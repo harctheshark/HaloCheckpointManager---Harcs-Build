@@ -596,6 +596,27 @@ public:
 			nameof(bottomlessClipToggle)
 		);
 
+	std::shared_ptr<BinarySetting<bool>> season7PhysicsToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(season7PhysicsToggle)
+		);
+
+	std::shared_ptr<BinarySetting<float>> farClipDistance = std::make_shared<BinarySetting<float>>
+		(
+			1024.f,
+			[](float in) { return in >= 0.f; },
+			nameof(farClipDistance)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> rocketLauncherAnimationFixToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(rocketLauncherAnimationFixToggle)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> display2DInfoToggle = std::make_shared<BinarySetting<bool>>
 		(
 			false,

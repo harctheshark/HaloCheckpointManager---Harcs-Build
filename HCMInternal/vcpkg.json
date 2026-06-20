@@ -16,10 +16,9 @@
       "name": "curl",
       "features": [
           "non-http",
-          "schannel",
           "ssl",
           "sspi"
-      ] 
+      ]
     },
     "boost-stacktrace",
     "boost-algorithm",

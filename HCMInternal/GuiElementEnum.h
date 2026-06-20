@@ -77,6 +77,9 @@
 	((invulnNPCGUI, (ALL_SUPPORTED_GAMES)))\
 	((infiniteAmmoGUI, (Halo1, Halo2)))\
 	((bottomlessClipGUI, (Halo1, Halo2)))\
+	((season7PhysicsToggle, (Halo2)))\
+	((farClipDistanceGUI, (Halo2)))\
+	((rocketLauncherAnimationFixToggle, (Halo2)))\
 	((aiFreezeGUI, (ALL_SUPPORTED_GAMES)))\
 	((medusaGUI, (Halo1, Halo2)))\
 	((forceTeleportGUI, (ALL_SUPPORTED_GAMES)))\

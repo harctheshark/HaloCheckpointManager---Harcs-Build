@@ -205,6 +205,18 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::BottomlessClip}
 	},
 
+	{ GUIElementEnum::season7PhysicsToggle,
+		{OptionalCheatEnum::Season7Physics}
+	},
+
+	{ GUIElementEnum::farClipDistanceGUI,
+		{OptionalCheatEnum::FarClipDistance}
+	},
+
+	{ GUIElementEnum::rocketLauncherAnimationFixToggle,
+		{OptionalCheatEnum::RocketLauncherAnimationFix}
+	},
+
 		{ GUIElementEnum::playerPositionToClipboardGUI,
 		{OptionalCheatEnum::PlayerPositionToClipboard}
 	},

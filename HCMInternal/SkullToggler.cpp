@@ -20,6 +20,11 @@ private:
 	bool cacheValid = false;
 	std::map<SkullEnum, std::shared_ptr<MultilevelPointer>> skullDataPointers;
 
+	// Halo 2: an 8-byte "which skulls are allowed" mask that defaults to disabling some skulls in multiplayer.
+	// We poke it to all-set whenever the user touches skulls so the toggles actually take effect (no extra step).
+	// Optional: only present for the verified Halo 2 build; std::nullopt otherwise.
+	std::optional<std::shared_ptr<MultilevelPointer>> skullEnableMaskPointer;
+
 	// event callbacks
 	ScopedCallback<eventpp::CallbackList<void (GameState)>> updateSkullBitBoolCollectionEventCallback;
 	ScopedCallback< eventpp::CallbackList<void(const MCCState&)>> MCCStateChangedCallback;
@@ -75,6 +80,14 @@ private:
 	void onUpdateSkullBitBoolCollectionEvent(GameState game)
 	{
 		if (game != mGame) return; // not our game, not our problem
+
+		// make sure every skull is allowed by the engine's skull-enable mask before we toggle anything
+		if (skullEnableMaskPointer.has_value())
+		{
+			uint64_t allEnabled = 0xFFFFFFFFFFFFFFFFull;
+			if (!skullEnableMaskPointer.value()->writeData(&allEnabled))
+				PLOG_ERROR << "Failed to set skull-enable mask: " << MultilevelPointer::GetLastError();
+		}
 
 		if (cacheValid == true)
 		{
@@ -276,6 +289,16 @@ public:
 				}
 			}
 
+		}
+
+		// optional skull-enable mask (Halo 2 only). Missing on other games/builds -> just skip the poke.
+		try
+		{
+			skullEnableMaskPointer = pointerDataStore->getData<std::shared_ptr<MultilevelPointer>>("skullEnableMask", gameImpl);
+		}
+		catch (HCMInitException&)
+		{
+			skullEnableMaskPointer = std::nullopt;
 		}
 
 		if (skullDataPointers.empty()) throw HCMInitException("Could not resolve any data pointers for skulls!");

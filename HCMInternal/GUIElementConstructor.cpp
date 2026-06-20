@@ -16,6 +16,7 @@
 #include "GUIRadioButton.h"
 #include "GUIRadioGroup.h"
 #include "GUIFloat.h"
+#include "GUIFloatStepper.h"
 #include "GUIToggleWithChildren.h"
 #include "GUIInputString.h"
 #include "GUIInputMultilineString.h"
@@ -410,6 +411,9 @@ private:
 							createNestedElement(GUIElementEnum::invulnerabilitySettingsSubheading),
 							createNestedElement(GUIElementEnum::infiniteAmmoGUI),
 							createNestedElement(GUIElementEnum::bottomlessClipGUI),
+							createNestedElement(GUIElementEnum::season7PhysicsToggle),
+							createNestedElement(GUIElementEnum::farClipDistanceGUI),
+							createNestedElement(GUIElementEnum::rocketLauncherAnimationFixToggle),
 							createNestedElement(GUIElementEnum::aiFreezeGUI),
 							createNestedElement(GUIElementEnum::medusaGUI),
 							createNestedElement(GUIElementEnum::forceTeleportGUI),
@@ -458,6 +462,21 @@ private:
 				case GUIElementEnum::bottomlessClipGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("The player no longer has to reload"), RebindableHotkeyEnum::bottomlessClip, "Bottomless Clip", settings->bottomlessClipToggle
+						));
+
+				case GUIElementEnum::season7PhysicsToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: swaps the physics/tickrate scalar to the Season 7 value while enabled, restoring the default when disabled."), std::nullopt, "Season 7 Physics", settings->season7PhysicsToggle
+						));
+
+				case GUIElementEnum::farClipDistanceGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloatStepper>
+						(game, ToolTipCollection("Halo 2: renderer far clip distance. +/- steps by 512; click (or ctrl-click) the field to type a value. Synced to the live value when a game loads."), "Far Clip Distance", settings->farClipDistance
+						));
+
+				case GUIElementEnum::rocketLauncherAnimationFixToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: fixes the first-person rocket launcher animation pop by patching the loaded animation tag data. Re-applies on map loads while enabled."), std::nullopt, "Toggle Rocket Launcher Animation Fix", settings->rocketLauncherAnimationFixToggle
 						));
 
 				case GUIElementEnum::aiFreezeGUI:

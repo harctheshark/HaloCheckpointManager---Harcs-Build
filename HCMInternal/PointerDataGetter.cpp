@@ -16,9 +16,11 @@ namespace PointerDataGetter
 
         std::string downloadFailureMessage = "Download not attempted";
 
-        // RELEASE will try to download the latest version of the pointer data, overwriting the local file.
-        // DEBUG skips the download and always uses the local file, since the build events are setup to copy paste the latest version every time; thus immediately reflecting any changes.
-#ifndef HCM_DEBUG  
+        // RELEASE normally downloads the latest pointer data from GitHub, OVERWRITING the local file.
+        // DISABLED in this fork (#if 0): we maintain custom offsets in the local InternalPointerData.xml
+        // (e.g. the S5 ODST skull pointer) that a download would clobber. Always use the local file
+        // regardless of build configuration.
+#if 0
         try
         {
             PLOG_INFO << "Downloading pointer data from Github repo";
@@ -37,6 +39,7 @@ namespace PointerDataGetter
 
         }
 #endif
+        (void)downloadFailureMessage;
 
         if (!fileExists(pointerDataLocation)) // no local copy? we're doomed, throw
         {

@@ -110,7 +110,10 @@ RevertEventHook,\
 ForceMissionRestart,\
 GameEngineDetail,\
 GameEngineFunctions,\
-ViewAngle3D
+ViewAngle3D,\
+Season7Physics,\
+FarClipDistance,\
+RocketLauncherAnimationFix
 
 
 enum class OptionalCheatEnum {

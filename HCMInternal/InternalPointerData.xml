@@ -1449,10 +1449,16 @@
 			</Offsets>
 		</Version>
 
+		<!-- MP FIX (1.3528): the original target 0x6BE0AC (inside sub_1806BE090) increments dword_1815A3EA0,
+		     an SP-only counter gated by sub_1806A6310 / sub_1806F4A20 - that gate is closed in multiplayer, so
+		     the tick event never fired in MP and NO tick-driven feature worked there. 0x7067F0 is sub_1807067F0,
+		     which does `++*(qword_1815FE008+8)` - the actual game tick HCM reads as tickCounter. It's called once
+		     per real sim tick from sub_1806A72A0 (guarded only by the sim-tick flag, common to the SP loop
+		     sub_1806A7790 AND the netgame loop sub_18088C3A0), so it fires in both campaign and multiplayer. -->
 		<Version Version="1.3528.0.0" Game="Halo2">
 			<Module>halo2.dll</Module>
 			<Offsets>
-				<Offset>0x6BE0AC</Offset>
+				<Offset>0x7067F0</Offset>
 			</Offsets>
 		</Version>
 
@@ -7089,6 +7095,25 @@
 	<!-- #endregion playerDatum-->
 
 
+	<!-- #region localPlayerIndex-->
+	<!-- Halo2 only. playerDatum (above) is field +0x04 of entry[0] in a 16-entry, 0x44-stride player-control
+	     tracking array (base = playerDatum address). entry[i] belongs to player index i. In campaign the local
+	     player is always index 0 so entry[0] is correct, but in multiplayer the local player sits at its network
+	     player index, so GetPlayerDatum must offset playerDatum by 0x44 * localPlayerIndex. This pointer reads
+	     that index: players-globals heap ptr (halo2.dll+0xE80A20) -> +0x1C = player index of local player 0
+	     (engine: sub_18069CFF0(0)). Verified for build 1.3528; other builds fall back to index 0 (campaign-only). -->
+	<VersionedEntry Name="localPlayerIndex" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0xE80A20</Offset>
+				<Offset>0x1C</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<!-- #endregion localPlayerIndex-->
+
+
 	<VersionedEntry Name="playerViewAngle" Type="MultilevelPointer::ModuleOffset">
 		<Version Version="1.3272.0.0" Game="Halo1">
 			<Module>halo1.dll</Module>
@@ -8858,6 +8883,38 @@
 			<Module>halo2.dll</Module>
 			<Offsets>
 				<Offset>0x15F2883</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!-- Halo 2 renderer far clip distance (float). Written directly by the FarClipDistance feature. -->
+	<VersionedEntry Name="farClipDistance" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0xE19204</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!-- Halo 2 skull-enable mask: an 8-byte bitmask that gates which skulls are allowed (some default OFF in MP).
+	     SkullToggler pokes this to all-set so skull toggles take effect without the extra manual step. -->
+	<VersionedEntry Name="skullEnableMask" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0xDFC898</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!-- Season 7 Physics: start of the `mulss xmm6,[rip+disp]` tickrate/physics-scalar instruction.
+	     The cheat rewrites these 8 bytes between the Season 7 constant and the default. Verified for 1.3528. -->
+	<VersionedEntry Name="season7PhysicsPatch" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x70DBFA</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
