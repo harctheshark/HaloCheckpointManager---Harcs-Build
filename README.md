@@ -10,9 +10,9 @@
 * **Replay system (pseudo-theater)** — record the player's per-tick inputs and replay them from a matching checkpoint (HCM's checkpoint system handles RNG/determinism), with an optional first-person "theater" camera. **Freecam-friendly:** while HCM freecam is active the replay yields the camera so you can free-cam / dollycam montages over a replay while the inputs keep playing.
 * **Season 7 Physics** — toggle the physics/tickrate collision scalar (applied on level load).
 * **Master Tickrate** — button to flip the simulation tickrate between **60 and 30 Hz**.
-* **Far Clip Distance** — adjust the renderer far clip (±-512 world units per step, or ctrl+click to type a value).
+* **Far Clip Distance** — adjust the renderer far clip (±/- 512 world units per step, or ctrl+click to type a value).
 * **Skull-enable mask auto-poke** — skull toggles take effect in Halo 2 multiplayer without the extra manual step.
-* **Toggle Rocket Launcher Animation Fix** — fixes the first-person rocket launcher animation pop.
+* **Toggle Rocket Launcher Animation Fix** — fixes the first-person rocket launcher animation pop by injecting corrected quad rotational values into the rocket launchers animation graph, as the existing one has a bad FK rig.
 
 ---**Download**---  
 From the [Releases page](https://github.com/harctheshark/HaloCheckpointManager---Harcs-Build/releases) (Harc's Build) — or upstream HCM from the [original Releases page](https://github.com/Burnt-o/HaloCheckpointManager/releases).  
