@@ -43,6 +43,7 @@
 #include "Season7Physics.h"
 #include "FarClipDistance.h"
 #include "RocketLauncherAnimationFix.h"
+#include "MasterTickrate.h"
 #include "DisplayPlayerInfo.h"
 #include "GetObjectHealth.h"
 #include "GetAggroData.h"
@@ -110,6 +111,9 @@
 #include "GameEngineFunctions.h"
 #include "GameEngineDetail.h"
 #include "ForceMissionRestart.h"
+#include "PlayerActionUpdateHook.h"
+#include "ReplayRecorder.h"
+#include "ReplayPlayer.h"
 
 
 #include "DIContainer.h"

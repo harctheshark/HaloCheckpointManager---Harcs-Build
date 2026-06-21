@@ -8908,6 +8908,28 @@
 		</Version>
 	</VersionedEntry>
 
+	<!-- Halo 2 master simulation tickrate (int16) inside the "game time globals" struct (*(halo2.dll+0x15FE008)).
+	     +0x02 = tickrate (60 default), +0x04 = seconds-per-tick float. MasterTickrate flips both 60<->30. -->
+	<VersionedEntry Name="masterTickrate" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x15FE008</Offset>
+				<Offset>0x2</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="masterTickrateDt" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x15FE008</Offset>
+				<Offset>0x4</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
 	<!-- Season 7 Physics: start of the `mulss xmm6,[rip+disp]` tickrate/physics-scalar instruction.
 	     The cheat rewrites these 8 bytes between the Season 7 constant and the default. Verified for 1.3528. -->
 	<VersionedEntry Name="season7PhysicsPatch" Type="MultilevelPointer::ModuleOffset">
@@ -11569,6 +11591,34 @@
 			<value>true</value>
 		</Version>
 	</VersionedEntry>
+
+	<!--#region replaySystem-->
+	<!-- sub_180866A10(uint mask /*rcx*/, void* actions /*rdx*/): the single funnel every
+	     player_action update passes through before the engine consumes it. ReplayRecorder
+	     reads (mask, actions[4][0x60]); ReplayPlayer overwrites them. See REPLAY_SYSTEM_DESIGN.md.
+	     1.3528 anchor: builder sub_1806C4CE0 tail-calls this; HCM's BlockPlayerCharacterInput
+	     (+0x6C4D51) lives in that builder. -->
+	<!-- sub_1806A3910: the PER-SIM-TICK simulation_update consumer (called once per real tick from the tick
+	     handler sub_1806A72A0, after the gate, before the RNG seed advance). rcx = simulation_update*;
+	     mask @ +0x8, player_actions[16] @ +0x100 (stride 0x60). This is the deterministic input point -
+	     NOT the per-render-frame builder sub_180866A10 (which fires ~240Hz and desyncs). -->
+	<VersionedEntry Name="playerActionUpdateFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x6A3910</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="playerActionUpdateContextInterpreter" Type="MidhookContextInterpreter">
+		<Version Version="All" Game="Halo2">
+			<Parameters>
+				<pSimUpdate>rcx</pSimUpdate>
+			</Parameters>
+		</Version>
+	</VersionedEntry>
+	<!--#endregion replaySystem-->
 
 	<!--#endregion freeCamera-->
 

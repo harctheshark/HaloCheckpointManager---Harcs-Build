@@ -217,6 +217,29 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::RocketLauncherAnimationFix}
 	},
 
+	{ GUIElementEnum::masterTickrateToggleGUI,
+		{OptionalCheatEnum::MasterTickrate}
+	},
+
+	{ GUIElementEnum::replayRecord30GUI,
+		{OptionalCheatEnum::ReplayRecorder}
+	},
+	{ GUIElementEnum::replayRecord60GUI,
+		{OptionalCheatEnum::ReplayRecorder}
+	},
+	{ GUIElementEnum::replayStopSaveGUI,
+		{OptionalCheatEnum::ReplayRecorder}
+	},
+	{ GUIElementEnum::replayLoadFileGUI,
+		{OptionalCheatEnum::ReplayPlayer}
+	},
+	{ GUIElementEnum::replayPlayGUI,
+		{OptionalCheatEnum::ReplayPlayer}
+	},
+	{ GUIElementEnum::replayStopPlaybackGUI,
+		{OptionalCheatEnum::ReplayPlayer}
+	},
+
 		{ GUIElementEnum::playerPositionToClipboardGUI,
 		{OptionalCheatEnum::PlayerPositionToClipboard}
 	},

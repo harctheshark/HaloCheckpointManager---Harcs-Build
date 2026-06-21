@@ -70,6 +70,13 @@
 		((forceFutureCheckpointTick, (ALL_SUPPORTED_GAMES)))\
 		((forceFutureCheckpointFill, (ALL_SUPPORTED_GAMES)))\
 	((forceMissionRestartGUI, (ALL_SUPPORTED_GAMES)))\
+	((replayInputSubheading, (Halo2)))\
+		((replayRecord30GUI, (Halo2)))\
+		((replayRecord60GUI, (Halo2)))\
+		((replayStopSaveGUI, (Halo2)))\
+		((replayLoadFileGUI, (Halo2)))\
+		((replayPlayGUI, (Halo2)))\
+		((replayStopPlaybackGUI, (Halo2)))\
 ((cheatsHeadingGUI, (ALL_SUPPORTED_GAMES)))\
 	((speedhackGUI, (ALL_SUPPORTED_GAMES)))\
 	((invulnGUI, (ALL_SUPPORTED_GAMES)))\
@@ -80,6 +87,7 @@
 	((season7PhysicsToggle, (Halo2)))\
 	((farClipDistanceGUI, (Halo2)))\
 	((rocketLauncherAnimationFixToggle, (Halo2)))\
+	((masterTickrateToggleGUI, (Halo2)))\
 	((aiFreezeGUI, (ALL_SUPPORTED_GAMES)))\
 	((medusaGUI, (Halo1, Halo2)))\
 	((forceTeleportGUI, (ALL_SUPPORTED_GAMES)))\

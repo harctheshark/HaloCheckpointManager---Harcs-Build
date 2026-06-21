@@ -243,7 +243,8 @@ private:
 							createNestedElement(GUIElementEnum::naturalCheckpointDisableGUI),
 							createNestedElement(GUIElementEnum::forceFutureCheckpointGUI),
 							createNestedElement(GUIElementEnum::forceMissionRestartGUI),
-							
+							createNestedElement(GUIElementEnum::replayInputSubheading),
+
 						}));
 
 				case GUIElementEnum::forceCheckpointGUI:
@@ -401,6 +402,42 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
 						(game, ToolTipCollection("Forces the mission to restart, same as doing it from the pause menu"), RebindableHotkeyEnum::forceMissionRestart, "Force Mission Restart", settings->forceMissionRestartEvent));
 
+				case GUIElementEnum::replayInputSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Halo 2: deterministic per-tick input record/playback (.h2r). Recording starts on the next revert; playback feeds the recorded inputs on the next revert. Load the matching checkpoint first."), "Input Replay (.h2r)", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::replayRecord30GUI),
+							createNestedElement(GUIElementEnum::replayRecord60GUI),
+							createNestedElement(GUIElementEnum::replayStopSaveGUI),
+							createNestedElement(GUIElementEnum::replayLoadFileGUI),
+							createNestedElement(GUIElementEnum::replayPlayGUI),
+							createNestedElement(GUIElementEnum::replayStopPlaybackGUI),
+							}));
+
+					case GUIElementEnum::replayRecord30GUI:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+							(game, ToolTipCollection("Arm recording at 30 tickrate. Capture begins on your next revert/checkpoint-load."), RebindableHotkeyEnum::replayRecord30Hotkey, "Record (30 tick)", settings->replayRecord30Event));
+
+					case GUIElementEnum::replayRecord60GUI:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+							(game, ToolTipCollection("Arm recording at 60 tickrate. Capture begins on your next revert/checkpoint-load."), RebindableHotkeyEnum::replayRecord60Hotkey, "Record (60 tick)", settings->replayRecord60Event));
+
+					case GUIElementEnum::replayStopSaveGUI:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+							(game, ToolTipCollection("Stop recording and save it (auto-named with a timestamp) to <HCM dir>\\replays\\."), RebindableHotkeyEnum::replayStopSaveHotkey, "Stop & Save Recording", settings->replayStopSaveEvent));
+
+					case GUIElementEnum::replayLoadFileGUI:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+							(game, ToolTipCollection("Browse for and load a .h2r replay file into memory (does not start playback)."), RebindableHotkeyEnum::replayLoadFileHotkey, "Load .h2r File", settings->replayLoadFileEvent));
+
+					case GUIElementEnum::replayPlayGUI:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+							(game, ToolTipCollection("Arm playback of the loaded replay. Real input is blocked and the recorded inputs are fed on your next revert/checkpoint-load."), RebindableHotkeyEnum::replayPlayHotkey, "Play Replay", settings->replayPlayEvent));
+
+					case GUIElementEnum::replayStopPlaybackGUI:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+							(game, ToolTipCollection("Stop playback and restore real input."), RebindableHotkeyEnum::replayStopPlaybackHotkey, "Stop Playback", settings->replayStopPlaybackEvent));
+
 
 			case GUIElementEnum::cheatsHeadingGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
@@ -414,6 +451,7 @@ private:
 							createNestedElement(GUIElementEnum::season7PhysicsToggle),
 							createNestedElement(GUIElementEnum::farClipDistanceGUI),
 							createNestedElement(GUIElementEnum::rocketLauncherAnimationFixToggle),
+							createNestedElement(GUIElementEnum::masterTickrateToggleGUI),
 							createNestedElement(GUIElementEnum::aiFreezeGUI),
 							createNestedElement(GUIElementEnum::medusaGUI),
 							createNestedElement(GUIElementEnum::forceTeleportGUI),
@@ -477,6 +515,11 @@ private:
 				case GUIElementEnum::rocketLauncherAnimationFixToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Halo 2: fixes the first-person rocket launcher animation pop by patching the loaded animation tag data. Re-applies on map loads while enabled."), std::nullopt, "Toggle Rocket Launcher Animation Fix", settings->rocketLauncherAnimationFixToggle
+						));
+
+				case GUIElementEnum::masterTickrateToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+						(game, ToolTipCollection("Halo 2: flips the master simulation tickrate between 60 and 30 Hz (and the matching dt). Requires a loaded Halo 2 game."), std::nullopt, "Toggle Tickrate (60/30)", settings->masterTickrateFlipEvent
 						));
 
 				case GUIElementEnum::aiFreezeGUI:

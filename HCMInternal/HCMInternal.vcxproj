@@ -400,6 +400,11 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="FarClipDistance.h" />
     <ClInclude Include="GUIFloatStepper.h" />
     <ClInclude Include="RocketLauncherAnimationFix.h" />
+    <ClInclude Include="MasterTickrate.h" />
+    <ClInclude Include="ReplayData.h" />
+    <ClInclude Include="PlayerActionUpdateHook.h" />
+    <ClInclude Include="ReplayRecorder.h" />
+    <ClInclude Include="ReplayPlayer.h" />
     <ClInclude Include="CarrierBumpAnalyser.h" />
     <ClInclude Include="CheckpointInjectionLogger.h" />
     <ClInclude Include="DisableScreenEffects.h" />
@@ -697,6 +702,10 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="Season7Physics.cpp" />
     <ClCompile Include="FarClipDistance.cpp" />
     <ClCompile Include="RocketLauncherAnimationFix.cpp" />
+    <ClCompile Include="MasterTickrate.cpp" />
+    <ClCompile Include="PlayerActionUpdateHook.cpp" />
+    <ClCompile Include="ReplayRecorder.cpp" />
+    <ClCompile Include="ReplayPlayer.cpp" />
     <ClCompile Include="CarrierBumpAnalyser.cpp" />
     <ClCompile Include="CheckpointInjectionLogger.cpp" />
     <ClCompile Include="DisableScreenEffects.cpp" />

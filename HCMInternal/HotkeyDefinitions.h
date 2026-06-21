@@ -79,8 +79,8 @@ private:
 
 
 	// have to split up the counting here since BOOST_PP_TUPLE_SIZE can only count up to 64
-	static constexpr inline int allEventOnPressHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS));
-	static constexpr inline int allRebindableHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((NOEVENT_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS));
+	static constexpr inline int allEventOnPressHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS));
+	static constexpr inline int allRebindableHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((NOEVENT_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS));
 	static constexpr inline int rebindableOnlyCount = allRebindableHotkeyEnumCount - allEventOnPressHotkeyEnumCount;
 
 	const std::map<RebindableHotkeyEnum, std::shared_ptr<EventOnPressHotkey>>::value_type allEventOnPressHotkeysData[allEventOnPressHotkeyEnumCount]
@@ -487,9 +487,34 @@ private:
 		mSettings->skullAcrophobiaToggleHotkeyEvent,
 		vsk{}),
 
+		/// replay (input record/playback) - default unbound; bind via the GUI
+		initEventOnPressHotkey(replayRecord30Hotkey,
+		mSettings->replayRecord30Event,
+		vsk{}),
+
+		initEventOnPressHotkey(replayRecord60Hotkey,
+		mSettings->replayRecord60Event,
+		vsk{}),
+
+		initEventOnPressHotkey(replayStopSaveHotkey,
+		mSettings->replayStopSaveEvent,
+		vsk{}),
+
+		initEventOnPressHotkey(replayLoadFileHotkey,
+		mSettings->replayLoadFileEvent,
+		vsk{}),
+
+		initEventOnPressHotkey(replayPlayHotkey,
+		mSettings->replayPlayEvent,
+		vsk{}),
+
+		initEventOnPressHotkey(replayStopPlaybackHotkey,
+		mSettings->replayStopPlaybackEvent,
+		vsk{}),
 
 
-		
+
+
 
 	};
 

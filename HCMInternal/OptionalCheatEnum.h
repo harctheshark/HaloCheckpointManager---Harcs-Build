@@ -113,7 +113,11 @@ GameEngineFunctions,\
 ViewAngle3D,\
 Season7Physics,\
 FarClipDistance,\
-RocketLauncherAnimationFix
+RocketLauncherAnimationFix,\
+PlayerActionUpdateHook,\
+ReplayRecorder,\
+ReplayPlayer,\
+MasterTickrate
 
 
 enum class OptionalCheatEnum {

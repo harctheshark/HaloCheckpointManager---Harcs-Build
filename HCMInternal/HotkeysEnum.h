@@ -107,6 +107,16 @@ skullSputnikHotkey, \
 skullAcrophobiaHotkey
 
 
+// replay hotkeys. Like the skulls, kept in their own macro because ALL_EVENTONPRESS_HOTKEYS is near the
+// BOOST_PP_TUPLE_SIZE limit of 64. These are event-on-press hotkeys (they fire ActionEvents).
+#define REPLAY_HOTKEYS \
+replayRecord30Hotkey, \
+replayRecord60Hotkey, \
+replayStopSaveHotkey, \
+replayLoadFileHotkey, \
+replayPlayHotkey, \
+replayStopPlaybackHotkey
+
 // hotkeys that do not fire an event. Usually used for continous inputs like freecamera
 #define NOEVENT_HOTKEYS \
 cameraTranslateUpBinding,\
@@ -117,7 +127,7 @@ cameraFOVIncreaseBinding,\
 cameraFOVDecreaseBinding
 
 // both event and non-event hotkeys are rebindable
-#define ALL_REBINDABLE_HOTKEYS ALL_EVENTONPRESS_HOTKEYS, NOEVENT_HOTKEYS, SKULL_HOTKEYS
+#define ALL_REBINDABLE_HOTKEYS ALL_EVENTONPRESS_HOTKEYS, NOEVENT_HOTKEYS, SKULL_HOTKEYS, REPLAY_HOTKEYS
 
 
 //enum class RebindableHotkeyEnum : int {

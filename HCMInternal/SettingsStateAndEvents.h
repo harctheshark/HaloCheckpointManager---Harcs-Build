@@ -32,6 +32,15 @@ public:
 	//	hotkeys - see HotkeyEventsLambdas for how they connect to respective toggle (they just flip the value)
 	std::shared_ptr<ActionEvent> toggleGUIHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> togglePauseHotkeyEvent = std::make_shared<ActionEvent>();
+
+	// replay (input record/playback) action events - fired by both the GUI buttons and the rebindable hotkeys.
+	// ReplayRecorder / ReplayPlayer subscribe to these directly.
+	std::shared_ptr<ActionEvent> replayRecord30Event = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> replayRecord60Event = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> replayStopSaveEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> replayLoadFileEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> replayPlayEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> replayStopPlaybackEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> speedhackHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> invulnerabilityHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> aiFreezeHotkeyEvent = std::make_shared<ActionEvent>();
@@ -73,6 +82,7 @@ public:
 	std::shared_ptr<ActionEvent> forceDoubleRevertEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceCoreSaveEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceCoreLoadEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> masterTickrateFlipEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> injectCheckpointEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> dumpCheckpointEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> injectCoreEvent = std::make_shared<ActionEvent>();
