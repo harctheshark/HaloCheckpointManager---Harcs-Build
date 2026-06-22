@@ -8908,6 +8908,51 @@
 		</Version>
 	</VersionedEntry>
 
+	<!-- Halo 2 loaded structure_bsp tag pointer = *(halo2.dll+0xE6F770). CollisionWireframeOverlay reads the
+	     collision_bsp (block @ sbsp+0x14) edges/vertices from it to draw the collision wireframe. -->
+	<VersionedEntry Name="structureBSPAddress" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0xE6F770</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!-- Halo 2 per-frame world-entry render function sub_1807E1600 (halo2.dll+0x7E1600). It renders the whole
+	     world-entry list for the main view in one loop, then returns. CollisionWireframeOverlay INLINE-HOOKS it
+	     to draw the collision wireframe inside the game's render against the LIVE bound depth (world + FP), which
+	     gives correct occlusion with no D3D11 depth-buffer capture/selection (the source of the flicker). -->
+	<VersionedEntry Name="collisionWorldRenderFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x7E1600</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!-- Halo 2 tag element memory pools. MCC tagblock dataOffset selects a pool by its sign bit:
+	     dataOffset>=0 -> poolA(*(0xE80AB0)) + dataOffset ; dataOffset<0 -> poolB(*(0xE80AC0)) + (dataOffset&0x7FFFFFFF).
+	     Needed because campaign collision lands in poolA but multiplayer collision lands in poolB. -->
+	<VersionedEntry Name="tagElementPoolA" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0xE80AB0</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="tagElementPoolB" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0xE80AC0</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
 	<!-- Halo 2 master simulation tickrate (int16) inside the "game time globals" struct (*(halo2.dll+0x15FE008)).
 	     +0x02 = tickrate (60 default), +0x04 = seconds-per-tick float. MasterTickrate flips both 60<->30. -->
 	<VersionedEntry Name="masterTickrate" Type="MultilevelPointer::ModuleOffset">
@@ -9945,6 +9990,22 @@
 			</Offsets>
 		</Version>
 
+		<!--Halo2: force-skip the ENTIRE HUD-message block in the HUD dispatcher
+		    sub_180822190 (rva 0x822190). That block draws the "Hold X to pick up/enter"
+		    prompt (sub_1808226E0), the "picked up N rounds/grenades" pickup confirmations
+		    (sub_180823110 / sub_180832A60) and objective text (sub_180823A90) — all sourced
+		    from hud_globals "hud messages" -> .unic, none of which the main-HUD patch
+		    (hideHUDPatchFunction1) covers. The engine already has a jz->0x822333 that skips
+		    this whole block on legit paths (player==-1 / sub_18068F470 false); we turn the
+		    first such jz at 0x82226E into an unconditional jmp. The jump TARGET sub_180953A10
+		    (HUD projection-matrix state) and the main HUD sub_180829050 still run. -->
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x82226E</Offset>
+			</Offsets>
+		</Version>
+
 		<!--hides current objective text-->
 		<Version Version="1.3385.0.0" Game="HaloReach">
 			<Module>haloreach.dll</Module>
@@ -10058,6 +10119,11 @@
 		</Version>
 		<Version Version="1.3528.0.0" Game="Halo1">
 			<Data>0x85</Data>
+		</Version>
+
+		<!--Halo2: 0F 84 BF 00 00 00 (jz 0x822333) -> E9 C0 00 00 00 90 (jmp 0x822333 + nop). -->
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Data>0xE9, 0xC0, 0x00, 0x00, 0x00, 0x90</Data>
 		</Version>
 
 		<Version Version="1.3385.0.0" Game="HaloReach">

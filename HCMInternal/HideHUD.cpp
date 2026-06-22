@@ -145,7 +145,10 @@ HideHUD::HideHUD(GameState gameImpl, IDIContainer& dicon)
 		break;
 
 	case GameState::Value::Halo2:
-		pimpl = std::make_shared<HideHUDImplSinglePatch<GameState::Value::Halo2>>(gameImpl, dicon);
+		// two patches: #1 the main HUD gate (shield/health/ammo/motion-tracker/reticle),
+		// #2 force-skips the entire HUD-message block (pickup prompt, "picked up N
+		// rounds/grenades" confirmations, objective text) that the main gate misses.
+		pimpl = std::make_shared<HideHUDImplDoublePatch<GameState::Value::Halo2>>(gameImpl, dicon);
 		break;
 
 
