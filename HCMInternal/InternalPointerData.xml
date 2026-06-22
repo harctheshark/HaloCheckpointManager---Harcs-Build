@@ -8908,6 +8908,76 @@
 		</Version>
 	</VersionedEntry>
 
+	<!-- Halo 2 Sun Scale Fix (SunScaleFix): repoint the sun-glow + occlusion-query placement loads from
+	     the live far-clip (RIP-rel disp32) to the fixed 1023.875 corona constant @0x180B3ED60, so raising
+	     the far clip stops shrinking the sun. Two 4-byte disp32 operand rewrites, RIP-relative => ASLR-safe.
+	     suns_draw  movss xmm1,[far] @VA 0x180982411, disp32 @RVA 0x982415: 53 46 01 01 -> 47 C9 1B 00
+	     suns_occlude movss xmm4,[far] @VA 0x180982BC9, disp32 @RVA 0x982BCD: 9B 3E 01 01 -> 8F C1 1B 00 -->
+	<VersionedEntry Name="sunScaleFixFunction1" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x982415</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="sunScaleFixCode1" Type="Vector" Typename="byte">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Data>0x47, 0xC9, 0x1B, 0x00</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="sunScaleFixFunction2" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x982BCD</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="sunScaleFixCode2" Type="Vector" Typename="byte">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Data>0x8F, 0xC1, 0x1B, 0x00</Data>
+		</Version>
+	</VersionedEntry>
+
+	<!-- Halo 2 Animation Fixes (AnimationFixes bundle). -->
+	<!-- Fix 1: rocket firing interp (barrel 60-tick pop). Mid-hook site inside the anim codec dispatcher
+	     sub_1807DA400 @ RVA 0x7DA419, where rdx = TLS base and r8 = 0xD0. The mid-hook snaps (frame1=frame0,
+	     frac=0) the rocket fire anim's tail frames (gate: nodeCount==43, frame_count==31, frame0>=25). -->
+	<VersionedEntry Name="animFixBarrelSnapFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x7DA419</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<!-- Fix 2: cyclotron elevator interp. Inline-hook the interp gate halo_interpolator_object_can_interpolate
+	     sub_180723230 @ RVA 0x723230; the detour returns "can't interpolate" for the elevator (object 0 on
+	     Cyclotron) on loop-reset frames (phase float @ datum+0x144 < 0.05). -->
+	<VersionedEntry Name="animFixCyclotronGateFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x723230</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<!-- Fix 1b: rocket barrel render-interp seam guard (the static ".rckt" cave, ported to a runtime mid-hook).
+	     Mid-hook the FP-weapon render-interp guard sub_180722850 @ RVA 0x7228EF (the "about to interpolate"
+	     path; clean bytes 48 8B 0D 02 8A F2 00 = mov rcx,[out region]). The callback re-checks each node's
+	     rotation(dot vs 1.5)+position(<0.04) between the two render regions (rdx / r10) and, if any node moved
+	     too much, redirects to the SNAP path 0x722963 (no interpolation). .snap alone does NOT fix the barrel
+	     pop on a clean dll; .snap + this guard together do. -->
+	<VersionedEntry Name="animFixRcktFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x7228EF</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
 	<!-- Halo 2 loaded structure_bsp tag pointer = *(halo2.dll+0xE6F770). CollisionWireframeOverlay reads the
 	     collision_bsp (block @ sbsp+0x14) edges/vertices from it to draw the collision wireframe. -->
 	<VersionedEntry Name="structureBSPAddress" Type="MultilevelPointer::ModuleOffset">

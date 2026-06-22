@@ -450,7 +450,8 @@ private:
 							createNestedElement(GUIElementEnum::bottomlessClipGUI),
 							createNestedElement(GUIElementEnum::season7PhysicsToggle),
 							createNestedElement(GUIElementEnum::farClipDistanceGUI),
-							createNestedElement(GUIElementEnum::rocketLauncherAnimationFixToggle),
+							createNestedElement(GUIElementEnum::sunScaleFixToggle),
+							createNestedElement(GUIElementEnum::animationFixesToggle),
 							createNestedElement(GUIElementEnum::masterTickrateToggleGUI),
 							createNestedElement(GUIElementEnum::aiFreezeGUI),
 							createNestedElement(GUIElementEnum::medusaGUI),
@@ -512,9 +513,14 @@ private:
 						(game, ToolTipCollection("Halo 2: renderer far clip distance. +/- steps by 512; click (or ctrl-click) the field to type a value. Synced to the live value when a game loads."), "Far Clip Distance", settings->farClipDistance
 						));
 
-				case GUIElementEnum::rocketLauncherAnimationFixToggle:
+				case GUIElementEnum::sunScaleFixToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: fixes the first-person rocket launcher animation pop by patching the loaded animation tag data. Re-applies on map loads while enabled."), std::nullopt, "Toggle Rocket Launcher Animation Fix", settings->rocketLauncherAnimationFixToggle
+						(game, ToolTipCollection("Halo 2: keeps the sun a constant size when Far Clip Distance is raised. Anchors the sun glow and its occlusion query at the fixed corona distance instead of the far-clip plane (otherwise the sun shrinks to a hard square at high far clip)."), std::nullopt, "Sun Scale Fix", settings->sunScaleFixToggle
+						));
+
+				case GUIElementEnum::animationFixesToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: bundle of animation/interpolation fixes - the rocket launcher firing-spin barrel pop (60 tick), the rocket launcher animation pop, and the Cyclotron elevator's loop-seam interpolation glitch. Re-applies on map loads while enabled."), std::nullopt, "Animation Fixes", settings->animationFixesToggle
 						));
 
 				case GUIElementEnum::masterTickrateToggleGUI:

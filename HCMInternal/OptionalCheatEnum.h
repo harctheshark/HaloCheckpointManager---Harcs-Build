@@ -113,7 +113,8 @@ GameEngineFunctions,\
 ViewAngle3D,\
 Season7Physics,\
 FarClipDistance,\
-RocketLauncherAnimationFix,\
+SunScaleFix,\
+AnimationFixes,\
 PlayerActionUpdateHook,\
 ReplayRecorder,\
 ReplayPlayer,\

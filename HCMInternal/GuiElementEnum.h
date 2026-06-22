@@ -86,7 +86,8 @@
 	((bottomlessClipGUI, (Halo1, Halo2)))\
 	((season7PhysicsToggle, (Halo2)))\
 	((farClipDistanceGUI, (Halo2)))\
-	((rocketLauncherAnimationFixToggle, (Halo2)))\
+	((sunScaleFixToggle, (Halo2)))\
+	((animationFixesToggle, (Halo2)))\
 	((masterTickrateToggleGUI, (Halo2)))\
 	((aiFreezeGUI, (ALL_SUPPORTED_GAMES)))\
 	((medusaGUI, (Halo1, Halo2)))\

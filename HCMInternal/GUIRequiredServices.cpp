@@ -213,8 +213,12 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::FarClipDistance}
 	},
 
-	{ GUIElementEnum::rocketLauncherAnimationFixToggle,
-		{OptionalCheatEnum::RocketLauncherAnimationFix}
+	{ GUIElementEnum::sunScaleFixToggle,
+		{OptionalCheatEnum::SunScaleFix}
+	},
+
+	{ GUIElementEnum::animationFixesToggle,
+		{OptionalCheatEnum::AnimationFixes}
 	},
 
 	{ GUIElementEnum::masterTickrateToggleGUI,

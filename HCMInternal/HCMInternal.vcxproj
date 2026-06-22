@@ -399,7 +399,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="Season7Physics.h" />
     <ClInclude Include="FarClipDistance.h" />
     <ClInclude Include="GUIFloatStepper.h" />
-    <ClInclude Include="RocketLauncherAnimationFix.h" />
+    <ClInclude Include="AnimationFixes.h" />
+    <ClInclude Include="SunScaleFix.h" />
     <ClInclude Include="MasterTickrate.h" />
     <ClInclude Include="ReplayData.h" />
     <ClInclude Include="PlayerActionUpdateHook.h" />
@@ -701,7 +702,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="BottomlessClip.cpp" />
     <ClCompile Include="Season7Physics.cpp" />
     <ClCompile Include="FarClipDistance.cpp" />
-    <ClCompile Include="RocketLauncherAnimationFix.cpp" />
+    <ClCompile Include="AnimationFixes.cpp" />
+    <ClCompile Include="SunScaleFix.cpp" />
     <ClCompile Include="MasterTickrate.cpp" />
     <ClCompile Include="PlayerActionUpdateHook.cpp" />
     <ClCompile Include="ReplayRecorder.cpp" />

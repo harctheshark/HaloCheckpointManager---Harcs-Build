@@ -620,12 +620,24 @@ public:
 			nameof(farClipDistance)
 		);
 
-	std::shared_ptr<BinarySetting<bool>> rocketLauncherAnimationFixToggle = std::make_shared<BinarySetting<bool>>
+	// Halo 2: anchors the sun glow + occlusion query at the fixed corona distance instead of the
+	// far-clip plane, so raising Far Clip Distance no longer shrinks the sun. Sits under the slider.
+	std::shared_ptr<BinarySetting<bool>> sunScaleFixToggle = std::make_shared<BinarySetting<bool>>
 		(
 			false,
 			[](bool in) { return true; },
-			nameof(rocketLauncherAnimationFixToggle)
+			nameof(sunScaleFixToggle)
 		);
+
+	// Halo 2: bundle of animation/interpolation fixes (rocket firing interp + cyclotron elevator
+	// + rocket launcher animation). Replaces the old standalone rocketLauncherAnimationFixToggle.
+	std::shared_ptr<BinarySetting<bool>> animationFixesToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(animationFixesToggle)
+		);
+
 
 	std::shared_ptr<BinarySetting<bool>> display2DInfoToggle = std::make_shared<BinarySetting<bool>>
 		(
