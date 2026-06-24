@@ -94,8 +94,85 @@ namespace
 		return memcmp((void*)h, kSignature.data(), kSignature.size()) == 0;
 	}
 
-	// Scan committed, writable, non-executable, PRIVATE heap for the signature. (MEM_PRIVATE skips images +
-	// mapped files, where tag data never lives — a big speedup over scanning the whole address space.)
+	// ---- tag-table resolution (Halo2 1.3528): find the rocket jmad tag directly, no heap sweep ----
+	constexpr uintptr_t kRvaMetaHeader    = 0x15E4B58; // *(...) = tag meta header (magic "sgat" @ +0x1C)
+	constexpr uintptr_t kRvaStringTable   = 0x15E4B78; // *(...) = tag-name string table
+	constexpr uintptr_t kRvaStringMetaTbl = 0x15E4B68; // *(...) = per-tag name-offset table (u32[tagIndex])
+	constexpr uintptr_t kRvaTagPoolA      = 0xE80AB0;  // *(...) = tag data pool A (offset >= 0)
+	constexpr uintptr_t kRvaTagPoolB      = 0xE80AC0;  // *(...) = tag data pool B (offset sign bit set)
+
+	// Resolve the rocket-launcher jmad tag(s) straight from the tag table and find the anim-data signature
+	// inside that tag's small (~94 KB) data region — instead of sweeping gigabytes of heap. Fires the instant
+	// the tag is loaded. Returns the absolute address(es) of the signature, same as the old heap scan did.
+	// Tag element (stride 0x10): +0 group "damj", +4 datum, +8 data offset (dual-pool), +0xC data size.
+	std::vector<uintptr_t> findRocketAnimHeaders()
+	{
+		std::vector<uintptr_t> found;
+		uintptr_t base = (uintptr_t)GetModuleHandleW(L"halo2.dll");
+		if (!base) return found;
+
+		uintptr_t metaHeader = *(uintptr_t*)(base + kRvaMetaHeader);
+		if (!metaHeader || IsBadReadPtr((void*)metaHeader, 0x20)) return found;
+		if (memcmp((void*)(metaHeader + 0x1C), "sgat", 4) != 0) return found; // tag-table magic safety check
+		uint32_t numGroups = *(uint32_t*)(metaHeader + 0x04);
+		uint32_t numTags   = *(uint32_t*)(metaHeader + 0x18);
+		if (numTags == 0 || numTags > 0x40000) return found;
+		uintptr_t elemTable = metaHeader + 0x20 + (uintptr_t)numGroups * 0x0C;
+		if (IsBadReadPtr((void*)elemTable, (size_t)numTags * 0x10)) return found;
+
+		uintptr_t stringTable = *(uintptr_t*)(base + kRvaStringTable);
+		uintptr_t stringMeta  = *(uintptr_t*)(base + kRvaStringMetaTbl);
+		uintptr_t poolA = *(uintptr_t*)(base + kRvaTagPoolA);
+		uintptr_t poolB = *(uintptr_t*)(base + kRvaTagPoolB);
+		if (!stringTable || !stringMeta || !poolA) return found;
+
+		const uint8_t first = kSignature[0];
+		for (uint32_t idx = 0; idx < numTags; ++idx)
+		{
+			uintptr_t el = elemTable + (uintptr_t)idx * 0x10;
+			if (memcmp((void*)el, "damj", 4) != 0) continue; // jmad group only
+
+			// name must contain "rocket_launcher" (bounded, SEH-safe copy)
+			uint32_t nameOff = *(uint32_t*)(stringMeta + 4ull * idx);
+			const char* name = (const char*)(stringTable + nameOff);
+			char nbuf[256]; size_t k = 0; bool terminated = false;
+			for (; k < sizeof(nbuf) - 1; ++k)
+			{
+				if (IsBadReadPtr((void*)(name + k), 1)) break;
+				nbuf[k] = name[k];
+				if (nbuf[k] == 0) { terminated = true; break; }
+			}
+			if (!terminated) continue;
+			if (!strstr(nbuf, "rocket_launcher")) continue;
+
+			// resolve this tag's data region via the dual pool, scan only it for the signature
+			uint32_t off = *(uint32_t*)(el + 0x08);
+			uint32_t size = *(uint32_t*)(el + 0x0C);
+			if (size < kSignature.size() || size > 0x400000) continue;
+			uintptr_t dataStart = (off & 0x80000000u) ? (poolB + (off & 0x7FFFFFFFu)) : (poolA + off);
+			if (IsBadReadPtr((void*)dataStart, size)) continue;
+			const uint8_t* p = (const uint8_t*)dataStart;
+			for (uint32_t i = 0; i + (uint32_t)kSignature.size() <= size; ++i)
+				if (p[i] == first && memcmp(p + i, kSignature.data(), kSignature.size()) == 0)
+					found.push_back(dataStart + i);
+		}
+		return found;
+	}
+
+	// True when we're in a loaded Halo 2 game (the tag table is present + valid). Used to gate the heap-scan
+	// fallback so it never runs at menus / before a game loads.
+	bool tagTableIsLoaded()
+	{
+		uintptr_t base = (uintptr_t)GetModuleHandleW(L"halo2.dll");
+		if (!base) return false;
+		uintptr_t mh = *(uintptr_t*)(base + kRvaMetaHeader);
+		if (!mh || IsBadReadPtr((void*)(mh + 0x1C), 4)) return false;
+		return memcmp((void*)(mh + 0x1C), "sgat", 4) == 0;
+	}
+
+	// FALLBACK ONLY: brute-force scan committed, writable, non-executable, PRIVATE heap for the signature.
+	// The tag-table lookup (findRocketAnimHeaders) is the fast primary path; this only runs if that ever
+	// fails to find it (e.g. an MCC update shifts the tag-table offsets), and is heavily rate-limited.
 	std::vector<uintptr_t> scanForHeaders()
 	{
 		std::vector<uintptr_t> found;
@@ -112,21 +189,19 @@ namespace
 
 			if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE)
 			{
-				DWORD p = mbi.Protect & 0xFF;
-				bool writable = (p == PAGE_READWRITE || p == PAGE_WRITECOPY || p == PAGE_EXECUTE_READWRITE || p == PAGE_EXECUTE_WRITECOPY);
-				bool executable = (p == PAGE_EXECUTE || p == PAGE_EXECUTE_READ || p == PAGE_EXECUTE_READWRITE || p == PAGE_EXECUTE_WRITECOPY);
+				DWORD prot = mbi.Protect & 0xFF;
+				bool writable = (prot == PAGE_READWRITE || prot == PAGE_WRITECOPY || prot == PAGE_EXECUTE_READWRITE || prot == PAGE_EXECUTE_WRITECOPY);
+				bool executable = (prot == PAGE_EXECUTE || prot == PAGE_EXECUTE_READ || prot == PAGE_EXECUTE_READWRITE || prot == PAGE_EXECUTE_WRITECOPY);
 				bool inaccessible = (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0;
 
 				if (writable && !executable && !inaccessible && mbi.RegionSize >= kSignature.size())
 				{
-					uint8_t* base = (uint8_t*)mbi.BaseAddress;
+					uint8_t* rbase = (uint8_t*)mbi.BaseAddress;
 					const uint8_t first = kSignature[0];
 					const size_t limit = mbi.RegionSize - kSignature.size();
 					for (size_t i = 0; i <= limit; ++i)
-					{
-						if (base[i] == first && memcmp(base + i, kSignature.data(), kSignature.size()) == 0)
-							found.push_back((uintptr_t)(base + i));
-					}
+						if (rbase[i] == first && memcmp(rbase + i, kSignature.data(), kSignature.size()) == 0)
+							found.push_back((uintptr_t)(rbase + i));
 				}
 			}
 
@@ -206,6 +281,7 @@ private:
 	std::mutex mHeadersMutex;
 	std::vector<uintptr_t> mCachedHeaders;
 	uint64_t mLastScanTick = 0;
+	uint64_t mLastFallbackScan = 0; // rate-limits the heap-scan fallback
 
 
 	// ---- Fix 1: rocket firing interp (barrel 60-tick codec pop) ----
@@ -305,12 +381,21 @@ private:
 
 			if (!cacheOk)
 			{
-				// poll quickly until the tag is loaded (was 4000ms -> fires within ~1s of a map/weapon load)
+				// poll quickly until the tag is loaded (fires within ~400ms of a map/weapon load)
 				uint64_t now = GetTickCount64();
 				if (mCachedHeaders.empty() || (now - mLastScanTick) >= 400)
 				{
 					mLastScanTick = now;
-					mCachedHeaders = scanForHeaders();
+					mCachedHeaders = findRocketAnimHeaders(); // PRIMARY: tag-table direct lookup (no heap sweep)
+
+					// FALLBACK (rare): if the tag-table lookup found nothing but we ARE in a loaded game
+					// (so it should have), the offsets may have shifted - brute-force the heap, rate-limited
+					// to once every 5s so a genuine "rocket not loaded" state doesn't keep scanning.
+					if (mCachedHeaders.empty() && tagTableIsLoaded() && (now - mLastFallbackScan) >= 5000)
+					{
+						mLastFallbackScan = now;
+						mCachedHeaders = scanForHeaders();
+					}
 				}
 			}
 			headers = mCachedHeaders;
@@ -387,7 +472,7 @@ private:
 				}
 
 				startWorker();
-				messagesGUI->addMessage("  rocket launcher animation (heap): APPLIED");
+				messagesGUI->addMessage("  rocket launcher animation: APPLIED");
 			}
 			else
 			{
