@@ -209,6 +209,18 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::Season7Physics}
 	},
 
+	{ GUIElementEnum::dropShadowsOnObjectsToggle,
+		{OptionalCheatEnum::DropShadowsOnObjects}
+	},
+
+	{ GUIElementEnum::uncapDropShadowsToggle,
+		{OptionalCheatEnum::UncapDropShadows}
+	},
+
+	{ GUIElementEnum::uncapVisibilityLimitsToggle,
+		{OptionalCheatEnum::UncapVisibilityLimits}
+	},
+
 	{ GUIElementEnum::farClipDistanceGUI,
 		{OptionalCheatEnum::FarClipDistance}
 	},
@@ -219,6 +231,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 
 	{ GUIElementEnum::animationFixesToggle,
 		{OptionalCheatEnum::AnimationFixes}
+	},
+
+	{ GUIElementEnum::havokDebuggerGUI,
+		{OptionalCheatEnum::HavokDebugger}
 	},
 
 	{ GUIElementEnum::masterTickrateToggleGUI,
@@ -296,6 +312,22 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 
 			{ GUIElementEnum::softCeilingOverlaySettings,
 		{OptionalCheatEnum::SoftCeilingOverlay}
+	},
+
+	{ GUIElementEnum::placementPointsOverlayToggle,
+{OptionalCheatEnum::PlacementPointsOverlay}
+	},
+	{ GUIElementEnum::placementPointsOverlaySettings,
+{OptionalCheatEnum::PlacementPointsOverlay}
+	},
+	{ GUIElementEnum::placementPointsOverlayExtended,
+{OptionalCheatEnum::PlacementPointsOverlay}
+	},
+	{ GUIElementEnum::placementPointsOverlayShowValidity,
+{OptionalCheatEnum::PlacementPointsOverlay}
+	},
+	{ GUIElementEnum::placementPointsOverlayRadius,
+{OptionalCheatEnum::PlacementPointsOverlay}
 	},
 
 			{ GUIElementEnum::shieldInputPrinterToggle,

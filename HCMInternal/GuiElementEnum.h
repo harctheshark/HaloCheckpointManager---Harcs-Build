@@ -85,9 +85,13 @@
 	((infiniteAmmoGUI, (Halo1, Halo2)))\
 	((bottomlessClipGUI, (Halo1, Halo2)))\
 	((season7PhysicsToggle, (Halo2)))\
+	((dropShadowsOnObjectsToggle, (Halo2)))\
+	((uncapDropShadowsToggle, (Halo2)))\
+	((uncapVisibilityLimitsToggle, (Halo2)))\
 	((farClipDistanceGUI, (Halo2)))\
 	((sunScaleFixToggle, (Halo2)))\
 	((animationFixesToggle, (Halo2)))\
+	((havokDebuggerGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
 	((masterTickrateToggleGUI, (Halo2)))\
 	((aiFreezeGUI, (ALL_SUPPORTED_GAMES)))\
 	((medusaGUI, (Halo1, Halo2)))\
@@ -257,6 +261,11 @@
 		((sensFontColour, (Halo1)))\
 	((softCeilingOverlayToggle, (THIRD_GEN)))\
 	((softCeilingOverlaySettings, (THIRD_GEN)))\
+	((placementPointsOverlayToggle, (Halo3, Halo3ODST, HaloReach)))\
+	((placementPointsOverlaySettings, (Halo3, Halo3ODST, HaloReach)))\
+	((placementPointsOverlayExtended, (Halo3, Halo3ODST, HaloReach)))\
+	((placementPointsOverlayShowValidity, (Halo3, Halo3ODST, HaloReach)))\
+	((placementPointsOverlayRadius, (Halo3, Halo3ODST, HaloReach)))\
 		((softCeilingOverlayRenderTypes, (THIRD_GEN)))\
 		((softCeilingOverlayRenderDirection, (THIRD_GEN)))\
 		((softCeilingOverlayColorAccel, (THIRD_GEN)))\

@@ -7281,18 +7281,23 @@
 		<Version Version="1.2448.0.0" Game="Halo2">
 			<freezeFlag>0xC9</freezeFlag>
 			<havokComponentDatum>0xBC</havokComponentDatum>
+			<!--EXPERIMENT: object-header non-havok position, mirrors H3+ object visualPosition (== bipedDataFields position)-->
+			<visualPosition>0x6C</visualPosition>
 		</Version>
 		<Version Version="1.3272.0.0" Game="Halo2">
 			<freezeFlag>0xC1</freezeFlag>
 			<havokComponentDatum>0xB4</havokComponentDatum>
+			<visualPosition>0x64</visualPosition>
 		</Version>
 		<Version Version="1.3385.0.0" Game="Halo2">
 			<freezeFlag>0xC1</freezeFlag>
 			<havokComponentDatum>0xB4</havokComponentDatum>
+			<visualPosition>0x64</visualPosition>
 		</Version>
 		<Version Version="1.3528.0.0" Game="Halo2">
 			<freezeFlag>0xC1</freezeFlag>
 			<havokComponentDatum>0xB4</havokComponentDatum>
+			<visualPosition>0x64</visualPosition>
 		</Version>
 
 		<Version Version="All" Game="Halo3">
@@ -9052,6 +9057,18 @@
 			<Module>halo2.dll</Module>
 			<Offsets>
 				<Offset>0x70DBFA</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!-- DropShadowsOnObjects: the `xor r9d, r9d` (45 33 C9) that sets a4=0 (object-receive shadow_mode mask)
+	     at the drop-shadow caster pass's call to the receiver-filter sub_1809EEDD0. The cheat rewrites these
+	     3 bytes to `mov r9b, 0xFF` (41 B1 FF) to let objects receive other objects' drop shadows. Verified 1.3528. -->
+	<VersionedEntry Name="dropShadowsOnObjectsPatch" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x7EAC2B</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -11754,9 +11771,90 @@
 			</Parameters>
 		</Version>
 	</VersionedEntry>
+
+	<!-- engine sub-tick interpolation alpha: fractional part of the fixed-timestep accumulator, i.e. the SAME
+	     alpha the renderer uses to interpolate every object / FP body between sim ticks. Timing struct =
+	     *(halo2.dll+0x15FE008) (same base as tickCounter), accumulator float @ +0x10. Read as float, clamp
+	     [0,1]. Used to drive the replay camera interpolation so it tracks the body smoothly at any framerate. -->
+	<VersionedEntry Name="interpAlphaPointer" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x15FE008</Offset>
+				<Offset>0x10</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
 	<!--#endregion replaySystem-->
 
 	<!--#endregion freeCamera-->
+
+	<!-- Halo 3 placement-search validity tests (for PlacementPointsOverlay V2). surfaceTest sets a u16 surface ref -->
+	<!-- (0xFFFF = none) for a world position; used to colour candidate respawn/vehicle-exit points valid/invalid.   -->
+	<VersionedEntry Name="placementSurfaceTestFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x9BC78</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.3528.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0xA87F0</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.3528.0.0" Game="HaloReach">
+			<Module>haloreach.dll</Module>
+			<Offsets>
+				<Offset>0x145C8</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!-- BSP-validity test sub_1801FCAC0(flags, &pos, unitDatum, -1, 0) -> nonzero = point is blocked/in-solid. -->
+	<VersionedEntry Name="placementBspValidityFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x1FCAC0</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.3528.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x22EB84</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.3528.0.0" Game="HaloReach">
+			<Module>haloreach.dll</Module>
+			<Offsets>
+				<Offset>0x1284F8</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!-- collision-BSP flags global (arg a1 to the BSP-validity test); resolves to the address, read the qword there. -->
+	<VersionedEntry Name="placementBspFlagsGlobal" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x22863C0</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.3528.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x22CA2E8</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.3528.0.0" Game="HaloReach">
+			<Module>haloreach.dll</Module>
+			<Offsets>
+				<Offset>0x29025E0</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
 
 	<!--just check what accesses bsp index on bsp load. actually zoneset for h3+-->
 	<VersionedEntry Name="switchBSPFunction" Type="MultilevelPointer::ModuleOffset">

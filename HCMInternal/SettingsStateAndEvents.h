@@ -425,6 +425,13 @@ public:
 			nameof(aiFreezeToggle)
 		);
 
+	std::shared_ptr<BinarySetting<bool>> havokDebuggerToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(havokDebuggerToggle)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> medusaToggle = std::make_shared<BinarySetting<bool>>
 		(
 			false,
@@ -611,6 +618,27 @@ public:
 			false,
 			[](bool in) { return true; },
 			nameof(season7PhysicsToggle)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> dropShadowsOnObjectsToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(dropShadowsOnObjectsToggle)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> uncapDropShadowsToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(uncapDropShadowsToggle)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> uncapVisibilityLimitsToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(uncapVisibilityLimitsToggle)
 		);
 
 	std::shared_ptr<BinarySetting<float>> farClipDistance = std::make_shared<BinarySetting<float>>
@@ -1683,6 +1711,32 @@ public:
 			false,
 			[](bool in) { return true; },
 			nameof(softCeilingOverlayToggle)
+		);
+
+	// Placement Points Overlay (Halo 3 respawn / vehicle-exit candidate visualisation)
+	std::shared_ptr<BinarySetting<bool>> placementPointsOverlayToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(placementPointsOverlayToggle)
+		);
+	std::shared_ptr<BinarySetting<bool>> placementPointsOverlayExtended = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(placementPointsOverlayExtended)
+		);
+	std::shared_ptr<BinarySetting<bool>> placementPointsOverlayShowValidity = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(placementPointsOverlayShowValidity)
+		);
+	std::shared_ptr<BinarySetting<float>> placementPointsOverlayRadius = std::make_shared<BinarySetting<float>>
+		(
+			1.0f, // verified live: the respawn search uses radii 1.0/2.0/4.0 (base 1.0 = 2x biped radius)
+			[](float in) { return in >= 0.f; },
+			nameof(placementPointsOverlayRadius)
 		);
 
 	std::shared_ptr<BinarySetting<SettingsEnums::SoftCeilingRenderTypes>> softCeilingOverlayRenderTypes = std::make_shared<BinarySetting<SettingsEnums::SoftCeilingRenderTypes>>

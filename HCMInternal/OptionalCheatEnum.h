@@ -86,6 +86,7 @@ TagBlockReader,\
 TagTableRange,\
 GetSoftCeilingData,\
 SoftCeilingOverlay,\
+PlacementPointsOverlay,\
 GetCurrentBSPSet,\
 SwitchBSPSet,\
 GetCurrentZoneSet,\
@@ -112,9 +113,13 @@ GameEngineDetail,\
 GameEngineFunctions,\
 ViewAngle3D,\
 Season7Physics,\
+DropShadowsOnObjects,\
+UncapDropShadows,\
+UncapVisibilityLimits,\
 FarClipDistance,\
 SunScaleFix,\
 AnimationFixes,\
+HavokDebugger,\
 PlayerActionUpdateHook,\
 ReplayRecorder,\
 ReplayPlayer,\

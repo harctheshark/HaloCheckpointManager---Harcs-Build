@@ -452,6 +452,7 @@ private:
 							createNestedElement(GUIElementEnum::farClipDistanceGUI),
 							createNestedElement(GUIElementEnum::sunScaleFixToggle),
 							createNestedElement(GUIElementEnum::animationFixesToggle),
+							createNestedElement(GUIElementEnum::havokDebuggerGUI),
 							createNestedElement(GUIElementEnum::masterTickrateToggleGUI),
 							createNestedElement(GUIElementEnum::aiFreezeGUI),
 							createNestedElement(GUIElementEnum::medusaGUI),
@@ -469,6 +470,9 @@ private:
 							createNestedElement(GUIElementEnum::disableBarriersToggle),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterToggle),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterSettings),
+							createNestedElement(GUIElementEnum::dropShadowsOnObjectsToggle),
+							createNestedElement(GUIElementEnum::uncapDropShadowsToggle),
+							createNestedElement(GUIElementEnum::uncapVisibilityLimitsToggle),
 						}));
 
 				case GUIElementEnum::speedhackGUI:
@@ -508,6 +512,21 @@ private:
 						(game, ToolTipCollection("Halo 2: swaps the physics/tickrate scalar to the Season 7 value while enabled, restoring the default when disabled."), std::nullopt, "Season 7 Physics", settings->season7PhysicsToggle
 						));
 
+				case GUIElementEnum::dropShadowsOnObjectsToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: lets objects receive the drop-shadow blobs cast by other objects (e.g. the player's shadow falling onto a nearby crate). Enables a feature the engine ships disabled."), std::nullopt, "Drop Shadows On Objects", settings->dropShadowsOnObjectsToggle
+						));
+
+				case GUIElementEnum::uncapDropShadowsToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: raises the engine's 32-shadow caps to 120 and enlarges the rasterizer pool to 8MB, so far more drop-shadows render at once without the sky/water de-rendering. Relocates the shadow buffers via code caves; fully reverts on disable. Build 1.3528 only."), std::nullopt, "Uncap Drop Shadows", settings->uncapDropShadowsToggle
+						));
+
+				case GUIElementEnum::uncapVisibilityLimitsToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: raises the per-frame visibility caps for visible objects, instanced geometry and building meshes from 256/128/384 to 4096, so large maps stop de-rendering chunks of the level (\"overflowed visibility index collection count\"). Does NOT raise clusters-per-region (128). Takes effect on the next level load. Build 1.3528 only."), std::nullopt, "Uncap Visibility Limits", settings->uncapVisibilityLimitsToggle
+						));
+
 				case GUIElementEnum::farClipDistanceGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloatStepper>
 						(game, ToolTipCollection("Halo 2: renderer far clip distance. +/- steps by 512; click (or ctrl-click) the field to type a value. Synced to the live value when a game loads."), "Far Clip Distance", settings->farClipDistance
@@ -521,6 +540,11 @@ private:
 				case GUIElementEnum::animationFixesToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Halo 2: bundle of animation/interpolation fixes - the rocket launcher firing-spin barrel pop (60 tick), the rocket launcher animation pop, and the Cyclotron elevator's loop-seam interpolation glitch. Re-applies on map loads while enabled."), std::nullopt, "Animation Fixes", settings->animationFixesToggle
+						));
+
+				case GUIElementEnum::havokDebuggerGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Starts an in-process Havok Visual Debugger server. Connect the Havok Visual Debugger client to 127.0.0.1:25001. Halo 3: live Havok world (collision, broadphase, islands, soft ceilings). Halo 2: static world BSP collision (in the 'BSP Collision' tab). Re-establishes on each enable so map switches don't need a restart."), std::nullopt, "Havok Debugger", settings->havokDebuggerToggle
 						));
 
 				case GUIElementEnum::masterTickrateToggleGUI:
@@ -870,6 +894,8 @@ private:
 							createNestedElement(GUIElementEnum::triggerOverlaySettings),
 							createNestedElement(GUIElementEnum::softCeilingOverlayToggle),
 							createNestedElement(GUIElementEnum::softCeilingOverlaySettings),
+							createNestedElement(GUIElementEnum::placementPointsOverlayToggle),
+							createNestedElement(GUIElementEnum::placementPointsOverlaySettings),
 							createNestedElement(GUIElementEnum::shieldInputPrinterToggle),
 							createNestedElement(GUIElementEnum::abilityMeterOverlayToggle),
 							createNestedElement(GUIElementEnum::abilityMeterOverlaySettings),
@@ -1403,6 +1429,31 @@ private:
 						createNestedElement(GUIElementEnum::softCeilingOverlaySolidTransparency),
 						createNestedElement(GUIElementEnum::softCeilingOverlayWireframeTransparency)
 						}));
+
+			case GUIElementEnum::placementPointsOverlayToggle:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+					(game, ToolTipCollection("Halo 3: visualises the respawn / vehicle-exit placement search (the candidate points the game tries when finding a safe spot around the player)."), std::nullopt, "Placement Points Overlay", settings->placementPointsOverlayToggle));
+
+			case GUIElementEnum::placementPointsOverlaySettings:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+					(game, ToolTipCollection("Settings for the placement points overlay"), "Placement Points Settings", headerChildElements
+						{
+						createNestedElement(GUIElementEnum::placementPointsOverlayShowValidity),
+						createNestedElement(GUIElementEnum::placementPointsOverlayExtended),
+						createNestedElement(GUIElementEnum::placementPointsOverlayRadius)
+						}));
+
+			case GUIElementEnum::placementPointsOverlayShowValidity:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+					(game, ToolTipCollection("Colour each candidate point by whether the game would accept it: GREEN = a valid spot (on/in collision world), RED = invalid. Turn off to colour by ring/direction instead."), std::nullopt, "Show Validity (green/red)", settings->placementPointsOverlayShowValidity));
+
+			case GUIElementEnum::placementPointsOverlayExtended:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+					(game, ToolTipCollection("Also draw the 9 downward candidate points - these are only used for vehicle exits (you can't respawn downward in Halo 3)."), std::nullopt, "Extended Placement Points (Vehicle Only)", settings->placementPointsOverlayExtended));
+
+			case GUIElementEnum::placementPointsOverlayRadius:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloatStepper>
+					(game, ToolTipCollection("Base search radius. Verified live = 1.0 (the respawn search uses radii 1.0/2.0/4.0). Rings draw at this radius x1, x2, x4 to match the engine's expanding retries."), "Base Radius", settings->placementPointsOverlayRadius));
 
 			case GUIElementEnum::softCeilingOverlayRenderTypes:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::SoftCeilingRenderTypes, 150.f>>

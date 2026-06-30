@@ -79,11 +79,14 @@ private:
         if (!getCam) return;
         try
         {
-            if (mQpcFreq <= 0.0) { LARGE_INTEGER fr; QueryPerformanceFrequency(&fr); mQpcFreq = (double)fr.QuadPart; }
-            LARGE_INTEGER now; QueryPerformanceCounter(&now);
-            uint32_t tr = mData.header.gameTickRate ? mData.header.gameTickRate : 30u;
-            double t = (double)(now.QuadPart - mCamTickStartQpc) / mQpcFreq * (double)tr; // elapsed / (1/tr)
-            float ft = t < 0.0 ? 0.f : (t > 1.0 ? 1.f : (float)t);
+            // sub-tick fraction = the engine's own interpolation alpha (so the camera rides the exact same
+            // 0..1 the renderer uses for the body -> smooth at any fps). Fall back to 0 (snap) if unavailable.
+            float ft = 0.f;
+            if (mInterpAlpha)
+            {
+                float a = 0.f;
+                if (mInterpAlpha->readData(&a)) ft = a < 0.f ? 0.f : (a > 1.f ? 1.f : a);
+            }
 
             float fwd[3], up[3];
             for (int i = 0; i < 3; ++i)
@@ -125,9 +128,10 @@ private:
     bool mHaveLastTick = false;
     uint32_t mDbgPrevPlayCurRel = 0xFFFFFFFFu; // #2 diagnostic: previous tick's curRel (0xFFFFFFFF = none yet)
     size_t mFrameIndex = 0;
-    // camera sub-tick interpolation timing (QPC); mCamTickStartQpc reset each tick when a new pair is set
-    double mQpcFreq = 0.0;
-    int64_t mCamTickStartQpc = 0;
+    // engine sub-tick interpolation alpha (the SAME 0..1 the renderer uses to interpolate the body between
+    // ticks). Driving the camera lerp with this makes it track the body smoothly at ANY framerate, including
+    // when capture fps != playback fps. Null -> fall back to snapping to the tick sample.
+    std::shared_ptr<MultilevelPointer> mInterpAlpha;
 
     uint32_t currentTick()
     {
@@ -200,16 +204,13 @@ private:
         catch (HCMRuntimeException) { /* non-fatal: keep replaying inputs even if the view write fails */ }
     }
 
-    // Capture this tick's camera pair (A=this tick, B=next) for the per-frame camera hook to interpolate,
-    // and reset the sub-tick timer so interpolation starts from now.
+    // Capture this tick's camera pair (A=this tick, B=next) for the per-frame camera hook to interpolate
+    // between, using the engine's interp alpha as the fraction.
     void setCameraPairForTick(size_t idx)
     {
         if (!mData.hasCamera() || idx >= mData.cameras.size()) { mCamValid = false; return; }
         mCamA = mData.cameras[idx];
         mCamB = (idx + 1 < mData.cameras.size()) ? mData.cameras[idx + 1] : mCamA;
-        if (mQpcFreq <= 0.0) { LARGE_INTEGER fr; QueryPerformanceFrequency(&fr); mQpcFreq = (double)fr.QuadPart; }
-        LARGE_INTEGER now; QueryPerformanceCounter(&now);
-        mCamTickStartQpc = now.QuadPart;
         mCamValid = true;
     }
 
@@ -333,6 +334,8 @@ public:
             auto ptr = dicon.Resolve<PointerDataStore>().lock();
             auto setCameraDataFunction = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(setCameraDataFunction), game);
             mCameraHook = ModuleMidHook::make(game.toModuleName(), setCameraDataFunction, &cameraHookFunction); // detached until playback
+            try { mInterpAlpha = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(interpAlphaPointer), game); }
+            catch (HCMInitException ex) { PLOG_ERROR << "ReplayPlayer: interpAlphaPointer unavailable (camera will snap per tick): " << ex.what(); }
         }
         catch (HCMInitException ex) { PLOG_ERROR << "ReplayPlayer: camera replay unavailable (FP view won't follow): " << ex.what(); }
     }

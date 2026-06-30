@@ -210,8 +210,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>d3d11.lib;dxguid.lib;libcurl.lib;version.lib;Ws2_32.lib;Wldap32.Lib;Crypt32.Lib;Secur32.lib;Iphlpapi.lib;Normaliz.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(VcpkgManifestRoot)\vcpkg_installed\$(VcpkgTriplet)\$(VcpkgTriplet)\lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>havok.lib;winmm.lib;user32.lib;advapi32.lib;d3d11.lib;dxguid.lib;libcurl.lib;version.lib;Ws2_32.lib;Wldap32.Lib;Crypt32.Lib;Secur32.lib;Iphlpapi.lib;Normaliz.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>G:\SteamLibrary\steamapps\common\H3EK\vdb_inject\build;$(VcpkgManifestRoot)\vcpkg_installed\$(VcpkgTriplet)\$(VcpkgTriplet)\lib</AdditionalLibraryDirectories>
       <IgnoreSpecificDefaultLibraries>
       </IgnoreSpecificDefaultLibraries>
     </Link>
@@ -369,6 +369,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="SliderParam.h" />
     <ClInclude Include="SoftCeilingData.h" />
     <ClInclude Include="SoftCeilingOverlay.h" />
+    <ClInclude Include="PlacementPointsOverlay.h" />
     <ClInclude Include="SwitchBSPSet.h" />
     <ClInclude Include="TagBlock.h" />
     <ClInclude Include="TagBlockReader.h" />
@@ -397,7 +398,12 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="BlockPlayerCharacterInput.h" />
     <ClInclude Include="BottomlessClip.h" />
     <ClInclude Include="Season7Physics.h" />
+    <ClInclude Include="DropShadowsOnObjects.h" />
+    <ClInclude Include="UncapDropShadows.h" />
+    <ClInclude Include="UncapVisibilityLimits.h" />
     <ClInclude Include="FarClipDistance.h" />
+    <ClInclude Include="HavokDebugger.h" />
+    <ClInclude Include="HavokDebuggerBridge.h" />
     <ClInclude Include="GUIFloatStepper.h" />
     <ClInclude Include="AnimationFixes.h" />
     <ClInclude Include="SunScaleFix.h" />
@@ -682,6 +688,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="ShieldInputPrinter.cpp" />
     <ClCompile Include="SkullToggler.cpp" />
     <ClCompile Include="SoftCeilingOverlay.cpp" />
+    <ClCompile Include="PlacementPointsOverlay.cpp" />
     <ClCompile Include="SwitchBSPSet.cpp" />
     <ClCompile Include="TagBlockReader.cpp" />
     <ClCompile Include="TagReferenceReader.cpp" />
@@ -701,7 +708,20 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="BlockPlayerCharacterInput.cpp" />
     <ClCompile Include="BottomlessClip.cpp" />
     <ClCompile Include="Season7Physics.cpp" />
+    <ClCompile Include="DropShadowsOnObjects.cpp" />
+    <ClCompile Include="UncapDropShadows.cpp" />
+    <ClCompile Include="UncapVisibilityLimits.cpp" />
     <ClCompile Include="FarClipDistance.cpp" />
+    <ClCompile Include="HavokDebugger.cpp" />
+    <ClCompile Include="HavokDebuggerImpl.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp14</LanguageStandard>
+      <ConformanceMode>false</ConformanceMode>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">G:\SteamLibrary\steamapps\common\H3EK\havok-v5.1.0r1-b2007.09.19-main\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">HCM_HAVOK_AVAILABLE;TARGET_H3;_CRT_SECURE_NO_WARNINGS;__w64=;_FARQ=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
     <ClCompile Include="AnimationFixes.cpp" />
     <ClCompile Include="SunScaleFix.cpp" />
     <ClCompile Include="MasterTickrate.cpp" />
