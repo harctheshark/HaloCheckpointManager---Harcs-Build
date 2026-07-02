@@ -114,8 +114,10 @@ GameEngineFunctions,\
 ViewAngle3D,\
 Season7Physics,\
 DropShadowsOnObjects,\
+OffscreenShadowCasters,\
 UncapDropShadows,\
 UncapVisibilityLimits,\
+UncapClusterLimit,\
 FarClipDistance,\
 SunScaleFix,\
 AnimationFixes,\

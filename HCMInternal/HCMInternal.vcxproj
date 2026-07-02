@@ -399,8 +399,10 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="BottomlessClip.h" />
     <ClInclude Include="Season7Physics.h" />
     <ClInclude Include="DropShadowsOnObjects.h" />
+    <ClInclude Include="OffscreenShadowCasters.h" />
     <ClInclude Include="UncapDropShadows.h" />
     <ClInclude Include="UncapVisibilityLimits.h" />
+    <ClInclude Include="UncapClusterLimit.h" />
     <ClInclude Include="FarClipDistance.h" />
     <ClInclude Include="HavokDebugger.h" />
     <ClInclude Include="HavokDebuggerBridge.h" />
@@ -709,8 +711,10 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="BottomlessClip.cpp" />
     <ClCompile Include="Season7Physics.cpp" />
     <ClCompile Include="DropShadowsOnObjects.cpp" />
+    <ClCompile Include="OffscreenShadowCasters.cpp" />
     <ClCompile Include="UncapDropShadows.cpp" />
     <ClCompile Include="UncapVisibilityLimits.cpp" />
+    <ClCompile Include="UncapClusterLimit.cpp" />
     <ClCompile Include="FarClipDistance.cpp" />
     <ClCompile Include="HavokDebugger.cpp" />
     <ClCompile Include="HavokDebuggerImpl.cpp">

@@ -641,6 +641,29 @@ public:
 			nameof(uncapVisibilityLimitsToggle)
 		);
 
+	std::shared_ptr<BinarySetting<bool>> uncapClusterLimitToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(uncapClusterLimitToggle)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> offscreenShadowCastersToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(offscreenShadowCastersToggle)
+		);
+
+	// Halo 2: multiplier applied to the instanced-geo/object bounding-sphere radius in the visibility test
+	// (OffscreenShadowCasters). Higher = casters stay shadowing from further off-camera. Live-editable.
+	std::shared_ptr<BinarySetting<float>> offscreenShadowCastersMultiplier = std::make_shared<BinarySetting<float>>
+		(
+			25.f,
+			[](float in) { return in >= 1.f; },
+			nameof(offscreenShadowCastersMultiplier)
+		);
+
 	std::shared_ptr<BinarySetting<float>> farClipDistance = std::make_shared<BinarySetting<float>>
 		(
 			1024.f,

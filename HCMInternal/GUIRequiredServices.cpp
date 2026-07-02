@@ -213,12 +213,24 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::DropShadowsOnObjects}
 	},
 
+	{ GUIElementEnum::offscreenShadowCastersToggle,
+		{OptionalCheatEnum::OffscreenShadowCasters}
+	},
+
+	{ GUIElementEnum::offscreenShadowCastersMultiplierGUI,
+		{OptionalCheatEnum::OffscreenShadowCasters}
+	},
+
 	{ GUIElementEnum::uncapDropShadowsToggle,
 		{OptionalCheatEnum::UncapDropShadows}
 	},
 
 	{ GUIElementEnum::uncapVisibilityLimitsToggle,
 		{OptionalCheatEnum::UncapVisibilityLimits}
+	},
+
+	{ GUIElementEnum::uncapClusterLimitToggle,
+		{OptionalCheatEnum::UncapClusterLimit}
 	},
 
 	{ GUIElementEnum::farClipDistanceGUI,

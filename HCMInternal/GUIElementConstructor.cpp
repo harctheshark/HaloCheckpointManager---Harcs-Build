@@ -471,8 +471,11 @@ private:
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterToggle),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterSettings),
 							createNestedElement(GUIElementEnum::dropShadowsOnObjectsToggle),
+							createNestedElement(GUIElementEnum::offscreenShadowCastersToggle),
+							createNestedElement(GUIElementEnum::offscreenShadowCastersMultiplierGUI),
 							createNestedElement(GUIElementEnum::uncapDropShadowsToggle),
 							createNestedElement(GUIElementEnum::uncapVisibilityLimitsToggle),
+							createNestedElement(GUIElementEnum::uncapClusterLimitToggle),
 						}));
 
 				case GUIElementEnum::speedhackGUI:
@@ -517,6 +520,16 @@ private:
 						(game, ToolTipCollection("Halo 2: lets objects receive the drop-shadow blobs cast by other objects (e.g. the player's shadow falling onto a nearby crate). Enables a feature the engine ships disabled."), std::nullopt, "Drop Shadows On Objects", settings->dropShadowsOnObjectsToggle
 						));
 
+				case GUIElementEnum::offscreenShadowCastersToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: keeps instanced geometry AND objects casting projective-light shadows when they leave the camera frustum (turn away from a caster near a projective light and its shadow normally vanishes, while the BSP's shadow persists). Inflates the caster's bounding-sphere radius (set by the multiplier below) only in the visibility test, so off-camera casters keep casting. Stored data untouched; fully reverts on disable. Build 1.3528 only."), std::nullopt, "Off-Screen Shadow Casters", settings->offscreenShadowCastersToggle
+						));
+
+				case GUIElementEnum::offscreenShadowCastersMultiplierGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloatStepper>
+						(game, ToolTipCollection("Halo 2: bounding-sphere radius multiplier for Off-Screen Shadow Casters. Higher = casters keep shadowing from further off-camera (25 is a good default). Live-editable; too high in a dense scene can hit the visibility caps."), "  Off-Screen Caster Radius x", settings->offscreenShadowCastersMultiplier
+						));
+
 				case GUIElementEnum::uncapDropShadowsToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Halo 2: raises the engine's 32-shadow caps to 120 and enlarges the rasterizer pool to 8MB, so far more drop-shadows render at once without the sky/water de-rendering. Relocates the shadow buffers via code caves; fully reverts on disable. Build 1.3528 only."), std::nullopt, "Uncap Drop Shadows", settings->uncapDropShadowsToggle
@@ -525,6 +538,11 @@ private:
 				case GUIElementEnum::uncapVisibilityLimitsToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Halo 2: raises the per-frame visibility caps for visible objects, instanced geometry and building meshes from 256/128/384 to 4096, so large maps stop de-rendering chunks of the level (\"overflowed visibility index collection count\"). Does NOT raise clusters-per-region (128). Takes effect on the next level load. Build 1.3528 only."), std::nullopt, "Uncap Visibility Limits", settings->uncapVisibilityLimitsToggle
+						));
+
+				case GUIElementEnum::uncapClusterLimitToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: beats the 128 region-clusters-per-region wall that makes chunks of large maps stop rendering from a high vantage (\"overflowed region clusters during region building\"). Raises the cap to 255 - relocates the region buffer's index/volume arrays into slack, relocates + enlarges the subpart-mask pool, widens the per-region cluster bitvector 128->256 bits, makes the cluster index map unsigned, and grows the clusters submit sub-collection. Pairs with Uncap Visibility Limits for very dense views. Toggle-off drains in a crash-safe order. Offline only. Build 1.3528 only."), std::nullopt, "Uncap Cluster Limit", settings->uncapClusterLimitToggle
 						));
 
 				case GUIElementEnum::farClipDistanceGUI:

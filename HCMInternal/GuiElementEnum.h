@@ -86,8 +86,11 @@
 	((bottomlessClipGUI, (Halo1, Halo2)))\
 	((season7PhysicsToggle, (Halo2)))\
 	((dropShadowsOnObjectsToggle, (Halo2)))\
+	((offscreenShadowCastersToggle, (Halo2)))\
+	((offscreenShadowCastersMultiplierGUI, (Halo2)))\
 	((uncapDropShadowsToggle, (Halo2)))\
 	((uncapVisibilityLimitsToggle, (Halo2)))\
+	((uncapClusterLimitToggle, (Halo2)))\
 	((farClipDistanceGUI, (Halo2)))\
 	((sunScaleFixToggle, (Halo2)))\
 	((animationFixesToggle, (Halo2)))\
