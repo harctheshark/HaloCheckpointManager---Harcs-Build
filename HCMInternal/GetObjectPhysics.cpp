@@ -67,7 +67,11 @@ public:
 				// promote biped to vehicle
 				CommonObjectType vehiObjectTypeEnum;
 				physicsObjectAddress = getObjectAddress->getObjectAddress(bipedsVehicleDatum, &vehiObjectTypeEnum);
-				if (vehiObjectTypeEnum != CommonObjectType::Vehicle) throw HCMRuntimeException(std::format("bipeds Vehicle somehow wasn't a vehicle! Was {} instead. BipedVehicleDatum: {}", magic_enum::enum_name(vehiObjectTypeEnum), bipedsVehicleDatum.toString()));
+				// The seat we're in usually belongs to a vehicle, but in H2 / Reach / H4 a biped can have
+				// seats too (e.g. riding another biped). Both bipeds and vehicles have position/velocity at
+				// the same object-relative offsets (see the type check below, which already accepts Biped),
+				// so treat a biped seat-object the same as a vehicle instead of erroring the overlay off.
+				if (vehiObjectTypeEnum != CommonObjectType::Vehicle && vehiObjectTypeEnum != CommonObjectType::Biped) throw HCMRuntimeException(std::format("biped's seat object was neither a vehicle nor a biped! Was {} instead. BipedVehicleDatum: {}", magic_enum::enum_name(vehiObjectTypeEnum), bipedsVehicleDatum.toString()));
 				thisObjectTypeEnum = vehiObjectTypeEnum;
 			}
 		}	
@@ -115,7 +119,11 @@ public:
 				// promote biped to vehicle
 				CommonObjectType vehiObjectTypeEnum;
 				physicsObjectAddress = getObjectAddress->getObjectAddress(bipedsVehicleDatum, &vehiObjectTypeEnum);
-				if (vehiObjectTypeEnum != CommonObjectType::Vehicle) throw HCMRuntimeException(std::format("bipeds Vehicle somehow wasn't a vehicle! Was {} instead. BipedVehicleDatum: {}", magic_enum::enum_name(vehiObjectTypeEnum), bipedsVehicleDatum.toString()));
+				// The seat we're in usually belongs to a vehicle, but in H2 / Reach / H4 a biped can have
+				// seats too (e.g. riding another biped). Both bipeds and vehicles have position/velocity at
+				// the same object-relative offsets (see the type check below, which already accepts Biped),
+				// so treat a biped seat-object the same as a vehicle instead of erroring the overlay off.
+				if (vehiObjectTypeEnum != CommonObjectType::Vehicle && vehiObjectTypeEnum != CommonObjectType::Biped) throw HCMRuntimeException(std::format("biped's seat object was neither a vehicle nor a biped! Was {} instead. BipedVehicleDatum: {}", magic_enum::enum_name(vehiObjectTypeEnum), bipedsVehicleDatum.toString()));
 				thisObjectTypeEnum = vehiObjectTypeEnum;
 			}
 		}
@@ -199,7 +207,9 @@ public:
 				LOG_ONCE_CAPTURE(PLOG_DEBUG << "Promoting to vehicles datum: " << vDatum, vDatum = bipedsVehicleDatum);
 				CommonObjectType vehiObjectTypeEnum;
 				auto vehiObjectAddress = getObjectAddress->getObjectAddress(bipedsVehicleDatum, &vehiObjectTypeEnum);
-				if (vehiObjectTypeEnum != CommonObjectType::Vehicle) throw HCMRuntimeException(std::format("bipeds Vehicle somehow wasn't a vehicle! Was {} instead", magic_enum::enum_name(vehiObjectTypeEnum)));
+				// A biped can occupy a seat on a vehicle OR (in H2 / Reach / H4) on another biped; both have
+				// physics we can read, so accept a biped seat-object and recurse into it the same as a vehicle.
+				if (vehiObjectTypeEnum != CommonObjectType::Vehicle && vehiObjectTypeEnum != CommonObjectType::Biped) throw HCMRuntimeException(std::format("biped's seat object was neither a vehicle nor a biped! Was {} instead", magic_enum::enum_name(vehiObjectTypeEnum)));
 				return getObjectPositionMutableAndVisual(bipedsVehicleDatum);
 			}
 		}
@@ -244,7 +254,9 @@ public:
 				LOG_ONCE_CAPTURE(PLOG_DEBUG << "Promoting to vehicles datum: " << vDatum, vDatum = bipedsVehicleDatum);
 				CommonObjectType vehiObjectTypeEnum;
 				auto vehiObjectAddress = getObjectAddress->getObjectAddress(bipedsVehicleDatum, &vehiObjectTypeEnum);
-				if (vehiObjectTypeEnum != CommonObjectType::Vehicle) throw HCMRuntimeException(std::format("bipeds Vehicle somehow wasn't a vehicle! Was {} instead", magic_enum::enum_name(vehiObjectTypeEnum)));
+				// A biped can occupy a seat on a vehicle OR (in H2 / Reach / H4) on another biped; both have
+				// physics we can read, so accept a biped seat-object and recurse into it the same as a vehicle.
+				if (vehiObjectTypeEnum != CommonObjectType::Vehicle && vehiObjectTypeEnum != CommonObjectType::Biped) throw HCMRuntimeException(std::format("biped's seat object was neither a vehicle nor a biped! Was {} instead", magic_enum::enum_name(vehiObjectTypeEnum)));
 				return getObjectVelocityMutable(bipedsVehicleDatum);
 			}
 		}
@@ -326,7 +338,9 @@ public:
 				LOG_ONCE_CAPTURE(PLOG_DEBUG << "Promoting to vehicles datum: " << vDatum, vDatum = bipedsVehicleDatum);
 				CommonObjectType vehiObjectTypeEnum;
 				auto vehiObjectAddress = getObjectAddress->getObjectAddress(bipedsVehicleDatum, &vehiObjectTypeEnum);
-				if (vehiObjectTypeEnum != CommonObjectType::Vehicle) throw HCMRuntimeException(std::format("bipeds Vehicle somehow wasn't a vehicle! Was {} instead", magic_enum::enum_name(vehiObjectTypeEnum)));
+				// A biped can occupy a seat on a vehicle OR (in H2 / Reach / H4) on another biped; both have
+				// physics we can read, so accept a biped seat-object and recurse into it the same as a vehicle.
+				if (vehiObjectTypeEnum != CommonObjectType::Vehicle && vehiObjectTypeEnum != CommonObjectType::Biped) throw HCMRuntimeException(std::format("biped's seat object was neither a vehicle nor a biped! Was {} instead", magic_enum::enum_name(vehiObjectTypeEnum)));
 				return getObjectPositionMutableAndVisual(bipedsVehicleDatum);
 			}
 		}
@@ -371,7 +385,9 @@ public:
 				LOG_ONCE_CAPTURE(PLOG_DEBUG << "Promoting to vehicles datum: " << vDatum, vDatum = bipedsVehicleDatum);
 				CommonObjectType vehiObjectTypeEnum;
 				auto vehiObjectAddress = getObjectAddress->getObjectAddress(bipedsVehicleDatum, &vehiObjectTypeEnum);
-				if (vehiObjectTypeEnum != CommonObjectType::Vehicle) throw HCMRuntimeException(std::format("bipeds Vehicle somehow wasn't a vehicle! Was {} instead", magic_enum::enum_name(vehiObjectTypeEnum)));
+				// A biped can occupy a seat on a vehicle OR (in H2 / Reach / H4) on another biped; both have
+				// physics we can read, so accept a biped seat-object and recurse into it the same as a vehicle.
+				if (vehiObjectTypeEnum != CommonObjectType::Vehicle && vehiObjectTypeEnum != CommonObjectType::Biped) throw HCMRuntimeException(std::format("biped's seat object was neither a vehicle nor a biped! Was {} instead", magic_enum::enum_name(vehiObjectTypeEnum)));
 				return getObjectVelocityMutable(bipedsVehicleDatum);
 			}
 		}

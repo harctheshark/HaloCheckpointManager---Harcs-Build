@@ -45,6 +45,7 @@ private:
 	// data
 	GameState mGame;
 	bool isActive = false;
+	bool mTickReadFailing = false; // true while per-tick reads are failing (e.g. dead / mid-load-zone), so we log the pause/resume once instead of every tick
 	GetGameDataAsString<gameT> getGameDataAsString;
 	GetPlayerDataAsString<gameT> getPlayerDataAsString;
 	GetEntityDataAsString<gameT> getEntityDataAsString;
@@ -101,18 +102,30 @@ private:
 			if (currentlyTrackingCustomObject) dataString->append(getEntityDataAsString.getDataString(!useDataA));
 
 			useDataA = !useDataA;
+
+			// reads succeeded again after a failing streak - resume normally
+			if (mTickReadFailing)
+			{
+				PLOG_INFO << "Display 2D Info: pointers valid again, resumed updating.";
+				mTickReadFailing = false;
+			}
 		}
 		catch (HCMRuntimeException ex)
 		{
-			ex.prepend("An error occured while displaying 2D Info!\n");
-			runtimeExceptions->handleMessage(ex);
-
-			lockOrThrow(settingsWeak, settings)
-			settings->display2DInfoToggle->GetValueDisplay() = false;
-			settings->display2DInfoToggle->UpdateValueWithInput();
-			
+			// A failed read here is EXPECTED and TRANSIENT: when the player dies or a load zone / BSP
+			// switches, the player/object pointers briefly go null while the game rebuilds them. We used
+			// to show an error and turn the whole overlay OFF, forcing the user to re-enable it after
+			// every death. Instead just skip this tick - the last-good text stays on screen (we don't
+			// flip useDataA on failure) and the overlay keeps retrying every tick, so it recovers on its
+			// own once the pointers come back. Log once per failing streak rather than spamming, and no
+			// on-screen popup.
+			if (!mTickReadFailing)
+			{
+				ex.prepend("Display 2D Info: pointer not ready (e.g. death / load zone) - pausing updates until it recovers.\n");
+				runtimeExceptions->handleSilent(ex);
+				mTickReadFailing = true;
+			}
 		}
-	
 	}
 
 	// fires every frame, render dataString if isActive.
