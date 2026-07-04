@@ -74,6 +74,35 @@ void SetupInternal(DWORD mccPID)
 
 		PLOG_INFO << "Given MCC process ID: 0x" << std::hex << mccPID;
 
+		// If a previous HCMInternal is still loaded in MCC (e.g. HCMExternal was closed and reopened
+		// before the old instance finished tearing down), a fresh LoadLibraryA would only bump the
+		// DLL's reference count WITHOUT running DllMain again - so no new instance starts, the status
+		// flag never reaches AllGood, and HCM sits forever on "Internal Initialising". Wait for the
+		// old instance to unload before injecting; if it doesn't, fail with a clear message instead
+		// of hanging.
+		if (processContainsModule(mccPID, std::wstring(wdllChars)))
+		{
+			PLOG_INFO << "HCMInternal is still loaded in MCC (previous session tearing down); waiting for it to unload before re-injecting";
+			constexpr int maxWaitMs = 15000;
+			constexpr int pollMs = 100;
+			int waited = 0;
+			while (processContainsModule(mccPID, std::wstring(wdllChars)) && waited < maxWaitMs)
+			{
+				Sleep(pollMs);
+				waited += pollMs;
+			}
+
+			if (processContainsModule(mccPID, std::wstring(wdllChars)))
+			{
+				throw InjectionException(
+					"A previous HCMInternal is still loaded in MCC and did not unload in time.\n"
+					"This can happen if HCM was closed and reopened very quickly.\n"
+					"Please wait a few seconds and try again - if it keeps happening, restart MCC.");
+			}
+
+			PLOG_INFO << "Previous HCMInternal unloaded after " << std::dec << waited << "ms; proceeding with injection";
+		}
+
 		InjectModule(mccPID, dllFilePath);
 		
 

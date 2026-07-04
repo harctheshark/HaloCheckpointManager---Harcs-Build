@@ -4,6 +4,7 @@
 #include "IMessagesGUI.h"
 #include "SettingsStateAndEvents.h"
 #include "RuntimeExceptionHandler.h"
+#include "ScopedThreadSuspender.h"
 #include <array>
 
 // halo2.dll sub_180709D40 = sapien sub_6752A0 (per-instance/object bounding-sphere visibility test).
@@ -124,7 +125,14 @@ private:
 		// exit-to-menu; writing to the old base would corrupt whatever now occupies that address).
 		uintptr_t curBase = (uintptr_t)GetModuleHandleA("halo2.dll");
 		if (curBase && curBase == base)
+		{
+			// Restore the detour entry with other threads suspended so the render thread can't
+			// execute a half-restored instruction mid-revert (races and can crash the game). The
+			// cave VirtualFree stays OUTSIDE the suspend window (a suspended thread could hold the
+			// VM lock). (See ScopedThreadSuspender.)
+			ScopedThreadSuspender suspend;
 			writeRaw(base + kTargetRVA, savedEntry.data(), 5);
+		}
 		if (cavePage) { VirtualFree(cavePage, 0, MEM_RELEASE); cavePage = nullptr; }
 		factorAddr = 0;
 		applied = false;

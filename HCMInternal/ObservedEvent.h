@@ -2,6 +2,7 @@
 #include "pch.h"
 #include "ObservedScopedCallback.h"
 #include "SharedRequestProvider.h"
+#include "GlobalKill.h"
 // A wrapper for eventpp events. Whenever a client makes or destroys a callback to an event, the wrapper fires an onCallbackListChanged event.
 
 
@@ -19,8 +20,15 @@ private:
 	std::shared_ptr<ActionEvent> callbackListChangedEvent = std::make_shared<ActionEvent>();
 
 
-	virtual void updateService() override 
+	virtual void updateService() override
 	{
+		// During shutdown, do NOT fire the onCallbackListChanged notification. It is invoked when a
+		// subscriber is added/removed, which happens all through teardown as services are destroyed.
+		// The handler on the other end is typically a `[this]` lambda owned by a hook object that may
+		// already have been destroyed (this ObservedEvent can outlive it - subscribers hold it), so
+		// firing it would run against a dangling `this` and crash. GlobalKill is a static flag, so this
+		// check is safe regardless of any object lifetime.
+		if (GlobalKill::isKillSet()) return;
 		callbackListChangedEvent->operator()();
 	}
 

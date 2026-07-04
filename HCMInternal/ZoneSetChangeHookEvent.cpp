@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "ZoneSetChangeHookEvent.h"
+#include "GlobalKill.h"
 #include "ModuleHook.h"
 #include "PointerDataStore.h"
 #include "GetCurrentZoneSet.h"
@@ -18,12 +19,16 @@ private:
 
 	void onCallbackListChanged()
 	{
+		// Guard against shutdown: a subscriber token can expire after our destructor resets
+		// ZoneSetChangeHook, still firing this notification -> null deref. (See exit-crash signature A.)
+		if (!ZoneSetChangeHook) return;
 		ZoneSetChangeHook->setWantsToBeAttached(ZoneSetChangeEvent->isEventSubscribed());
 	}
 
 
 	static void ZoneSetChangeHookFunction(SafetyHookContext& ctx)
 	{
+		if (GlobalKill::isKillSet()) return; // stop firing events into services being torn down
 		if (!instance)
 			return;
 

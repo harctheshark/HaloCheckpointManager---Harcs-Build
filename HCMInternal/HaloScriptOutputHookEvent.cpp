@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "HaloScriptOutputHookEvent.h"
 #include "ModuleHook.h"
+#include "GlobalKill.h"
 #include "PointerDataStore.h"
 #include "MultilevelPointer.h"
 #include "MidhookContextInterpreter.h"
@@ -60,6 +61,9 @@ private:
 		// disable hook if callbacklist is empty (no subscribers), enable otherwise
 		bool shouldEnable = mHaloScriptOutputEvent->isEventSubscribed();
 
+		// Guard against shutdown: a subscriber token can expire after our destructor resets
+		// these hooks, still firing this notification -> null deref. (See exit-crash signature A.)
+		if (!commandOutputStringHook) return;
 		PLOG_DEBUG << "setting HaloScriptOutput hooks state to: " << (shouldEnable ? "true" : "false");
 		commandOutputStringHook->setWantsToBeAttached(shouldEnable);
 		commandErrorStringHook->setWantsToBeAttached(shouldEnable);
@@ -74,6 +78,7 @@ private:
 	template<HSOutputType outputType, MidhookContextType contextType, bool checkStringLength>
 	static void outputHookFunction(SafetyHookContext& ctx)
 	{
+		if (GlobalKill::isKillSet()) return; // stop firing events into services being torn down
 		if (!instance)
 			return;
 
@@ -238,6 +243,9 @@ private:
 		// disable hook if callbacklist is empty (no subscribers), enable otherwise
 		bool shouldEnable = mHaloScriptOutputEvent->isEventSubscribed();
 
+		// Guard against shutdown: a subscriber token can expire after our destructor resets
+		// these hooks, still firing this notification -> null deref. (See exit-crash signature A.)
+		if (!commandOutputStringHook) return;
 		PLOG_DEBUG << "setting HaloScriptOutput hooks state to: " << (shouldEnable ? "true" : "false");
 		commandOutputStringHook->setWantsToBeAttached(shouldEnable);
 		commandErrorStringHook->setWantsToBeAttached(shouldEnable);
@@ -249,6 +257,7 @@ private:
 	template<HSOutputType outputType, MidhookContextType contextType, bool checkStringLength>
 	static void outputHookFunction(SafetyHookContext& ctx)
 	{
+		if (GlobalKill::isKillSet()) return; // stop firing events into services being torn down
 		if (!instance)
 			return;
 

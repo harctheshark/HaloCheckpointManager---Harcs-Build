@@ -14,6 +14,16 @@ WNDPROC ImGuiManager::mOldWndProc = nullptr;
 IMGUI_IMPL_API LRESULT  ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT __stdcall ImGuiManager::mNewWndProc(const HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
+	// Once shutdown has begun, get completely out of the game's way: forward every message straight to
+	// the game's original WndProc and don't touch ImGui. During teardown the "return true" path below
+	// can SWALLOW window messages (WM_SIZE / WM_DISPLAYCHANGE / activation etc.) that the game needs to
+	// keep its D3D device consistent - a message swallowed there can leave the game's immediate context
+	// in a bad state and crash the render thread mid-teardown. This also avoids touching an ImGui
+	// context that may be mid-destruction.
+	if (GlobalKill::isKillSet())
+		return mOldWndProc ? CallWindowProc(mOldWndProc, hWnd, uMsg, wParam, lParam)
+		                   : DefWindowProcW(hWnd, uMsg, wParam, lParam);
+
 	//https://www.unknowncheats.me/forum/2488829-post5.html
 	ImGuiIO& io = ImGui::GetIO();
 	LRESULT res = ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);

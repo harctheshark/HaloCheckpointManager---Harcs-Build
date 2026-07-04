@@ -333,6 +333,14 @@ HRESULT D3D11Hook::newDX11Present(IDXGISwapChain* pSwapChain, UINT SyncInterval,
 		return 0;
 	}
 
+	// Once shutdown has begun, stop invoking HCM's render/overlay callbacks. The services they
+	// call into are being destroyed on the shutdown thread; firing render events here races with
+	// that teardown - it crashed on older builds, and now causes lock-contention that stalls
+	// shutdown for tens of seconds. That stall prevents the DLL from unloading, which is why HCM
+	// can't re-attach after being closed and reopened. Just pass the frame straight to the game.
+	if (GlobalKill::isKillSet())
+		return d3d->presentHook.stdcall<HRESULT>(pSwapChain, SyncInterval, Flags);
+
 	//auto guard = d3d->shared_from_this();
 
 
@@ -419,6 +427,10 @@ HRESULT D3D11Hook::newDX11PresentOBSBypass(IDXGISwapChain* pSwapChain, UINT Sync
 		return 0;
 	}
 
+	// During shutdown, pass through without firing HCM render callbacks. See newDX11Present.
+	if (GlobalKill::isKillSet())
+		return d3d->OBSPresentHook->getInlineHook().stdcall<HRESULT>(pSwapChain, SyncInterval, Flags);
+
 	LOG_ONCE(PLOG_VERBOSE << "invoking mainPresentHookEvent callback via inline obs bypass");
 	d3d->presentHookEvent->operator()(d3d->m_pDevice, d3d->m_pDeviceContext, pSwapChain, d3d->m_pMainRenderTargetView);
 	auto hr = d3d->OBSPresentHook->getInlineHook().stdcall<HRESULT>(pSwapChain, SyncInterval, Flags);
@@ -436,6 +448,11 @@ HRESULT D3D11Hook::newDX11ResizeBuffers(IDXGISwapChain* pSwapChain, UINT BufferC
 	{
 		PLOG_FATAL << "d3d instance was null at newDX11ResizeBuffers";
 	}
+
+	// During shutdown, don't run our resize/render handling (which fires events into services
+	// being torn down and can throw). Just pass through to the game. See newDX11Present.
+	if (d3d && GlobalKill::isKillSet())
+		return d3d->resizebuffersHook.stdcall<HRESULT>(pSwapChain, BufferCount, Width, Height, NewFormat, SwapChainFlags);
 
 	//auto guard = d3d->shared_from_this();
 

@@ -6,6 +6,7 @@
 #include "RuntimeExceptionHandler.h"
 #include "MultilevelPointer.h"
 #include "PointerDataStore.h"
+#include "ScopedThreadSuspender.h"
 #include <array>
 
 // The patched site is the guard at the top of render_light (sub_1807E9E50) that decides whether to zero a
@@ -94,7 +95,10 @@ public:
 	// restore stock behaviour so we never leave the game patched after HCM unloads
 	~SphereSpecularForceImpl()
 	{
-		try { writePatch(kOffBytes); }
+		// Suspend other threads while restoring this .text patch: the render thread runs this
+		// instruction every light-render frame, so reverting it underneath the running thread can
+		// crash the game. Only the memory write happens inside the suspend window. (See ScopedThreadSuspender.)
+		try { ScopedThreadSuspender suspend; writePatch(kOffBytes); }
 		catch (HCMRuntimeException& ex) { PLOG_ERROR << ex.what(); }
 	}
 };

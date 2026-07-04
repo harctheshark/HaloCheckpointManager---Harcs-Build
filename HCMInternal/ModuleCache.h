@@ -9,8 +9,14 @@
 class ModuleCache
 {
 private:
-	// DLL Name, Base Address
-	static std::unordered_map<std::wstring, MODULEINFO> mCache;
+	// DLL Name, Base Address.
+	// Reference to a heap map that is intentionally LEAKED (never destroyed). ModuleCache is a static
+	// global, and some hooks are static-lifetime too (e.g. HideHUD's `static inline` ModulePatches) -
+	// those detach at DLL-unload atexit and re-resolve their address through this cache. If the cache
+	// object were destroyed first (static destruction order is undefined between two globals), that
+	// late lookup would run on a freed map and crash (_Find_last AV). Leaking it keeps it valid for
+	// the whole process lifetime.
+	static std::unordered_map<std::wstring, MODULEINFO>& mCache;
 
 
 

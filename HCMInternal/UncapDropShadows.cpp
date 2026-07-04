@@ -4,6 +4,7 @@
 #include "IMessagesGUI.h"
 #include "SettingsStateAndEvents.h"
 #include "RuntimeExceptionHandler.h"
+#include "ScopedThreadSuspender.h"
 #include <Windows.h>
 #include <vector>
 #include <cstring>
@@ -319,13 +320,19 @@ namespace
 
 		void revert()
 		{
-			// restore patched bytes in reverse order
-			for (auto it = saves.rbegin(); it != saves.rend(); ++it)
+			// restore patched bytes in reverse order, with other threads suspended so the render
+			// thread can't execute a half-restored instruction (that races the revert and can crash
+			// the game). Only the memory writes are inside the suspend window; heap ops (saves.clear,
+			// buffer queueing) stay OUTSIDE it. (See ScopedThreadSuspender.)
 			{
-				DWORD o; VirtualProtect((void*)it->addr, it->orig.size(), PAGE_EXECUTE_READWRITE, &o);
-				memcpy((void*)it->addr, it->orig.data(), it->orig.size());
-				VirtualProtect((void*)it->addr, it->orig.size(), o, &o);
-				FlushInstructionCache(GetCurrentProcess(), (void*)it->addr, it->orig.size());
+				ScopedThreadSuspender suspend;
+				for (auto it = saves.rbegin(); it != saves.rend(); ++it)
+				{
+					DWORD o; VirtualProtect((void*)it->addr, it->orig.size(), PAGE_EXECUTE_READWRITE, &o);
+					memcpy((void*)it->addr, it->orig.data(), it->orig.size());
+					VirtualProtect((void*)it->addr, it->orig.size(), o, &o);
+					FlushInstructionCache(GetCurrentProcess(), (void*)it->addr, it->orig.size());
+				}
 			}
 			saves.clear();
 			queueBuffersForDeferredFree(); // NOT freeAll() - avoid use-after-free on an in-flight frame

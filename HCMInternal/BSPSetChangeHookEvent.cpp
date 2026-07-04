@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "BSPSetChangeHookEvent.h"
+#include "GlobalKill.h"
 #include "ModuleHook.h"
 #include "PointerDataStore.h"
 #include "GetCurrentBSPSet.h"
@@ -23,12 +24,16 @@ private:
 
 	void onCallbackListChanged()
 	{
+		// Guard against shutdown: a subscriber token can expire after our destructor resets
+		// BSPSetChangeHook, still firing this notification -> null deref. (See exit-crash signature A.)
+		if (!BSPSetChangeHook) return;
 		BSPSetChangeHook->setWantsToBeAttached(BSPSetChangeEvent->isEventSubscribed());
 	}
 
 
 	static void BSPSetChangeHookFunction(SafetyHookContext& ctx)
 	{
+		if (GlobalKill::isKillSet()) return; // stop firing events into services being torn down
 		if (!instance)
 			return;
 

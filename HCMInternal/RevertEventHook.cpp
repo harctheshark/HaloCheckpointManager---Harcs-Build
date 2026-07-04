@@ -3,6 +3,7 @@
 #include "ModuleHook.h"
 #include "PointerDataStore.h"
 #include "RuntimeExceptionHandler.h"
+#include "GlobalKill.h"
 
 
 template <GameState::Value gameT>
@@ -17,11 +18,15 @@ private:
 
 	void onRevertEventCallbackListChanged()
 	{
+		// Guard against shutdown: a subscriber token can expire after our destructor resets
+		// revertHook, still firing this notification -> null deref. (See exit-crash signature A.)
+		if (!revertHook) return;
 		revertHook->setWantsToBeAttached(revertEvent->isEventSubscribed());
 	}
 
 	static void revertHookFunction(SafetyHookContext& ctx)
 	{
+		if (GlobalKill::isKillSet()) return; // stop firing events into services being torn down
 		if (!instance) { PLOG_ERROR << "null RevertEventHookTemplated instance"; return; }
 		ScopedAtomicBool lock(revertHookRunningMutex);
 		try

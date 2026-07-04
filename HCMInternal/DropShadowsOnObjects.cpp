@@ -6,6 +6,7 @@
 #include "RuntimeExceptionHandler.h"
 #include "MultilevelPointer.h"
 #include "PointerDataStore.h"
+#include "ScopedThreadSuspender.h"
 #include <array>
 
 // The patched site sets the 4th argument (a4 = object-receive shadow_mode bitmask) of the drop-shadow
@@ -87,7 +88,10 @@ public:
 	// restore stock behaviour so we never leave the game patched after HCM unloads
 	~DropShadowsOnObjectsImpl()
 	{
-		try { writePatch(kOffBytes); }
+		// Suspend other threads while restoring this .text patch: the render thread runs this
+		// instruction every shadow frame, so reverting it underneath the running thread can crash
+		// the game. Only the memory write happens inside the suspend window. (See ScopedThreadSuspender.)
+		try { ScopedThreadSuspender suspend; writePatch(kOffBytes); }
 		catch (HCMRuntimeException& ex) { PLOG_ERROR << ex.what(); }
 	}
 };

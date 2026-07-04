@@ -3,7 +3,8 @@
 
 
 // Adapted from scales' MCCTAS https://github.com/Scaless/HaloTAS/blob/master/HaloTAS/libhalotas/dll_cache.cpp
-std::unordered_map<std::wstring, MODULEINFO> ModuleCache::mCache = {};
+// Intentionally leaked (never deleted) so late-teardown lookups don't hit a freed map - see ModuleCache.h.
+std::unordered_map<std::wstring, MODULEINFO>& ModuleCache::mCache = *(new std::unordered_map<std::wstring, MODULEINFO>());
 
 void ModuleCache::initialize()
 {

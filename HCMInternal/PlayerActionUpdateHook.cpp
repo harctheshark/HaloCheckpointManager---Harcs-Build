@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "PlayerActionUpdateHook.h"
+#include "GlobalKill.h"
 #include "ModuleHook.h"
 #include "MidhookContextInterpreter.h"
 #include "MultilevelPointer.h"
@@ -27,11 +28,15 @@ private:
 
     void onEventCallbackListChanged()
     {
+        // Guard against shutdown: a subscriber token can expire after our destructor resets
+        // updateHook, still firing this notification -> null deref. (See exit-crash signature A.)
+        if (!updateHook) return;
         updateHook->setWantsToBeAttached(playerActionUpdateEvent->isEventSubscribed());
     }
 
     static void updateHookFunction(SafetyHookContext& ctx)
     {
+        if (GlobalKill::isKillSet()) return; // stop firing events into services being torn down
         if (!instance) { PLOG_ERROR << "null PlayerActionUpdateHookTemplated instance"; return; }
         ScopedAtomicBool lock(hookRunningMutex);
         try

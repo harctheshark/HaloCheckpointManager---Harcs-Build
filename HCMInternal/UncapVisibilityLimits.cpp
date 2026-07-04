@@ -4,6 +4,8 @@
 #include "IMessagesGUI.h"
 #include "SettingsStateAndEvents.h"
 #include "RuntimeExceptionHandler.h"
+#include "ScopedThreadSuspender.h"
+#include "GlobalKill.h"
 #include <Windows.h>
 #include <vector>
 #include <cstring>
@@ -201,10 +203,34 @@ namespace
 			UncapDbg& d = UncapDbg::get();
 			d.logf("===== REVERT =====");
 			d.inCriticalOp.store(true);
+
+			// SHUTDOWN path: the game's render thread is live and dereferences the render-state pointer
+			// every frame. Repointing it back to the original arena datum races that thread, AND the
+			// original may have been freed/reused by the game since we captured it (observed: render
+			// thread read 0xFFFF... mid-revert -> game crash). During teardown we therefore touch NOTHING
+			// live - leave our still-valid VirtualAlloc block installed and LEAK it (and any deferred
+			// blocks). The game keeps a consistent render-state; the block persists fine after HCM unloads.
+			if (GlobalKill::isKillSet())
+			{
+				rsActive = nullptr; rsOriginal = 0;   // drop our handles WITHOUT freeing (leak)
+				rsOld.clear();                         // ditto for deferred blocks - do not VirtualFree them
+				d.inCriticalOp.store(false); d.clearRanges();
+				d.logf("===== REVERT skipped (shutdown - left installed, leaked) =====");
+				return;
+			}
+
 			if (base && GetModuleHandleA("halo2.dll"))
 			{
-				if (rsActive && rsOriginal && *(uintptr_t*)(base + RS_PTR) == (uintptr_t)rsActive)
-					*(uintptr_t*)(base + RS_PTR) = rsOriginal;
+				// Repoint the render-state pointer back to the arena datum with other threads
+				// suspended: the render thread reads this pointer every frame, so swapping it
+				// underneath a running thread can crash the game. ONLY the pointer write goes inside
+				// the suspend window - the game-heap frees (drainVisOld -> game deallocator) must stay
+				// OUTSIDE it, since a suspended thread could hold the game heap lock. (ScopedThreadSuspender.)
+				{
+					ScopedThreadSuspender suspend;
+					if (rsActive && rsOriginal && *(uintptr_t*)(base + RS_PTR) == (uintptr_t)rsActive)
+						*(uintptr_t*)(base + RS_PTR) = rsOriginal;
+				}
 				drainVisOld();   // free orphaned originals now (collection no longer references them)
 			}
 			if (rsActive) rsOld.push_back(rsActive);
@@ -218,6 +244,19 @@ namespace
 
 		~Patcher()
 		{
+			// Remove our crash-hunter vectored exception handler BEFORE HCMInternal.dll unloads.
+			// If it stays registered it points into the DLL, which gets unmapped right after teardown
+			// completes - then the very next exception anywhere in MCC calls this now-dangling handler
+			// and crashes the game. (This was the "almost fully shut down, then crashed" case.)
+			UncapDbg& dbg = UncapDbg::get();
+			if (dbg.veh) { RemoveVectoredExceptionHandler(dbg.veh); dbg.veh = nullptr; }
+
+			// On shutdown, don't touch game memory or free our blocks (the render thread may still be
+			// using them). revert() above already dropped our handles; leak the rest. Only free during
+			// a normal (non-shutdown) teardown.
+			if (GlobalKill::isKillSet())
+				return;
+
 			if (base && GetModuleHandleA("halo2.dll")) drainVisOld();   // free orphaned originals via game heap
 			for (void* p : rsOld) VirtualFree(p, 0, MEM_RELEASE);
 			if (rsActive) VirtualFree(rsActive, 0, MEM_RELEASE);

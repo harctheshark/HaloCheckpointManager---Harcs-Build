@@ -3,6 +3,7 @@
 #include "ModuleHook.h"
 #include "PointerDataStore.h"
 #include "RuntimeExceptionHandler.h"
+#include "GlobalKill.h"
 
 template <GameState::Value gameT>
 class GameTickEventHookTemplated : public GameTickEventHook::GameTickEventHookImpl
@@ -25,12 +26,21 @@ private:
 	void onGameTickEventCallbackListChanged()
 	{
 		PLOG_DEBUG << "eeeeeettt";
+		// During shutdown our destructor resets tickIncrementHook to null, yet a subscriber's
+		// SharedRequestToken can expire afterwards and still fire this "callback list changed"
+		// notification (via SharedRequestProvider's deleter -> updateService). Without this guard
+		// we dereference a null unique_ptr -> AV reading @0x28. (Proven exit-crash signature A.)
+		if (!tickIncrementHook) return;
 		tickIncrementHook->setWantsToBeAttached(gameTickEvent->isEventSubscribed());
 	}
 
 	static void tickIncrementHookFunction(SafetyHookContext& ctx)
 	{
 		static int errorCount = 0;
+		// Once shutdown has begun, don't fire the tick event: firing it reads game memory
+		// (tickCounter / subscriber cheats) that MCC may already be tearing down, causing an
+		// AV during exit. (Proven exit-crash signature B: MultilevelPointer read @0x7D8.)
+		if (GlobalKill::isKillSet()) return;
 		if (!instance) { PLOG_ERROR << "null GameTickEventHookTemplated instance"; return; }
 		ScopedAtomicBool lock(gameTickHookRunningMutex);
 		try

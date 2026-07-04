@@ -5,6 +5,7 @@
 #include "SettingsStateAndEvents.h"
 #include "RuntimeExceptionHandler.h"
 #include "DirectXRenderEvent.h"
+#include "ScopedThreadSuspender.h"
 #include <Windows.h>
 #include <vector>
 #include <atomic>
@@ -150,13 +151,19 @@ namespace
 
 		void revert()
 		{
-			for (auto it = saves.rbegin(); it != saves.rend(); ++it)
+			// restore patched bytes with other threads suspended so the render thread can't execute a
+			// half-restored instruction mid-revert (races and can crash the game). Only the memory
+			// writes are inside the suspend window; saves.clear() (heap) stays outside. (ScopedThreadSuspender.)
 			{
-				size_t len = it->orig.size();
-				DWORD o; VirtualProtect((void*)it->addr, len, PAGE_EXECUTE_READWRITE, &o);
-				memcpy((void*)it->addr, it->orig.data(), len);
-				VirtualProtect((void*)it->addr, len, o, &o);
-				FlushInstructionCache(GetCurrentProcess(), (void*)it->addr, len);
+				ScopedThreadSuspender suspend;
+				for (auto it = saves.rbegin(); it != saves.rend(); ++it)
+				{
+					size_t len = it->orig.size();
+					DWORD o; VirtualProtect((void*)it->addr, len, PAGE_EXECUTE_READWRITE, &o);
+					memcpy((void*)it->addr, it->orig.data(), len);
+					VirtualProtect((void*)it->addr, len, o, &o);
+					FlushInstructionCache(GetCurrentProcess(), (void*)it->addr, len);
+				}
 			}
 			saves.clear();
 			applied = false;
