@@ -114,10 +114,13 @@ GameEngineFunctions,\
 ViewAngle3D,\
 Season7Physics,\
 DropShadowsOnObjects,\
+SphereSpecularForce,\
 OffscreenShadowCasters,\
 UncapDropShadows,\
 UncapVisibilityLimits,\
 UncapClusterLimit,\
+H2ShadowResolution,\
+H2ArmorColour,\
 FarClipDistance,\
 SunScaleFix,\
 AnimationFixes,\

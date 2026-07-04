@@ -213,6 +213,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::DropShadowsOnObjects}
 	},
 
+	{ GUIElementEnum::sphereSpecularForceToggle,
+		{OptionalCheatEnum::SphereSpecularForce}
+	},
+
 	{ GUIElementEnum::offscreenShadowCastersToggle,
 		{OptionalCheatEnum::OffscreenShadowCasters}
 	},
@@ -231,6 +235,32 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 
 	{ GUIElementEnum::uncapClusterLimitToggle,
 		{OptionalCheatEnum::UncapClusterLimit}
+	},
+
+	{ GUIElementEnum::h2ShadowResolutionCombo,
+		{OptionalCheatEnum::H2ShadowResolution}
+	},
+
+	{ GUIElementEnum::h2ArmorColourToggle,
+		{OptionalCheatEnum::H2ArmorColour}
+	},
+	{ GUIElementEnum::h2ArmorColourPrimaryPicker,
+		{OptionalCheatEnum::H2ArmorColour}
+	},
+	{ GUIElementEnum::h2ArmorColourSecondaryPicker,
+		{OptionalCheatEnum::H2ArmorColour}
+	},
+	{ GUIElementEnum::h2ArmorColourSavePresetButton,
+		{OptionalCheatEnum::H2ArmorColour}
+	},
+	{ GUIElementEnum::h2ArmorColourLoadPresetButton,
+		{OptionalCheatEnum::H2ArmorColour}
+	},
+	{ GUIElementEnum::h2ArmorEmblemToggle,
+		{OptionalCheatEnum::H2ArmorColour}
+	},
+	{ GUIElementEnum::h2ArmorEmblemLoadButton,
+		{OptionalCheatEnum::H2ArmorColour}
 	},
 
 	{ GUIElementEnum::farClipDistanceGUI,

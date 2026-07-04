@@ -471,11 +471,20 @@ private:
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterToggle),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterSettings),
 							createNestedElement(GUIElementEnum::dropShadowsOnObjectsToggle),
+							createNestedElement(GUIElementEnum::sphereSpecularForceToggle),
 							createNestedElement(GUIElementEnum::offscreenShadowCastersToggle),
 							createNestedElement(GUIElementEnum::offscreenShadowCastersMultiplierGUI),
 							createNestedElement(GUIElementEnum::uncapDropShadowsToggle),
 							createNestedElement(GUIElementEnum::uncapVisibilityLimitsToggle),
 							createNestedElement(GUIElementEnum::uncapClusterLimitToggle),
+							createNestedElement(GUIElementEnum::h2ShadowResolutionCombo),
+							createNestedElement(GUIElementEnum::h2ArmorColourToggle),
+							createNestedElement(GUIElementEnum::h2ArmorColourPrimaryPicker),
+							createNestedElement(GUIElementEnum::h2ArmorColourSecondaryPicker),
+							createNestedElement(GUIElementEnum::h2ArmorColourSavePresetButton),
+							createNestedElement(GUIElementEnum::h2ArmorColourLoadPresetButton),
+							createNestedElement(GUIElementEnum::h2ArmorEmblemToggle),
+							createNestedElement(GUIElementEnum::h2ArmorEmblemLoadButton),
 						}));
 
 				case GUIElementEnum::speedhackGUI:
@@ -520,6 +529,11 @@ private:
 						(game, ToolTipCollection("Halo 2: lets objects receive the drop-shadow blobs cast by other objects (e.g. the player's shadow falling onto a nearby crate). Enables a feature the engine ships disabled."), std::nullopt, "Drop Shadows On Objects", settings->dropShadowsOnObjectsToggle
 						));
 
+				case GUIElementEnum::sphereSpecularForceToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: forces sphere (spherical) lights to show specular highlights at all times. Stock, the engine zeroes a sphere light's specular unless a cinematic is playing, so sphere lights only glint during cutscenes. Reverts to stock on disable. Build 1.3528 only."), std::nullopt, "Sphere Specular Force", settings->sphereSpecularForceToggle
+						));
+
 				case GUIElementEnum::offscreenShadowCastersToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Halo 2: keeps instanced geometry AND objects casting projective-light shadows when they leave the camera frustum (turn away from a caster near a projective light and its shadow normally vanishes, while the BSP's shadow persists). Inflates the caster's bounding-sphere radius (set by the multiplier below) only in the visibility test, so off-camera casters keep casting. Stored data untouched; fully reverts on disable. Build 1.3528 only."), std::nullopt, "Off-Screen Shadow Casters", settings->offscreenShadowCastersToggle
@@ -544,6 +558,40 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Halo 2: beats the 128 region-clusters-per-region wall that makes chunks of large maps stop rendering from a high vantage (\"overflowed region clusters during region building\"). Raises the cap to 255 - relocates the region buffer's index/volume arrays into slack, relocates + enlarges the subpart-mask pool, widens the per-region cluster bitvector 128->256 bits, makes the cluster index map unsigned, and grows the clusters submit sub-collection. Pairs with Uncap Visibility Limits for very dense views. Toggle-off drains in a crash-safe order. Offline only. Build 1.3528 only."), std::nullopt, "Uncap Cluster Limit", settings->uncapClusterLimitToggle
 						));
+
+				case GUIElementEnum::h2ArmorColourToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: live-recolours your MasterChief biped using the game's own change-color setter (the exact call the engine makes when applying a player's colours), so it's correct and holds across respawns. Set the two colours below. Campaign or MP. Build 1.3528 only."), std::nullopt, "MasterChief Colour", settings->h2ArmorColourToggle
+						));
+
+				case GUIElementEnum::h2ArmorColourPrimaryPicker:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Primary armour colour (change-color slot 0)."), "  Primary Colour", settings->h2ArmorColourPrimary));
+
+				case GUIElementEnum::h2ArmorColourSecondaryPicker:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Secondary / trim armour colour (change-color slot 1)."), "  Secondary Colour", settings->h2ArmorColourSecondary));
+
+				case GUIElementEnum::h2ArmorColourSavePresetButton:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+						(game, ToolTipCollection("Save the current primary+secondary colours to a preset file (opens a Save dialog)."), std::nullopt, "Save Preset...", settings->h2ArmorColourSavePresetEvent));
+
+				case GUIElementEnum::h2ArmorColourLoadPresetButton:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+						(game, ToolTipCollection("Load a colour preset from a file (opens an Open dialog)."), std::nullopt, "Load Preset...", settings->h2ArmorColourLoadPresetEvent));
+
+				case GUIElementEnum::h2ArmorEmblemToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: show a custom image on your MasterChief's biped emblem (shoulders/chest) by injecting it over the game's emblem texture. Click 'Load Emblem PNG...' to pick any PNG (transparency supported). Visible in 3rd-person / Theater / to other players. Build 1.3528 only."), std::nullopt, "Custom Emblem", settings->h2ArmorEmblemToggle
+						));
+
+				case GUIElementEnum::h2ArmorEmblemLoadButton:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+						(game, ToolTipCollection("Pick a PNG image to use as your custom emblem (opens an Open dialog)."), std::nullopt, "Load Emblem PNG...", settings->h2ArmorEmblemLoadEvent));
+
+				case GUIElementEnum::h2ShadowResolutionCombo:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::H2ShadowResolution, 90.f>>
+						(game, ToolTipCollection("Halo 2: dynamic (projected-light) shadow-buffer resolution + render-detail extras. Retail = engine default, no changes. RetailLOD = keep ~1024 shadows but force max detail: L6 cinematic LOD on every object AND disable object distance-culling (scenery, crates, device machines etc. stop popping out - their model tag's max-draw distance is set to 4096 units). x2048/x4096/x8192 = that shadow res (x4096 ~ 128MB, x8192 ~ 512MB VRAM and may fail to allocate) PLUS the same L6 LOD + no-distance-cull. Ports the Cartographer shadow-resolution / static-LOD / draw-distance tweaks. Applies live; distance-cull re-applies each map load. Pick Retail to revert everything. Build 1.3528 only."), "Shadow / Detail", settings->h2ShadowResolutionSetting));
 
 				case GUIElementEnum::farClipDistanceGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloatStepper>

@@ -627,12 +627,56 @@ public:
 			nameof(dropShadowsOnObjectsToggle)
 		);
 
+	std::shared_ptr<BinarySetting<bool>> sphereSpecularForceToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(sphereSpecularForceToggle)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> uncapDropShadowsToggle = std::make_shared<BinarySetting<bool>>
 		(
 			false,
 			[](bool in) { return true; },
 			nameof(uncapDropShadowsToggle)
 		);
+
+	std::shared_ptr<BinarySetting<SettingsEnums::H2ShadowResolution>> h2ShadowResolutionSetting = std::make_shared<BinarySetting<SettingsEnums::H2ShadowResolution>>
+		(
+			SettingsEnums::H2ShadowResolution::Retail,
+			[](SettingsEnums::H2ShadowResolution in) { return true; },
+			nameof(h2ShadowResolutionSetting)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> h2ArmorColourToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h2ArmorColourToggle)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> h2ArmorColourPrimary = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{ 0.15f, 0.35f, 0.15f, 1.0f }, // MC-ish green
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(h2ArmorColourPrimary)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> h2ArmorColourSecondary = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{ 0.20f, 0.20f, 0.20f, 1.0f }, // dark grey trim
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(h2ArmorColourSecondary)
+		);
+	std::shared_ptr<ActionEvent> h2ArmorColourSavePresetEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> h2ArmorColourLoadPresetEvent = std::make_shared<ActionEvent>();
+
+	// Custom emblem (pixel-injection): show any PNG on the MasterChief biped emblem.
+	std::shared_ptr<BinarySetting<bool>> h2ArmorEmblemToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h2ArmorEmblemToggle)
+		);
+	std::shared_ptr<ActionEvent> h2ArmorEmblemLoadEvent = std::make_shared<ActionEvent>();
 
 	std::shared_ptr<BinarySetting<bool>> uncapVisibilityLimitsToggle = std::make_shared<BinarySetting<bool>>
 		(

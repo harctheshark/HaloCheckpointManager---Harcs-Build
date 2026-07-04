@@ -399,8 +399,11 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="BottomlessClip.h" />
     <ClInclude Include="Season7Physics.h" />
     <ClInclude Include="DropShadowsOnObjects.h" />
+    <ClInclude Include="SphereSpecularForce.h" />
     <ClInclude Include="OffscreenShadowCasters.h" />
     <ClInclude Include="UncapDropShadows.h" />
+    <ClInclude Include="H2ShadowResolution.h" />
+    <ClInclude Include="H2ArmorColour.h" />
     <ClInclude Include="UncapVisibilityLimits.h" />
     <ClInclude Include="UncapClusterLimit.h" />
     <ClInclude Include="FarClipDistance.h" />
@@ -711,8 +714,11 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="BottomlessClip.cpp" />
     <ClCompile Include="Season7Physics.cpp" />
     <ClCompile Include="DropShadowsOnObjects.cpp" />
+    <ClCompile Include="SphereSpecularForce.cpp" />
     <ClCompile Include="OffscreenShadowCasters.cpp" />
     <ClCompile Include="UncapDropShadows.cpp" />
+    <ClCompile Include="H2ShadowResolution.cpp" />
+    <ClCompile Include="H2ArmorColour.cpp" />
     <ClCompile Include="UncapVisibilityLimits.cpp" />
     <ClCompile Include="UncapClusterLimit.cpp" />
     <ClCompile Include="FarClipDistance.cpp" />

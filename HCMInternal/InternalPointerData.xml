@@ -9073,6 +9073,19 @@
 		</Version>
 	</VersionedEntry>
 
+	<!-- SphereSpecularForce: the `jnz` guard (byte 0x75) at the top of render_light (sub_1807E9E50) that
+	     skips zeroing a spherical light's specular colour when a cinematic is in progress. Stock zeroes
+	     specular for `!cinematic && light_type==0 (spherical)`. The cheat rewrites this 0x75 to 0xEB (jmp)
+	     so the zero-out is always skipped and sphere lights keep specular everywhere. Verified 1.3528. -->
+	<VersionedEntry Name="sphereSpecularForcePatch" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x7E9F08</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
 	<VersionedEntry Name="bottomlessClipFlag" Type="MultilevelPointer::ModuleOffset">
 		<Version Version="1.3272.0.0" Game="Halo1">
 			<Module>halo1.dll</Module>

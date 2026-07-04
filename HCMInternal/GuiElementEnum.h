@@ -86,11 +86,20 @@
 	((bottomlessClipGUI, (Halo1, Halo2)))\
 	((season7PhysicsToggle, (Halo2)))\
 	((dropShadowsOnObjectsToggle, (Halo2)))\
+	((sphereSpecularForceToggle, (Halo2)))\
 	((offscreenShadowCastersToggle, (Halo2)))\
 	((offscreenShadowCastersMultiplierGUI, (Halo2)))\
 	((uncapDropShadowsToggle, (Halo2)))\
 	((uncapVisibilityLimitsToggle, (Halo2)))\
 	((uncapClusterLimitToggle, (Halo2)))\
+	((h2ShadowResolutionCombo, (Halo2)))\
+	((h2ArmorColourToggle, (Halo2)))\
+	((h2ArmorColourPrimaryPicker, (Halo2)))\
+	((h2ArmorColourSecondaryPicker, (Halo2)))\
+	((h2ArmorColourSavePresetButton, (Halo2)))\
+	((h2ArmorColourLoadPresetButton, (Halo2)))\
+	((h2ArmorEmblemToggle, (Halo2)))\
+	((h2ArmorEmblemLoadButton, (Halo2)))\
 	((farClipDistanceGUI, (Halo2)))\
 	((sunScaleFixToggle, (Halo2)))\
 	((animationFixesToggle, (Halo2)))\

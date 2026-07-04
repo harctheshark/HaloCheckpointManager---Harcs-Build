@@ -111,6 +111,13 @@ namespace
 		void* rastBuf = nullptr;
 		void* cavePage = nullptr;
 		bool applied = false;
+		// Buffers superseded by a revert. NOT freed at revert time: the engine's shadow/rasterizer
+		// functions read the relocated buffer addresses (via the caves) once per frame, so a frame that
+		// was in-flight when we restored the lea sites can still touch our buffers this frame. Freeing them
+		// immediately = use-after-free (the "crash sometimes on toggle-off"). Instead we queue them and free
+		// on the NEXT apply / dtor, by which point many frames have passed and nothing references them.
+		// Same crash-safe deferral UncapVisibilityLimits / UncapClusterLimit use.
+		std::vector<void*> pendingFree;
 
 		struct Save { uintptr_t addr; std::vector<uint8_t> orig; };
 		std::vector<Save> saves;
@@ -178,6 +185,21 @@ namespace
 			if (cavePage){ VirtualFree(cavePage, 0, MEM_RELEASE);cavePage = nullptr; }
 		}
 
+		// move the current buffers into the deferred-free queue (called by revert instead of freeAll)
+		void queueBuffersForDeferredFree()
+		{
+			for (void* p : { mgrBuf, collBuf, rastBuf, cavePage })
+				if (p) pendingFree.push_back(p);
+			mgrBuf = collBuf = rastBuf = cavePage = nullptr;
+		}
+
+		// free anything queued by a previous revert - safe now, many frames later
+		void drainPending()
+		{
+			for (void* p : pendingFree) VirtualFree(p, 0, MEM_RELEASE);
+			pendingFree.clear();
+		}
+
 	public:
 		bool isApplied() const { return applied; }
 
@@ -187,6 +209,8 @@ namespace
 			if (applied) return true;
 			base = (uintptr_t)GetModuleHandleA("halo2.dll");
 			if (!base) return false; // deferred until Halo 2 loads
+
+			drainPending(); // free buffers a previous revert queued (safe now - many frames have passed)
 
 			if (!verify())
 				throw HCMRuntimeException("UncapDropShadows: halo2.dll bytes don't match build 1.3528; refusing to patch.");
@@ -304,11 +328,19 @@ namespace
 				FlushInstructionCache(GetCurrentProcess(), (void*)it->addr, it->orig.size());
 			}
 			saves.clear();
-			freeAll();
+			queueBuffersForDeferredFree(); // NOT freeAll() - avoid use-after-free on an in-flight frame
 			applied = false;
 		}
 
-		~Patcher() { if (applied && GetModuleHandleA("halo2.dll")) revert(); else freeAll(); }
+		// Feature destroyed (HCM unload / MCC shutdown): revert restores the bytes and queues the buffers;
+		// then we free everything. This is a controlled teardown (not a live gameplay toggle), matching how
+		// UncapVisibilityLimits / UncapClusterLimit free their deferred buffers in their dtors.
+		~Patcher()
+		{
+			if (applied && GetModuleHandleA("halo2.dll")) revert();
+			drainPending();
+			freeAll();
+		}
 	};
 } // namespace
 
