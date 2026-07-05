@@ -12,6 +12,7 @@
 #include "DirectXRenderEvent.h"
 #include "ModuleHook.h"
 #include "MultilevelPointer.h"
+#include "ModalDialogGuard.h"
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <wincodec.h>
@@ -291,6 +292,9 @@ private:
 	// Load Emblem button: pick a PNG (spawned thread -> modal dialog is fine), queue a reload on the render thread.
 	void onLoadEmblem()
 	{
+		// one shared file dialog at a time (this cheat is built once per game; the shared guard stops N dialogs) - see ModalDialogGuard
+		auto claim = ModalDialogGuard::tryClaim();
+		if (!claim) return;
 		wchar_t fileBuf[MAX_PATH]; fileBuf[0] = L'\0';
 		OPENFILENAMEW ofn{};
 		ofn.lStructSize = sizeof(ofn);
@@ -337,6 +341,8 @@ private:
 
 	void onSavePreset()
 	{
+		auto claim = ModalDialogGuard::tryClaim();
+		if (!claim) return;
 		try
 		{
 			lockOrThrow(settingsWeak, settings);
@@ -356,6 +362,8 @@ private:
 
 	void onLoadPreset()
 	{
+		auto claim = ModalDialogGuard::tryClaim();
+		if (!claim) return;
 		try
 		{
 			lockOrThrow(settingsWeak, settings);

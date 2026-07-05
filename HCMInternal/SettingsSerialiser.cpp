@@ -40,38 +40,47 @@ void throwOnDuplicateName(pugi::xml_document& doc)
 
 
 
+// Shared writer for both the main config (shared_ptr list) and presets (raw-pointer list). option-> works for
+// either, so one template covers both.
+namespace
+{
+	template<typename Container>
+	void writeSettingsFile(const std::string& filePath, Container& options, RuntimeExceptionHandler* runtimeExceptions)
+	{
+		PLOG_DEBUG << "Saving settings to filepath: " << filePath;
+		try
+		{
+			pugi::xml_document doc;
+			auto optionArray = doc.append_child(nameof(Setting));
+
+			for (auto& option : options)
+			{
+				PLOG_DEBUG << "Serialising setting: " << option->getOptionName();
+				option->serialise(optionArray);
+			}
+
+			throwOnDuplicateName(doc);
+
+			if (!doc.save_file(filePath.c_str()))
+				PLOG_ERROR << "Error saving config to " << filePath;
+			else
+				PLOG_DEBUG << "Successfully saved settings to filepath: " << filePath;
+		}
+		catch (HCMSerialisationException& ex)
+		{
+			runtimeExceptions->handleMessage(ex);
+		}
+	}
+}
+
 void SettingsSerialiser::serialise(std::vector<std::shared_ptr<SerialisableSetting>>& allSerialisableOptions)
 {
-	std::string filePath = mDirPath + configFileName.data();
-	PLOG_DEBUG << "Saving settings to filepath: " << filePath;
-	try
-	{
-		pugi::xml_document doc;
-		// options
-		auto optionArray = doc.append_child(nameof(Setting));
+	writeSettingsFile(mDirPath + configFileName.data(), allSerialisableOptions, runtimeExceptions.get());
+}
 
-		for (auto& option : allSerialisableOptions)
-		{
-			PLOG_DEBUG << "Serialising setting: " << option->getOptionName();
-			option->serialise(optionArray);
-		}
-
-
-		throwOnDuplicateName(doc); 
-
-		if (!doc.save_file(filePath.c_str()))
-		{
-			PLOG_ERROR << "Error saving config to " << filePath;
-		}
-		else
-		{
-			PLOG_DEBUG << "Successfully saved settings to filepath: " << filePath;
-		}
-	}
-	catch (HCMSerialisationException& ex)
-	{
-		runtimeExceptions->handleMessage(ex);
-	}
+void SettingsSerialiser::serialiseToPath(const std::string& filePath, const std::vector<SerialisableSetting*>& allPresetOptions)
+{
+	writeSettingsFile(filePath, allPresetOptions, runtimeExceptions.get());
 }
 
 void SettingsSerialiser::deserialise(std::vector<std::shared_ptr<SerialisableSetting>>& allSerialisableOptions)
@@ -124,6 +133,47 @@ void SettingsSerialiser::deserialise(std::vector<std::shared_ptr<SerialisableSet
 		}
 
 
+	}
+}
+
+
+// Preset load: apply a full settings snapshot from an arbitrary file. Unlike the main-config deserialise, this is
+// QUIET on missing options (a setting absent from the preset simply keeps its current value - no per-option spam),
+// which lets partial/older presets load cleanly. Each option->deserialise fires that setting's valueChangedEvent,
+// so features react live. MUST be called on the render thread (same thread the GUI toggles fire on).
+void SettingsSerialiser::deserialiseFromPath(const std::string& filePath, const std::vector<SerialisableSetting*>& allPresetOptions)
+{
+	PLOG_DEBUG << "Loading preset from filepath: " << filePath;
+	pugi::xml_document doc;
+	pugi::xml_parse_result result = doc.load_file(filePath.c_str());
+	if (!result)
+	{
+		std::string err = std::format("Couldn't read preset file at {}\nError: {}", filePath, result.description());
+		HCMSerialisationException ex(err);
+		runtimeExceptions->handleMessage(ex);
+		return;
+	}
+
+	try
+	{
+		auto optionArray = doc.child(nameof(Setting));
+		if (optionArray.type() == pugi::node_null)
+			throw HCMSerialisationException("Preset file has no Setting node (not a valid HCM preset)");
+
+		int applied = 0;
+		for (auto& option : allPresetOptions)
+		{
+			auto optionXML = optionArray.child(option->getOptionName().c_str());
+			if (optionXML.type() == pugi::node_null)
+				continue; // absent from this preset - leave the setting untouched
+			option->deserialise(optionXML);
+			++applied;
+		}
+		PLOG_DEBUG << "Preset applied " << applied << " settings from " << filePath;
+	}
+	catch (HCMSerialisationException& ex)
+	{
+		runtimeExceptions->handleMessage(ex);
 	}
 }
 

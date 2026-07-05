@@ -257,6 +257,20 @@ namespace
 		if (IsBadReadPtr(p, n)) return false;
 		return memcmp(p, clean, n) != 0;
 	}
+
+	// true if the currently-loaded Halo 2 level is cyclotron (the only map the elevator interp fix affects).
+	// Same level-code read the gate detour uses; lets onToggle report whether the fix is actually active now.
+	bool cyclotronMapLoaded()
+	{
+		uintptr_t base = (uintptr_t)GetModuleHandleW(L"halo2.dll");
+		if (!base) return false;
+		const char* lvl = (const char*)(base + kRvaCurrentLevelCode);
+		if (IsBadReadPtr((void*)lvl, 1)) return false;
+		for (int i = 0; i < 28 && lvl[i]; ++i)
+			if (lvl[i] == 'c' && !IsBadReadPtr((void*)(lvl + i), 10) && memcmp(lvl + i, "cyclotron", 9) == 0)
+				return true;
+		return false;
+	}
 }
 
 
@@ -467,8 +481,17 @@ private:
 					messagesGUI->addMessage("  cyclotron elevator: SKIPPED (already patched in your dll)");
 				else
 				{
+					// The gate hook self-gates on the level (see cyclotronGateDetour), so we arm it regardless
+					// of the current map - it activates once you're on cyclotron. Report whether that map is
+					// actually loaded right now so it's clear the fix isn't doing anything on other maps.
 					sCyclotronGateHook->setWantsToBeAttached(true);
-					messagesGUI->addMessage("  cyclotron elevator: APPLIED");
+					if (cyclotronMapLoaded())
+						messagesGUI->addMessage("  cyclotron elevator: APPLIED");
+					else
+					{
+						PLOG_INFO << "AnimationFixes: cyclotron elevator fix skipped for now - cyclotron map is not loaded (hook armed; it takes effect when you load cyclotron).";
+						messagesGUI->addMessage("  cyclotron elevator: SKIPPED (cyclotron map not loaded - applies when you load cyclotron)");
+					}
 				}
 
 				startWorker();

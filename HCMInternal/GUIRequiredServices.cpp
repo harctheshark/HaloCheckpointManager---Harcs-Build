@@ -37,6 +37,13 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 			{OptionalCheatEnum::HideWatermarkCheck}
 	},
 
+		{GUIElementEnum::presetSaveButton,
+			{OptionalCheatEnum::PresetManager}
+	},
+		{GUIElementEnum::presetLoadButton,
+			{OptionalCheatEnum::PresetManager}
+	},
+
 		{GUIElementEnum::disableBarriersToggle,
 			{OptionalCheatEnum::DisableBarriers}
 	},

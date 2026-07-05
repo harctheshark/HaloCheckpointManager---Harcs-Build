@@ -128,7 +128,8 @@ HavokDebugger,\
 PlayerActionUpdateHook,\
 ReplayRecorder,\
 ReplayPlayer,\
-MasterTickrate
+MasterTickrate,\
+PresetManager
 
 
 enum class OptionalCheatEnum {

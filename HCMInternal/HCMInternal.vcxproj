@@ -413,6 +413,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="AnimationFixes.h" />
     <ClInclude Include="SunScaleFix.h" />
     <ClInclude Include="MasterTickrate.h" />
+    <ClInclude Include="PresetManager.h" />
+    <ClInclude Include="ModalDialogGuard.h" />
     <ClInclude Include="ReplayData.h" />
     <ClInclude Include="PlayerActionUpdateHook.h" />
     <ClInclude Include="ReplayRecorder.h" />
@@ -735,6 +737,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="AnimationFixes.cpp" />
     <ClCompile Include="SunScaleFix.cpp" />
     <ClCompile Include="MasterTickrate.cpp" />
+    <ClCompile Include="PresetManager.cpp" />
     <ClCompile Include="PlayerActionUpdateHook.cpp" />
     <ClCompile Include="ReplayRecorder.cpp" />
     <ClCompile Include="ReplayPlayer.cpp" />

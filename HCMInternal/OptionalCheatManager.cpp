@@ -54,6 +54,7 @@
 #include "AnimationFixes.h"
 #include "HavokDebugger.h"
 #include "MasterTickrate.h"
+#include "PresetManager.h"
 #include "DisplayPlayerInfo.h"
 #include "GetObjectHealth.h"
 #include "GetAggroData.h"

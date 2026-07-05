@@ -222,6 +222,24 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Hides the HCM message log too."), std::nullopt, "Also hide HCM messages", settings->hideWatermarkHideMessages));
 
+				case GUIElementEnum::presetsHeadingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
+						(game, ToolTipCollection("Save or load a full HCM settings snapshot (every toggle, value and hotkey) to a named .hcm preset file. Loading a preset applies it live."), "Presets", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::presetSaveButton),
+							createNestedElement(GUIElementEnum::presetLoadButton),
+							}));
+
+					case GUIElementEnum::presetSaveButton:
+						// "##hcmGlobalPreset" keeps the visible label "Save Preset..." but gives ImGui a unique ID
+						// (the armour-colour section reuses the plain "Save Preset..." label - identical IDs collide).
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+							(game, ToolTipCollection("Save every current HCM setting to a preset file (opens a Save dialog). Presets live in <HCM folder>/presets."), std::nullopt, "Save Preset...##hcmGlobalPreset", settings->presetSaveEvent));
+
+					case GUIElementEnum::presetLoadButton:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+							(game, ToolTipCollection("Load a preset file and apply it live (opens an Open dialog). Every setting in the file is applied; anything not in the file keeps its current value."), std::nullopt, "Load Preset...##hcmGlobalPreset", settings->presetLoadEvent));
+
 
 			case GUIElementEnum::saveManagementHeadingGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>

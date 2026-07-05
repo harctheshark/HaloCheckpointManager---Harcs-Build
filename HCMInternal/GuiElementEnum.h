@@ -20,6 +20,9 @@
 // A sequence of pairs, where the first element of a pair is the GUIElementEnum name, and the second element is a tuple of supported games for that guielement
 // Indentation is cosmetic but indicates hiearchy of elements
 #define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES1 \
+((presetsHeadingGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((presetSaveButton, (ALL_GAMES_AND_MAINMENU)))\
+	((presetLoadButton, (ALL_GAMES_AND_MAINMENU)))\
 ((controlHeadingGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((toggleGUIHotkeyGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((messagesFontSize, (ALL_GAMES_AND_MAINMENU)))\

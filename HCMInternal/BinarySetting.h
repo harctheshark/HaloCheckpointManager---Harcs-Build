@@ -22,7 +22,11 @@ public:
 
 	explicit BinarySetting(T defaultValue, std::function<bool(T)> inputValidator, std::string optionName)
 		: isInputValid(inputValidator), value(defaultValue), valueDisplay(defaultValue), mOptionName(optionName), defaultValue(defaultValue)
-	{}
+	{
+		// self-register into the preset collector (if a SettingsStateAndEvents is currently arming it) so presets
+		// capture EVERY setting, including cheat toggles that allSerialisableOptions omits. See SerialisableSetting.
+		if (s_presetCollector) s_presetCollector->push_back(this);
+	}
 
 	// TODO: make value reference const. this will require a lot of boilerplate consting around the joint so we can compile but shouldn't actually break anything.
 	std::shared_ptr<eventpp::CallbackList<void(T& newValue)>> valueChangedEvent = std::make_shared<eventpp::CallbackList<void(T & newValue)>>();

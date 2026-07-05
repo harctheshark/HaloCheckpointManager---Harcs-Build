@@ -16,5 +16,7 @@ public:
 		: mDirPath(dirPath), runtimeExceptions(exp), messagesGUI(mes) {}
 	virtual void serialise(std::vector<std::shared_ptr<SerialisableSetting>>& allSerialisableOptions) override;
 	virtual void deserialise(std::vector<std::shared_ptr<SerialisableSetting>>& allSerialisableOptions) override;
+	virtual void serialiseToPath(const std::string& fullFilePath, const std::vector<SerialisableSetting*>& allPresetOptions) override;
+	virtual void deserialiseFromPath(const std::string& fullFilePath, const std::vector<SerialisableSetting*>& allPresetOptions) override;
 };
 

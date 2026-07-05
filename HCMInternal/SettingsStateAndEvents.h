@@ -15,6 +15,15 @@ class SettingsStateAndEvents
 private:
 	std::shared_ptr<ISettingsSerialiser> mSerialiser;
 
+	// COMPLETE list of every BinarySetting (unlike allSerialisableOptions, which is a curated persist-subset that
+	// omits the cheat toggles). Presets snapshot this. It's built automatically: mPresetCollectorArmer points the
+	// static collector at this vector BEFORE any setting member constructs, each BinarySetting self-registers (see
+	// BinarySetting's ctor), and mPresetCollectorDisarmer (the very last member) clears the collector afterwards.
+	// These two helpers MUST bracket every setting member in declaration order.
+	std::vector<SerialisableSetting*> allPresetOptions;
+	struct PresetCollectorArmer { PresetCollectorArmer(std::vector<SerialisableSetting*>* v) { SerialisableSetting::s_presetCollector = v; } };
+	PresetCollectorArmer mPresetCollectorArmer{ &allPresetOptions };
+
 public:
 	SettingsStateAndEvents(std::shared_ptr<ISettingsSerialiser> serialiser)
 		: mSerialiser(serialiser)
@@ -26,8 +35,27 @@ public:
 	~SettingsStateAndEvents() {
 		PLOG_DEBUG << "~SettingsStateAndEvents()";
 		// serialise (save) serialisable options
-		mSerialiser->serialise(allSerialisableOptions); 
+		mSerialiser->serialise(allSerialisableOptions);
 	};
+
+	// --- Presets: save/load the full settings snapshot to/from a named file (see PresetManager) ---
+	// Fired by the Save/Load Preset buttons. PresetManager handles the file dialog then calls these.
+	std::shared_ptr<ActionEvent> presetSaveEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> presetLoadEvent = std::make_shared<ActionEvent>();
+
+	// Write EVERY setting (including cheat toggles) to the given file - the complete allPresetOptions, not the
+	// curated persist-subset. That's what makes a preset able to turn features on/off.
+	void savePresetToFile(const std::string& fullFilePath)
+	{
+		mSerialiser->serialiseToPath(fullFilePath, allPresetOptions);
+	}
+
+	// Apply a full settings snapshot from the given file. Each setting fires its valueChangedEvent, so features
+	// react live. Settings absent from the file keep their current value. MUST be called on the render thread.
+	void loadPresetFromFile(const std::string& fullFilePath)
+	{
+		mSerialiser->deserialiseFromPath(fullFilePath, allPresetOptions);
+	}
 
 	//	hotkeys - see HotkeyEventsLambdas for how they connect to respective toggle (they just flip the value)
 	std::shared_ptr<ActionEvent> toggleGUIHotkeyEvent = std::make_shared<ActionEvent>();
@@ -2380,6 +2408,10 @@ public:
 
 	};
 
+	// MUST be the last member: disarms the preset collector once every setting above has self-registered into
+	// allPresetOptions. Any BinarySetting declared AFTER this line would be missing from presets.
+	struct PresetCollectorDisarmer { PresetCollectorDisarmer() { SerialisableSetting::s_presetCollector = nullptr; } };
+	PresetCollectorDisarmer mPresetCollectorDisarmer;
 
 };
 
