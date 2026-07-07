@@ -472,6 +472,7 @@ private:
 							createNestedElement(GUIElementEnum::animationFixesToggle),
 							createNestedElement(GUIElementEnum::havokDebuggerGUI),
 							createNestedElement(GUIElementEnum::masterTickrateToggleGUI),
+							createNestedElement(GUIElementEnum::masterTickrateCustomGUI),
 							createNestedElement(GUIElementEnum::aiFreezeGUI),
 							createNestedElement(GUIElementEnum::medusaGUI),
 							createNestedElement(GUIElementEnum::forceTeleportGUI),
@@ -634,6 +635,11 @@ private:
 				case GUIElementEnum::masterTickrateToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
 						(game, ToolTipCollection("Halo 2: flips the master simulation tickrate between 60 and 30 Hz (and the matching dt). Requires a loaded Halo 2 game."), std::nullopt, "Toggle Tickrate (60/30)", settings->masterTickrateFlipEvent
+						));
+
+				case GUIElementEnum::masterTickrateCustomGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+						(game, ToolTipCollection("Halo 2: type an arbitrary master simulation tickrate (Hz) and press Enter to apply. The matching seconds-per-tick (dt = 1/rate) is written for you so game speed stays 1x. Requires a loaded Halo 2 game; resets to the game default on map load."), "Custom Tickrate (Hz)", settings->customTickrate
 						));
 
 				case GUIElementEnum::aiFreezeGUI:

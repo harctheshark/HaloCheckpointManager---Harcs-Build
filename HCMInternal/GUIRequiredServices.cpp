@@ -290,6 +290,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::MasterTickrate}
 	},
 
+	{ GUIElementEnum::masterTickrateCustomGUI,
+		{OptionalCheatEnum::MasterTickrate, OptionalCheatEnum::GameTickEventHook}
+	},
+
 	{ GUIElementEnum::replayRecord30GUI,
 		{OptionalCheatEnum::ReplayRecorder}
 	},

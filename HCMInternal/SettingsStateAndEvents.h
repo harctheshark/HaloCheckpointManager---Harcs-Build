@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include "UnarySetting.h"
 #include "BinarySetting.h"
 #include "ISettingsSerialiser.h"
@@ -742,6 +743,20 @@ public:
 			[](float in) { return in >= 0.f; },
 			nameof(farClipDistance)
 		);
+
+	// Halo 2: arbitrary master simulation tickrate (Hz). Applied by the MasterTickrate cheat, which also writes
+	// the matching seconds-per-tick (dt = 1/rate) so game speed stays 1x. Clamped 1..1000 (fits the int16 field).
+	std::shared_ptr<BinarySetting<int>> customTickrate = std::make_shared<BinarySetting<int>>
+		(
+			60,
+			[](int in) { return in >= 1 && in <= 1000; },
+			nameof(customTickrate)
+		);
+
+	// Runtime coordination flag (NOT a serialisable setting): set true by MasterTickrate once the user applies a
+	// custom tickrate, so its collision "tickrate scalar" repoint owns halo2.dll+0x70DBFA. Season7Physics checks
+	// this and stands down while it's set (both patch the same instruction). Cleared on MasterTickrate teardown.
+	std::atomic<bool> customTickrateScalarActive{ false };
 
 	// Halo 2: anchors the sun glow + occlusion query at the fixed corona distance instead of the
 	// far-clip plane, so raising Far Clip Distance no longer shrinks the sun. Sits under the slider.

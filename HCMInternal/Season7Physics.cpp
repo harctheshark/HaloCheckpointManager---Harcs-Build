@@ -46,12 +46,23 @@ private:
 	void applyCurrentState()
 	{
 		lockOrThrow(settingsWeak, settings);
+		// A custom tickrate scalar owns the 0x70DBFA instruction (see MasterTickrate). Don't fight it.
+		if (settings->customTickrateScalarActive) return;
 		writePatch(settings->season7PhysicsToggle->GetValue() ? kSeason7Bytes : kDefaultBytes);
 	}
 
 	void onToggle(bool& newValue)
 	{
 		PLOG_DEBUG << "Season7Physics onToggle, newValue: " << newValue;
+
+		// If a custom tickrate is active it patches the same instruction with an arbitrary scalar; Season 7
+		// Physics (a fixed 60.0 scalar) would only clobber it, so it's overridden while custom is active.
+		if (auto settings = settingsWeak.lock(); settings && settings->customTickrateScalarActive)
+		{
+			try { lockOrThrow(messagesGUIWeak, messagesGUI); messagesGUI->addMessage("Custom Tickrate is active and overrides Season 7 Physics."); }
+			catch (HCMRuntimeException&) {}
+			return;
+		}
 
 		// apply immediately if the module is loaded; if not (e.g. at the MCC menu) it'll apply on level load.
 		bool appliedNow = false;

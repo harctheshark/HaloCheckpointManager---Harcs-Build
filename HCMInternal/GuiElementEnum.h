@@ -108,6 +108,7 @@
 	((animationFixesToggle, (Halo2)))\
 	((havokDebuggerGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
 	((masterTickrateToggleGUI, (Halo2)))\
+	((masterTickrateCustomGUI, (Halo2)))\
 	((aiFreezeGUI, (ALL_SUPPORTED_GAMES)))\
 	((medusaGUI, (Halo1, Halo2)))\
 	((forceTeleportGUI, (ALL_SUPPORTED_GAMES)))\
