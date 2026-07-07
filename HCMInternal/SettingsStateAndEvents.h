@@ -758,6 +758,27 @@ public:
 	// this and stands down while it's set (both patch the same instruction). Cleared on MasterTickrate teardown.
 	std::atomic<bool> customTickrateScalarActive{ false };
 
+	// Halo 2 "FP Scale Fix": renders the first-person legs/body at a fixed reference FOV (no FOV stretch), via a
+	// runtime code cave. LegSize = the cave's TAN_REF reference (lower = bigger legs); LegTuck = body push FOV (rad).
+	std::shared_ptr<BinarySetting<bool>> fpScaleFixToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool) { return true; },
+			nameof(fpScaleFixToggle)
+		);
+	std::shared_ptr<BinarySetting<float>> fpScaleFixLegSize = std::make_shared<BinarySetting<float>>
+		(
+			0.65f,
+			[](float in) { return in > 0.f && in < 4.f; },
+			nameof(fpScaleFixLegSize)
+		);
+	std::shared_ptr<BinarySetting<float>> fpScaleFixLegTuck = std::make_shared<BinarySetting<float>>
+		(
+			1.5f,
+			[](float in) { return in >= 0.f && in < 3.2f; },
+			nameof(fpScaleFixLegTuck)
+		);
+
 	// Halo 2: anchors the sun glow + occlusion query at the fixed corona distance instead of the
 	// far-clip plane, so raising Far Clip Distance no longer shrinks the sun. Sits under the slider.
 	std::shared_ptr<BinarySetting<bool>> sunScaleFixToggle = std::make_shared<BinarySetting<bool>>

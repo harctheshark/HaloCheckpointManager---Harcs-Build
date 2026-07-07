@@ -45,6 +45,7 @@
 #include "SphereSpecularForce.h"
 #include "OffscreenShadowCasters.h"
 #include "UncapDropShadows.h"
+#include "FPScaleFix.h"
 #include "H2ShadowResolution.h"
 #include "H2ArmorColour.h"
 #include "UncapVisibilityLimits.h"

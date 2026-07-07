@@ -278,6 +278,16 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::SunScaleFix}
 	},
 
+	{ GUIElementEnum::fpScaleFixToggle,
+		{OptionalCheatEnum::FPScaleFix}
+	},
+	{ GUIElementEnum::fpScaleFixLegSizeGUI,
+		{OptionalCheatEnum::FPScaleFix}
+	},
+	{ GUIElementEnum::fpScaleFixLegTuckGUI,
+		{OptionalCheatEnum::FPScaleFix}
+	},
+
 	{ GUIElementEnum::animationFixesToggle,
 		{OptionalCheatEnum::AnimationFixes}
 	},

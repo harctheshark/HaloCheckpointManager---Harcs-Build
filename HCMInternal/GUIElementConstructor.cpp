@@ -469,6 +469,9 @@ private:
 							createNestedElement(GUIElementEnum::season7PhysicsToggle),
 							createNestedElement(GUIElementEnum::farClipDistanceGUI),
 							createNestedElement(GUIElementEnum::sunScaleFixToggle),
+							createNestedElement(GUIElementEnum::fpScaleFixToggle),
+							createNestedElement(GUIElementEnum::fpScaleFixLegSizeGUI),
+							createNestedElement(GUIElementEnum::fpScaleFixLegTuckGUI),
 							createNestedElement(GUIElementEnum::animationFixesToggle),
 							createNestedElement(GUIElementEnum::havokDebuggerGUI),
 							createNestedElement(GUIElementEnum::masterTickrateToggleGUI),
@@ -620,6 +623,21 @@ private:
 				case GUIElementEnum::sunScaleFixToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Halo 2: keeps the sun a constant size when Far Clip Distance is raised. Anchors the sun glow and its occlusion query at the fixed corona distance instead of the far-clip plane (otherwise the sun shrinks to a hard square at high far clip)."), std::nullopt, "Sun Scale Fix", settings->sunScaleFixToggle
+						));
+
+				case GUIElementEnum::fpScaleFixToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 2: renders the first-person legs/body at a fixed reference FOV so they stop stretching when you change FOV. Runtime port of the 'Static FP Legs' code cave. Requires a loaded Halo 2 game; tune with the two values below."), std::nullopt, "FP Scale Fix", settings->fpScaleFixToggle
+						));
+
+				case GUIElementEnum::fpScaleFixLegSizeGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloatStepper>
+						(game, ToolTipCollection("FP Scale Fix reference scale (TAN_REF). Lower = bigger legs, higher = smaller. Default 0.65. Applies live while the fix is on."), "Leg Size", settings->fpScaleFixLegSize, 0.01f, 0.05f, "%.4f"
+						));
+
+				case GUIElementEnum::fpScaleFixLegTuckGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloatStepper>
+						(game, ToolTipCollection("FP Scale Fix body push/tuck FOV in radians. ~1.36 = 78deg (no push/centered), higher pushes the body into the lowered pose. Default 1.5. Applies live while the fix is on."), "Leg Tuck (rad)", settings->fpScaleFixLegTuck, 0.01f, 0.05f, "%.4f"
 						));
 
 				case GUIElementEnum::animationFixesToggle:

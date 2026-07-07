@@ -105,6 +105,9 @@
 	((h2ArmorEmblemLoadButton, (Halo2)))\
 	((farClipDistanceGUI, (Halo2)))\
 	((sunScaleFixToggle, (Halo2)))\
+	((fpScaleFixToggle, (Halo2)))\
+	((fpScaleFixLegSizeGUI, (Halo2)))\
+	((fpScaleFixLegTuckGUI, (Halo2)))\
 	((animationFixesToggle, (Halo2)))\
 	((havokDebuggerGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
 	((masterTickrateToggleGUI, (Halo2)))\

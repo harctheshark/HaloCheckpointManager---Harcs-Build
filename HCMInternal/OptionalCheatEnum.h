@@ -113,6 +113,7 @@ GameEngineDetail,\
 GameEngineFunctions,\
 ViewAngle3D,\
 Season7Physics,\
+FPScaleFix,\
 DropShadowsOnObjects,\
 SphereSpecularForce,\
 OffscreenShadowCasters,\

@@ -402,6 +402,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="SphereSpecularForce.h" />
     <ClInclude Include="OffscreenShadowCasters.h" />
     <ClInclude Include="UncapDropShadows.h" />
+    <ClInclude Include="FPScaleFix.h" />
     <ClInclude Include="H2ShadowResolution.h" />
     <ClInclude Include="H2ArmorColour.h" />
     <ClInclude Include="UncapVisibilityLimits.h" />
@@ -719,6 +720,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="SphereSpecularForce.cpp" />
     <ClCompile Include="OffscreenShadowCasters.cpp" />
     <ClCompile Include="UncapDropShadows.cpp" />
+    <ClCompile Include="FPScaleFix.cpp" />
     <ClCompile Include="H2ShadowResolution.cpp" />
     <ClCompile Include="H2ArmorColour.cpp" />
     <ClCompile Include="UncapVisibilityLimits.cpp" />
