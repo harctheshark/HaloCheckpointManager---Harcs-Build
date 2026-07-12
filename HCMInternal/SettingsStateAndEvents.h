@@ -745,11 +745,15 @@ public:
 		);
 
 	// Halo 2: arbitrary master simulation tickrate (Hz). Applied by the MasterTickrate cheat, which also writes
-	// the matching seconds-per-tick (dt = 1/rate) so game speed stays 1x. Clamped 1..1000 (fits the int16 field).
+	// the matching seconds-per-tick (dt = 1/rate) so game speed stays 1x. Restricted 3..32766: the engine reads the
+	// tickrate as a SIGNED int16 (movsx word[+2] -> cvtdq2ps in the tick accumulator @halo2.dll+0x706CAB), so 32767
+	// is the true ceiling (32766 as a safe limit) and rates of 1-2 crash the game.
 	std::shared_ptr<BinarySetting<int>> customTickrate = std::make_shared<BinarySetting<int>>
 		(
 			60,
-			[](int in) { return in >= 1 && in <= 1000; },
+			// reject 1-2 (crash the game) and anything past the signed-int16 tickrate field's safe max (32766).
+			// An invalid input is rejected (value reverts), so a partial keystroke never applies a bad rate.
+			[](int in) { return in >= 3 && in <= 32766; },
 			nameof(customTickrate)
 		);
 

@@ -193,7 +193,7 @@ private:
 				return;
 			}
 
-			int16_t rate16 = (int16_t)newRate; // validator clamps to 1..1000 (fits the int16 field & keeps dt sane)
+			int16_t rate16 = (int16_t)newRate; // validator restricts to 3..32766 (fits the signed int16 field; 1-2 crash)
 			writeRate(rate16);
 			applyScalarForRate(newRate);
 			mPendingRebuild.store(true); // rebuild existing shapes on the next game tick (safe point)

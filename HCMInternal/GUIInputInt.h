@@ -3,7 +3,10 @@
 #include "SettingsStateAndEvents.h"
 #include "SliderParam.h"
 
-template <SliderParam<int> sliderParam = SliderParam<int>()>
+// commitOnEnter: when true (text-input path only), the value is applied only when the user presses Enter, not on
+// every keystroke - so partial values typed on the way to the final one are never applied. Essential where an
+// intermediate value is dangerous (e.g. Custom Tickrate: typing "100" must not momentarily apply "1", which crashes).
+template <SliderParam<int> sliderParam = SliderParam<int>(), bool commitOnEnter = false>
 class GUIInputInt : public IGUIElement {
 
 private:
@@ -39,6 +42,10 @@ public:
 
 		if constexpr (sliderParam.showSlider)
 			updateRequired = ImGui::SliderInt(mLabelText.c_str(), &mOptionInt->GetValueDisplay(), sliderParam.minValue, sliderParam.maxValue, "%d", sliderParam.sliderFlags);
+		else if constexpr (commitOnEnter)
+			// EnterReturnsTrue: ImGui only writes the bound value + returns true on Enter, so nothing is applied
+			// while the user is still typing digits.
+			updateRequired = ImGui::InputInt(mLabelText.c_str(), &mOptionInt->GetValueDisplay(), 1, 100, ImGuiInputTextFlags_EnterReturnsTrue);
 		else
 			updateRequired = ImGui::InputInt(mLabelText.c_str(), &mOptionInt->GetValueDisplay());
 

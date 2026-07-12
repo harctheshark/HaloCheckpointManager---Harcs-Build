@@ -6,6 +6,7 @@
 #include "SettingsStateAndEvents.h"
 #include "RuntimeExceptionHandler.h"
 #include "IMessagesGUI.h"
+#include "ScopedThreadSuspender.h"
 #include <array>
 #include <vector>
 #include <atomic>
@@ -249,6 +250,33 @@ namespace
 	constexpr float     kCyclotronSeamThreshold  = 0.05f;
 	using ObjDatumResolverFn = uintptr_t(__fastcall*)(uintptr_t);
 
+	// ============================================================================================
+	// Fix 4: FP legs/body always-interpolate (first-person leg jitter at high / uncapped FPS).
+	// The FP render path gates the body's interpolation on r15b, which is 0 for the render pass, so the
+	// body renders the RAW current-tick pose while the world/camera/weapon use the sub-tick interp alpha.
+	// The FP legs therefore jump in whole-tick steps -> visible jitter when turning, worst near/under the
+	// FPS cap (e.g. 240). NOP the gate `jz` so the body ALWAYS calls the interp getter (sub_180722CB0);
+	// it self-validates and falls back to the raw pose when interp is unavailable, so it's safe in every
+	// state. Verified against stock halo2.dll 1.3528. See memory halo2dll-static-fp-legs (v3).
+	// A direct 2-byte patch (not a hook): 74 14 -> 90 90. Gated on the full test+jz context so a build
+	// mismatch (or an already-baked dll) is detected instead of nop-ing a stray branch.
+	constexpr uintptr_t kRvaFpLegsJz     = 0x8183D5;                            // the jz to neutralise
+	constexpr uint8_t   kFpLegsStock5[5] = { 0x45, 0x84, 0xFF, 0x74, 0x14 };    // test r15b,r15b ; jz +0x14  @ jz-3
+	constexpr uint8_t   kFpLegsFixed5[5] = { 0x45, 0x84, 0xFF, 0x90, 0x90 };    // test r15b,r15b ; nop nop    (patched)
+	constexpr uint8_t   kFpLegsJzOrig[2] = { 0x74, 0x14 };                      // restore bytes
+	constexpr uint8_t   kFpLegsJzNop[2]  = { 0x90, 0x90 };                      // fix bytes
+
+	// Thread-safe write into executable .text: freeze the other threads, flip protection, patch, restore,
+	// flush the icache. Mirrors MasterTickrate::TickrateScalarPatcher::writeText.
+	void writeTextBytes(uintptr_t addr, const void* data, size_t len)
+	{
+		ScopedThreadSuspender suspend;
+		DWORD o; VirtualProtect((void*)addr, len, PAGE_EXECUTE_READWRITE, &o);
+		memcpy((void*)addr, data, len);
+		VirtualProtect((void*)addr, len, o, &o);
+		FlushInstructionCache(GetCurrentProcess(), (void*)addr, len);
+	}
+
 	// true if the bytes at base+rva differ from the clean originals (i.e. a static dll cave is already there)
 	bool siteIsStaticallyPatched(uintptr_t base, uintptr_t rva, const uint8_t* clean, size_t n)
 	{
@@ -271,6 +299,55 @@ namespace
 				return true;
 		return false;
 	}
+
+
+	// ============================================================================================
+	// Fix 5: first-person crouch interpolation. Crouching makes the WORLD jitter/step at tick rate because the eye
+	// height in biped_get_sight_position (sub_180927170) uses the RAW unit.crouching scalar, never interpolated
+	// (walking is smooth - only the crouch height add is raw; the effect is look-angle dependent). Port of the
+	// offline .crouch cave (Option A, shipped + verified in-game): snapshot crouch per-tick (prev/curr per user) and
+	// lerp it by the interp delta at sight-build time. Three mid-hooks. safetyhook saves/restores the full register
+	// context around each detour, which auto-handles the cave's rcx-preservation crash. See memory halo2dll-crouch-interp.
+	constexpr uintptr_t kRvaCrouchSight       = 0x92725B; // movss xmm0,[r15+0x30C]  (the raw eye-height crouch read)
+	constexpr uintptr_t kRvaCrouchSightCont   = 0x927264; // resume here after skipping the 9-byte movss
+	constexpr uintptr_t kRvaCrouchUpdateBegin = 0x72354A; // interp update_begin: roll prev <- curr
+	constexpr uintptr_t kRvaCrouchPopulate    = 0x72340F; // interp populate: store curr crouch per player biped
+	constexpr uint8_t   kCleanCrouchSight[9]  = { 0xF3,0x41,0x0F,0x10,0x87,0x0C,0x03,0x00,0x00 };
+	constexpr uintptr_t kRvaInterpEnabled     = 0xDFCBF8;  // byte: master interpolation enabled
+	constexpr uintptr_t kRvaInterpInProgress  = 0x164B304; // byte: interp update in progress
+	constexpr uintptr_t kRvaInterpDelta       = 0x164B300; // float: interp delta (lerp t)
+	constexpr uintptr_t kRvaPlayerPool        = 0xE80A28;  // qword_180E80A28 (player pool header)
+	constexpr uintptr_t kRvaPlayerFromObject  = 0x69D010;  // sub_18069D010(objectIndex) -> playerIndex (0xFFFFFFFF = none)
+	constexpr uint16_t  kUnitCrouchOff        = 0x30C;     // unit + 0x30C = float crouching scalar (0=stand,1=crouch)
+	constexpr int       kPlayerStride         = 0x224;
+	constexpr int       kUserIdxOff           = 0x28;      // player + 0x28 = int16 local user index
+	using PlayerFromObjectFn = uint32_t(__fastcall*)(uint32_t);
+
+	// per-user crouch snapshots (prev/curr tick) + validity, shared by the three crouch hooks. Single AnimationFixes
+	// instance (Halo2), so namespace-static is fine (like gHalo2Base).
+	static inline float   sCrouchCurr[8]{};
+	static inline float   sCrouchPrev[8]{};
+	static inline uint8_t sCrouchCurrValid[8]{};
+	static inline uint8_t sCrouchPrevValid[8]{};
+
+	// Resolve a player biped's object index -> local user index (0..7), or -1. Mirrors the cave's
+	// sub_18069D010 + player-pool walk (the same pool H2ArmorColour uses). Only called while the hooks are attached,
+	// which only happens after the sight-site build check confirms v1.3528 (so sub_18069D010 is at the expected RVA).
+	int crouchResolveUserIndex(uintptr_t base, uint32_t objectIndex)
+	{
+		if (!base) return -1;
+		auto playerFromObject = (PlayerFromObjectFn)(base + kRvaPlayerFromObject);
+		uint32_t player = playerFromObject(objectIndex);
+		if (player == 0xFFFFFFFFu) return -1;
+		uintptr_t poolHdr = *(uintptr_t*)(base + kRvaPlayerPool);
+		if (!poolHdr || IsBadReadPtr((void*)(poolHdr + 0x48), 8)) return -1;
+		uintptr_t off = *(uintptr_t*)(poolHdr + 0x48);
+		if (!off) return -1;
+		uintptr_t entry = poolHdr + off + (uintptr_t)(uint16_t)player * kPlayerStride + kUserIdxOff;
+		if (IsBadReadPtr((void*)entry, 2)) return -1;
+		int user = *(int16_t*)entry;
+		return (user >= 0 && user < 8) ? user : -1;
+	}
 }
 
 
@@ -288,6 +365,15 @@ private:
 	std::shared_ptr<ModuleMidHook> mBarrelSnapHook;       // .snap  codec frame snap
 	std::shared_ptr<ModuleMidHook> mRcktHook;             // .rckt  render-interp seam guard
 	static inline std::shared_ptr<ModuleInlineHook> sCyclotronGateHook; // cyclotron elevator interp
+
+	// Fix 4: FP legs interp is a direct .text byte-patch (not a hook). Track whether WE applied it so toggle-off
+	// restores only our patch and never clobbers the same fix baked into a user's modded dll.
+	bool mFpLegsPatchApplied = false;
+
+	// Fix 5: crouch interpolation - three mid-hooks (attached/detached together as one unit)
+	std::shared_ptr<ModuleMidHook> mCrouchSightHook;       // biped_get_sight_position raw crouch read
+	std::shared_ptr<ModuleMidHook> mCrouchUpdateBeginHook; // interp update_begin (roll prev <- curr)
+	std::shared_ptr<ModuleMidHook> mCrouchPopulateHook;    // interp populate (store curr crouch)
 
 	// Fix 3: rocket-anim heap patcher worker
 	std::atomic_bool mRunning = false;
@@ -380,6 +466,54 @@ private:
 			return 0;
 		}
 		return result;
+	}
+
+
+	// ---- Fix 5: crouch interpolation (3 mid-hooks) ----
+	// Hook S @ interp update_begin: roll curr -> prev, invalidate curr. safetyhook preserves the host's live rcx
+	// across the detour (the cave had to hand-save it), so nothing else is needed here.
+	static void crouchUpdateBeginMidHook(safetyhook::Context&)
+	{
+		for (int i = 0; i < 8; ++i)
+		{
+			sCrouchPrev[i] = sCrouchCurr[i];
+			sCrouchPrevValid[i] = sCrouchCurrValid[i];
+			sCrouchCurrValid[i] = 0;
+		}
+	}
+
+	// Hook P @ interp populate: snapshot this player biped's current crouch. rax = unit ptr, edi = object index.
+	static void crouchPopulateMidHook(safetyhook::Context& ctx)
+	{
+		uintptr_t base = gHalo2Base.load();
+		if (!base) { base = (uintptr_t)GetModuleHandleW(L"halo2.dll"); gHalo2Base.store(base); }
+		if (!base) return;
+		uintptr_t unit = ctx.rax;
+		if (!unit || IsBadReadPtr((void*)(unit + kUnitCrouchOff), 4)) return;
+		int user = crouchResolveUserIndex(base, (uint32_t)ctx.rdi);
+		if (user < 0) return;
+		sCrouchCurr[user] = *(float*)(unit + kUnitCrouchOff);
+		sCrouchCurrValid[user] = 1;
+	}
+
+	// Hook A @ sight build: swap the raw crouch read for lerp(prev,curr,delta) when available; else let the original
+	// movss run. edi = object index. On the interp path we set xmm0 and skip the 9-byte movss (via ctx.rip); on any
+	// fallback we touch nothing so the trampoline runs the original movss (raw crouch).
+	static void crouchSightMidHook(safetyhook::Context& ctx)
+	{
+		uintptr_t base = gHalo2Base.load();
+		if (!base) { base = (uintptr_t)GetModuleHandleW(L"halo2.dll"); gHalo2Base.store(base); }
+		if (!base) return;                                          // can't resolve -> raw movss
+		if (*(uint8_t*)(base + kRvaInterpEnabled) == 0) return;     // interpolation disabled -> raw
+		if (*(uint8_t*)(base + kRvaInterpInProgress) != 0) return;  // mid tick-update -> raw
+		int user = crouchResolveUserIndex(base, (uint32_t)ctx.rdi);
+		if (user < 0) return;
+		if (!sCrouchCurrValid[user] || !sCrouchPrevValid[user]) return; // need both ticks -> raw
+		float delta = *(float*)(base + kRvaInterpDelta);
+		float prev = sCrouchPrev[user];
+		float curr = sCrouchCurr[user];
+		ctx.xmm0.f32[0] = prev + (curr - prev) * delta; // interpolated eye-height crouch
+		ctx.rip = base + kRvaCrouchSightCont;           // skip the raw movss so our xmm0 survives
 	}
 
 
@@ -494,6 +628,37 @@ private:
 					}
 				}
 
+				// Fix 4: FP legs/body always-interpolate (high-FPS leg jitter). Direct 2-byte NOP; verify the full
+				// test r15b,r15b + jz context so a build mismatch or already-baked dll is detected, not mis-patched.
+				{
+					uintptr_t ctx = base + kRvaFpLegsJz - 3;
+					if (!base || IsBadReadPtr((void*)ctx, 5))
+						messagesGUI->addMessage("  FP legs interpolation: SKIPPED (halo2.dll not ready)");
+					else if (memcmp((void*)ctx, kFpLegsStock5, sizeof(kFpLegsStock5)) == 0)
+					{
+						writeTextBytes(base + kRvaFpLegsJz, kFpLegsJzNop, sizeof(kFpLegsJzNop)); // 74 14 -> 90 90
+						mFpLegsPatchApplied = true;
+						messagesGUI->addMessage("  FP legs interpolation: APPLIED");
+					}
+					else if (memcmp((void*)ctx, kFpLegsFixed5, sizeof(kFpLegsFixed5)) == 0)
+						messagesGUI->addMessage("  FP legs interpolation: SKIPPED (already patched in your dll)");
+					else
+						messagesGUI->addMessage("  FP legs interpolation: SKIPPED (site doesn't match build 1.3528)");
+				}
+
+				// Fix 5: crouch interpolation (3 hooks as one unit; detect a baked-in static .crouch cave via the sight site)
+				if (siteIsStaticallyPatched(base, kRvaCrouchSight, kCleanCrouchSight, sizeof(kCleanCrouchSight)))
+					messagesGUI->addMessage("  crouch interpolation: SKIPPED (already patched in your dll)");
+				else
+				{
+					// clear stale snapshots so the first frames after enabling fall back to raw until both ticks captured
+					for (int i = 0; i < 8; ++i) { sCrouchCurrValid[i] = 0; sCrouchPrevValid[i] = 0; }
+					mCrouchUpdateBeginHook->setWantsToBeAttached(true);
+					mCrouchPopulateHook->setWantsToBeAttached(true);
+					mCrouchSightHook->setWantsToBeAttached(true);
+					messagesGUI->addMessage("  crouch interpolation: APPLIED");
+				}
+
 				startWorker();
 				messagesGUI->addMessage("  rocket launcher animation: APPLIED");
 			}
@@ -503,6 +668,19 @@ private:
 				mBarrelSnapHook->setWantsToBeAttached(false);
 				mRcktHook->setWantsToBeAttached(false);
 				sCyclotronGateHook->setWantsToBeAttached(false);
+				mCrouchUpdateBeginHook->setWantsToBeAttached(false);
+				mCrouchPopulateHook->setWantsToBeAttached(false);
+				mCrouchSightHook->setWantsToBeAttached(false);
+
+				// Fix 4: restore the FP legs jz only if WE patched it (leave a baked-in dll fix untouched)
+				if (mFpLegsPatchApplied)
+				{
+					uintptr_t base = gHalo2Base.load();
+					if (!base) { base = (uintptr_t)GetModuleHandleW(L"halo2.dll"); gHalo2Base.store(base); }
+					if (base && !IsBadReadPtr((void*)(base + kRvaFpLegsJz), 2))
+						writeTextBytes(base + kRvaFpLegsJz, kFpLegsJzOrig, sizeof(kFpLegsJzOrig)); // 90 90 -> 74 14
+					mFpLegsPatchApplied = false;
+				}
 
 				stopWorker();
 				applyAll(false); // restore the rocket-anim tag bytes
@@ -539,6 +717,15 @@ public:
 
 		auto cyclotronGateFunction = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(animFixCyclotronGateFunction), gameImpl);
 		sCyclotronGateHook = ModuleInlineHook::make(gameImpl.toModuleName(), cyclotronGateFunction, &cyclotronGateDetour);
+
+		// Fix 5: crouch interpolation - three mid-hooks built inline from module + RVA (no InternalPointerData entry
+		// needed; the sight-site build check gates them). Mirrors H2ArmorColour's inline ModuleOffset construction.
+		auto crouchSightFn = std::make_shared<MultilevelPointerSpecialisation::ModuleOffset>(gameImpl.toModuleName(), std::vector<int64_t>{ (int64_t)kRvaCrouchSight });
+		mCrouchSightHook = ModuleMidHook::make(gameImpl.toModuleName(), crouchSightFn, &crouchSightMidHook);
+		auto crouchUpdateFn = std::make_shared<MultilevelPointerSpecialisation::ModuleOffset>(gameImpl.toModuleName(), std::vector<int64_t>{ (int64_t)kRvaCrouchUpdateBegin });
+		mCrouchUpdateBeginHook = ModuleMidHook::make(gameImpl.toModuleName(), crouchUpdateFn, &crouchUpdateBeginMidHook);
+		auto crouchPopulateFn = std::make_shared<MultilevelPointerSpecialisation::ModuleOffset>(gameImpl.toModuleName(), std::vector<int64_t>{ (int64_t)kRvaCrouchPopulate });
+		mCrouchPopulateHook = ModuleMidHook::make(gameImpl.toModuleName(), crouchPopulateFn, &crouchPopulateMidHook);
 	}
 
 	~AnimationFixesImpl()

@@ -642,7 +642,7 @@ private:
 
 				case GUIElementEnum::animationFixesToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: bundle of animation/interpolation fixes - the rocket launcher firing-spin barrel pop (60 tick), the rocket launcher animation pop, and the Cyclotron elevator's loop-seam interpolation glitch. Re-applies on map loads while enabled."), std::nullopt, "Animation Fixes", settings->animationFixesToggle
+						(game, ToolTipCollection("Halo 2: bundle of animation/interpolation fixes - the rocket launcher firing-spin barrel pop (60 tick), the rocket launcher animation pop, the Cyclotron elevator's loop-seam interpolation glitch, first-person leg jitter (forces the FP legs/body to always interpolate so they're smooth at high/uncapped FPS instead of stepping per-tick), and crouch interpolation (stops the world stepping/juddering at low tick rates while you crouch up/down - the eye height is interpolated instead of snapping per-tick). Re-applies on map loads while enabled."), std::nullopt, "Animation Fixes", settings->animationFixesToggle
 						));
 
 				case GUIElementEnum::havokDebuggerGUI:
@@ -656,8 +656,8 @@ private:
 						));
 
 				case GUIElementEnum::masterTickrateCustomGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
-						(game, ToolTipCollection("Halo 2: type an arbitrary master simulation tickrate (Hz) and press Enter to apply. The matching seconds-per-tick (dt = 1/rate) is written for you so game speed stays 1x. Requires a loaded Halo 2 game; resets to the game default on map load."), "Custom Tickrate (Hz)", settings->customTickrate
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<SliderParam<int>{}, true>>
+						(game, ToolTipCollection("Halo 2: type a master simulation tickrate (Hz) from 3 to 32766, then press Enter to apply (it does NOT apply while you're still typing). The matching seconds-per-tick (dt = 1/rate) is written for you so game speed stays 1x. Values below 3 and above 32766 are rejected - the engine stores the tickrate as a signed 16-bit int, and rates of 1-2 crash the game. Requires a loaded Halo 2 game; resets to the game default on map load."), "Custom Tickrate (Hz)", settings->customTickrate
 						));
 
 				case GUIElementEnum::aiFreezeGUI:
