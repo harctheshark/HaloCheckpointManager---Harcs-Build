@@ -73,6 +73,24 @@ namespace
 	constexpr uint8_t  kCullNew[4]    = { 0xB0, 0xFF, 0x90, 0x90 };     // mov al,0xFF ; nop ; nop
 	constexpr uint8_t  kCullAnchor[3] = { 0x41, 0x88, 0x07 };           // mov [r15],al (follows, build-guard)
 
+	// --- Decorator render-distance patches (engaged with the L6-LOD extras; see Fixes/halo2_decorator_patches.md) ---
+	// Grass/foliage decorators cull at ~40 world units via three independent gates; opening all three renders them
+	// to 100u, dithered fade 100->125, gone past 125. Two are movss disp32 REDIRECTS (repoint the load at another
+	// existing .rdata constant - the shared 40.0 / (1/255) constants must NOT be overwritten); two are .data float
+	// tables (per-class cutoff distance + the scale/distance multiplier, = 3/125 = 0.024, the "scale factor"). Radius
+	// stays 128 - a hard 256-cell gather-buffer cap makes higher unsafe (random de-render on dense maps). Verified
+	// vs build 1.3528. Applied best-effort (skip silently if any site != stock, so a mismatch never breaks shadows).
+	constexpr uint32_t kDecRadiusRVA = 0x7F51AD; // movss disp32: gather AABB radius 40 -> 128
+	constexpr uint8_t  kDecRadiusOrig[4] = { 0x03,0xD9,0x43,0x00 };  constexpr uint8_t kDecRadiusNew[4] = { 0x8B,0x74,0x37,0x00 };
+	constexpr uint32_t kDecFadeRVA   = 0x7EF261; // movss disp32: fade-band width K 8 -> ~25
+	constexpr uint8_t  kDecFadeOrig[4] = { 0x4F,0x33,0x44,0x00 };    constexpr uint8_t kDecFadeNew[4] = { 0xC3,0x5A,0x32,0x00 };
+	constexpr uint32_t kDecDistRVA   = 0xE13690; // .data: per-class cutoff distance 8/16/24 -> 125/125/125
+	constexpr uint8_t  kDecDistOrig[12] = { 0x00,0x00,0x00,0x41,0x00,0x00,0x80,0x41,0x00,0x00,0xC0,0x41 };
+	constexpr uint8_t  kDecDistNew[12]  = { 0x00,0x00,0xFA,0x42,0x00,0x00,0xFA,0x42,0x00,0x00,0xFA,0x42 };
+	constexpr uint32_t kDecMultRVA   = 0xE136A0; // .data: scale/distance multiplier -> 3/125 = 0.024 each
+	constexpr uint8_t  kDecMultOrig[12] = { 0x01,0x00,0xC0,0x3E,0x01,0x00,0x40,0x3E,0x00,0x00,0x00,0x3E };
+	constexpr uint8_t  kDecMultNew[12]  = { 0xA6,0x9B,0xC4,0x3C,0xA6,0x9B,0xC4,0x3C,0xA6,0x9B,0xC4,0x3C };
+
 	class Patcher
 	{
 		uintptr_t base = 0;
@@ -143,6 +161,21 @@ namespace
 			{
 				writeSaved(base + kLodJnzRVA, kLodJmpNew, sizeof(kLodJmpNew));
 				writeSaved(base + kCullRVA, kCullNew, sizeof(kCullNew));
+
+				// decorator render-distance -> 125 (+ matched scale/distance multiplier). Best-effort: only touch
+				// them if ALL four sites still hold their stock bytes, so a table/site mismatch can't disable shadows.
+				if (memcmp((void*)(base + kDecRadiusRVA), kDecRadiusOrig, sizeof(kDecRadiusOrig)) == 0
+					&& memcmp((void*)(base + kDecFadeRVA), kDecFadeOrig, sizeof(kDecFadeOrig)) == 0
+					&& memcmp((void*)(base + kDecDistRVA), kDecDistOrig, sizeof(kDecDistOrig)) == 0
+					&& memcmp((void*)(base + kDecMultRVA), kDecMultOrig, sizeof(kDecMultOrig)) == 0)
+				{
+					writeSaved(base + kDecRadiusRVA, kDecRadiusNew, sizeof(kDecRadiusNew)); // gather radius 40 -> 128
+					writeSaved(base + kDecFadeRVA, kDecFadeNew, sizeof(kDecFadeNew));       // fade band K 8 -> ~25
+					writeSaved(base + kDecDistRVA, kDecDistNew, sizeof(kDecDistNew));       // cutoff -> 125
+					writeSaved(base + kDecMultRVA, kDecMultNew, sizeof(kDecMultNew));       // scale/distance -> 0.024
+				}
+				else
+					PLOG_INFO << "H2ShadowResolution: decorator render-distance sites don't match build 1.3528; skipped (shadows/LOD still applied).";
 			}
 
 			applied = true;
@@ -194,10 +227,10 @@ namespace
 		using E = SettingsEnums::H2ShadowResolution;
 		switch (v)
 		{
-		case E::RetailLOD: return "Shadow: Retail (1024) + max LOD + no distance cull";
-		case E::x2048:     return "Shadow 2048 + max LOD + no distance cull";
-		case E::x4096:     return "Shadow 4096 + max LOD + no distance cull";
-		case E::x8192:     return "Shadow 8192 + max LOD + no distance cull (extreme VRAM)";
+		case E::RetailLOD: return "Shadow: Retail (1024) + max LOD + no distance cull + far decorators (125)";
+		case E::x2048:     return "Shadow 2048 + max LOD + no distance cull + far decorators (125)";
+		case E::x4096:     return "Shadow 4096 + max LOD + no distance cull + far decorators (125)";
+		case E::x8192:     return "Shadow 8192 + max LOD + no distance cull + far decorators (125, extreme VRAM)";
 		case E::Retail:
 		default:           return "Shadow resolution: Retail (engine default)";
 		}

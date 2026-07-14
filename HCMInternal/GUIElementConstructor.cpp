@@ -604,12 +604,12 @@ private:
 
 				case GUIElementEnum::h2ArmorEmblemToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: show a custom image on your MasterChief's biped emblem (shoulders/chest) by injecting it over the game's emblem texture. Click 'Load Emblem PNG...' to pick any PNG (transparency supported). Visible in 3rd-person / Theater / to other players. Build 1.3528 only."), std::nullopt, "Custom Emblem", settings->h2ArmorEmblemToggle
+						(game, ToolTipCollection("Halo 2: show a custom image on your MasterChief's biped emblem (shoulders/chest) by injecting it over the game's emblem texture. Click 'Load Emblem...' to pick a PNG, animated GIF, or a VIDEO (mp4/mov/mkv/...) - GIFs and videos animate (video loops, no audio; use a small clip). Transparency supported. Visible in 3rd-person / Theater / to other players. Build 1.3528 only."), std::nullopt, "Custom Emblem", settings->h2ArmorEmblemToggle
 						));
 
 				case GUIElementEnum::h2ArmorEmblemLoadButton:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-						(game, ToolTipCollection("Pick a PNG image to use as your custom emblem (opens an Open dialog)."), std::nullopt, "Load Emblem PNG...", settings->h2ArmorEmblemLoadEvent));
+						(game, ToolTipCollection("Pick a PNG, animated GIF, or video (mp4/mov/mkv/...) to use as your custom emblem (opens an Open dialog). Videos loop and play without audio."), std::nullopt, "Load Emblem...", settings->h2ArmorEmblemLoadEvent));
 
 				case GUIElementEnum::h2ShadowResolutionCombo:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::H2ShadowResolution, 90.f>>
