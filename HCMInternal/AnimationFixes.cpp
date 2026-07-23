@@ -28,6 +28,10 @@ namespace
 		0x40,0x25,0x00,0x00,0x60,0x01,0x00,0x00,0x10,0x02,0x00,0x00,0xB0,0x00,0x00,0x00,
 		0x73,0xBD,0x5E,0xFD,0xAC,0x03,0xC3,0x92 };
 
+	// SEH-guarded region scanner (defined below); forward-declared so both the primary tag-table lookup and the
+	// fallback heap sweep can use it to survive a mid-scan free during teardown.
+	static int scanRegionSEH(const uint8_t* rbase, size_t limit, uintptr_t* out, int outMax);
+
 	struct PatchEntry
 	{
 		uint32_t rel;                 // offset from the matched header
@@ -127,7 +131,6 @@ namespace
 		uintptr_t poolB = *(uintptr_t*)(base + kRvaTagPoolB);
 		if (!stringTable || !stringMeta || !poolA) return found;
 
-		const uint8_t first = kSignature[0];
 		for (uint32_t idx = 0; idx < numTags; ++idx)
 		{
 			uintptr_t el = elemTable + (uintptr_t)idx * 0x10;
@@ -152,10 +155,11 @@ namespace
 			if (size < kSignature.size() || size > 0x400000) continue;
 			uintptr_t dataStart = (off & 0x80000000u) ? (poolB + (off & 0x7FFFFFFFu)) : (poolA + off);
 			if (IsBadReadPtr((void*)dataStart, size)) continue;
-			const uint8_t* p = (const uint8_t*)dataStart;
-			for (uint32_t i = 0; i + (uint32_t)kSignature.size() <= size; ++i)
-				if (p[i] == first && memcmp(p + i, kSignature.data(), kSignature.size()) == 0)
-					found.push_back(dataStart + i);
+			// SEH-guarded: IsBadReadPtr above is TOCTOU-racy - the tag data can be freed between the check and the
+			// scan during teardown, so guard the actual read too.
+			uintptr_t matches[128];
+			int nm = scanRegionSEH((const uint8_t*)dataStart, (size_t)(size - kSignature.size()), matches, 128);
+			for (int k = 0; k < nm; ++k) found.push_back(matches[k]);
 		}
 		return found;
 	}
@@ -169,6 +173,34 @@ namespace
 		uintptr_t mh = *(uintptr_t*)(base + kRvaMetaHeader);
 		if (!mh || IsBadReadPtr((void*)(mh + 0x1C), 4)) return false;
 		return memcmp((void*)(mh + 0x1C), "sgat", 4) == 0;
+	}
+
+	// SEH-guarded scan of ONE memory region for kSignature. POD-only locals so __try is allowed. A region that
+	// VirtualQuery reported as committed can be freed/decommitted MID-SCAN - the game frees large heap blocks during
+	// quit-to-menu teardown, and rbase[i] then reads unmapped memory -> access violation (the confirmed quit-to-menu
+	// crash: scanForHeaders reading freed memory during teardown). Catch that AV and just stop scanning this region,
+	// returning whatever matched before the fault. Writes matches to `out` (up to outMax); returns the count.
+	static int scanRegionSEH(const uint8_t* rbase, size_t limit, uintptr_t* out, int outMax)
+	{
+		int n = 0;
+		__try
+		{
+			const uint8_t first = kSignature[0];
+			for (size_t i = 0; i <= limit; ++i)
+			{
+				if (rbase[i] == first && memcmp(rbase + i, kSignature.data(), kSignature.size()) == 0)
+				{
+					if (n < outMax) out[n] = (uintptr_t)(rbase + i);
+					++n;
+					if (n >= outMax) break;
+				}
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			// region was freed/decommitted mid-scan (teardown race) -> abandon this region safely
+		}
+		return n;
 	}
 
 	// FALLBACK ONLY: brute-force scan committed, writable, non-executable, PRIVATE heap for the signature.
@@ -197,12 +229,10 @@ namespace
 
 				if (writable && !executable && !inaccessible && mbi.RegionSize >= kSignature.size())
 				{
-					uint8_t* rbase = (uint8_t*)mbi.BaseAddress;
-					const uint8_t first = kSignature[0];
-					const size_t limit = mbi.RegionSize - kSignature.size();
-					for (size_t i = 0; i <= limit; ++i)
-						if (rbase[i] == first && memcmp(rbase + i, kSignature.data(), kSignature.size()) == 0)
-							found.push_back((uintptr_t)(rbase + i));
+					// SEH-guarded (see scanRegionSEH): a mid-scan free during teardown would AV here otherwise.
+					uintptr_t matches[128];
+					int nm = scanRegionSEH((uint8_t*)mbi.BaseAddress, mbi.RegionSize - kSignature.size(), matches, 128);
+					for (int k = 0; k < nm; ++k) found.push_back(matches[k]);
 				}
 			}
 

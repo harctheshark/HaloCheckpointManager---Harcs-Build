@@ -113,7 +113,16 @@ namespace
 
 		void* gameAlloc(size_t n) { return ((void* (*)(int64_t))(base + GAME_ALLOC))((int64_t)n); }
 		void  gameFree(void* p)   { if (p) ((void (*)(void*))(base + GAME_FREE))(p); }
-		void  drainVisOld()       { for (void* p : visOld) gameFree(p); visOld.clear(); }
+		// Free last cycle's orphaned (game-heap) originals via the engine's own deallocator. SEH-guarded backstop: if
+		// we ever reach here with pointers from a torn-down map (the game bulk-frees its arena on teardown), the game
+		// free would AV on decommitted memory - catch it and just drop the list instead of crashing the process.
+		void  drainVisOld()
+		{
+			void** arr = visOld.data(); size_t n = visOld.size(); uintptr_t gf = base + GAME_FREE;
+			__try { for (size_t i = 0; i < n; ++i) if (arr[i]) ((void(*)(void*))gf)(arr[i]); }
+			__except (EXCEPTION_EXECUTE_HANDLER) {}
+			visOld.clear();
+		}
 
 		// Grow one visibility sub-collection: allocate the 4 bigger arrays from the GAME heap
 		// (sub_1800769E0) so the engine frees them normally on per-map teardown. Idempotent.
@@ -239,8 +248,13 @@ namespace
 			d.logf("===== REVERT done =====");
 		}
 
+		// A map (re)loaded / we left the game: the game already freed last map's orphaned (game-heap) arrays as part
+		// of its per-map arena teardown, so we must NOT call the game deallocator on them again (double-free -> the
+		// halo2 free() AV we saw at level-select). Just drop our stale handles; the game already reclaimed the memory.
+		void discardVisOldNoFree() { visOld.clear(); }
+
 		// leaving Halo 2: the arena datum is gone; just drop our render-state block (freed next apply/dtor).
-		void onLeave() { if (rsActive) rsOld.push_back(rsActive); rsActive = nullptr; rsOriginal = 0; }
+		void onLeave() { discardVisOldNoFree(); if (rsActive) rsOld.push_back(rsActive); rsActive = nullptr; rsOriginal = 0; }
 
 		~Patcher()
 		{
@@ -293,9 +307,21 @@ private:
 	{
 		try
 		{
-			if (s.currentGameState != mGame) { mPatcher.onLeave(); return; }
+			if (s.currentGameState != mGame) { mPatcher.onLeave(); return; } // left Halo 2 -> drop handles (game frees its arrays)
+			// Only (re)apply once we're FULLY in-game. During a save-and-quit / loading screen the game is tearing
+			// down or rebuilding its visibility arrays, and touching them mid-transition is unsafe - so we wait.
+			// Leaving to menu already dropped our handles via onLeave above, so the enlarged limit is naturally gone
+			// until we re-apply here on the new map.
+			if (s.currentPlayState != PlayState::Ingame) return;
 			lockOrThrow(settingsWeak, settings);
-			if (settings->uncapVisibilityLimitsToggle->GetValue()) mPatcher.apply();
+			if (settings->uncapVisibilityLimitsToggle->GetValue())
+			{
+				// This is a map (re)load: the previous map's orphaned game-heap arrays were already freed by the
+				// game's own per-map teardown, so drop them WITHOUT re-freeing (apply()'s drainVisOld would otherwise
+				// double-free them -> the level-select crash).
+				mPatcher.discardVisOldNoFree();
+				mPatcher.apply();
+			}
 		}
 		catch (HCMRuntimeException& ex) { PLOG_DEBUG << "UncapVisibilityLimits MCCState: " << ex.what(); }
 	}

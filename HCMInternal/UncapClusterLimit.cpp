@@ -92,7 +92,19 @@ namespace
 
 		void* gameAlloc(size_t n) { return ((void* (*)(int64_t))(base + GAME_ALLOC))((int64_t)n); }
 		void  gameFree(void* p) { if (p) ((void (*)(void*))(base + GAME_FREE))(p); }
-		void  drainVisOld() { if (base && GetModuleHandleA("halo2.dll")) for (void* p : visOld) gameFree(p); visOld.clear(); }
+		// Free last cycle's orphaned (game-heap) sub-coll arrays via the engine's deallocator. SEH-guarded backstop:
+		// if a stale pointer from a torn-down map ever reaches here (the game bulk-frees its arena on teardown), the
+		// game free would AV on decommitted memory - catch it and drop the list rather than crash.
+		void  drainVisOld()
+		{
+			if (base && GetModuleHandleA("halo2.dll"))
+			{
+				void** arr = visOld.data(); size_t n = visOld.size(); uintptr_t gf = base + GAME_FREE;
+				__try { for (size_t i = 0; i < n; ++i) if (arr[i]) ((void(*)(void*))gf)(arr[i]); }
+				__except (EXCEPTION_EXECUTE_HANDLER) {}
+			}
+			visOld.clear();
+		}
 
 		// Grow the clusters sub-collection (coll+0x10) to SUBCOLL_NEWCAP using game-heap arrays. Idempotent;
 		// per-map (the engine reallocates it at 128 each map, so we re-grow on each apply). Layout:
@@ -100,6 +112,12 @@ namespace
 		void resizeClusterSubcoll()
 		{
 			Dbg& d = Dbg::get();
+
+			// Phase 1 (threads LIVE): allocate + zero the new bigger game-heap arrays. gameAlloc takes a heap lock a
+			// suspended thread could be holding, so it MUST run outside the suspend window. Zeroing means a read past
+			// the live count (up to the raised cap) never hits uninitialised game-heap garbage. Just stage the swaps.
+			struct Swap { uintptr_t subp; uint16_t cnt; void* nA; void* nB; void* nC; void* nD; uintptr_t oA, oB, oC, oD; };
+			std::vector<Swap> swaps;
 			for (uint32_t c : COLLS)
 			{
 				uintptr_t subp = *(uintptr_t*)(base + c + CLUSTER_SUBCOLL_OFF);
@@ -110,13 +128,31 @@ namespace
 				void* nA = gameAlloc(2 * SUBCOLL_NEWCAP); void* nB = gameAlloc(4 * SUBCOLL_NEWCAP);
 				void* nC = gameAlloc(8 * SUBCOLL_NEWCAP); void* nD = gameAlloc(2 * SUBCOLL_NEWCAP);
 				if (!(nA && nB && nC && nD)) { gameFree(nA); gameFree(nB); gameFree(nC); gameFree(nD); d.logf("  subcoll grow: gameAlloc fail"); continue; }
-				memcpy(nA, (void*)oA, (size_t)cnt * 2); memcpy(nB, (void*)oB, (size_t)cnt * 4);
-				memcpy(nC, (void*)oC, (size_t)cnt * 8); memcpy(nD, (void*)oD, (size_t)cnt * 2);
-				*(uintptr_t*)(subp + 8) = (uintptr_t)nA; *(uintptr_t*)(subp + 0x10) = (uintptr_t)nB;
-				*(uintptr_t*)(subp + 0x18) = (uintptr_t)nC; *(uintptr_t*)(subp + 0x20) = (uintptr_t)nD;
-				*(uint32_t*)subp = SUBCOLL_NEWCAP;
-				visOld.push_back((void*)oA); visOld.push_back((void*)oB); visOld.push_back((void*)oC); visOld.push_back((void*)oD);
-				d.logf("  clusters sub-coll 0x%X: %u -> %d (cnt %u)", (unsigned)c, cap, SUBCOLL_NEWCAP, cnt);
+				memset(nA, 0, 2 * SUBCOLL_NEWCAP); memset(nB, 0, 4 * SUBCOLL_NEWCAP);
+				memset(nC, 0, 8 * SUBCOLL_NEWCAP); memset(nD, 0, 2 * SUBCOLL_NEWCAP);
+				swaps.push_back({ subp, cnt, nA, nB, nC, nD, oA, oB, oC, oD });
+			}
+			if (swaps.empty()) return;
+
+			// Phase 2 (threads SUSPENDED): copy the live entries, then atomically repoint the 4 arrays and raise the
+			// cap. This is the fix for the toggle-on/level-load crash: previously these writes ran with the render
+			// thread live, so it could read a torn pointer set (or the raised cap against the old smaller arrays)
+			// and AV. Memory-only work under the suspend window - no heap lock is taken here (allocs already done).
+			suspendOthers();
+			for (auto& s : swaps)
+			{
+				memcpy(s.nA, (void*)s.oA, (size_t)s.cnt * 2); memcpy(s.nB, (void*)s.oB, (size_t)s.cnt * 4);
+				memcpy(s.nC, (void*)s.oC, (size_t)s.cnt * 8); memcpy(s.nD, (void*)s.oD, (size_t)s.cnt * 2);
+				*(uintptr_t*)(s.subp + 8) = (uintptr_t)s.nA; *(uintptr_t*)(s.subp + 0x10) = (uintptr_t)s.nB;
+				*(uintptr_t*)(s.subp + 0x18) = (uintptr_t)s.nC; *(uintptr_t*)(s.subp + 0x20) = (uintptr_t)s.nD;
+				*(uint32_t*)s.subp = SUBCOLL_NEWCAP;
+			}
+			resumeOthers();
+
+			for (auto& s : swaps)
+			{
+				visOld.push_back((void*)s.oA); visOld.push_back((void*)s.oB); visOld.push_back((void*)s.oC); visOld.push_back((void*)s.oD);
+				d.logf("  clusters sub-coll: -> %d (cnt %u)", SUBCOLL_NEWCAP, s.cnt);
 			}
 		}
 		// byte-field undo: (addr, original bytes)
@@ -428,7 +464,11 @@ namespace
 			d.logf("===== REVERT done =====");
 		}
 
-		void onLeave() { applied = false; undo.clear(); slotUndo.clear(); for (void* p : bufs) bufsOld.push_back(p); bufs.clear(); cavePage = nullptr; }
+		// A map (re)loaded / we left the game: the game already freed last map's orphaned arrays in its per-map arena
+		// teardown, so DON'T hand them to the game deallocator again (double-free). Just drop the stale handles.
+		void discardVisOldNoFree() { visOld.clear(); }
+
+		void onLeave() { applied = false; undo.clear(); slotUndo.clear(); discardVisOldNoFree(); for (void* p : bufs) bufsOld.push_back(p); bufs.clear(); cavePage = nullptr; }
 		~Patcher() { try { revert(); } catch (...) {} for (void* p : bufsOld) VirtualFree(p, 0, MEM_RELEASE); }
 
 	private:
@@ -481,9 +521,20 @@ private:
 	{
 		try
 		{
-			if (s.currentGameState != mGame) { mPatcher.onLeave(); return; }
+			if (s.currentGameState != mGame) { mPatcher.onLeave(); return; } // left Halo 2 -> drop handles (game frees its arrays)
+			// Only (re)apply once we're FULLY in-game. During a save-and-quit / loading screen the game is tearing
+			// down or rebuilding its cluster arrays, and touching them mid-transition is unsafe - so we wait. Leaving
+			// to menu already dropped our handles via onLeave above, so the enlarged limit is naturally gone until we
+			// re-apply here on the new map.
+			if (s.currentPlayState != PlayState::Ingame) return;
 			lockOrThrow(settingsWeak, settings);
-			if (settings->uncapClusterLimitToggle->GetValue()) mPatcher.apply();
+			if (settings->uncapClusterLimitToggle->GetValue())
+			{
+				// map (re)load: the previous map's orphaned game-heap arrays were freed by the game's teardown, so
+				// drop them WITHOUT re-freeing (apply()'s drainVisOld would otherwise double-free them).
+				mPatcher.discardVisOldNoFree();
+				mPatcher.apply();
+			}
 		}
 		catch (HCMRuntimeException& ex) { PLOG_DEBUG << "UncapClusterLimit MCCState: " << ex.what(); }
 	}

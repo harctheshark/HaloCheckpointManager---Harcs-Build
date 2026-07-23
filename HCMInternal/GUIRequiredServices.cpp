@@ -615,6 +615,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 			{OptionalCheatEnum::GetPlayerDatumPresenter}
 		},
 
+		{ GUIElementEnum::getPlayerAddressGUI,
+			{OptionalCheatEnum::GetPlayerDatumPresenter}
+		},
+
 
 			{ GUIElementEnum::getObjectAddressGUI,
 {OptionalCheatEnum::GetObjectAddressCLI}

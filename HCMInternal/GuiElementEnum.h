@@ -110,6 +110,7 @@
 	((fpScaleFixLegTuckGUI, (Halo2)))\
 	((animationFixesToggle, (Halo2)))\
 	((havokDebuggerGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+	((masterTickrateEnableGUI, (Halo2)))\
 	((masterTickrateToggleGUI, (Halo2)))\
 	((masterTickrateCustomGUI, (Halo2)))\
 	((aiFreezeGUI, (ALL_SUPPORTED_GAMES)))\
@@ -376,6 +377,7 @@
 ((theaterHeadingGUI, (Halo3,Halo3ODST,HaloReach,Halo4)))\
 ((debugHeadingGUI, (ALL_SUPPORTED_GAMES)))\
 	((getPlayerDatumGUI, (ALL_SUPPORTED_GAMES)))\
+	((getPlayerAddressGUI, (ALL_SUPPORTED_GAMES)))\
 	((getObjectAddressGUI, (ALL_SUPPORTED_GAMES)))\
 	((getTagAddressGUI, (ALL_SUPPORTED_GAMES)))\
 

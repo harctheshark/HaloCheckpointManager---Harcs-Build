@@ -98,16 +98,34 @@ namespace
 
 		struct Save { uintptr_t addr; std::vector<uint8_t> orig; };
 		std::vector<Save> saves;
+		std::vector<std::pair<uintptr_t, std::vector<uint8_t>>> pending; // queued writes, committed under one suspend
 
+		// Record the original bytes and QUEUE the new ones - but don't touch .text here. Both the save-record and the
+		// queue allocate on the heap, so they MUST run outside the thread-suspend window (a suspended thread could be
+		// holding the heap lock -> deadlock). commitWrites() performs the actual .text writes under the suspend.
 		void writeSaved(uintptr_t addr, const uint8_t* data, size_t len)
 		{
 			Save s; s.addr = addr; s.orig.resize(len);
 			memcpy(s.orig.data(), (void*)addr, len);
 			saves.push_back(std::move(s));
-			DWORD o; VirtualProtect((void*)addr, len, PAGE_EXECUTE_READWRITE, &o);
-			memcpy((void*)addr, data, len);
-			VirtualProtect((void*)addr, len, o, &o);
-			FlushInstructionCache(GetCurrentProcess(), (void*)addr, len);
+			pending.emplace_back(addr, std::vector<uint8_t>(data, data + len));
+		}
+
+		// Commit all queued writes with the render thread suspended, so it can't execute a half-written multi-byte
+		// instruction (the per-frame LOD-jnz/cull/decorator patches). Memory-only inside the window - no heap ops.
+		void commitWrites()
+		{
+			if (pending.empty()) return;
+			ScopedThreadSuspender suspend;
+			for (auto& pw : pending)
+			{
+				uintptr_t addr = pw.first; const std::vector<uint8_t>& bytes = pw.second;
+				DWORD o; VirtualProtect((void*)addr, bytes.size(), PAGE_EXECUTE_READWRITE, &o);
+				memcpy((void*)addr, bytes.data(), bytes.size());
+				VirtualProtect((void*)addr, bytes.size(), o, &o);
+				FlushInstructionCache(GetCurrentProcess(), (void*)addr, bytes.size());
+			}
+			pending.clear();
 		}
 
 		bool verify()
@@ -178,12 +196,14 @@ namespace
 					PLOG_INFO << "H2ShadowResolution: decorator render-distance sites don't match build 1.3528; skipped (shadows/LOD still applied).";
 			}
 
+			commitWrites(); // write all queued patches once, under a single render-thread suspend (see writeSaved)
 			applied = true;
 			return true;
 		}
 
 		void revert()
 		{
+			pending.clear(); // discard any queued-but-uncommitted writes; we're reverting to stock
 			// restore patched bytes with other threads suspended so the render thread can't execute a
 			// half-restored instruction mid-revert (races and can crash the game). Only the memory
 			// writes are inside the suspend window; saves.clear() (heap) stays outside. (ScopedThreadSuspender.)
@@ -324,8 +344,16 @@ private:
 	// when the setting was first chosen.
 	void onMCCStateChanged(const MCCState& newState)
 	{
-		if (newState.currentGameState != mGame) return;
-		if (newState.currentPlayState == PlayState::MainMenu) return;
+		if (newState.currentGameState != mGame) return; // not Halo 2 (dll may be unloaded) - nothing to touch
+		if (newState.currentPlayState != PlayState::Ingame)
+		{
+			// loading screen / menu within Halo 2: force stock so nothing of ours is live during teardown. Stop any
+			// pending live target rebuild and restore the patched bytes (revert() no-ops if we aren't applied). It's
+			// re-applied below once we're fully back in-game on the new map (unless the setting is Retail).
+			mPendingRebuild.store(false);
+			try { mPatcher.revert(); } catch (HCMRuntimeException&) {}
+			return;
+		}
 		if (mDesired == SettingsEnums::H2ShadowResolution::Retail) return;
 		if (mPatcher.isApplied()) return;
 		try { applyValue(mDesired); }

@@ -452,7 +452,7 @@ static float g_cmpTri[MAX_CMP][9];
 static volatile LONG g_cmpTriCount = 0;
 static volatile LONG g_cmpGen = 0;
 // H2 "Live Havok Bodies": actual rigid-body collision shapes (convex hulls) at their live transforms
-#define MAX_LIVE 800000
+#define MAX_LIVE 2500000   // headroom for a full map (up to 2048 objects, each a multi-tri shape) - was 800k (overflowed -> dropped objects)
 static float g_liveSeg[MAX_LIVE][6];
 static float g_liveTri[MAX_LIVE][9];
 static volatile LONG g_liveTriCount = 0;
@@ -3059,6 +3059,27 @@ static void emitH2ShapeTree(uintptr_t shape, const Xform& X, int* pn, int* pm, i
 	}
 	else if(t==17||t==19) emitH2ShapeTree(*(uintptr_t*)(shape+0x18), X, pn, pm, depth+1);   // MOPP/bv-tree wrapper -> child @ +0x18 (no xform)
 	else if(t==23) emitH2ShapeTree(*(uintptr_t*)(shape+0x40), X, pn, pm, depth+1);          // radius wrapper -> child @ +0x40 (no xform)
+	else if(t==4){                                                              // SPHERE (hkpSphereShape, IDA-confirmed):
+		float r=*(const float*)(shape+0x18);                                   // centered at local origin, radius = m_radius @+0x18
+		if(r==r&&r>0.0f&&r<1000.0f){ const float z[3]={0.0f,0.0f,0.0f}; emitH2Capsule(X, z, z, r, pm); }
+	}
+}
+
+// DIAG: record the shape-type chain (root -> leaf, following the same unwraps emitH2ShapeTree uses) into out[8].
+// Reveals what wrapper/leaf types the drawn-vs-missing objects actually are.
+static void shapeTypeChainH2(uintptr_t shape, int* out)
+{
+	int n=0;
+	__try {
+		for(int d=0; d<8; ++d){
+			if(!ok4(shape)){ out[n++]=-1; break; }
+			int t=h2ShapeType(shape); out[n++]=t;
+			if(t==21||t==17||t==19) shape=*(uintptr_t*)(shape+0x18);
+			else if(t==23) shape=*(uintptr_t*)(shape+0x40);
+			else break;   // leaf (or unknown type)
+		}
+	} __except(EXCEPTION_EXECUTE_HANDLER){}
+	for(; n<8; ++n) out[n]=-8;
 }
 
 // Build an Xform from a 13-float object/node matrix ([0]=scale,[1..3]=fwd,[4..6]=left,[7..9]=up,[10..12]=pos)
@@ -3150,11 +3171,45 @@ static void gatherAuxDrawH2(HDH* H, int tag, int mode)
 // bodies' shape AABBs (emit each shape into a scratch via the getType-based emitH2ShapeTree, then min/max). Skip
 // degenerate bodies (parked at origin, FLT_MAX, or NaN). Colour green=active / cyan=inactive (phaseColor).
 static float g_islScratch[16384][9];
+static bool bodyCurXformH2(uintptr_t body, Xform& X);   // fwd: current motion-state transform (defined below)
+
+// A shape's LOCAL-space AABB is constant, so cache it per shape: the Islands viewer then tessellates each UNIQUE
+// shape once instead of every body every frame (a busy map reuses ~dozens of shapes across ~2048 bodies). Cleared
+// when the havok world changes (level load / revert). state: 0 empty, 1 valid AABB, 2 shape emits no geometry.
+struct ShAabbEnt { uintptr_t shape; float mn[3], mx[3]; unsigned char state; };
+#define SH_AABB_N 4096
+static ShAabbEnt g_shAabb[SH_AABB_N];
+static uintptr_t g_shAabbWorld=0;
+static bool shapeLocalAabbCached(uintptr_t shape, float* mn, float* mx)
+{
+	unsigned idx=(unsigned)(shape>>4) & (SH_AABB_N-1);
+	ShAabbEnt& e=g_shAabb[idx];
+	if(e.shape==shape && e.state){
+		if(e.state==2) return false;
+		mn[0]=e.mn[0];mn[1]=e.mn[1];mn[2]=e.mn[2]; mx[0]=e.mx[0];mx[1]=e.mx[1];mx[2]=e.mx[2]; return true;
+	}
+	float (*sSeg)[6]=g_tSeg; float (*sTri)[9]=g_tTri; int ss=g_tSegMax,st=g_tTriMax;   // tessellate once, at identity
+	g_tSeg=g_liveSeg; g_tTri=g_islScratch; g_tSegMax=MAX_LIVE; g_tTriMax=16384;
+	Xform ID={{1,0,0,0,1,0,0,0,1},{0,0,0}}; int n=0,m=0; emitH2ShapeTree(shape,ID,&n,&m,0);
+	g_tSeg=sSeg; g_tTri=sTri; g_tSegMax=ss; g_tTriMax=st;
+	float lmn[3]={1e9f,1e9f,1e9f},lmx[3]={-1e9f,-1e9f,-1e9f}; bool any=false;
+	for(int t=0;t<m;++t){ const float* tr=g_islScratch[t];
+		for(int k=0;k<3;++k){ float vx=tr[k*3],vy=tr[k*3+1],vz=tr[k*3+2];
+			if(!(vx==vx&&vy==vy&&vz==vz)) continue;
+			if(fabsf(vx)>4000.0f||fabsf(vy)>4000.0f||fabsf(vz)>4000.0f) continue;
+			if(vx<lmn[0])lmn[0]=vx; if(vy<lmn[1])lmn[1]=vy; if(vz<lmn[2])lmn[2]=vz;
+			if(vx>lmx[0])lmx[0]=vx; if(vy>lmx[1])lmx[1]=vy; if(vz>lmx[2])lmx[2]=vz; any=true; } }
+	e.shape=shape;
+	if(any){ e.state=1; e.mn[0]=lmn[0];e.mn[1]=lmn[1];e.mn[2]=lmn[2]; e.mx[0]=lmx[0];e.mx[1]=lmx[1];e.mx[2]=lmx[2];
+		mn[0]=lmn[0];mn[1]=lmn[1];mn[2]=lmn[2]; mx[0]=lmx[0];mx[1]=lmx[1];mx[2]=lmx[2]; return true; }
+	e.state=2; return false;
+}
 static void drawIslandsH2(HDH* H, int tag)
 {
 	uintptr_t base=g_modBase; if(!base) return;
 	uintptr_t world=*(uintptr_t*)(base+0x15FDFE0); if(!okPtr(world)) return;
 	float (*sSeg)[6]=g_tSeg; float (*sTri)[9]=g_tTri; int sSegMax=g_tSegMax, sTriMax=g_tTriMax;   // save target
+	if(world!=g_shAabbWorld){ g_shAabbWorld=world; for(int z=0;z<SH_AABB_N;++z) g_shAabb[z].state=0; }   // clear shape-AABB cache on level/revert
 	const int arrOff[2]={0x10,0x20}, cntOff[2]={0x18,0x28};   // [0]=active, [1]=inactive
 	for(int p=0;p<2;++p){
 		uintptr_t arr=*(uintptr_t*)(world+arrOff[p]); int cnt=*(int*)(world+cntOff[p]);
@@ -3166,38 +3221,342 @@ static void drawIslandsH2(HDH* H, int tag)
 			float mn[3]={1e9f,1e9f,1e9f},mx[3]={-1e9f,-1e9f,-1e9f}; bool any=false;
 			for(int e=0;e<eCnt && e<256;++e){
 				uintptr_t body=*(uintptr_t*)(eArr+8LL*e); if(!okPtr(body)||!inMod(*(uint64_t*)body)) continue;
-				const float* T=(const float*)(body+0x190);
-				float ox=T[12],oy=T[13],oz=T[14];
-				if(!(ox==ox&&oy==oy&&oz==oz)) continue;                                   // NaN
-				if(fabsf(ox)>5000.0f||fabsf(oy)>5000.0f||fabsf(oz)>5000.0f) continue;      // FLT_MAX / parked-out
-				if(fabsf(ox)<1e-4f&&fabsf(oy)<1e-4f&&fabsf(oz)<1e-4f) continue;            // disabled body at origin
-				// rotation must be ~orthonormal — reject uninitialised/garbage motion states that skew & blow up the box
-				float l0=T[0]*T[0]+T[1]*T[1]+T[2]*T[2], l1=T[4]*T[4]+T[5]*T[5]+T[6]*T[6], l2=T[8]*T[8]+T[9]*T[9]+T[10]*T[10];
-				if(!(l0>0.25f&&l0<4.0f&&l1>0.25f&&l1<4.0f&&l2>0.25f&&l2<4.0f)) continue;
+				// island entries ARE the same hkpEntity as the component chain's v7 - use the live motion-state
+				// transform (rot @ *(body+0x68)+0x90, trans @ +0xC0), NOT the stale inline +0x190 copy.
+				Xform X; if(!bodyCurXformH2(body,X)) continue;
+				if(fabsf(X.o[0])<1e-4f&&fabsf(X.o[1])<1e-4f&&fabsf(X.o[2])<1e-4f) continue;   // disabled body at origin
 				uintptr_t shape=*(uintptr_t*)(body+0x18); if(!okPtr(shape)||!inMod(*(uint64_t*)shape)) continue;
-				Xform X; X.r[0]=T[0];X.r[1]=T[1];X.r[2]=T[2]; X.r[3]=T[4];X.r[4]=T[5];X.r[5]=T[6]; X.r[6]=T[8];X.r[7]=T[9];X.r[8]=T[10]; X.o[0]=ox;X.o[1]=oy;X.o[2]=oz;
 				g_tSeg=g_liveSeg; g_tTri=g_islScratch; g_tSegMax=MAX_LIVE; g_tTriMax=16384;   // emit shape into scratch
-				int n=0,m=0; emitH2ShapeTree(shape,X,&n,&m,0);
-				float bmn[3]={1e9f,1e9f,1e9f},bmx[3]={-1e9f,-1e9f,-1e9f}; bool bany=false;
-				for(int t=0;t<m;++t){ const float* tr=g_islScratch[t];
-					for(int k=0;k<3;++k){ float vx=tr[k*3],vy=tr[k*3+1],vz=tr[k*3+2];
-						if(!(vx==vx&&vy==vy&&vz==vz)) continue;
-						if(fabsf(vx)>4000.0f||fabsf(vy)>4000.0f||fabsf(vz)>4000.0f) continue;   // clamp stray verts
-						if(vx<bmn[0])bmn[0]=vx; if(vy<bmn[1])bmn[1]=vy; if(vz<bmn[2])bmn[2]=vz;
-						if(vx>bmx[0])bmx[0]=vx; if(vy>bmx[1])bmx[1]=vy; if(vz>bmx[2])bmx[2]=vz; bany=true; } }
-				if(!bany){ bmn[0]=bmx[0]=ox; bmn[1]=bmx[1]=oy; bmn[2]=bmx[2]=oz; }            // shape empty: bound the point
-				// drop mis-parsed shapes that yield an absurd per-body span (don't let one body inflate the island)
+				float bmn[3],bmx[3];
+				if(!shapeLocalAabbCached(shape,bmn,bmx)) continue;   // cached per-shape local AABB (tessellate once)
 				if(bmx[0]-bmn[0]>200.0f||bmx[1]-bmn[1]>200.0f||bmx[2]-bmn[2]>200.0f) continue;
-				for(int a=0;a<3;++a){ if(bmn[a]<mn[a])mn[a]=bmn[a]; if(bmx[a]>mx[a])mx[a]=bmx[a]; }
-				any=true;
-			}
-			if(any && mn[0]<=mx[0]){
-				Xform I={{1,0,0,0,1,0,0,0,1},{(mn[0]+mx[0])*0.5f,(mn[1]+mx[1])*0.5f,(mn[2]+mx[2])*0.5f}};
-				drawLocalBox(H,tag,I,(mx[0]-mn[0])*0.5f,(mx[1]-mn[1])*0.5f,(mx[2]-mn[2])*0.5f,phaseColor(p));
+				// bmn/bmx are the shape's LOCAL AABB; draw an ORIENTED box at the body transform (follows object rotation)
+				float lc[3]={(bmn[0]+bmx[0])*0.5f,(bmn[1]+bmx[1])*0.5f,(bmn[2]+bmx[2])*0.5f};
+				float cr9[9]={1,0,0,0,1,0,0,0,1};
+				Xform X2=compose(X,cr9,lc);
+				drawLocalBox(H,tag,X2,(bmx[0]-bmn[0])*0.5f,(bmx[1]-bmn[1])*0.5f,(bmx[2]-bmn[2])*0.5f,phaseColor(p));
 			}
 		}
 	}
 	g_tSeg=sSeg; g_tTri=sTri; g_tSegMax=sSegMax; g_tTriMax=sTriMax;   // restore default target
+}
+
+// ============ object -> live Havok body ("get objects from the real world") =========================
+// For each object we find its ACTUAL live rigid body and draw the body's real shape at its real physics
+// transform, instead of the phmo tag posed by the object's node matrices. Objects with no live body (an
+// unloaded room, or a bodyless object) fall through to the phmo path below - i.e. "only use phmo for
+// objects in unloaded rooms". The link is the proven, teardown-safe chain HCM already uses for live object
+// positions (GetObjectPhysics / GetHavokComponent):
+//   object+0xB4        = havok-component datum ({u16 index, u16 salt}; 0/0xFFFFFFFF = none)
+//   component table    = *(halo2.dll+0x1433EC0); data @ hdr + *(u32)(hdr+0x48); stride 0xC0; [datum.index]
+//   anchor position    = *(*(*(comp+0x70)+0x40)+0x68) + 0x80   (world physics position, hkVector4)
+// We only use that chain to get the object's live PHYSICS POSITION, then match it to a live island body
+// (the Islands viewer already reads these correctly: shape@+0x18, transform rows@+0x190, translation@+0x1C0).
+// So the only geometry ever drawn is a fully validated island body - a stale/garbage component during a
+// checkpoint-revert can at worst fail to match (-> phmo), never draw garbage. Everything is re-read fresh
+// each gather; a world-pointer change drops the static cache (see gatherLiveH2).
+struct LiveBodyH2 { float t[3]; uintptr_t body; };
+#define MAX_LIVE_BODIES 8192
+static LiveBodyH2        g_liveBodies[MAX_LIVE_BODIES];
+static int               g_liveBodyCount = 0;
+static uintptr_t         g_hkCompTable   = 0;   // resolved havok-component data table for this gather (0 = unavailable)
+static volatile unsigned g_realMatched = 0, g_realPhmo = 0;   // diag: objects drawn from a live body vs phmo fallback
+// Memory-readable diagnostic (search for the "RLBDYD01" tag). Tells us WHY objects fall to phmo:
+//   liveBodies==0 -> island read produced nothing;  compTableOk==0 -> havok-component table didn't resolve;
+//   anchorOk small -> the object->component->anchor chain is failing;  matchFail high + sampleNearest a few
+//   units -> the anchor position and body translation are offset (COM vs origin) -> widen epsilon / fix source.
+static volatile struct RealBodyDiag {
+	char     m[8];            // +0x00 "RLBDYD01" (scan for this)
+	unsigned liveBodies;      // +0x08 island bodies passing the (loose) validity check
+	unsigned compTableOk;     // +0x0C 1 = havok-component data table resolved
+	int      islRotOff;       // +0x10 offset in a sample island body of a TIGHT orthonormal rotation (-1 none)
+	int      isl190Orth;      // +0x14 1 = body+0x190 (my current guess) is tightly orthonormal
+	unsigned hkDataOff;       // +0x18 *(compHdr+0x48) - the table's data offset (0 if hdr bad)
+	unsigned nBodiesScanned;  // +0x1C island bodies scanned before finding a clean rotation
+	uint64_t hkHdrRaw;        // +0x20 *(base+0x1433EC0) - comp-table header ptr (0/garbage = wrong offset)
+	uint64_t islBodyPtr;      // +0x28 the sample island body pointer
+	float    islRot[12];      // +0x30 rotation cols at islRotOff (3 x vec4)
+	float    islTrans[3];     // +0x60 translation at islRotOff+0x30 (the body's world position per our read)
+	float    nearestObjDist;  // +0x6C distance from islTrans to the nearest object's obj+0x64 (~0 = transform OK)
+	float    nearestObjPos[3];// +0x70 that nearest object's position (obj+0x64)
+	unsigned chainObjs;       // +0x7C objects with a havok-component datum (obj+0xB4 valid)
+	unsigned cV7;             // +0x80 ...where rigid-body[0] (v7) resolved
+	unsigned cXform;          // +0x84 ...bodyCurXformH2(v7) succeeded
+	unsigned cDist;           // +0x88 ...transform within 3u of obj+0x64
+	unsigned cShapeInMod;     // +0x8C ...*(v7+0x18) is an in-module shape pointer
+	unsigned cTris;           // +0x90 ...emitH2ShapeTree produced >0 triangles (would actually draw)
+	unsigned cInIsl;          // +0x94 ...v7 pointer is ALSO in the island body list (same struct?)
+	int      sampleTris;      // +0x98 triangles produced for the first sample shape
+	unsigned islShapeInMod;   // +0x9C sanity: a sample ISLAND body's +0x18 is an in-module shape
+	uint64_t sV7;             // +0xA0 sample v7 pointer
+	uint64_t sShapeVt;        // +0xA8 sample shape's vtable (= *(*(v7+0x18)))
+	uint64_t sIslShapeVt;     // +0xB0 sample ISLAND body's shape vtable (for comparison)
+	int      sDrawTree[8];    // +0xB8 shape-type chain (root->leaf, unwrapping 17/19/21/23) of the first DRAWN object
+	int      sMissTree[8];    // +0xD8 shape-type chain of the first object that produced 0 triangles (missing)
+	uint64_t sMissLeaf;       // +0xF8 the undecoded leaf shape pointer (type 4) of that missing object
+	unsigned char sMissLeafBytes[256]; // +0x100 raw first 256 bytes of the type-4 leaf shape (decode its layout)
+	unsigned sMissLeafVtRva;  // +0x200 (type-4 shape vtable) - g_modBase  => .i64 VA = 0x180000000 + this
+	unsigned _pad3;           // +0x204
+	uint64_t sModBase;        // +0x208 halo2.dll runtime base (to map any runtime vtable to the .i64)
+} g_rbodyDiag = {{'R','L','B','D','Y','D','0','1'},0,0,-1,0,0,0,0,0,{0},{0,0,0},-1.0f,{0,0,0},0,0,0,0,0,0,0,0,0,0,0,0,{0},{0},0,{0},0,0,0};
+
+// validate + extract a live island body's world transform (same layout/guards as drawIslandsH2)
+static bool bodyXformH2(uintptr_t body, Xform& X)
+{
+	if(!okPtr(body)||!inMod(*(uint64_t*)body)) return false;
+	const float* T=(const float*)(body+0x190);
+	float ox=T[12],oy=T[13],oz=T[14];
+	if(!(ox==ox&&oy==oy&&oz==oz)) return false;                                  // NaN
+	if(fabsf(ox)>5000.0f||fabsf(oy)>5000.0f||fabsf(oz)>5000.0f) return false;    // FLT_MAX / parked-out
+	// TIGHT orthonormal test: a real Havok rotation has unit-length, mutually perpendicular columns. The old
+	// loose bounds (0.25..4) let garbage bodies through with junk transforms -> islands/objects at wrong places.
+	float l0=T[0]*T[0]+T[1]*T[1]+T[2]*T[2], l1=T[4]*T[4]+T[5]*T[5]+T[6]*T[6], l2=T[8]*T[8]+T[9]*T[9]+T[10]*T[10];
+	if(!(l0>0.9f&&l0<1.1f&&l1>0.9f&&l1<1.1f&&l2>0.9f&&l2<1.1f)) return false;
+	float d01=T[0]*T[4]+T[1]*T[5]+T[2]*T[6], d02=T[0]*T[8]+T[1]*T[9]+T[2]*T[10];
+	if(fabsf(d01)>0.05f||fabsf(d02)>0.05f) return false;
+	X.r[0]=T[0];X.r[1]=T[1];X.r[2]=T[2]; X.r[3]=T[4];X.r[4]=T[5];X.r[5]=T[6]; X.r[6]=T[8];X.r[7]=T[9];X.r[8]=T[10];
+	X.o[0]=ox;X.o[1]=oy;X.o[2]=oz; return true;
+}
+// CURRENT world transform of a Havok-2 rigid body. Live-scan confirmed layout: *(body+0x68) = motion state,
+// The current world transform is one coherent hkTransform on the motion state ms = *(body+0x68):
+//   rotation = 3 hkVector4 columns @ ms+0x90/+0xA0/+0xB0 (column-major, 16-byte stride, NO transpose)
+//   translation = hkVector4 @ ms+0xC0   <-- the m_transform translation. ms+0x70 is the COM/reported position
+//   (== obj+0x64); posing shape-local verts at the COM instead of +0xC0 shifts them by R*comLocal = the old
+//   "too high / ~45deg tilt" bug. All IDA-confirmed against the engine's own draw code (sub_180713420/C60,
+//   sub_18070E850 -> matrix consumer sub_180988BB0). Both islands and the chain use this same source.
+static bool bodyCurXformH2(uintptr_t body, Xform& X)
+{
+	if(!okPtr(body)||!inMod(*(uint64_t*)body)) return false;
+	uintptr_t ms=*(uintptr_t*)(body+0x68);
+	if(okPtr(ms)){
+		const float* R=(const float*)(ms+0x90); const float* T=(const float*)(ms+0xC0);
+		float l0=R[0]*R[0]+R[1]*R[1]+R[2]*R[2], l1=R[4]*R[4]+R[5]*R[5]+R[6]*R[6], l2=R[8]*R[8]+R[9]*R[9]+R[10]*R[10];
+		float d01=R[0]*R[4]+R[1]*R[5]+R[2]*R[6];
+		if(l0>0.9f&&l0<1.1f&&l1>0.9f&&l1<1.1f&&l2>0.9f&&l2<1.1f&&fabsf(d01)<0.05f
+			&& T[0]==T[0]&&T[1]==T[1]&&T[2]==T[2]
+			&& fabsf(T[0])<=5000.0f&&fabsf(T[1])<=5000.0f&&fabsf(T[2])<=5000.0f){
+			X.r[0]=R[0];X.r[1]=R[1];X.r[2]=R[2]; X.r[3]=R[4];X.r[4]=R[5];X.r[5]=R[6]; X.r[6]=R[8];X.r[7]=R[9];X.r[8]=R[10];
+			X.o[0]=T[0];X.o[1]=T[1];X.o[2]=T[2]; return true;
+		}
+	}
+	return bodyXformH2(body,X);   // last-resort stale inline copy (only ~correct for settled bodies)
+}
+// build the live-body position index (active + inactive islands) for this gather. SEH: island arrays can be
+// mid-rebuild during a revert/restart, and one bad island must not abort the whole object gather.
+static void buildLiveBodiesH2(uintptr_t base)
+{
+	g_liveBodyCount=0;
+	__try {
+		uintptr_t world=*(uintptr_t*)(base+0x15FDFE0); if(!okPtr(world)) return;
+		const int arrOff[2]={0x10,0x20}, cntOff[2]={0x18,0x28};   // [0]=active, [1]=inactive
+		for(int p=0;p<2;++p){
+			uintptr_t arr=*(uintptr_t*)(world+arrOff[p]); int cnt=*(int*)(world+cntOff[p]);
+			if(!okPtr(arr)||cnt<=0||cnt>100000) continue;
+			for(int i=0;i<cnt && g_liveBodyCount<MAX_LIVE_BODIES;++i){
+				uintptr_t isl=*(uintptr_t*)(arr+8LL*i); if(!okPtr(isl)) continue;
+				uintptr_t eArr=*(uintptr_t*)(isl+0x50); int eCnt=*(int*)(isl+0x58);
+				if(!okPtr(eArr)||eCnt<=0||eCnt>100000) continue;
+				for(int e=0;e<eCnt && g_liveBodyCount<MAX_LIVE_BODIES;++e){
+					uintptr_t body=*(uintptr_t*)(eArr+8LL*e); Xform X;
+					if(!bodyCurXformH2(body,X)) continue;   // live motion-state transform
+					LiveBodyH2& lb=g_liveBodies[g_liveBodyCount++]; lb.t[0]=X.o[0];lb.t[1]=X.o[1];lb.t[2]=X.o[2]; lb.body=body;
+				}
+			}
+		}
+	} __except(EXCEPTION_EXECUTE_HANDLER){ /* keep whatever we gathered before the fault */ }
+}
+// resolve the havok-component data table root for this gather (SEH: the header can be torn down on revert)
+// "havok components" s_data_array. IDA-confirmed for this build (sub_1807119A0 creates it: 512 elems, stride
+// 0xC0, pointer stored at base+0x1648940 - HCM's old XML offset 0x1433EC0 has NO xrefs and reads 0 here).
+// Engine access pattern (sub_180702DD0 et al.): data = hdr + *(u64)(hdr+0x48); comp = data + 0xC0*(u16)index.
+static void resolveHkCompTableH2(uintptr_t base)
+{
+	g_hkCompTable=0; g_rbodyDiag.hkHdrRaw=0; g_rbodyDiag.hkDataOff=0;
+	__try {
+		uintptr_t hdr=*(uintptr_t*)(base+0x1648940); g_rbodyDiag.hkHdrRaw=(uint64_t)hdr; if(!ok4(hdr)) return;
+		uint64_t dataOff=*(uint64_t*)(hdr+0x48); g_rbodyDiag.hkDataOff=(unsigned)dataOff;
+		if(!dataOff||dataOff>0x10000000ull) return;
+		g_hkCompTable=hdr+(uintptr_t)dataOff;
+	} __except(EXCEPTION_EXECUTE_HANDLER){ g_hkCompTable=0; }
+}
+// object -> its rigid bodies via the ENGINE'S OWN chain (all IDA-confirmed for this build):
+//   obj+0xB4 (u32 datum)  -> comp = table + 0xC0*(u16)datum      [engine: sub_1808DC800 reads *(obj+180)]
+//   comp+0x70             -> rigid-body records, stride 0x70, count @ comp+0x78   [sub_180702DD0/sub_180715200]
+//   record+0x40           -> v7 (runtime rigid-body wrapper)
+//   *(v7+0x68)            -> P3: motion state. HYPOTHESIS under validation: CURRENT transform = rot cols
+//                            @ P3+0x50/+0x60/+0x70, translation @ P3+0x80 (the position HCM's proven anchor
+//                            chain reads; the islands' body+0x190 copy is stale for moving bodies).
+//   *(v7+0x78)            -> v8: the havok entity (shape @ +0x18 - the same struct the islands hold).
+// Every rigid body is validated (tight orthonormal rotation, sane translation near the object, in-module shape
+// vtable); a failing rb is skipped, zero emitted -> caller falls back. Returns #bodies emitted. POD-only + SEH.
+static int emitObjectRealBodyChainH2(uintptr_t obj, int* pn, int* pm)
+{
+	int emitted=0;
+	if(!g_hkCompTable) return 0;
+	__try {
+		unsigned datum=*(unsigned*)(obj+0xB4); if(datum==0xFFFFFFFFu||datum==0) return 0;
+		uintptr_t comp=g_hkCompTable+(uintptr_t)(datum&0xFFFF)*0xC0;
+		uintptr_t rbArr=*(uintptr_t*)(comp+0x70); if(!okPtr(rbArr)) return 0;
+		int rbCount=*(int*)(comp+0x78); if(rbCount<=0||rbCount>64) return 0;
+		const float* op=(const float*)(obj+0x64);
+		for(int i=0;i<rbCount;++i){
+			// v7 IS the hkpEntity (same struct the islands hold): shape @ +0x18, live transform via its motion
+			// state (rot @ *(v7+0x68)+0x90, trans @ +0xC0). IDA-confirmed against the engine's own draw code.
+			uintptr_t v7=*(uintptr_t*)(rbArr+(uintptr_t)i*0x70+0x40); if(!okPtr(v7)) continue;
+			Xform X; if(!bodyCurXformH2(v7,X)) continue;
+			// sanity: the motion-state COM (ms+0x70, == obj+0x64) must be near this object. Check the COM, not
+			// the transform translation X.o (=ms+0xC0), since those differ by the body's local COM offset.
+			uintptr_t ms=*(uintptr_t*)(v7+0x68);
+			if(okPtr(ms)&&op[0]==op[0]){ const float* com=(const float*)(ms+0x70);
+				float dx=com[0]-op[0],dy=com[1]-op[1],dz=com[2]-op[2]; if(dx*dx+dy*dy+dz*dz>3.0f*3.0f) continue; }
+			uintptr_t shape=*(uintptr_t*)(v7+0x18); if(!okPtr(shape)||!inMod(*(uint64_t*)shape)) continue;
+			emitH2ShapeTree(shape,X,pn,pm,0);
+			++emitted;
+		}
+	} __except(EXCEPTION_EXECUTE_HANDLER){}
+	return emitted;
+}
+// nearest live island body to a physics position; returns the body ptr (even if far) + its distance in *d2.
+// Instances are at distinct positions, so the nearest match is unambiguous.
+static uintptr_t nearestLiveBodyH2(const float* P, float* d2)
+{
+	float best=1e30f; uintptr_t bb=0;
+	for(int i=0;i<g_liveBodyCount;++i){ const float* t=g_liveBodies[i].t;
+		float dx=t[0]-P[0],dy=t[1]-P[1],dz=t[2]-P[2],d=dx*dx+dy*dy+dz*dz;
+		if(d<best){ best=d; bb=g_liveBodies[i].body; } }
+	*d2=best; return bb;
+}
+static const float kRealMatchEps = 0.35f;   // position-match radius (units); widen if COM-offset misses
+// draw an object from its live Havok body if one exists; returns false if it has none (caller does phmo).
+static bool emitObjectRealBodyH2(uintptr_t obj, int* pn, int* pm)
+{
+	// The engine's own object->component->rigid-body chain draws each object's real shape at its real physics
+	// transform. If it draws nothing (the object has no live havok body: it settled into "quake mode" and left
+	// the sim, or its room deloaded) return false so the caller draws the object's OWN phmo shape at its OWN node
+	// transform. We deliberately do NOT position-match to the nearest island body: a settled object ~1 foot
+	// (~0.1 wu) from an active one would wrongly borrow its neighbour's body (old 0.35 wu match) and draw on top
+	// of it, making the settled object look missing. (nearestLiveBodyH2 / kRealMatchEps retained for diagnostics.)
+	int pm0=*pm;
+	emitObjectRealBodyChainH2(obj, pn, pm);
+	return *pm>pm0;
+}
+// scan a struct for (a) the first tight orthonormal rotation (3 cols x 4 floats) and (b) the first vec3 within
+// 0.25u of ref. -1 if not found. Plain reads - caller must be SEH-guarded.
+static void scanRotPosH2(uintptr_t s, const float* ref, int* rotOff, int* posOff)
+{
+	*rotOff=-1; *posOff=-1;
+	for(int o=0;o<0x200;o+=4){
+		const float* T=(const float*)(s+o);
+		if(*rotOff<0){
+			float l0=T[0]*T[0]+T[1]*T[1]+T[2]*T[2], l1=T[4]*T[4]+T[5]*T[5]+T[6]*T[6], l2=T[8]*T[8]+T[9]*T[9]+T[10]*T[10];
+			float d01=T[0]*T[4]+T[1]*T[5]+T[2]*T[6], d02=T[0]*T[8]+T[1]*T[9]+T[2]*T[10];
+			if(l0>0.98f&&l0<1.02f&&l1>0.98f&&l1<1.02f&&l2>0.98f&&l2<1.02f&&fabsf(d01)<0.03f&&fabsf(d02)<0.03f) *rotOff=o;
+		}
+		if(*posOff<0 && ref && ref[0]==ref[0]){
+			float dx=T[0]-ref[0],dy=T[1]-ref[1],dz=T[2]-ref[2];
+			if(dx*dx+dy*dy+dz*dz<0.25f*0.25f) *posOff=o;
+		}
+		if(*rotOff>=0&&*posOff>=0) break;
+	}
+}
+
+// DIAG: scan a sample ISLAND body for its REAL world transform. The bodies in g_liveBodies passed only a
+// LOOSE rotation check at +0x190 (col lengths 0.5..2), so +0x190 can be garbage that slipped through - which
+// is exactly what "islands draw at wrong location/transform" looks like. Here we scan each body for a TIGHT
+// orthonormal rotation (col lengths ~1.0, columns mutually perpendicular) to find where the transform really
+// lives, and record what's at +0x190 for comparison. metaTable/dataTable kept for signature compat.
+static void probeRealBodyDiagH2(uintptr_t metaTable, uintptr_t dataTable)
+{
+	g_rbodyDiag.liveBodies=(unsigned)g_liveBodyCount; g_rbodyDiag.compTableOk=(g_hkCompTable!=0)?1u:0u;
+	g_rbodyDiag.islRotOff=-1; g_rbodyDiag.isl190Orth=0; g_rbodyDiag.nBodiesScanned=0; g_rbodyDiag.islBodyPtr=0;
+	g_rbodyDiag.nearestObjDist=-1.0f;
+	__try {
+		for(int i=0;i<g_liveBodyCount;++i){
+			uintptr_t body=g_liveBodies[i].body; if(!okPtr(body)) continue;
+			g_rbodyDiag.nBodiesScanned=(unsigned)(i+1);
+			int rotOff=-1;
+			for(int o=0x10;o<0x260;o+=4){
+				const float* T=(const float*)(body+o);
+				float l0=T[0]*T[0]+T[1]*T[1]+T[2]*T[2], l1=T[4]*T[4]+T[5]*T[5]+T[6]*T[6], l2=T[8]*T[8]+T[9]*T[9]+T[10]*T[10];
+				float d01=T[0]*T[4]+T[1]*T[5]+T[2]*T[6], d02=T[0]*T[8]+T[1]*T[9]+T[2]*T[10];
+				if(l0>0.98f&&l0<1.02f&&l1>0.98f&&l1<1.02f&&l2>0.98f&&l2<1.02f&&fabsf(d01)<0.03f&&fabsf(d02)<0.03f){ rotOff=o; break; }
+			}
+			if(rotOff<0) continue;                        // no clean rotation in this body; try the next
+			g_rbodyDiag.islBodyPtr=(uint64_t)body; g_rbodyDiag.islRotOff=rotOff;
+			const float* R=(const float*)(body+rotOff);       for(int k=0;k<12;++k) g_rbodyDiag.islRot[k]=R[k];
+			const float* Tr=(const float*)(body+rotOff+0x30); g_rbodyDiag.islTrans[0]=Tr[0];g_rbodyDiag.islTrans[1]=Tr[1];g_rbodyDiag.islTrans[2]=Tr[2];
+			const float* T9=(const float*)(body+0x190);
+			float m0=T9[0]*T9[0]+T9[1]*T9[1]+T9[2]*T9[2], m1=T9[4]*T9[4]+T9[5]*T9[5]+T9[6]*T9[6];
+			g_rbodyDiag.isl190Orth=(m0>0.98f&&m0<1.02f&&m1>0.98f&&m1<1.02f)?1:0;
+			// GROUND TRUTH: nearest object position (obj+0x64) to this body's translation. ~0 => transform is right.
+			float best=1e30f, bp[3]={0,0,0};
+			for(int oi=0;oi<2048;++oi){
+				unsigned dOff=*(unsigned*)(metaTable+(uintptr_t)oi*0xC+0x8);
+				if(dOff==0xFFFFFFFFu) continue;
+				uintptr_t obj=dataTable+dOff; if(!ok4(obj)||*(unsigned short*)(obj+0x00)==0xFFFF) continue;
+				const float* op=(const float*)(obj+0x64); if(!(op[0]==op[0]&&op[1]==op[1]&&op[2]==op[2])) continue;
+				float dx=op[0]-Tr[0],dy=op[1]-Tr[1],dz=op[2]-Tr[2],d=dx*dx+dy*dy+dz*dz;
+				if(d<best){ best=d; bp[0]=op[0];bp[1]=op[1];bp[2]=op[2]; }
+			}
+			g_rbodyDiag.nearestObjDist=(best<1e29f)?sqrtf(best):-1.0f;
+			g_rbodyDiag.nearestObjPos[0]=bp[0];g_rbodyDiag.nearestObjPos[1]=bp[1];g_rbodyDiag.nearestObjPos[2]=bp[2];
+			break;
+		}
+	} __except(EXCEPTION_EXECUTE_HANDLER){}
+
+	// chain breakdown: where objects drop on the way to a drawn real body (IDA-confirmed layout). cShapeInMod
+	// high but cTris low => shapes are valid but emitH2ShapeTree can't decode the leaf type (the mesh/MOPP case).
+	g_rbodyDiag.chainObjs=0; g_rbodyDiag.cV7=0; g_rbodyDiag.cXform=0; g_rbodyDiag.cDist=0;
+	g_rbodyDiag.cShapeInMod=0; g_rbodyDiag.cTris=0; g_rbodyDiag.cInIsl=0;
+	g_rbodyDiag.sampleTris=0; g_rbodyDiag.sV7=0; g_rbodyDiag.sShapeVt=0;
+	g_rbodyDiag.islShapeInMod=0; g_rbodyDiag.sIslShapeVt=0;
+	g_rbodyDiag.sDrawTree[0]=-9; g_rbodyDiag.sMissTree[0]=-9;   // -9 = uncaptured
+	g_rbodyDiag.sMissLeafVtRva=0; g_rbodyDiag.sModBase=(uint64_t)g_modBase;
+	if(g_liveBodyCount>0){ uintptr_t ib=g_liveBodies[0].body;
+		__try { if(okPtr(ib)){ uintptr_t s=*(uintptr_t*)(ib+0x18);
+			if(okPtr(s)){ g_rbodyDiag.islShapeInMod=inMod(*(uint64_t*)s)?1u:0u; g_rbodyDiag.sIslShapeVt=*(uint64_t*)s; } } }
+		__except(EXCEPTION_EXECUTE_HANDLER){} }
+	__try {
+		int sampled=0;
+		float (*sSeg)[6]=g_tSeg; float (*sTri)[9]=g_tTri; int sSegMax=g_tSegMax, sTriMax=g_tTriMax;
+		for(int oi=0;oi<2048 && g_hkCompTable;++oi){
+			unsigned dOff=*(unsigned*)(metaTable+(uintptr_t)oi*0xC+0x8);
+			if(dOff==0xFFFFFFFFu) continue;
+			uintptr_t obj=dataTable+dOff; if(!ok4(obj)||*(unsigned short*)(obj+0x00)==0xFFFF) continue;
+			unsigned datum=*(unsigned*)(obj+0xB4); if(datum==0xFFFFFFFFu||datum==0) continue;
+			g_rbodyDiag.chainObjs++;
+			uintptr_t comp=g_hkCompTable+(uintptr_t)(datum&0xFFFF)*0xC0;
+			uintptr_t rbArr=*(uintptr_t*)(comp+0x70); if(!okPtr(rbArr)) continue;
+			int rbCount=*(int*)(comp+0x78); if(rbCount<=0||rbCount>64) continue;
+			uintptr_t v7=*(uintptr_t*)(rbArr+0x40); if(!okPtr(v7)) continue;   // rigid body 0
+			g_rbodyDiag.cV7++;
+			Xform X; if(!bodyCurXformH2(v7,X)) continue; g_rbodyDiag.cXform++;
+			const float* op=(const float*)(obj+0x64); uintptr_t ms=*(uintptr_t*)(v7+0x68);
+			if(okPtr(ms)&&op[0]==op[0]){ const float* com=(const float*)(ms+0x70);
+				float dx=com[0]-op[0],dy=com[1]-op[1],dz=com[2]-op[2]; if(dx*dx+dy*dy+dz*dz>3.0f*3.0f) continue; }
+			g_rbodyDiag.cDist++;
+			uintptr_t shape=*(uintptr_t*)(v7+0x18); if(!okPtr(shape)||!inMod(*(uint64_t*)shape)) continue;
+			g_rbodyDiag.cShapeInMod++;
+			for(int k=0;k<g_liveBodyCount;++k) if(g_liveBodies[k].body==v7){ g_rbodyDiag.cInIsl++; break; }
+			g_tSeg=g_liveSeg; g_tTri=g_islScratch; g_tSegMax=MAX_LIVE; g_tTriMax=16384;
+			int n=0,m=0; emitH2ShapeTree(shape,X,&n,&m,0);
+			if(m>0){ g_rbodyDiag.cTris++; if(g_rbodyDiag.sDrawTree[0]==-9) shapeTypeChainH2(shape,(int*)g_rbodyDiag.sDrawTree); }
+			else if(g_rbodyDiag.sMissTree[0]==-9){   // undecoded leaf: capture the tree + dump the leaf's raw bytes
+				shapeTypeChainH2(shape,(int*)g_rbodyDiag.sMissTree);
+				__try { uintptr_t leaf=shape;
+					for(int d=0;d<8;++d){ int tt=h2ShapeType(leaf);
+						if(tt==21||tt==17||tt==19) leaf=*(uintptr_t*)(leaf+0x18);
+						else if(tt==23) leaf=*(uintptr_t*)(leaf+0x40);
+						else break; }
+					g_rbodyDiag.sMissLeaf=(uint64_t)leaf;
+					if(okPtr(leaf)){ const unsigned char* lb=(const unsigned char*)leaf; for(int b=0;b<256;++b) g_rbodyDiag.sMissLeafBytes[b]=lb[b];
+						uint64_t vt=*(uint64_t*)leaf; if(g_modBase&&vt>g_modBase) g_rbodyDiag.sMissLeafVtRva=(unsigned)(vt-g_modBase); }
+				} __except(EXCEPTION_EXECUTE_HANDLER){}
+			}
+			if(!sampled){ sampled=1; g_rbodyDiag.sV7=(uint64_t)v7; g_rbodyDiag.sShapeVt=*(uint64_t*)shape; g_rbodyDiag.sampleTris=m; }
+		}
+		g_tSeg=sSeg; g_tTri=sTri; g_tSegMax=sSegMax; g_tTriMax=sTriMax;
+	} __except(EXCEPTION_EXECUTE_HANDLER){}
 }
 
 // object -> def -> hlmt -> phmo; walk the phmo Rigid Bodies block; each rigid body's runtime shape pointer is
@@ -3225,6 +3584,10 @@ static void emitObjectH2(uintptr_t obj, unsigned char type, uintptr_t tableBase,
 			return;
 		}
 	}
+	// REAL WORLD: draw the object from its live Havok body if it has one; only objects with no live body
+	// (unloaded room / bodyless) fall through to the phmo tag path below. (Dead bipeds ragdoll here too.)
+	if(emitObjectRealBodyH2(obj, pn, pm)){ g_realMatched++; return; }
+	g_realPhmo++;
 	unsigned hlmtIdx=*(unsigned short*)(defTag+0x38); if(hlmtIdx==0xFFFF) return;
 	uintptr_t hlmt=h2TagData(tableBase,hlmtIdx,poolA,poolB); if(!ok4(hlmt)) return;
 	unsigned phmoIdx=*(unsigned short*)(hlmt+0x24); if(phmoIdx==0xFFFF) return;
@@ -3282,8 +3645,40 @@ static void gatherLiveH2()
 	uintptr_t tableBase=metaHeader+0x20+(uintptr_t)numTagGroups*0x0C;
 	uintptr_t metaTable=metaHdr+0x58, dataTable=dataHdr+0x48;
 
+	// real-world object read: on a world-pointer change (checkpoint revert / level restart) drop the static
+	// cache so no stale geometry is reused (the "frozen on revert" fix); then resolve the havok-component table
+	// and index the live island bodies fresh, so each object below can be drawn from its actual Havok body.
+	static uintptr_t s_lastWorld=0;
+	uintptr_t curWorld=*(uintptr_t*)(base+0x15FDFE0);
+	if(curWorld!=s_lastWorld){ s_lastWorld=curWorld; g_staticSig=0xFFFFFFFFu; }
+	resolveHkCompTableH2(base);
+	buildLiveBodiesH2(base);
+	g_realMatched=0; g_realPhmo=0;
+	// DIAG (RLBDYD01): a FULL redundant object pass with shape emission - do it rarely (every ~2s), not per frame.
+	{ static unsigned s_diagTick=0; if((s_diagTick++ % 128u)==0u) probeRealBodyDiagH2(metaTable, dataTable); }
+
+	// TRANSITION GUARD: on a revert/restart the engine restores the object table (final positions) BEFORE the
+	// havok world finishes rebuilding. A gather in that window can pair an object with a half-initialised body -
+	// new transform already written but the freed previous owner's SHAPE pointer still in place (memory reuse) -
+	// e.g. a small crate rendering as a door. The object's key looks final and unchanged, so the static cache
+	// would preserve that garbage indefinitely, and restart-vs-revert reuse memory differently (different objects
+	// wrong each way). Detect ANY change in the live body-pointer SET and force full re-gathers until it has
+	// been stable for a few frames, so nothing captured mid-transition can persist.
+	{
+		static uintptr_t prevSet[MAX_LIVE_BODIES]; static int prevN=-1; static int holdOff=0;
+		static uintptr_t curSet[MAX_LIVE_BODIES];
+		for(int i=0;i<g_liveBodyCount;++i) curSet[i]=g_liveBodies[i].body;
+		if(g_liveBodyCount>1) qsort(curSet,g_liveBodyCount,sizeof(uintptr_t),cmpUptr);
+		bool setChanged=(prevN!=g_liveBodyCount);
+		if(!setChanged) for(int i=0;i<g_liveBodyCount;++i) if(curSet[i]!=prevSet[i]){ setChanged=true; break; }
+		if(g_liveBodyCount>0) memcpy(prevSet,curSet,sizeof(uintptr_t)*(size_t)g_liveBodyCount);
+		prevN=g_liveBodyCount;
+		if(setChanged) holdOff=4;                       // this gather + the next few rebuild from scratch
+		if(holdOff>0){ --holdOff; g_staticSig=0xFFFFFFFFu; }
+	}
+
 	// PASS 1 (cheap — no tag resolution / geometry): classify each live object static vs dynamic by key change.
-	static int dynSlot[1024]; int dynN=0;
+	static int dynSlot[2048]; int dynN=0;   // was 1024 - a busy map can have >1024 moving/animated objects
 	unsigned staticSig=2166136261u;
 	for(int i=0;i<2048;++i){
 		unsigned dataOff=*(unsigned*)(metaTable+(uintptr_t)i*0xC+0x8);
@@ -3299,7 +3694,7 @@ static void gatherLiveH2()
 			else if(type==0 && *(float*)(obj+0xEC)<=0.0f) dyn=true;
 		}
 		g_objStatic[i]=!dyn;
-		if(dyn){ if(dynN<1024) dynSlot[dynN++]=i; }
+		if(dyn){ if(dynN<2048) dynSlot[dynN++]=i; }
 		else { staticSig=(staticSig^(unsigned)i)*16777619u; staticSig=(staticSig^key)*16777619u; }
 	}
 

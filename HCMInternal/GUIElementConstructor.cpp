@@ -6,6 +6,7 @@
 #include "GUIElementEnum.h"
 
 #include "GUISimpleButton.h"
+#include "GUIButtonWithCopyableResult.h"
 #include "GUISimpleToggle.h"
 #include "GUISpeedhack.h"
 #include "GUIInvulnerability.h"
@@ -474,8 +475,7 @@ private:
 							createNestedElement(GUIElementEnum::fpScaleFixLegTuckGUI),
 							createNestedElement(GUIElementEnum::animationFixesToggle),
 							createNestedElement(GUIElementEnum::havokDebuggerGUI),
-							createNestedElement(GUIElementEnum::masterTickrateToggleGUI),
-							createNestedElement(GUIElementEnum::masterTickrateCustomGUI),
+							createNestedElement(GUIElementEnum::masterTickrateEnableGUI),
 							createNestedElement(GUIElementEnum::aiFreezeGUI),
 							createNestedElement(GUIElementEnum::medusaGUI),
 							createNestedElement(GUIElementEnum::forceTeleportGUI),
@@ -649,6 +649,14 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Starts an in-process Havok Visual Debugger server. Connect the Havok Visual Debugger client to 127.0.0.1:25001. Halo 3: live Havok world (collision, broadphase, islands, soft ceilings). Halo 2: static world BSP collision (in the 'BSP Collision' tab). Re-establishes on each enable so map switches don't need a restart."), std::nullopt, "Havok Debugger", settings->havokDebuggerToggle
 						));
+
+				case GUIElementEnum::masterTickrateEnableGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIToggleWithChildren<GUIToggleWithChildrenParameters::AlwaysShowChildren, false>>
+						(game, ToolTipCollection("Halo 2: arm the master simulation tickrate. Off by default and never saved to a preset - the 30/60 toggle and value box below are always visible (and reflect the real tickrate), but only take effect while this is checked, so you can't change the tickrate by accident. Unchecking it restores the game's stock tickrate."), std::nullopt, "Master Tickrate", settings->masterTickrateEnabled, headerChildElements
+							{
+							createNestedElement(GUIElementEnum::masterTickrateToggleGUI),
+							createNestedElement(GUIElementEnum::masterTickrateCustomGUI),
+							}));
 
 				case GUIElementEnum::masterTickrateToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
@@ -2446,13 +2454,18 @@ private:
 					(game, ToolTipCollection("Debug tools"), "Debug", headerChildElements
 						{ 
 						createNestedElement(GUIElementEnum::getPlayerDatumGUI),
+						createNestedElement(GUIElementEnum::getPlayerAddressGUI),
 						createNestedElement(GUIElementEnum::getObjectAddressGUI),
 						createNestedElement(GUIElementEnum::getTagAddressGUI),
 						}));
 
 				case GUIElementEnum::getPlayerDatumGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-						(game, ToolTipCollection("Copies the player datum to the clipboard"), std::nullopt, "Get Player Datum", settings->getPlayerDatumEvent));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIButtonWithCopyableResult>
+						(game, ToolTipCollection("Resolves the local player's object datum into the box, ready to copy (also copied to clipboard)."), "Get Player Datum", settings->getPlayerDatumEvent, settings->getPlayerDatumResult));
+
+				case GUIElementEnum::getPlayerAddressGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIButtonWithCopyableResult>
+						(game, ToolTipCollection("Resolves the local player's object (heap) address into the box, ready to copy (also copied to clipboard)."), "Get Player Address", settings->getPlayerAddressEvent, settings->getPlayerAddressResult));
 
 
 

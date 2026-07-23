@@ -44,18 +44,31 @@ public:
 	std::shared_ptr<ActionEvent> presetSaveEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> presetLoadEvent = std::make_shared<ActionEvent>();
 
-	// Write EVERY setting (including cheat toggles) to the given file - the complete allPresetOptions, not the
-	// curated persist-subset. That's what makes a preset able to turn features on/off.
+	// Presets snapshot EVERY setting EXCEPT a deliberately-excluded few (see presetOptionsExcludingGated): the master
+	// tickrate (its arming gate + value) and the Season 7 physics fix. Those are per-session, potentially game-
+	// destabilising toggles the user wants to arm by hand each boot, never auto-restored by a loaded profile.
+	std::vector<SerialisableSetting*> presetOptionsExcludingGated()
+	{
+		std::vector<SerialisableSetting*> out;
+		out.reserve(allPresetOptions.size());
+		for (auto* s : allPresetOptions)
+			if (s != masterTickrateEnabled.get() && s != customTickrate.get() && s != season7PhysicsToggle.get())
+				out.push_back(s);
+		return out;
+	}
+
+	// Write every setting (including cheat toggles) to the given file - EXCEPT the gated ones above. That's what
+	// makes a preset able to turn features on/off, while leaving the tickrate / Season 7 physics out of profiles.
 	void savePresetToFile(const std::string& fullFilePath)
 	{
-		mSerialiser->serialiseToPath(fullFilePath, allPresetOptions);
+		mSerialiser->serialiseToPath(fullFilePath, presetOptionsExcludingGated());
 	}
 
 	// Apply a full settings snapshot from the given file. Each setting fires its valueChangedEvent, so features
 	// react live. Settings absent from the file keep their current value. MUST be called on the render thread.
 	void loadPresetFromFile(const std::string& fullFilePath)
 	{
-		mSerialiser->deserialiseFromPath(fullFilePath, allPresetOptions);
+		mSerialiser->deserialiseFromPath(fullFilePath, presetOptionsExcludingGated());
 	}
 
 	//	hotkeys - see HotkeyEventsLambdas for how they connect to respective toggle (they just flip the value)
@@ -163,6 +176,7 @@ public:
 	std::shared_ptr<ActionEvent> triggerOverlayFilterStringCopyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> triggerOverlayFilterStringPasteEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> getPlayerDatumEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> getPlayerAddressEvent = std::make_shared<ActionEvent>(); // resolve the local player's object (heap) address
 	std::shared_ptr<ActionEvent> sensResetCountsEvent = std::make_shared<ActionEvent>();
 
 	
@@ -515,6 +529,22 @@ public:
 			nameof(getTagAddressDWORD)
 		);
 
+	// Result boxes for the Debug "Get Player Datum" / "Get Player Address" buttons: the presenter writes the resolved
+	// value here and the read-only GUI box displays it so the user can select & copy it (vs a transient on-screen print).
+	std::shared_ptr<BinarySetting<std::string>> getPlayerDatumResult = std::make_shared<BinarySetting<std::string>>
+		(
+			"",
+			[](std::string in) { return true; },
+			nameof(getPlayerDatumResult)
+		);
+
+	std::shared_ptr<BinarySetting<std::string>> getPlayerAddressResult = std::make_shared<BinarySetting<std::string>>
+		(
+			"",
+			[](std::string in) { return true; },
+			nameof(getPlayerAddressResult)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> forceTeleportApplyToPlayer = std::make_shared<BinarySetting<bool>>
 		(
 			true,
@@ -742,6 +772,17 @@ public:
 			1024.f,
 			[](float in) { return in >= 0.f; },
 			nameof(farClipDistance)
+		);
+
+	// Master-tickrate arming gate. OFF by default and deliberately EXCLUDED from presets/normal persistence (see
+	// presetOptionsExcludingGated), so every boot starts un-armed: the tickrate value input + 60/30 flip only appear
+	// (GUIToggleWithChildren) and only apply once the user turns this on, so the tickrate can't be nudged by accident.
+	// Turning it OFF restores the game's stock tickrate (MasterTickrate subscribes to this).
+	std::shared_ptr<BinarySetting<bool>> masterTickrateEnabled = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(masterTickrateEnabled)
 		);
 
 	// Halo 2: arbitrary master simulation tickrate (Hz). Applied by the MasterTickrate cheat, which also writes

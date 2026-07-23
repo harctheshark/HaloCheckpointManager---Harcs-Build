@@ -318,14 +318,37 @@ namespace
 			return true;
 		}
 
+		// Zero the STALE inline shadow-manager counts. While our enlarged buffers were installed the engine wrote
+		// shadow entries into THEM, never the inline manager (unk_181660C70) - so the inline manager still holds a
+		// count + entry pointers from before we applied, and those entries reference structures that have since been
+		// freed/reused. The instant revert() restores the lea sites, the render thread walks this inline manager
+		// again and dereferences a dangling entry (its hash table) -> AV (the confirmed toggle-off crash). Zero the
+		// counts so the engine walks NOTHING until it repopulates the manager fresh next frame - exactly the cure
+		// that made UncapClusterLimit's toggle-off safe. Layout: unk_181660C70, 4 categories, stock stride 0x484
+		// (32*36+4), count dword @ +0x480 (32*36). POD-only + SEH so a wrong base can't fault the process.
+		static void zeroInlineMgrCountsSEH(uintptr_t base)
+		{
+			__try
+			{
+				for (int i = 0; i < 4; ++i)
+					*(volatile uint32_t*)(base + 0x1660C70 + (uint32_t)i * 0x484 + 0x480) = 0;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER) {}
+		}
+
 		void revert()
 		{
+			// halo2 still mapped where we patched? (the dtor path can run mid-unload)
+			bool live = base && (HMODULE)base == GetModuleHandleA("halo2.dll");
 			// restore patched bytes in reverse order, with other threads suspended so the render
 			// thread can't execute a half-restored instruction (that races the revert and can crash
 			// the game). Only the memory writes are inside the suspend window; heap ops (saves.clear,
 			// buffer queueing) stay OUTSIDE it. (See ScopedThreadSuspender.)
 			{
 				ScopedThreadSuspender suspend;
+				// zero the stale inline-manager counts BEFORE restoring the lea sites, so the first post-revert
+				// frame walks an empty (safe) manager instead of dangling entries. (Under the suspend window.)
+				if (live) zeroInlineMgrCountsSEH(base);
 				for (auto it = saves.rbegin(); it != saves.rend(); ++it)
 				{
 					DWORD o; VirtualProtect((void*)it->addr, it->orig.size(), PAGE_EXECUTE_READWRITE, &o);
@@ -389,11 +412,25 @@ private:
 		catch (HCMRuntimeException&) {}
 	}
 
-	// re-apply on Halo 2 load if the toggle was flipped on while halo2.dll wasn't loaded
+	// Lifecycle: our buffer relocation is live ONLY while fully in a game. On save-and-quit / loading screens we
+	// force stock (revert zeros the stale inline-manager counts + restores the lea sites), and re-apply once we're
+	// back in-game on the new map. Our relocated buffers are HCM-owned (not game-heap arrays), so revert() here has
+	// no game double-free risk - unlike the cluster/visibility uncaps.
 	void onMCCStateChanged(const MCCState& newState)
 	{
-		if (newState.currentGameState != mGame) return;
-		if (newState.currentPlayState == PlayState::MainMenu) return;
+		if (newState.currentGameState != mGame)
+		{
+			// left Halo 2: if the module is momentarily still loaded, drop to stock; otherwise it unloaded and took
+			// our patches with it (the dtor also guards on the module being present).
+			if (mPatcher.isApplied() && GetModuleHandleA("halo2.dll"))
+				try { mPatcher.revert(); } catch (HCMRuntimeException&) {}
+			return;
+		}
+		if (newState.currentPlayState != PlayState::Ingame)
+		{
+			try { mPatcher.revert(); } catch (HCMRuntimeException&) {} // force stock during teardown/menu
+			return;
+		}
 		try
 		{
 			lockOrThrow(settingsWeak, settings);

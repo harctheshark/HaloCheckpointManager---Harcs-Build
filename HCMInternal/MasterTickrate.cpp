@@ -126,6 +126,8 @@ private:
 	ScopedCallback<ActionEvent> mFlipCallback;
 	// fires when the user commits a value in the "Custom Tickrate (Hz)" input
 	ScopedCallback<eventpp::CallbackList<void(int&)>> mCustomRateChangedCallback;
+	// fires when the user arms/disarms the "Master Tickrate" gate; disarming restores the stock tickrate
+	ScopedCallback<eventpp::CallbackList<void(bool&)>> mEnableChangedCallback;
 	// re-apply the custom rate on level load (the game resets the timing struct each load)
 	ScopedCallback<eventpp::CallbackList<void(const MCCState&)>> mMCCStateChangedCallback;
 	// runs each game tick on the GAME thread; performs the deferred collision rebuild at a safe point
@@ -142,6 +144,13 @@ private:
 
 	TickrateScalarPatcher mScalar;
 	std::atomic<bool> mPendingRebuild{ false };
+
+	// The engine's stock collision scalar is 30.0 (flt_180C32AA0). We only force a live rebuild of existing collision
+	// shapes when our scalar actually CHANGES from what they were last built with. Rebuilding to the SAME value - e.g.
+	// flipping to 30 Hz, whose scalar == stock - would walk the whole object table and call the engine's Havok
+	// teardown/rebuild on every object for zero benefit, which is pure crash risk around level transitions.
+	static constexpr float kStockScalar = 30.0f;
+	float mLastAppliedScalar = kStockScalar; // scalar the live collision shapes were last built with (stock at launch)
 
 	// --- game functions/data we call to force a live collision rebuild (halo2.dll v1.3528 RVAs) ---
 	using RecreateCollisionFn = uint32_t(__fastcall*)(uint16_t objectIndex);   // sub_180705B20 (self-no-ops if none)
@@ -168,20 +177,63 @@ private:
 			throw HCMRuntimeException(std::format("Failed to write tickrate dt: {}", MultilevelPointer::GetLastError()));
 	}
 
+	// Reflect `rate` in the "Custom Tickrate (Hz)" box so it always shows the real chosen rate (e.g. after the 30/60
+	// flip, or after a level load re-reads the game). Sets BOTH the committed value and the display copy directly -
+	// NOT via UpdateValueWithInput - so it updates the box without re-firing onSetCustomRate.
+	void setBox(int rate)
+	{
+		if (auto settings = settingsWeak.lock())
+		{
+			settings->customTickrate->GetValue() = rate;
+			settings->customTickrate->GetValueDisplay() = rate;
+		}
+	}
+
 	// Point the collision scalar at `rate` and take precedence over Season7Physics. May defer (no-op) if halo2.dll
-	// isn't loaded yet; throws only on a build mismatch.
-	void applyScalarForRate(int rate)
+	// isn't loaded yet; throws only on a build mismatch. Returns true only if the scalar actually CHANGED from the
+	// value the current collision shapes were built with (i.e. a live rebuild is worth doing).
+	bool applyScalarForRate(int rate)
 	{
 		if (auto settings = settingsWeak.lock())
 			settings->customTickrateScalarActive = true; // custom scalar owns 0x70DBFA now; Season7Physics stands down
-		if (!mScalar.apply()) return; // module not loaded yet
-		mScalar.setScalar((float)rate);
+		if (!mScalar.apply()) return false; // module not loaded yet
+		float newScalar = (float)rate;
+		bool changed = (newScalar != mLastAppliedScalar);
+		mScalar.setScalar(newScalar);
+		mLastAppliedScalar = newScalar;
+		return changed;
+	}
+
+	// true only while the user has armed the "Master Tickrate" gate. The value input / flip button are hidden until
+	// then, so this is a belt-and-suspenders guard against any stray apply while disarmed.
+	bool isArmed()
+	{
+		auto settings = settingsWeak.lock();
+		return settings && settings->masterTickrateEnabled->GetValue();
+	}
+
+	// Arm/disarm gate. Arming just reveals the controls (nothing applies until the user picks a rate). Disarming
+	// returns the game to its stock 60 Hz tickrate and releases the collision scalar (so Season 7 physics can reclaim
+	// it), and stops the level-load re-arm.
+	void onEnableChanged(bool& enabled)
+	{
+		if (enabled) return;
+		try
+		{
+			if (auto settings = settingsWeak.lock()) settings->customTickrateScalarActive = false;
+			if (mScalar.isApplied()) mScalar.revert();
+			auto mccStateHook = mccStateHookWeak.lock();
+			if (mccStateHook && mccStateHook->isGameCurrentlyPlaying(mGame))
+				writeRate((int16_t)60); // stock Halo 2 sim rate
+		}
+		catch (HCMRuntimeException& ex) { PLOG_DEBUG << "MasterTickrate disarm skipped: " << ex.what(); }
 	}
 
 	// user typed an arbitrary rate: set tickrate+dt, match the collision scalar, and queue a live rebuild.
 	void onSetCustomRate(int& newRate)
 	{
 		PLOG_DEBUG << "MasterTickrate onSetCustomRate: " << newRate;
+		if (!isArmed()) return; // gate disarmed: ignore
 		try
 		{
 			lockOrThrow(mccStateHookWeak, mccStateHook);
@@ -195,10 +247,12 @@ private:
 
 			int16_t rate16 = (int16_t)newRate; // validator restricts to 3..32766 (fits the signed int16 field; 1-2 crash)
 			writeRate(rate16);
-			applyScalarForRate(newRate);
-			mPendingRebuild.store(true); // rebuild existing shapes on the next game tick (safe point)
+			// only queue the (risky) live collision rebuild when the scalar actually changed - a no-op rebuild just
+			// churns every Havok body for nothing and is a crash risk when a level switch follows.
+			bool rebuild = applyScalarForRate(newRate);
+			if (rebuild) mPendingRebuild.store(true); // rebuild existing shapes on the next game tick (safe point)
 
-			messagesGUI->addMessage(std::format("Master tickrate set to {} Hz (rebuilding collision).", (int)rate16));
+			messagesGUI->addMessage(std::format("Master tickrate set to {} Hz{}.", (int)rate16, rebuild ? " (rebuilding collision)" : ""));
 		}
 		catch (HCMRuntimeException ex)
 		{
@@ -213,6 +267,10 @@ private:
 	{
 		if (newState.currentGameState != mGame) return;
 		if (newState.currentPlayState != PlayState::Ingame) return;
+
+		// reflect the game's REAL tickrate in the box whenever we (re)enter a game (the game resets it each load)
+		{ int16_t real = 0; if (masterTickratePointer->readData(&real) && real > 0) setBox(real); }
+
 		auto settings = settingsWeak.lock();
 		if (!settings || !settings->customTickrateScalarActive) return;
 		try
@@ -220,8 +278,39 @@ private:
 			int rate = settings->customTickrate->GetValue();
 			writeRate((int16_t)rate);
 			applyScalarForRate(rate);
+			setBox(rate); // armed: we just re-applied the chosen rate, so show it (overrides the reset value above)
 		}
 		catch (HCMRuntimeException& ex) { PLOG_DEBUG << "MasterTickrate re-arm skipped: " << ex.what(); }
+	}
+
+	// Raw object-table walk + engine collision rebuild, isolated in its own function with only POD locals so it can be
+	// SEH-wrapped: if the object header table is mid-rebuild during a level transition, a fault here is caught and the
+	// rebuild abandoned instead of crashing the game. Returns objects rebuilt, or -1 if a structured exception fired.
+	static int rebuildAllCollisionSEH(uintptr_t base, GetObjectFn getObject, RecreateCollisionFn recreate)
+	{
+		__try
+		{
+			uintptr_t headerPtr = *(uintptr_t*)(base + kObjectHeaderPtrRVA); // qword_1818B7398 (object header table)
+			if (!headerPtr || IsBadReadPtr((void*)headerPtr, 0x50)) return 0; // table not up / not readable
+			uintptr_t dataRegion = headerPtr + *(uintptr_t*)(headerPtr + kHeaderDataOffset); // first header entry
+			uint32_t count = *(uint32_t*)(headerPtr + kHeaderCountOffset);
+			if (count > kMaxObjects) count = kMaxObjects; // clamp to the array's real capacity (never read past it)
+
+			int rebuilt = 0;
+			for (uint32_t i = 0; i < count; ++i)
+			{
+				uintptr_t objData = getObject(dataRegion + (uintptr_t)kHeaderStride * i); // 0 for empty/deleted slots
+				if (!objData) continue;
+				if (*(uint32_t*)(objData + kHavokComponentOffset) == 0xFFFFFFFF) continue; // no collision body
+				recreate((uint16_t)i);
+				++rebuilt;
+			}
+			return rebuilt;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return -1;
+		}
 	}
 
 	// runs on the GAME thread each tick; when a rebuild is queued, recreate collision for every live object.
@@ -229,6 +318,10 @@ private:
 	{
 		if (!mPendingRebuild.exchange(false)) return;
 		if (!mScalar.isApplied()) return;
+		// NEVER walk the object table unless a game is fully in-play. During a level transition the table can be
+		// half-built, and calling the engine's collision teardown/rebuild against it can crash. This (plus the SEH
+		// guard below) is the core stability fix for the level-switch crash.
+		if (auto h = mccStateHookWeak.lock(); !h || !h->isGameCurrentlyPlaying(mGame)) return;
 		uintptr_t base = mScalar.moduleBase();
 		if (!base) return;
 
@@ -240,31 +333,19 @@ private:
 			return;
 		}
 
-		uintptr_t headerPtr = *(uintptr_t*)(base + kObjectHeaderPtrRVA); // qword_1818B7398 (object header table)
-		if (!headerPtr) return; // object table not up yet
-		uintptr_t dataRegion = headerPtr + *(uintptr_t*)(headerPtr + kHeaderDataOffset); // first header entry
-		uint32_t count = *(uint32_t*)(headerPtr + kHeaderCountOffset);
-		if (count > kMaxObjects) count = kMaxObjects; // clamp to the array's real capacity (never read past it)
-
 		auto getObject = reinterpret_cast<GetObjectFn>(base + kGetObjectRVA);
 		auto recreate  = reinterpret_cast<RecreateCollisionFn>(base + kRecreateCollisionRVA);
-
-		int rebuilt = 0;
-		for (uint32_t i = 0; i < count; ++i)
-		{
-			uintptr_t entry = dataRegion + (uintptr_t)kHeaderStride * i;
-			uintptr_t objData = getObject(entry); // 0 for empty/deleted slots (null-safe)
-			if (!objData) continue;
-			if (*(uint32_t*)(objData + kHavokComponentOffset) == 0xFFFFFFFF) continue; // no collision body
-			recreate((uint16_t)i);
-			++rebuilt;
-		}
-		PLOG_DEBUG << "MasterTickrate rebuilt collision for " << rebuilt << " objects";
+		int rebuilt = rebuildAllCollisionSEH(base, getObject, recreate);
+		if (rebuilt < 0)
+			PLOG_ERROR << "MasterTickrate: collision rebuild faulted (object table mid-transition?); skipped safely.";
+		else
+			PLOG_DEBUG << "MasterTickrate rebuilt collision for " << rebuilt << " objects";
 	}
 
 	void onFlip()
 	{
 		PLOG_DEBUG << "MasterTickrate onFlip";
+		if (!isArmed()) return; // gate disarmed: ignore
 		try
 		{
 			lockOrThrow(mccStateHookWeak, mccStateHook);
@@ -284,10 +365,13 @@ private:
 			// the collision scalar and rebuilds so 30/60 physics is consistent (not just game speed).
 			int16_t newRate = (currentRate >= 45) ? (int16_t)30 : (int16_t)60;
 			writeRate(newRate);
-			applyScalarForRate(newRate);
-			mPendingRebuild.store(true);
+			// only rebuild when the scalar actually changed (flipping to 30 == stock scalar, so no rebuild - which
+			// was the level-switch crash: a pointless full-object-table Havok churn right before a transition).
+			bool rebuild = applyScalarForRate(newRate);
+			if (rebuild) mPendingRebuild.store(true);
+			setBox(newRate); // update the "Custom Tickrate (Hz)" box so it shows the flipped rate (30/60), not the old value
 
-			messagesGUI->addMessage(std::format("Master tickrate set to {} Hz (rebuilding collision).", newRate));
+			messagesGUI->addMessage(std::format("Master tickrate set to {} Hz{}.", newRate, rebuild ? " (rebuilding collision)" : ""));
 		}
 		catch (HCMRuntimeException ex)
 		{
@@ -300,6 +384,7 @@ public:
 		: mGame(game),
 		mFlipCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->masterTickrateFlipEvent, [this]() { onFlip(); }),
 		mCustomRateChangedCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->customTickrate->valueChangedEvent, [this](int& n) { onSetCustomRate(n); }),
+		mEnableChangedCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->masterTickrateEnabled->valueChangedEvent, [this](bool& e) { onEnableChanged(e); }),
 		mMCCStateChangedCallback(dicon.Resolve<IMCCStateHook>().lock()->getMCCStateChangedEvent(), [this](const MCCState& s) { onMCCStateChanged(s); }),
 		mccStateHookWeak(dicon.Resolve<IMCCStateHook>()),
 		messagesGUIWeak(dicon.Resolve<IMessagesGUI>()),

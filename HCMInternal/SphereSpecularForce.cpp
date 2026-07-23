@@ -71,11 +71,18 @@ private:
 		catch (HCMRuntimeException&) {}
 	}
 
-	// re-apply on each Halo 2 load in case the toggle was flipped while halo2.dll wasn't loaded
+	// Lifecycle: our patch is live ONLY while fully in a game. Outside that (save-and-quit, loading screens) we
+	// force the site back to stock, and re-enable it when we're back in-game on the new map (if the toggle is on).
 	void onMCCStateChanged(const MCCState& newState)
 	{
-		if (newState.currentGameState != mGame) return;
-		if (newState.currentPlayState == PlayState::MainMenu) return;
+		if (newState.currentGameState != mGame) return; // not Halo 2 (dll may be unloaded) - nothing to touch
+		if (newState.currentPlayState != PlayState::Ingame)
+		{
+			// force stock during teardown/menu. Single-byte opcode -> atomic, no thread-suspend needed.
+			try { writePatch(kOffBytes); }
+			catch (HCMRuntimeException&) {} // halo2.dll gone / not resolvable -> nothing to revert
+			return;
+		}
 		try { applyCurrentState(); }
 		catch (HCMRuntimeException& ex) { PLOG_DEBUG << "SphereSpecularForce: load-time apply skipped (" << ex.what() << ")"; }
 	}

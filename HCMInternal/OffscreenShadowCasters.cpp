@@ -105,13 +105,16 @@ private:
 		memcpy(c + kCaveFactor, &f, 4);
 		FlushInstructionCache(GetCurrentProcess(), cavePage, kCaveSize);
 
-		// entry detour: E9 rel32 -> cave
+		// entry detour: E9 rel32 -> cave. Suspend the render thread around installing the 5-byte detour into the
+		// per-object shadow function's .text - it executes this instruction, so a torn multi-byte write races it
+		// (matches revert's own suspend). The cave build above is HCM-owned memory (+ allocNear needs heap locks a
+		// suspended thread could hold), so only this install goes inside the window.
 		uint8_t det[5];
 		det[0] = 0xE9;
 		int32_t rel = (int32_t)(caveVA - (targetVA + 5));
 		memcpy(det + 1, &rel, 4);
 		memcpy(savedEntry.data(), (void*)targetVA, 5);
-		writeRaw(targetVA, det, 5);
+		{ ScopedThreadSuspender suspend; writeRaw(targetVA, det, 5); }
 
 		applied = true;
 		PLOG_DEBUG << "OffscreenShadowCasters applied: cave=" << std::hex << caveVA << " factor=" << f;
@@ -177,8 +180,15 @@ private:
 	// rebuild against the new module.
 	void onMCCStateChanged(const MCCState& newState)
 	{
-		if (newState.currentGameState != mGame) return;
-		if (newState.currentPlayState == PlayState::MainMenu) return;
+		if (newState.currentGameState != mGame) return; // left Halo 2 (dll unloading); cave is rebuilt on re-entry below
+		if (newState.currentPlayState != PlayState::Ingame)
+		{
+			// loading screen / menu within Halo 2: force our detour back to stock so nothing of ours is live
+			// during teardown. revert() no-ops if we aren't applied and only touches the module we patched;
+			// it's re-applied below once we're fully back in-game (if the toggle is on).
+			try { revert(); } catch (HCMRuntimeException&) {}
+			return;
+		}
 		try
 		{
 			lockOrThrow(settingsWeak, settings);

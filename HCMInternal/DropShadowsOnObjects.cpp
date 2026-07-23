@@ -44,7 +44,11 @@ private:
 	void applyCurrentState()
 	{
 		lockOrThrow(settingsWeak, settings);
-		writePatch(settings->dropShadowsOnObjectsToggle->GetValue() ? kOnBytes : kOffBytes);
+		const auto& bytes = settings->dropShadowsOnObjectsToggle->GetValue() ? kOnBytes : kOffBytes;
+		// suspend the render thread while writing this per-frame shadow .text (the write is multi-byte, so it can
+		// tear under the running thread) - matches the destructor's own guard. Only the memory write is inside.
+		ScopedThreadSuspender suspend;
+		writePatch(bytes);
 	}
 
 	void onToggle(bool& newValue)
@@ -52,8 +56,9 @@ private:
 		PLOG_DEBUG << "DropShadowsOnObjects onToggle, newValue: " << newValue;
 
 		// the patch is read per shadow-render frame, so it takes effect live. if halo2.dll isn't loaded yet
-		// (e.g. toggled at the MCC menu) it'll be applied on the next Halo 2 load via onMCCStateChanged.
-		try { writePatch(newValue ? kOnBytes : kOffBytes); }
+		// (e.g. toggled at the MCC menu) it'll be applied on the next Halo 2 load via onMCCStateChanged. Suspend the
+		// render thread around the multi-byte write so it can't execute a half-written instruction (same as the dtor).
+		try { ScopedThreadSuspender suspend; writePatch(newValue ? kOnBytes : kOffBytes); }
 		catch (HCMRuntimeException& ex) { PLOG_DEBUG << "DropShadowsOnObjects: patch deferred (" << ex.what() << ")"; }
 
 		try
@@ -64,11 +69,19 @@ private:
 		catch (HCMRuntimeException&) {}
 	}
 
-	// re-apply on each Halo 2 load in case the toggle was flipped while halo2.dll wasn't loaded
+	// Lifecycle: our patch is live ONLY while fully in a game. Outside that (save-and-quit, loading screens) we
+	// force the site back to stock so nothing of ours is live during teardown, and re-enable it when we're back
+	// in-game on the new map (if the toggle is on).
 	void onMCCStateChanged(const MCCState& newState)
 	{
-		if (newState.currentGameState != mGame) return;
-		if (newState.currentPlayState == PlayState::MainMenu) return;
+		if (newState.currentGameState != mGame) return; // not Halo 2 (dll may be unloaded) - nothing to touch
+		if (newState.currentPlayState != PlayState::Ingame)
+		{
+			// force stock during teardown/menu, suspended (multi-byte write can tear under the render thread)
+			try { ScopedThreadSuspender suspend; writePatch(kOffBytes); }
+			catch (HCMRuntimeException&) {} // halo2.dll gone / not resolvable -> nothing to revert
+			return;
+		}
 		try { applyCurrentState(); }
 		catch (HCMRuntimeException& ex) { PLOG_DEBUG << "DropShadowsOnObjects: load-time apply skipped (" << ex.what() << ")"; }
 	}
