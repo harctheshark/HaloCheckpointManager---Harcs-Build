@@ -7,6 +7,18 @@
 // game set tuples
 #define ALL_SUPPORTED_GAMES Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4
 #define ALL_GAMES_AND_MAINMENU Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, NoGame
+// Halo Campaign Evolved is deliberately NOT in ALL_SUPPORTED_GAMES: it is a separate title with its own
+// (almost entirely missing) pointer data, so opting every MCC gui element into it would just produce a few
+// hundred failed services. Opt elements in one at a time using these instead.
+#define ALL_SUPPORTED_GAMES_AND_HALOCE Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCE
+#define HALOCE_ONLY HaloCE
+// Deliberately narrower than "widen ALL_GAMES_AND_MAINMENU": this is only for the handful of elements that are
+// pure HCM plumbing (no game pointer data at all) and that HaloCE genuinely needs. Right now that means the
+// Control heading and the "Show optional cheat service failures" button underneath it - without those two,
+// a HaloCE-only cheat that fails to construct makes its gui rows silently vanish with the reason visible
+// nowhere but the log file. The heading's other children stay MCC-only and each independently return nullopt;
+// GUIHeading::render early-outs when every child is nullopt, so this cannot produce an empty heading.
+#define ALL_GAMES_AND_MAINMENU_AND_HALOCE Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, NoGame, HaloCE
 #define FREE_CAMERA_SUPPORT Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4
 #define THIRD_GEN Halo3, Halo3ODST, HaloReach, Halo4
 #define ABILITY_GAMES HaloReach, Halo4
@@ -23,26 +35,27 @@
 ((presetsHeadingGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((presetSaveButton, (ALL_GAMES_AND_MAINMENU)))\
 	((presetLoadButton, (ALL_GAMES_AND_MAINMENU)))\
-((controlHeadingGUI, (ALL_GAMES_AND_MAINMENU)))\
+((controlHeadingGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCE)))\
 	((toggleGUIHotkeyGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((messagesFontSize, (ALL_GAMES_AND_MAINMENU)))\
 	((messagesFontColor, (ALL_GAMES_AND_MAINMENU)))\
-	((GUISettingsSubheading, (ALL_GAMES_AND_MAINMENU)))\
-		((GUIShowingFreesCursor, (ALL_GAMES_AND_MAINMENU)))\
-		((GUIShowingBlocksInput, (ALL_GAMES_AND_MAINMENU)))\
+	((GUISettingsSubheading, (ALL_GAMES_AND_MAINMENU_AND_HALOCE)))\
+		((GUIShowingFreesCursor, (ALL_GAMES_AND_MAINMENU_AND_HALOCE)))\
+		((GUIShowingBlocksInput, (ALL_GAMES_AND_MAINMENU_AND_HALOCE)))\
 		((GUIShowingPausesGame, (ALL_GAMES_AND_MAINMENU)))\
 	((togglePauseGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((togglePauseSettingsSubheading, (ALL_GAMES_AND_MAINMENU)))\
 		((advanceTicksGUI, (ALL_SUPPORTED_GAMES)))\
 		((pauseAlsoFreesCursorGUI, (ALL_GAMES_AND_MAINMENU)))\
 		((pauseAlsoBlocksInputGUI, (ALL_GAMES_AND_MAINMENU)))\
-	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCE)))\
 	((OBSBypassToggleGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((HideWatermarkGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((HideWatermarkIncludeMessagesGUI, (ALL_GAMES_AND_MAINMENU)))\
-((saveManagementHeadingGUI, (ALL_SUPPORTED_GAMES)))\
+((saveManagementHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCE)))\
 	((forceCheckpointGUI, (ALL_SUPPORTED_GAMES)))\
-	((forceRevertGUI, (ALL_SUPPORTED_GAMES)))\
+	((hceForceCheckpointGUI, (HALOCE_ONLY)))\
+	((forceRevertGUI, (ALL_SUPPORTED_GAMES_AND_HALOCE)))\
 	((forceDoubleRevertGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	((forceCoreSaveGUI, (Halo1)))\
 	((forceCoreLoadGUI, (Halo1)))\
@@ -68,6 +81,7 @@
 		((dumpCoreForcesSave, (Halo1)))\
 	((dumpCoreGUI, (Halo1)))\
 	((naturalCheckpointDisableGUI, (ALL_SUPPORTED_GAMES)))\
+	((hceNaturalCheckpointDisableGUI, (HALOCE_ONLY)))\
 	((forceFutureCheckpointGUI, (ALL_SUPPORTED_GAMES)))\
 		((forceFutureCheckpointToggle, (ALL_SUPPORTED_GAMES)))\
 		((forceFutureCheckpointTick, (ALL_SUPPORTED_GAMES)))\

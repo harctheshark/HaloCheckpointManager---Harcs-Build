@@ -4,6 +4,7 @@
 #include "GUISimpleButton.h"
 #include "MCCStateHook.h"
 #include "imgui.h"
+#include "ImGuiManager.h"   // setSwallowGameInput fallback for games with no blockGameInputService
 #include "Lapua.h"
 #define addTooltip(x) if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(x)
 
@@ -300,9 +301,25 @@ void HCMInternalGUI::onWindowJustOpened()
 
 	if (mSettings->GUIShowingFreesCursor->GetValue() && mControlServices->freeMCCSCursorService.has_value())
 		freeCursorRequest = mControlServices->freeMCCSCursorService.value()->makeScopedRequest();
+	else if (mSettings->GUIShowingFreesCursor->GetValue())
+	{
+		// No engine-level "free the cursor" service for this game (Halo Campaign Evolved has no equivalent of
+		// MCC's shouldCursorBeFree function). Fall back to ImGui's own software cursor so the user can see what
+		// they're pointing at - but ONLY while the HCM window is actually open, otherwise a cursor would sit on
+		// screen for the entire game. Undone in onWindowJustClosed().
+		if (ImGui::GetCurrentContext() != nullptr)
+			ImGui::GetIO().MouseDrawCursor = true;
+	}
 
 	if (mSettings->GUIShowingBlocksInput->GetValue() && mControlServices->blockGameInputService.has_value())
 		blockGameInputRequest = mControlServices->blockGameInputService.value()->makeScopedRequest();
+	else if (mSettings->GUIShowingBlocksInput->GetValue())
+	{
+		// No engine-level block-input service for this game (Halo Campaign Evolved). Fall back to simply not
+		// forwarding input messages to the game while the HCM window is open, so clicking buttons doesn't also
+		// shoot and moving the mouse doesn't turn the camera. Undone in onWindowJustClosed().
+		ImGuiManager::setSwallowGameInput(true);
+	}
 
 	if (mSettings->GUIShowingPausesGame->GetValue() && mControlServices->pauseGameService.has_value())
 		pauseGameRequest = mControlServices->pauseGameService.value()->makeScopedRequest();
@@ -316,8 +333,17 @@ void HCMInternalGUI::onWindowJustClosed()
 	if (freeCursorRequest)
 		freeCursorRequest.reset();
 
+	// counterpart to the software-cursor fallback in onWindowJustOpened(): never leave a cursor drawn once the
+	// HCM window is closed. Unconditional so it can't get stuck on if the setting changed while open.
+	if (ImGui::GetCurrentContext() != nullptr)
+		ImGui::GetIO().MouseDrawCursor = false;
+
 	if (blockGameInputRequest)
 		blockGameInputRequest.reset();
+
+	// counterpart to the input-swallow fallback in onWindowJustOpened(). Unconditional so the game can never be
+	// left deaf to input if the setting was changed while the window was open.
+	ImGuiManager::setSwallowGameInput(false);
 
 	if (pauseGameRequest)
 		pauseGameRequest.reset();

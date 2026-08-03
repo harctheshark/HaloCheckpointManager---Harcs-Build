@@ -14,6 +14,7 @@ private:
 		{GameState::Value::Halo4,""},
 		{GameState::Value::Halo3ODST,""},
 		{GameState::Value::HaloReach,""},
+		{GameState::Value::HaloCE,""},   // REQUIRED: ctor does toolTipStrings.at(game) for every AllGameStateValues entry
 		{GameState::Value::NoGame,""},
 	};
 

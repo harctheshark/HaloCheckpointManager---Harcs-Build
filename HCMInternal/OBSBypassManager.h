@@ -1,5 +1,6 @@
 #pragma once
 #include "D3D11Hook.h"
+#include "D3D12Hook.h"
 #include "Lapua.h"
 #include "RuntimeExceptionHandler.h"
 #include "BinarySetting.h"
@@ -11,7 +12,13 @@ private:
 
 	// injected services
 	std::shared_ptr<RuntimeExceptionHandler> runtimeExceptions;
+	// EXACTLY ONE of these is ever non-empty - whichever graphics hook App.h built for this process.
+	// mIsD3D12 (not weak_ptr::expired()) is what selects the branch: expired() would also be true for
+	// a D3D12 hook that has already been destroyed, which would silently fall through to the D3D11
+	// branch and report the wrong error.
+	const bool mIsD3D12;
 	std::weak_ptr<D3D11Hook> d3d11HookWeak;
+	std::weak_ptr<D3D12Hook> d3d12HookWeak;
 
 	ScopedCallback<ToggleEvent> OBSBypassToggleEventCallback;
 	std::shared_ptr<BinarySetting<bool>> OBSBypassToggle;
@@ -21,6 +28,18 @@ private:
 		PLOGV << "onOBSBypassToggleEvent firing, newValue: " << newValue;
 		try
 		{
+			// Halo Campaign Evolved / D3D12. D3D12Hook::setOBSBypass throws HCMRuntimeException
+			// (there is no D3D12 capture path in graphics-hook64.dll we have offsets for), which the
+			// catch below turns into a user-facing message and resets the toggle. The Lapua checks
+			// are deliberately NOT run on this path: a hard "unsupported on this game" is not a
+			// Lapua service failure and must not be reported as one.
+			if (mIsD3D12)
+			{
+				lockOrThrow(d3d12HookWeak, d3d12Hook);
+				d3d12Hook->setOBSBypass(newValue);
+				return;
+			}
+
 			lockOrThrow(d3d11HookWeak, d3d11Hook);
 
 			if (newValue)
@@ -48,7 +67,19 @@ private:
 public:
 	OBSBypassManager(std::weak_ptr<D3D11Hook> d3d11Hook, std::shared_ptr<BinarySetting<bool>> toggle, std::shared_ptr<RuntimeExceptionHandler> exp)
 		:
+		mIsD3D12(false),
 		d3d11HookWeak(d3d11Hook),
+		OBSBypassToggle(toggle),
+		runtimeExceptions(exp),
+		OBSBypassToggleEventCallback(toggle->valueChangedEvent, [this](bool& n) { onOBSBypassToggleEvent(n); })
+	{}
+
+	// Halo Campaign Evolved / D3D12 overload. Exists so App.h can build the service graph
+	// identically on both games; toggling it produces a clean "not supported" message.
+	OBSBypassManager(std::weak_ptr<D3D12Hook> d3d12Hook, std::shared_ptr<BinarySetting<bool>> toggle, std::shared_ptr<RuntimeExceptionHandler> exp)
+		:
+		mIsD3D12(true),
+		d3d12HookWeak(d3d12Hook),
 		OBSBypassToggle(toggle),
 		runtimeExceptions(exp),
 		OBSBypassToggleEventCallback(toggle->valueChangedEvent, [this](bool& n) { onOBSBypassToggleEvent(n); })

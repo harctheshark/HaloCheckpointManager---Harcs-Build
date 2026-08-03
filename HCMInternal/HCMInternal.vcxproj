@@ -529,6 +529,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="ControlDefs.h" />
     <ClInclude Include="CustomExceptions.h" />
     <ClInclude Include="D3D11Hook.h" />
+    <ClInclude Include="D3D12Hook.h" />
+    <ClInclude Include="D3D12RenderEvent.h" />
     <ClInclude Include="DIContainer.h" />
     <ClInclude Include="DumpCheckpoint.h" />
     <ClInclude Include="DumpCore.h" />
@@ -539,6 +541,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="ForceCoreSave.h" />
     <ClInclude Include="ForceDoubleRevert.h" />
     <ClInclude Include="ForceRevert.h" />
+    <ClInclude Include="HCECheckpointDetours.h" />
+    <ClInclude Include="HCEStateHook.h" />
     <ClInclude Include="MCCStateHook.h" />
     <ClInclude Include="GetMCCVersion.h" />
     <ClInclude Include="GlobalKill.h" />
@@ -759,6 +763,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="UserCameraInputReader.cpp" />
     <ClCompile Include="Conduit_ITCFont.cpp" />
     <ClCompile Include="D3D11Hook.cpp" />
+    <ClCompile Include="D3D12Hook.cpp" />
     <ClCompile Include="DisplayPlayerInfo.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="DynamicStruct.cpp" />
@@ -785,6 +790,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="GUIServiceInfo.cpp" />
     <ClCompile Include="HCM_imconfig.cpp" />
     <ClCompile Include="InfiniteAmmo.cpp" />
+    <ClCompile Include="HCEStateHook.cpp" />
     <ClCompile Include="MCCStateHook.cpp" />
     <ClCompile Include="GetMCCVersion.cpp" />
     <ClCompile Include="GUIElementConstructor.cpp" />
@@ -812,6 +818,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="ModuleHookManager.cpp" />
     <ClCompile Include="MultilevelPointer.cpp" />
     <ClCompile Include="GetPlayerDatum.cpp" />
+    <ClCompile Include="HCECheckpointDetours.cpp" />
     <ClCompile Include="NaturalCheckpointDisable.cpp" />
     <ClCompile Include="PauseGame.cpp" />
     <ClCompile Include="ProggyVectorRegularFont.cpp" />

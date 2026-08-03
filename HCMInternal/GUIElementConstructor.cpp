@@ -245,8 +245,9 @@ private:
 			case GUIElementEnum::saveManagementHeadingGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
 					(game, ToolTipCollection("Features for managing your checkpoints (savestates)"), "Save Management", headerChildElements
-						{ 
+						{
 							createNestedElement(GUIElementEnum::forceCheckpointGUI),
+							createNestedElement(GUIElementEnum::hceForceCheckpointGUI),
 							createNestedElement(GUIElementEnum::forceRevertGUI),
 							createNestedElement(GUIElementEnum::forceDoubleRevertGUI),
 							createNestedElement(GUIElementEnum::forceCoreSaveGUI),
@@ -260,6 +261,7 @@ private:
 							createNestedElement(GUIElementEnum::dumpCoreGUI),
 							createNestedElement(GUIElementEnum::dumpCoreSettingsSubheading),
 							createNestedElement(GUIElementEnum::naturalCheckpointDisableGUI),
+							createNestedElement(GUIElementEnum::hceNaturalCheckpointDisableGUI),
 							createNestedElement(GUIElementEnum::forceFutureCheckpointGUI),
 							createNestedElement(GUIElementEnum::forceMissionRestartGUI),
 							createNestedElement(GUIElementEnum::replayInputSubheading),
@@ -269,6 +271,13 @@ private:
 				case GUIElementEnum::forceCheckpointGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
 						(game, ToolTipCollection("Forces a checkpoint, regardless of if the player is safe or not"), RebindableHotkeyEnum::forceCheckpoint, "Force Checkpoint", settings->forceCheckpointEvent));
+
+				// Halo Campaign Evolved's own force checkpoint. Deliberately reuses forceCheckpointEvent (and so the
+				// existing forceCheckpoint hotkey) - HaloCE and the MCC games can never coexist in one process, so
+				// exactly one listener exists at a time. "##hce" keeps the visible label but gives imgui a unique ID.
+				case GUIElementEnum::hceForceCheckpointGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Forces a checkpoint, regardless of if the player is safe or not"), RebindableHotkeyEnum::forceCheckpoint, "Force Checkpoint##hce", settings->forceCheckpointEvent));
 
 				case GUIElementEnum::forceRevertGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -395,6 +404,13 @@ private:
 				case GUIElementEnum::naturalCheckpointDisableGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Disables naturally occuring checkpoints (will break cutscenes)"), RebindableHotkeyEnum::naturalCheckpointDisable, "Disable Natural Checkpoints", settings->naturalCheckpointDisable));
+
+				// Halo Campaign Evolved version. Same setting (and so the same hotkey and preset entry) as above -
+				// only one of the two elements can ever exist in a given process. Forced checkpoints still work
+				// while this is on, matching the tool this was ported from.
+				case GUIElementEnum::hceNaturalCheckpointDisableGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Disables naturally occuring checkpoints (will break cutscenes). Force Checkpoint still works while this is on."), RebindableHotkeyEnum::naturalCheckpointDisable, "Disable Natural Checkpoints##hce", settings->naturalCheckpointDisable));
 
 				case GUIElementEnum::forceFutureCheckpointGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>

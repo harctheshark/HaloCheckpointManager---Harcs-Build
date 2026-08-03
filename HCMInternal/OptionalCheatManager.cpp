@@ -10,6 +10,7 @@
 #include "ForceCheckpoint.h"
 #include "ForceRevert.h"
 #include "ForceDoubleRevert.h"
+#include "HCECheckpointDetours.h"
 
 #include "InjectCheckpoint.h"
 #include "InjectCore.h"
@@ -221,11 +222,26 @@ public:
 		PLOG_DEBUG << "Looping over required services";
 
 		
+		// Only build cheats for games that can actually exist in THIS process. Halo Campaign Evolved is a separate
+		// title (not MCC), so inside it every MCC-game cheat is guaranteed to fail for want of MCC pointer data -
+		// that produced ~428 bogus "failed service" reports plus a lot of pointless work. Filter both directions.
+		bool isCampaignEvolvedProcess = false;
+		try
+		{
+			if (auto store = cheatStore.lock())
+				if (auto verSvc = store->dicon.Resolve<IGetMCCVersion>().lock())
+					isCampaignEvolvedProcess = (verSvc->getMCCProcessType() == MCCProcessType::CampaignEvolved);
+		}
+		catch (...) { /* if we can't tell, fall back to building everything as before */ }
+
 		// Create cheats on multiple threads. Only one thread will access the cheatCollection at a time, but this way exceptions won't block execution of the next getOrMakeCheat
 		std::vector<std::thread> createCheatThreads;
-		
+
 		for (const std::pair<GameState, OptionalCheatEnum>& gameCheatPair : reqSer->getAllRequiredServices())
 		{
+			const bool pairIsHaloCE = (static_cast<GameState::Value>(gameCheatPair.first) == GameState::Value::HaloCE);
+			if (pairIsHaloCE != isCampaignEvolvedProcess) continue; // wrong title for this process - skip silently
+
 			auto& th = createCheatThreads.emplace_back(std::thread([gameCheatPair, cheatStore,info, this]() {
 				try
 				{

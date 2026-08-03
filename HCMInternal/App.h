@@ -4,6 +4,7 @@
 #include "ModuleCache.h"
 #include "ModuleHookManager.h"
 #include "D3D11Hook.h"
+#include "D3D12Hook.h"
 #include "ImGuiManager.h"
 #include "PointerDataStore.h"
 #include "PointerDataParser.h"
@@ -11,6 +12,7 @@
 #include "HCMInternalGUI.h"
 #include "MessagesGUI.h"
 #include "MCCStateHook.h"
+#include "HCEStateHook.h"
 #include "HeartbeatTimer.h"
 #include "GUIServiceInfo.h"
 #include "HotkeyManager.h"
@@ -118,15 +120,50 @@ public:
             auto control = std::make_shared<ControlServiceContainer>(ptrStore, hotkeyDisabler);
 
      
-            auto d3d = std::make_shared<D3D11Hook>(ptrStore); PLOGV << "d3d init"; // hooks d3d11 Present and ResizeBuffers
-            auto imm = std::make_shared<ImGuiManager>(d3d, d3d->presentHookEvent); PLOGV << "imm init"; // sets up imgui context and fires off imgui render events
+            // Which graphics API are we in? MCC (Steam/WinStore) is D3D11; Halo Campaign Evolved
+            // (HaloCampaignEvolved.exe, UE 5.5.4) is D3D12. Decided once, here, and nothing below
+            // this point re-evaluates it.
+            const bool isCampaignEvolved = (ver->getMCCProcessType() == MCCProcessType::CampaignEvolved);
+
+            // DECLARATION ORDER HERE IS LOAD-BEARING.
+            // These are automatic locals, so they are destroyed in REVERSE declaration order: `imm`
+            // goes first, then the graphics hook. That ordering is what lets ~ImGuiManager call
+            // d3d12->waitForGpuIdle() *before* ImGui_ImplDX12_Shutdown() frees imgui's PSO / root
+            // signature / vertex+index ring / font texture - all of which the last submitted overlay
+            // command list still references, and none of which D3D12 defers destruction on.
+            // Exactly one of d3d/d3d12 is ever non-null.
+            std::shared_ptr<D3D11Hook> d3d;
+            std::shared_ptr<D3D12Hook> d3d12;
+            std::shared_ptr<ImGuiManager> imm;
+            if (isCampaignEvolved)
+            {
+                d3d12 = std::make_shared<D3D12Hook>(ptrStore); PLOGV << "d3d12 init"; // hooks dxgi Present/Present1/ResizeBuffers(1) and d3d12 ExecuteCommandLists
+                imm = std::make_shared<ImGuiManager>(d3d12, d3d12->presentHookEvent); PLOGV << "imm init"; // sets up imgui context and fires off imgui render events
+            }
+            else
+            {
+                d3d = std::make_shared<D3D11Hook>(ptrStore); PLOGV << "d3d init"; // hooks d3d11 Present and ResizeBuffers
+                imm = std::make_shared<ImGuiManager>(d3d, d3d->presentHookEvent); PLOGV << "imm init"; // sets up imgui context and fires off imgui render events
+            }
 
             auto mes = std::make_shared<MessagesGUI>(ImVec2{ 20, 20 }, imm->ForegroundRenderEvent); PLOGV << "mes init";// renders temporary messages to the screen
             auto imes = std::reinterpret_pointer_cast<IMessagesGUI>(mes);
             auto exp = std::make_shared<RuntimeExceptionHandler>(mes); PLOGV << "exp init";// tells user if a cheat hook throws a runtime exception
             auto settings = std::make_shared<SettingsStateAndEvents>(std::make_shared<SettingsSerialiser>(dirPath, exp, mes)); PLOGV << "settings init";
            
-            auto mccStateHook = std::make_shared<MCCStateHook>(ptrStore, exp); PLOGV << "mccStateHook init";// fires event when game or level changes.
+            // fires event when game or level changes. HCE is not MCC (no gameEngine/load/menu
+            // indicators to hook), so it derives the same MCCState from HaloSimulation_tag_release.dll.
+            std::shared_ptr<IMCCStateHook> mccStateHook;
+            std::shared_ptr<HCEStateHook> hceStateHook; // concrete handle kept so we can read its cursor flag below
+            if (isCampaignEvolved)
+            {
+                hceStateHook = std::make_shared<HCEStateHook>(); PLOGV << "hceStateHook init";
+                mccStateHook = hceStateHook;
+            }
+            else
+            {
+                mccStateHook = std::make_shared<MCCStateHook>(ptrStore, exp); PLOGV << "mccStateHook init";
+            }
             auto guifail = std::make_shared<GUIServiceInfo>(mes); PLOGV << "guifail init"; // stores info about gui elements that failed to construct. starts empty, filled up later
             auto modal = std::make_shared<ModalDialogRenderer>(imm->ForegroundRenderEvent, control, hotkeyDisabler); PLOGV << "modal init"; // renders modal dialogs that can be called from optionalCheats
 
@@ -145,9 +182,21 @@ public:
             
         
             // set up rendering
-            auto isCursorShowingPtr = ptrStore->getData<std::shared_ptr<MultilevelPointer>>("isCursorShowing");
+            // isCursorShowing gates ALL mouse input to the overlay (HCMInternalGUI applies ImGuiWindowFlags_NoInputs
+            // when it is false), so it is load-bearing, not cosmetic. MCC exposes its own cursor bool at a known
+            // address. HCE has no equivalent we know of, so HCEStateHook derives the same fact from the WIN32 cursor
+            // state (GetCursorInfo/CURSOR_SHOWING) and we point at that - engine-agnostic and true to what the flag means.
             uintptr_t isCursorShowingResolved;
-            if (!isCursorShowingPtr->resolve(&isCursorShowingResolved)) throw HCMInitException(std::format("Could not resolve isCursorShowing: {}", MultilevelPointer::GetLastError()));
+            if (isCampaignEvolved)
+            {
+                isCursorShowingResolved = (uintptr_t)hceStateHook->getCursorShowingFlag();
+                PLOG_DEBUG << "HCE: isCursorShowing sourced from live WIN32 cursor state";
+            }
+            else
+            {
+                auto isCursorShowingPtr = ptrStore->getData<std::shared_ptr<MultilevelPointer>>("isCursorShowing");
+                if (!isCursorShowingPtr->resolve(&isCursorShowingResolved)) throw HCMInitException(std::format("Could not resolve isCursorShowing: {}", MultilevelPointer::GetLastError()));
+            }
 
 
             // set up optional cheats and optional gui elements
@@ -159,15 +208,26 @@ public:
             auto GUICon = std::make_shared<GUIElementConstructor>(guireq, cheatfail, guistore, guifail, settings, ver->getMCCProcessType(), exp); PLOGV << "GUIMan init"; // constructs gui elements, pushing them into guistore
             //guifail->printAllFailures();
             // set up main gui
-            auto HCMGUI = std::make_shared<HCMInternalGUI>(mccStateHook, guistore, hkr, imm->MidgroundRenderEvent, std::reinterpret_pointer_cast<IMCCStateHook>(mccStateHook)->getMCCStateChangedEvent(), control, settings, (bool*)isCursorShowingResolved); PLOGV << "HCMGUI init";// main gui. Mostly just a canvas for rendering a collection of IGUIElements that will get constructed a bit below.
+            // (mccStateHook is already a shared_ptr<IMCCStateHook>, so the old
+            // reinterpret_pointer_cast<IMCCStateHook> here is no longer needed.)
+            auto HCMGUI = std::make_shared<HCMInternalGUI>(mccStateHook, guistore, hkr, imm->MidgroundRenderEvent, mccStateHook->getMCCStateChangedEvent(), control, settings, (bool*)isCursorShowingResolved); PLOGV << "HCMGUI init";// main gui. Mostly just a canvas for rendering a collection of IGUIElements that will get constructed a bit below.
             mes->setAnchorPoint(HCMGUI);
 
             auto hb = std::make_shared<HeartbeatTimer>(sharedMem, settings); PLOGV << "hb init";
 
             auto lap = std::make_shared<Lapua>(); PLOGV << "lapua init";
-            auto obsBypass = std::make_shared<OBSBypassManager>(d3d, settings->OBSBypassToggle, exp); PLOGV << "obsBypass init";
+            // OBS bypass has no D3D12 capture path we have offsets for; the D3D12 overload exists so
+            // the service graph is identical on both games and toggling it gives a clean
+            // "not supported" message instead of doing nothing.
+            auto obsBypass = isCampaignEvolved
+                ? std::make_shared<OBSBypassManager>(std::weak_ptr<D3D12Hook>(d3d12), settings->OBSBypassToggle, exp)
+                : std::make_shared<OBSBypassManager>(std::weak_ptr<D3D11Hook>(d3d), settings->OBSBypassToggle, exp); PLOGV << "obsBypass init";
             auto hideWatermark = std::make_shared<HideWatermarkManager>(settings->hideWatermark, exp); PLOGV << "hideWatermark init";
-            d3d->beginHook();
+            // Installed LAST, once every service that its callbacks touch exists.
+            if (isCampaignEvolved)
+                d3d12->beginHook();
+            else
+                d3d->beginHook();
 
             PLOG_INFO << "All services succesfully initialized! Entering main loop";
             Sleep(100);

@@ -1,0 +1,1964 @@
+#include "pch.h"
+#include "D3D12Hook.h"
+
+#include "GlobalKill.h"
+
+#include <dxgi.h>
+#include <dxgi1_2.h>
+#include <dxgi1_4.h>
+#include <d3d12.h>
+#pragma comment(lib, "dxgi")
+#pragma comment(lib, "d3d12")
+
+#include "safetyhook.hpp"
+
+
+D3D12Hook* D3D12Hook::instance = nullptr;
+SimpleMath::Vector2 D3D12Hook::mScreenSize{ 1920, 1080 };
+SimpleMath::Vector2 D3D12Hook::mScreenCenter{ 960, 540 };
+
+
+#pragma region trampolines
+
+// Cached trampolines for every hook we install.
+//
+// WHY file-static atomics instead of reaching through `instance` (which is what the first draft
+// did, via d3d->presentHook.stdcall<>()):
+//
+//  1. CORRECTNESS. `instance` is null before beginHook() and after ~D3D12Hook. A detour that finds
+//     it null has no way to reach the original, and the first draft returned 0 - which is S_OK.
+//     The game then believes the frame was presented / the buffers were resized, and carries on
+//     with stale-size buffers. That is corruption in the GAME, not in the overlay.
+//  2. TEARDOWN. `presentHook = {}` in the destructor concurrently destroys the very object a
+//     detour would be calling through.
+//  3. PERFORMANCE. InlineHook::stdcall<>() takes a std::recursive_mutex on EVERY call
+//     (inline_hook.hpp:225). These are inline hooks on dxgi's shared implementations, so that
+//     would serialise every Present in the whole process against every other one.
+//
+// Publish order is: create the hook with StartDisabled -> store the trampoline here -> enable.
+// That makes "the atomic is null" mean exactly one thing: the hook is not installed. Which in turn
+// makes the fallback below provably non-recursive.
+static std::atomic<DX12Present*> gOriginalPresent = nullptr;
+static std::atomic<DX12Present1*> gOriginalPresent1 = nullptr;
+static std::atomic<DX12ResizeBuffers*> gOriginalResizeBuffers = nullptr;
+static std::atomic<DX12ResizeBuffers1*> gOriginalResizeBuffers1 = nullptr;
+static std::atomic<DX12ExecuteCommandLists*> gOriginalExecuteCommandLists = nullptr;
+
+// The fallbacks below call the COM method directly. That is safe precisely BECAUSE the trampoline
+// atomic is null: safetyhook has already restored dxgi's original bytes (InlineHook::destroy ->
+// disable() -> restore, then free the trampoline) and we never touched the vtable, so the interface
+// method now points straight at the real implementation and cannot re-enter us.
+// Reaching this at all means we lost a race with ~D3D12Hook; it must never silently drop the call.
+static HRESULT callOriginalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
+{
+	if (auto* original = gOriginalPresent.load(std::memory_order_acquire))
+		return original(pSwapChain, SyncInterval, Flags);
+	return pSwapChain->Present(SyncInterval, Flags);
+}
+
+static HRESULT callOriginalPresent1(IDXGISwapChain1* pSwapChain, UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters)
+{
+	if (auto* original = gOriginalPresent1.load(std::memory_order_acquire))
+		return original(pSwapChain, SyncInterval, PresentFlags, pPresentParameters);
+	return pSwapChain->Present1(SyncInterval, PresentFlags, pPresentParameters);
+}
+
+static HRESULT callOriginalResizeBuffers(IDXGISwapChain* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags)
+{
+	if (auto* original = gOriginalResizeBuffers.load(std::memory_order_acquire))
+		return original(pSwapChain, BufferCount, Width, Height, NewFormat, SwapChainFlags);
+	return pSwapChain->ResizeBuffers(BufferCount, Width, Height, NewFormat, SwapChainFlags);
+}
+
+static HRESULT callOriginalResizeBuffers1(IDXGISwapChain3* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format, UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue)
+{
+	if (auto* original = gOriginalResizeBuffers1.load(std::memory_order_acquire))
+		return original(pSwapChain, BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask, ppPresentQueue);
+	return pSwapChain->ResizeBuffers1(BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask, ppPresentQueue);
+}
+
+static void callOriginalExecuteCommandLists(ID3D12CommandQueue* pCommandQueue, UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists)
+{
+	if (auto* original = gOriginalExecuteCommandLists.load(std::memory_order_acquire))
+	{
+		original(pCommandQueue, NumCommandLists, ppCommandLists);
+		return;
+	}
+	pCommandQueue->ExecuteCommandLists(NumCommandLists, ppCommandLists);
+}
+
+#pragma endregion trampolines
+
+
+// UNNAMED NAMESPACE (internal linkage) IS LOAD-BEARING: D3D11Hook.cpp declares its own
+// `enum class IDXGISwapChainVMT` at namespace scope, and this one is no longer token-identical to it
+// (we extend through IDXGISwapChain1/3). Two differing definitions of the same namespace-scope
+// enumeration in one program is an ODR violation, no diagnostic required.
+namespace
+{
+
+// IDXGISwapChain vtable layout (DXGI doesn't care which D3D version created the swapchain).
+// Extended through IDXGISwapChain1 (Present1) and IDXGISwapChain3 (ResizeBuffers1); every index
+// below was verified against the Windows SDK 10.0.26100 IDXGISwapChain3Vtbl struct.
+enum class IDXGISwapChainVMT
+{
+	QueryInterface,
+	AddRef,
+	Release,
+	SetPrivateData,
+	SetPrivateDataInterface,
+	GetPrivateData,
+	GetParent,
+	GetDevice,
+	Present,			// 8
+	GetBuffer,
+	SetFullscreenState,
+	GetFullscreenState,
+	GetDesc,
+	ResizeBuffers,		// 13
+	ResizeTarget,
+	GetContainingOutput,
+	GetFrameStatistics,
+	GetLastPresentCount,
+	// ---- IDXGISwapChain1 ----
+	GetDesc1,
+	GetFullscreenDesc,
+	GetHwnd,
+	GetCoreWindow,
+	Present1,			// 22
+	IsTemporaryMonoSupported,
+	GetRestrictToOutput,
+	SetBackgroundColor,
+	GetBackgroundColor,
+	SetRotation,
+	GetRotation,
+	// ---- IDXGISwapChain2 ----
+	SetSourceSize,
+	GetSourceSize,
+	SetMaximumFrameLatency,
+	GetMaximumFrameLatency,
+	GetFrameLatencyWaitableObject,
+	SetMatrixTransform,
+	GetMatrixTransform,
+	// ---- IDXGISwapChain3 ----
+	GetCurrentBackBufferIndex,
+	CheckColorSpaceSupport,
+	SetColorSpace1,
+	ResizeBuffers1,		// 39
+};
+
+// ID3D12CommandQueue vtable layout.
+// NOTE the private-data methods are in a DIFFERENT order to IDXGIObject's: ID3D12Object declares
+// GetPrivateData first, IDXGIObject declares SetPrivateData first. Do not "tidy" these to match.
+enum class ID3D12CommandQueueVMT
+{
+	QueryInterface,
+	AddRef,
+	Release,
+	GetPrivateData,
+	SetPrivateData,
+	SetPrivateDataInterface,
+	SetName,
+	GetDevice,
+	UpdateTileMappings,
+	CopyTileMappings,
+	ExecuteCommandLists,	// 10
+	SetMarker,
+	BeginEvent,
+	EndEvent,
+	Signal,
+	Wait,
+	GetTimestampFrequency,
+	GetClockCalibration,
+	GetDesc,
+};
+
+} // unnamed namespace
+
+
+// How long we're willing to block the game's render thread waiting on our own fence.
+// The reference waits INFINITE; on a removed/hung device that hangs the game forever, which is a
+// much worse outcome than a missing overlay frame.
+static constexpr DWORD kFenceWaitTimeoutMs = 1000;
+static constexpr DWORD kGpuFlushTimeoutMs = 2000;
+
+// How often a swapchain we already rejected is re-tested. The rejection cache is a raw pointer
+// compare, and a foreign swapchain that gets destroyed can have its address reused by the game's
+// real one - so the cache must decay rather than blind us permanently.
+static constexpr uint32_t kRejectedSwapChainRecheckInterval = 1024;
+
+
+#pragma region detour entry guard
+
+// Depth of our own swapchain detours on THIS thread. Two jobs:
+//
+//  1. DOUBLE-RENDER GUARD. dxgi's IDXGISwapChain::Present is free to forward to the same object's
+//     Present1 inside dxgi.dll (and UE5 calls whichever it likes). Because we inline-hook BOTH
+//     shared implementations, that forwarding re-enters us; without this the overlay would be
+//     recorded and submitted twice for a single frame. The outermost entry owns the frame.
+//  2. LOCK RE-ENTRANCY. MSVC's std::shared_mutex is an SRWLOCK. Taking it shared twice on one
+//     thread deadlocks if a writer (i.e. ~D3D12Hook) queues in between. The nested entry does not
+//     re-lock - it is covered by the outer frame's shared lock, which is exactly as strong.
+static thread_local unsigned int tlDetourDepth = 0;
+
+namespace
+{
+	class DetourEntryGuard
+	{
+		std::shared_lock<std::shared_mutex> mLock;
+		bool mOutermost;
+
+	public:
+		explicit DetourEntryGuard(std::shared_mutex& guard)
+			: mOutermost(tlDetourDepth == 0)
+		{
+			if (mOutermost)
+				mLock = std::shared_lock<std::shared_mutex>(guard);
+			++tlDetourDepth;
+		}
+
+		~DetourEntryGuard() { --tlDetourDepth; }
+
+		DetourEntryGuard(const DetourEntryGuard&) = delete;
+		DetourEntryGuard& operator=(const DetourEntryGuard&) = delete;
+
+		bool isOutermost() const { return mOutermost; }
+	};
+
+	// Release, or - when the GPU could not be proven idle - deliberately LEAK.
+	// Freeing a resource the GPU is still reading is the classic D3D12 unload crash, and it takes
+	// the GAME down. Leaking a few MB during teardown is always the better trade.
+	template <typename T>
+	void releaseOrAbandon(T*& p, bool gpuIsIdle)
+	{
+		if (!p) return;
+		if (gpuIsIdle)
+			p->Release();
+		else
+			PLOG_ERROR << "Abandoning (leaking) a D3D12 object because the GPU could not be flushed";
+		p = nullptr;
+	}
+}
+
+#pragma endregion detour entry guard
+
+
+#pragma region helpers
+
+// Is this HWND a window belonging to our own process? Our Present/ResizeBuffers hooks are inline
+// hooks on the shared dxgi implementation, so they see EVERY swapchain in the process (Steam
+// overlay, Discord, RivaTuner, media foundation thumbnailers, ...). This is one of the two filters
+// that narrow that down to the game's own swapchain (the other being "does GetDevice give us an
+// ID3D12Device", which rejects every D3D11 swapchain for free).
+bool D3D12Hook::isOwnedByThisProcess(HWND hwnd)
+{
+	if (!hwnd || !::IsWindow(hwnd))
+		return false;
+
+	DWORD windowProcessId = 0;
+	::GetWindowThreadProcessId(hwnd, &windowProcessId);
+	return windowProcessId == ::GetCurrentProcessId();
+}
+
+// COM canonical-identity comparison. Two interface pointers refer to the same object if and only
+// if their IUnknown identities are equal - comparing (say) two ID3D12Device* directly is not valid,
+// because a single object can hand out different pointers for different interfaces.
+bool D3D12Hook::sameComObject(IUnknown* a, IUnknown* b)
+{
+	if (!a || !b)
+		return false;
+
+	IUnknown* identityA = nullptr;
+	IUnknown* identityB = nullptr;
+	a->QueryInterface(IID_PPV_ARGS(&identityA));
+	b->QueryInterface(IID_PPV_ARGS(&identityB));
+
+	const bool matches = (identityA != nullptr) && (identityA == identityB);
+
+	safe_release(identityA);
+	safe_release(identityB);
+
+	return matches;
+}
+
+// This is what proves the queue we scraped out of ExecuteCommandLists actually belongs to the
+// device that owns the swapchain we're about to draw into. Submitting our command list to a queue
+// from a different device would be an immediate device-removal.
+bool D3D12Hook::queueMatchesDevice(ID3D12CommandQueue* queue, ID3D12Device* expectedDevice)
+{
+	if (!queue || !expectedDevice)
+		return false;
+
+	ID3D12Device* queueDevice = nullptr;
+	if (FAILED(queue->GetDevice(IID_PPV_ARGS(&queueDevice))) || !queueDevice)
+		return false;
+
+	const bool matches = sameComObject(queueDevice, expectedDevice);
+	safe_release(queueDevice);
+	return matches;
+}
+
+// Returns S_OK when the device is healthy. Callers MUST act on a non-S_OK result: a removed device
+// fails identically on every subsequent frame, so retrying forever (with LOG_ONCE hiding it) just
+// burns the render thread.
+HRESULT D3D12Hook::checkDeviceRemoved(ID3D12Device* device, const char* context)
+{
+	if (!device) return S_OK;
+	const HRESULT reason = device->GetDeviceRemovedReason();
+	if (FAILED(reason))
+		PLOG_ERROR << "D3D12 device removed reason at " << context << ": 0x" << std::hex << (ULONG)reason;
+	return reason;
+}
+
+#pragma endregion helpers
+
+
+#pragma region srv descriptor allocator
+
+// imgui's dx12 backend does not own descriptor storage - it asks us for SRV descriptors (the font
+// atlas, plus one per user texture) out of a heap we provide, and hands them back on shutdown.
+// The reference implementation used a function-local "static UINT index" bump allocator with an
+// empty free function, which leaked a slot on every re-init and would silently run off the end of
+// the heap. This is a real free list so repeated shutdown/init cycles (HCM detaching and
+// re-attaching) are safe.
+//
+// CRITICAL: imgui's backend keeps a raw, un-AddRef'd COPY of ImGui_ImplDX12_InitInfo, so the
+// `info->Device` / `info->SrvDescriptorHeap` it hands back to us are only as valid as our heap.
+// ImGui_ImplDX12_Shutdown() calls SrvDescriptorFreeFn, and it can run after we have released those
+// objects. mSrvHeapLive is the gate; these callbacks must never trust `info` without it.
+void D3D12Hook::resetSrvDescriptorAllocator()
+{
+	std::scoped_lock lock(mSrvFreeListMutex);
+	mSrvFreeList.clear();
+	mSrvFreeList.reserve(SRV_DESCRIPTOR_COUNT);
+	// pushed in reverse so pop_back() hands out slot 0 first (nicer to read in a graphics debugger)
+	for (UINT i = SRV_DESCRIPTOR_COUNT; i > 0; --i)
+		mSrvFreeList.push_back(i - 1);
+}
+
+void D3D12Hook::srvDescriptorAlloc(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* outCpu, D3D12_GPU_DESCRIPTOR_HANDLE* outGpu)
+{
+	if (!mSrvHeapLive.load(std::memory_order_acquire))
+	{
+		// The heap (and possibly the device) behind `info` has been released. Hand back zeroed
+		// handles rather than dereferencing freed COM objects.
+		PLOG_ERROR << "srvDescriptorAlloc called after the SRV heap was released; ignoring";
+		if (outCpu) *outCpu = D3D12_CPU_DESCRIPTOR_HANDLE{};
+		if (outGpu) *outGpu = D3D12_GPU_DESCRIPTOR_HANDLE{};
+		return;
+	}
+
+	if (!info || !info->Device || !info->SrvDescriptorHeap || !outCpu || !outGpu)
+	{
+		PLOG_ERROR << "srvDescriptorAlloc called with null info";
+		return;
+	}
+
+	UINT index = 0;
+	{
+		std::scoped_lock lock(mSrvFreeListMutex);
+		if (mSrvFreeList.empty())
+		{
+			// Handing back slot 0 keeps us inside the heap (no GPU fault); the overlay will just
+			// draw the wrong texture. Better than an out-of-bounds descriptor.
+			PLOG_ERROR << "SRV descriptor heap exhausted (" << SRV_DESCRIPTOR_COUNT << " descriptors); reusing slot 0";
+		}
+		else
+		{
+			index = mSrvFreeList.back();
+			mSrvFreeList.pop_back();
+		}
+	}
+
+	const UINT increment = info->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	*outCpu = info->SrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+	*outGpu = info->SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+	outCpu->ptr += static_cast<SIZE_T>(index) * increment;
+	outGpu->ptr += static_cast<UINT64>(index) * increment;
+}
+
+void D3D12Hook::srvDescriptorFree(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE cpu, D3D12_GPU_DESCRIPTOR_HANDLE gpu)
+{
+	(void)gpu;
+
+	// The common case on shutdown: the heap is gone, so there is nothing to give back and `info`
+	// must not be dereferenced. See the comment on resetSrvDescriptorAllocator.
+	if (!mSrvHeapLive.load(std::memory_order_acquire))
+		return;
+
+	if (!info || !info->Device || !info->SrvDescriptorHeap)
+		return;
+
+	const UINT increment = info->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	if (increment == 0) return;
+
+	const SIZE_T heapStart = info->SrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart().ptr;
+	if (cpu.ptr < heapStart) return;
+
+	const UINT index = static_cast<UINT>((cpu.ptr - heapStart) / increment);
+	if (index >= SRV_DESCRIPTOR_COUNT) return;
+
+	std::scoped_lock lock(mSrvFreeListMutex);
+	// guard against a double free putting the same slot in the list twice
+	if (std::find(mSrvFreeList.begin(), mSrvFreeList.end(), index) == mSrvFreeList.end())
+		mSrvFreeList.push_back(index);
+}
+
+#pragma endregion srv descriptor allocator
+
+
+D3D12Hook::D3D12Hook(std::weak_ptr<PointerDataStore> pointerDataStore)
+	: pointerDataStoreWeak(pointerDataStore)
+{
+	if (instance != nullptr)
+	{
+		throw HCMInitException("Cannot have more than one D3D12Hook");
+	}
+	instance = this;
+
+	// Every one of these is `static inline`, so it survives a previous D3D12Hook. Reset them here
+	// rather than in the destructor: shuttingDown in particular must STAY true after teardown so a
+	// straggling detour keeps forwarding.
+	shuttingDown.store(false, std::memory_order_release);
+	mQueueSearchActive.store(true, std::memory_order_relaxed);
+	mRejectedSwapChain.store(nullptr, std::memory_order_relaxed);
+	mRejectedSwapChainSkips.store(0, std::memory_order_relaxed);
+	mSrvHeapLive.store(false, std::memory_order_release);
+
+	// NOTE: deliberately no hooking here. Same two-phase pattern as D3D11Hook - the constructor
+	// runs before most of HCM's services exist, so a detour firing now would call into a
+	// half-constructed service graph. beginHook() is called last, from App.h.
+	resetSrvDescriptorAllocator();
+}
+
+
+#pragma region address harvesting
+
+// Optional fast path: if this build of the game ever gets a pIDXGISwapChain entry in
+// InternalPointerData.xml (like MCC has), we can read Present/ResizeBuffers straight off the live
+// object and skip creating a dummy swapchain entirely. Dummy swapchains are known to upset
+// RivaTuner and friends, which is exactly why HCM prefers resolved pointers for the D3D11 path.
+// HaloCampaignEvolved.exe has no such entry today, so this normally returns nullptr.
+//
+// NOTE it can only ever give us slots 8 and 13: reading slot 22 (Present1) or 39 (ResizeBuffers1)
+// off an object we have not proven to be an IDXGISwapChain1/3 would be an out-of-bounds vtable read
+// and we would end up hooking whatever happened to sit past the end of the table.
+void** D3D12Hook::resolveLiveSwapChainVtable()
+{
+	try
+	{
+		auto ptr = pointerDataStoreWeak.lock();
+		if (!ptr)
+			return nullptr;
+
+		uintptr_t pIDXGISwapChain = 0;
+		auto mlp_IDXGISwapChain = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(pIDXGISwapChain));
+		if (!mlp_IDXGISwapChain || !mlp_IDXGISwapChain->resolve(&pIDXGISwapChain) || pIDXGISwapChain == 0)
+			return nullptr;
+
+		PLOG_INFO << "Resolved a live IDXGISwapChain from pointer data: 0x" << std::hex << pIDXGISwapChain;
+		return *reinterpret_cast<void***>(pIDXGISwapChain);
+	}
+	catch (...)
+	{
+		// getData throws HCMInitException when the datum simply isn't present for this build.
+		// That is the expected case for HaloCampaignEvolved.exe - fall back to the dummy objects.
+		PLOG_DEBUG << "No pIDXGISwapChain pointer data for this build; falling back to dummy D3D12 objects";
+		return nullptr;
+	}
+}
+
+// Port of the reference overlay's GetHookAddresses(), with its null-deref bug fixed (it read the
+// factory vtable before checking the CreateDXGIFactory1 HRESULT) and with a WARP fallback added,
+// mirroring the multi-attempt / accumulate-errors-then-throw structure of
+// D3D11Hook::CreateDummySwapchain.
+//
+// We build a throwaway window + factory + device + queue + swapchain purely to read a handful of
+// vtable entries. Those entries are the *shared* implementations inside dxgi.dll / d3d12.dll, so
+// hooking them catches the game's real swapchain and command queue no matter when we were injected.
+D3D12Hook::HookAddresses D3D12Hook::harvestHookAddresses()
+{
+	HookAddresses addresses{};
+	std::vector<std::string> errorCodes;
+
+	// NOTE: a lambda, not a macro. The previous macro expanded its argument twice, so every
+	// std::format() in a call site was executed twice.
+	auto logHarvestFailure = [&errorCodes](std::string message)
+		{
+			PLOG_ERROR << message;
+			errorCodes.push_back(std::move(message));
+		};
+
+	const wchar_t* const dummyWindowClassName = L"HCM_TemporaryD3D12Window";
+	HINSTANCE dummyWindowInstance = GetModuleHandleW(nullptr); // the EXE, matching the reference
+	HWND dummyWindow = nullptr;
+	bool registeredClass = false;
+
+	IDXGIFactory4* factory = nullptr;
+	ID3D12Device* dummyDevice = nullptr;
+	ID3D12CommandQueue* dummyQueue = nullptr;
+	IDXGISwapChain1* dummySwapChain = nullptr;
+	IDXGISwapChain3* dummySwapChain3 = nullptr;
+	IDXGIAdapter* warpAdapter = nullptr;
+
+	HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+	if (FAILED(hr) || !factory)
+	{
+		logHarvestFailure(std::format("CreateDXGIFactory1 failed, error: {:x}", (ULONG)hr));
+	}
+	else
+	{
+		// attempt 1: default adapter (what the game itself will be using)
+		hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dummyDevice));
+		if (FAILED(hr) || !dummyDevice)
+		{
+			logHarvestFailure(std::format("D3D12CreateDevice on the default adapter failed, error: {:x}", (ULONG)hr));
+
+			// attempt 2: WARP. Slower to create but always present, and we only ever read vtables.
+			if (SUCCEEDED(factory->EnumWarpAdapter(IID_PPV_ARGS(&warpAdapter))) && warpAdapter)
+			{
+				hr = D3D12CreateDevice(warpAdapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dummyDevice));
+				if (FAILED(hr) || !dummyDevice)
+				{
+					logHarvestFailure(std::format("D3D12CreateDevice on the WARP adapter failed, error: {:x}", (ULONG)hr));
+				}
+				else
+				{
+					// The ID3D12CommandQueue implementation is the D3D12 runtime's, so a WARP device
+					// normally yields the same ExecuteCommandLists address as the game's hardware
+					// device. That stops being true if the game's Agility SDK (UE5.5 ships the
+					// D3D12Core.dll redist) has not yet been resolved process-wide when we run.
+					PLOG_WARNING << "Harvested the D3D12 hook addresses from a WARP device. If the game "
+						<< "uses a different D3D12 runtime (Agility SDK) the ExecuteCommandLists address "
+						<< "may not match and the overlay will never find the game's command queue.";
+				}
+			}
+		}
+	}
+
+	if (dummyDevice)
+	{
+		D3D12_COMMAND_QUEUE_DESC queueDesc{};
+		queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+		queueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+		queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+
+		hr = dummyDevice->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&dummyQueue));
+		if (FAILED(hr) || !dummyQueue)
+		{
+			logHarvestFailure(std::format("CreateCommandQueue on the dummy device failed, error: {:x}", (ULONG)hr));
+		}
+	}
+
+	if (dummyQueue)
+	{
+		void** queueVtable = *reinterpret_cast<void***>(dummyQueue);
+		addresses.executeCommandLists = queueVtable[(size_t)ID3D12CommandQueueVMT::ExecuteCommandLists];
+		PLOG_DEBUG << "ID3D12CommandQueue::ExecuteCommandLists @ 0x" << std::hex << (uintptr_t)addresses.executeCommandLists;
+	}
+
+	if (factory && dummyQueue)
+	{
+		WNDCLASSEXW wc{};
+		wc.cbSize = sizeof(wc);
+		wc.lpfnWndProc = DefWindowProcW;
+		wc.hInstance = dummyWindowInstance;
+		wc.lpszClassName = dummyWindowClassName;
+
+		if (!RegisterClassExW(&wc))
+		{
+			// A previous attach may have left the class registered; that's fine, carry on.
+			const DWORD lastError = GetLastError();
+			if (lastError != ERROR_CLASS_ALREADY_EXISTS)
+			{
+				logHarvestFailure(std::format("RegisterClassExW for the dummy window failed, error: {}", lastError));
+			}
+		}
+		else
+		{
+			registeredClass = true;
+		}
+
+		dummyWindow = CreateWindowExW(0, dummyWindowClassName, L"", WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, nullptr, nullptr, dummyWindowInstance, nullptr);
+		if (!dummyWindow)
+		{
+			logHarvestFailure(std::format("CreateWindowExW for the dummy window failed, error: {}", GetLastError()));
+		}
+		else
+		{
+			DXGI_SWAP_CHAIN_DESC1 swapDesc{};
+			swapDesc.Width = 100;
+			swapDesc.Height = 100;
+			swapDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			swapDesc.SampleDesc.Count = 1;
+			swapDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+			swapDesc.BufferCount = 2;
+			swapDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+
+			// NOTE: this runs BEFORE our hooks are installed, so it cannot re-enter our detours.
+			// If this call is ever moved after beginHook()'s create_inline calls, it will.
+			hr = factory->CreateSwapChainForHwnd(dummyQueue, dummyWindow, &swapDesc, nullptr, nullptr, &dummySwapChain);
+			if (FAILED(hr) || !dummySwapChain)
+			{
+				logHarvestFailure(std::format("CreateSwapChainForHwnd for the dummy swapchain failed, error: {:x}", (ULONG)hr));
+			}
+			else
+			{
+				void** swapChainVtable = *reinterpret_cast<void***>(dummySwapChain);
+				addresses.present = swapChainVtable[(size_t)IDXGISwapChainVMT::Present];
+				addresses.resizeBuffers = swapChainVtable[(size_t)IDXGISwapChainVMT::ResizeBuffers];
+				// Safe: dummySwapChain is statically an IDXGISwapChain1*, so slot 22 is in bounds.
+				addresses.present1 = swapChainVtable[(size_t)IDXGISwapChainVMT::Present1];
+				PLOG_DEBUG << "IDXGISwapChain::Present @ 0x" << std::hex << (uintptr_t)addresses.present;
+				PLOG_DEBUG << "IDXGISwapChain::ResizeBuffers @ 0x" << std::hex << (uintptr_t)addresses.resizeBuffers;
+				PLOG_DEBUG << "IDXGISwapChain1::Present1 @ 0x" << std::hex << (uintptr_t)addresses.present1;
+
+				// Slot 39 is only in bounds once the object has proven it implements IDXGISwapChain3.
+				if (SUCCEEDED(dummySwapChain->QueryInterface(IID_PPV_ARGS(&dummySwapChain3))) && dummySwapChain3)
+				{
+					void** swapChain3Vtable = *reinterpret_cast<void***>(dummySwapChain3);
+					addresses.resizeBuffers1 = swapChain3Vtable[(size_t)IDXGISwapChainVMT::ResizeBuffers1];
+					PLOG_DEBUG << "IDXGISwapChain3::ResizeBuffers1 @ 0x" << std::hex << (uintptr_t)addresses.resizeBuffers1;
+				}
+				else
+				{
+					PLOG_WARNING << "The dummy swapchain does not implement IDXGISwapChain3; ResizeBuffers1 will not be hooked";
+				}
+			}
+		}
+	}
+
+	// Fallback for the two required swapchain addresses only (see resolveLiveSwapChainVtable).
+	if (!addresses.present || !addresses.resizeBuffers)
+	{
+		if (void** liveSwapChainVtable = resolveLiveSwapChainVtable())
+		{
+			if (!addresses.present)
+				addresses.present = liveSwapChainVtable[(size_t)IDXGISwapChainVMT::Present];
+			if (!addresses.resizeBuffers)
+				addresses.resizeBuffers = liveSwapChainVtable[(size_t)IDXGISwapChainVMT::ResizeBuffers];
+		}
+	}
+
+	safe_release(dummySwapChain3);
+	safe_release(dummySwapChain);
+	safe_release(dummyQueue);
+	safe_release(dummyDevice);
+	safe_release(warpAdapter);
+	safe_release(factory);
+
+	if (dummyWindow) DestroyWindow(dummyWindow);
+	if (registeredClass) UnregisterClassW(dummyWindowClassName, dummyWindowInstance);
+
+	if (!addresses.present || !addresses.resizeBuffers || !addresses.executeCommandLists)
+	{
+		std::string resultsString = "Failed to harvest the D3D12/DXGI function addresses HCM needs to hook.\n";
+		for (auto& error : errorCodes)
+			resultsString += error + "\n";
+		throw HCMInitException(resultsString);
+	}
+
+	return addresses;
+}
+
+#pragma endregion address harvesting
+
+
+void D3D12Hook::beginHook()
+{
+	PLOG_DEBUG << "D3D12Hook::beginHook";
+
+	try
+	{
+		const HookAddresses addresses = harvestHookAddresses();
+
+		// Every hook below follows the same three-step dance:
+		//     create (StartDisabled) -> publish the trampoline -> enable
+		// so that a detour firing on another thread can never observe an installed hook whose
+		// trampoline pointer has not been published yet. See the gOriginal* comment block.
+
+		// ExecuteCommandLists first: it is the ONLY source of the game's command queue under late
+		// injection, and Present refuses to render until it has produced one. Installing it before
+		// Present just means we're more likely to already have a candidate on the first frame.
+		executeCommandListsHook = safetyhook::create_inline(addresses.executeCommandLists, &newDX12ExecuteCommandLists, safetyhook::InlineHook::StartDisabled);
+		if (!executeCommandListsHook)
+			throw HCMInitException("Failed to hook ID3D12CommandQueue::ExecuteCommandLists");
+		gOriginalExecuteCommandLists.store(executeCommandListsHook.original<DX12ExecuteCommandLists*>(), std::memory_order_release);
+		if (!executeCommandListsHook.enable())
+			throw HCMInitException("Failed to enable the ID3D12CommandQueue::ExecuteCommandLists hook");
+
+		presentHook = safetyhook::create_inline(addresses.present, &newDX12Present, safetyhook::InlineHook::StartDisabled);
+		if (!presentHook)
+			throw HCMInitException("Failed to hook IDXGISwapChain::Present");
+		gOriginalPresent.store(presentHook.original<DX12Present*>(), std::memory_order_release);
+		if (!presentHook.enable())
+			throw HCMInitException("Failed to enable the IDXGISwapChain::Present hook");
+
+		// UE5's D3D12 RHI presents through Present1, so this one is what actually makes the overlay
+		// appear on HaloCampaignEvolved.exe. It is still only best-effort: on the (impossible on
+		// Win10+, but cheap to tolerate) chance that Present1 could not be harvested we keep the
+		// slot-8 hook and log, rather than refusing to start.
+		// If dxgi implements both slots with the same body, hooking it twice would corrupt the
+		// prologue - so never install the second hook over the same address.
+		if (addresses.present1 && addresses.present1 != addresses.present)
+		{
+			present1Hook = safetyhook::create_inline(addresses.present1, &newDX12Present1, safetyhook::InlineHook::StartDisabled);
+			if (!present1Hook)
+			{
+				PLOG_ERROR << "Failed to hook IDXGISwapChain1::Present1; the overlay will only appear if the game presents through IDXGISwapChain::Present";
+			}
+			else
+			{
+				gOriginalPresent1.store(present1Hook.original<DX12Present1*>(), std::memory_order_release);
+				if (!present1Hook.enable())
+				{
+					PLOG_ERROR << "Failed to enable the IDXGISwapChain1::Present1 hook";
+					gOriginalPresent1.store(nullptr, std::memory_order_release);
+					present1Hook = {};
+				}
+			}
+		}
+		else
+		{
+			PLOG_WARNING << "IDXGISwapChain1::Present1 was not hooked (address unavailable, or identical to Present)";
+		}
+
+		resizeBuffersHook = safetyhook::create_inline(addresses.resizeBuffers, &newDX12ResizeBuffers, safetyhook::InlineHook::StartDisabled);
+		if (!resizeBuffersHook)
+			throw HCMInitException("Failed to hook IDXGISwapChain::ResizeBuffers");
+		gOriginalResizeBuffers.store(resizeBuffersHook.original<DX12ResizeBuffers*>(), std::memory_order_release);
+		if (!resizeBuffersHook.enable())
+			throw HCMInitException("Failed to enable the IDXGISwapChain::ResizeBuffers hook");
+
+		// Best-effort, same reasoning as Present1: missing it means the game could resize while we
+		// still hold back-buffer references, which fails its resize - so we want it if we can get it.
+		if (addresses.resizeBuffers1 && addresses.resizeBuffers1 != addresses.resizeBuffers)
+		{
+			resizeBuffers1Hook = safetyhook::create_inline(addresses.resizeBuffers1, &newDX12ResizeBuffers1, safetyhook::InlineHook::StartDisabled);
+			if (!resizeBuffers1Hook)
+			{
+				PLOG_ERROR << "Failed to hook IDXGISwapChain3::ResizeBuffers1";
+			}
+			else
+			{
+				gOriginalResizeBuffers1.store(resizeBuffers1Hook.original<DX12ResizeBuffers1*>(), std::memory_order_release);
+				if (!resizeBuffers1Hook.enable())
+				{
+					PLOG_ERROR << "Failed to enable the IDXGISwapChain3::ResizeBuffers1 hook";
+					gOriginalResizeBuffers1.store(nullptr, std::memory_order_release);
+					resizeBuffers1Hook = {};
+				}
+			}
+		}
+
+		PLOG_DEBUG << "D3D12 hooks set";
+	}
+	catch (HCMRuntimeException ex)
+	{
+		// App.h only catches HCMInitException, and lockOrThrow/PointerDataStore throw runtime ones.
+		throw HCMInitException(ex.what());
+	}
+}
+
+
+#pragma region adoption
+
+// Called from the Present detour whenever we see a swapchain that isn't the one we've adopted.
+// Returns true if (and only if) this swapchain is one we should be drawing into.
+bool D3D12Hook::tryAdoptSwapChain(IDXGISwapChain* pSwapChain)
+{
+	if (!pSwapChain)
+		return false;
+
+	// Filter 1: is it a D3D12 swapchain at all? Every D3D11 swapchain in the process (Steam
+	// overlay, RivaTuner, HCM's own dummy in other code paths) fails this for free.
+	IDXGISwapChain3* candidateSwapChain3 = nullptr;
+	if (FAILED(pSwapChain->QueryInterface(IID_PPV_ARGS(&candidateSwapChain3))) || !candidateSwapChain3)
+	{
+		LOG_ONCE(PLOG_VERBOSE << "Present on a swapchain that isn't an IDXGISwapChain3; ignoring");
+		return false;
+	}
+
+	ID3D12Device* candidateDevice = nullptr;
+	if (FAILED(candidateSwapChain3->GetDevice(IID_PPV_ARGS(&candidateDevice))) || !candidateDevice)
+	{
+		LOG_ONCE(PLOG_VERBOSE << "Present on a non-D3D12 swapchain; ignoring");
+		safe_release(candidateSwapChain3);
+		return false;
+	}
+
+	// Filter 2: is the output window one of ours? Rejects out-of-process / thumbnail swapchains.
+	DXGI_SWAP_CHAIN_DESC swapDesc{};
+	if (FAILED(candidateSwapChain3->GetDesc(&swapDesc)) || !isOwnedByThisProcess(swapDesc.OutputWindow))
+	{
+		LOG_ONCE(PLOG_VERBOSE << "Present on a D3D12 swapchain whose window isn't ours; ignoring");
+		safe_release(candidateDevice);
+		safe_release(candidateSwapChain3);
+		return false;
+	}
+
+	if (mAdoptedSwapChain != nullptr)
+	{
+		// Filter 3: we already have a swapchain. Only treat this as a REPLACEMENT if it targets the
+		// same window - otherwise it is a second, unrelated swapchain (a secondary window, a video
+		// capture surface) and adopting it would make us ping-pong between the two, tearing down and
+		// rebuilding every D3D12 resource on alternate frames.
+		if (swapDesc.OutputWindow != mWindowHandle)
+		{
+			LOG_ONCE(PLOG_INFO << "Ignoring a second D3D12 swapchain on a different window");
+			safe_release(candidateDevice);
+			safe_release(candidateSwapChain3);
+			return false;
+		}
+
+		// The game replaced its swapchain under us (fullscreen transition on some drivers, or a
+		// device-lost recovery). Everything we built is tied to the old one.
+		PLOG_INFO << "Game swapchain changed (old: 0x" << std::hex << (uintptr_t)mAdoptedSwapChain
+			<< ", new: 0x" << (uintptr_t)pSwapChain << "); rebuilding D3D12 resources";
+
+		// COM identity, not pointer equality - see sameComObject.
+		const bool sameDevice = sameComObject(mDevice, candidateDevice);
+		const bool gpuIsIdle = waitForGpuIdle();
+
+		if (!sameDevice && mHasFiredPresentEvent)
+		{
+			// imgui's dx12 backend is bound to the OLD device and to our SRV heap, and holds raw,
+			// un-AddRef'd pointers to both. We cannot re-init it from here, and we must not free
+			// them either - ~ImGuiManager still has to run ImGui_ImplDX12_Shutdown against them.
+			// So: drop everything tied to the swapchain, keep the imgui-bound objects alive, and
+			// stop touching D3D12 for the rest of the session.
+			PLOG_FATAL << "The game's D3D12 device changed. imgui's dx12 backend is bound to the old "
+				<< "device and cannot be re-initialised from D3D12Hook. (Fixing this properly needs "
+				<< "ImGuiManager to tear down and re-init its dx12 backend in response to a "
+				<< "device-changed event.)";
+			releaseSwapChainResources(gpuIsIdle);
+			disableOverlayPermanently("the game's D3D12 device changed under a live imgui backend");
+			safe_release(candidateDevice);
+			safe_release(candidateSwapChain3);
+			return false;
+		}
+
+		if (sameDevice)
+		{
+			// Cheap path: keep the device, the command queue, the fence and - critically - the SRV
+			// heap, because imgui's dx12 backend is holding raw pointers to the device and that heap
+			// and we have no way to make it re-init from here.
+			releaseSwapChainResources(gpuIsIdle);
+		}
+		else
+		{
+			// imgui was never bound, so a full rebuild on the new device is still possible.
+			releaseD3Dresources(gpuIsIdle);
+			releaseImGuiBoundResources(gpuIsIdle);
+		}
+
+		// releaseSwapChainResources deliberately does not touch mDevice, so drop our reference to the
+		// old one HERE - otherwise the assignment below overwrites a still-AddRef'd pointer and we
+		// leak one ID3D12Device (and with it the queue, heaps and allocators it owns) on every
+		// fullscreen transition / swapchain recreation.
+		// In the sameDevice case this is a plain refcount balance, not a destruction: candidateDevice
+		// already holds a fresh reference to the very same COM object.
+		safe_release(mDevice);
+	}
+
+	mAdoptedSwapChain = pSwapChain;   // identity only; kept valid by the ref mSwapChain3 holds
+	mSwapChain3 = candidateSwapChain3; // takes ownership of the QueryInterface ref
+	mDevice = candidateDevice;         // takes ownership of the GetDevice ref
+	mWindowHandle = swapDesc.OutputWindow;
+	isD3DdeviceInitialized = false;
+
+	PLOG_INFO << "Adopted the game's D3D12 swapchain: 0x" << std::hex << (uintptr_t)pSwapChain
+		<< ", device: 0x" << (uintptr_t)mDevice
+		<< ", hwnd: 0x" << (uintptr_t)mWindowHandle;
+
+	return true;
+}
+
+// THE CRUX OF THE WHOLE PORT.
+//
+// D3D12 has no immediate context. To draw anything we must submit a command list to a command
+// queue, and it has to be the SAME queue the game submitted its frame on - queue submissions are
+// ordered, so submitting after the game's frame work on that queue is what guarantees the overlay
+// lands on top of the rendered scene instead of racing it.
+//
+// There is no API to ask a swapchain for its queue. In D3D12 the queue is passed to
+// CreateSwapChainForHwnd, so an overlay that loads BEFORE the game can hook that call and read it
+// straight out of the arguments (that is what the reference overlay does). HCM is injected into an
+// already-running game, so that call happened long ago and that path can never fire for us.
+//
+// The only remaining source is ID3D12CommandQueue::ExecuteCommandLists: every frame the game
+// submits its work through it, and the "this" pointer of the most recent DIRECT-type submission is
+// the queue it is about to present from. So the reference's dead-code hook becomes our load-bearing
+// one. We then validate the candidate against the swapchain's device (COM identity, not pointer
+// equality) before trusting it.
+bool D3D12Hook::tryCaptureCommandQueue()
+{
+	if (mCommandQueue)
+		return true;
+
+	if (!mDevice)
+		return false;
+
+	// EXCHANGE, not load: the detour publishes an OWNED reference and releases whatever it
+	// displaces, so taking ownership atomically is the only way to read the candidate without
+	// racing that release. (Reading it raw and dereferencing it a frame later on another thread was
+	// a use-after-free, and a hard crash in the game.)
+	ID3D12CommandQueue* candidate = mCandidateDirectQueue.exchange(nullptr, std::memory_order_acq_rel);
+	if (!candidate)
+	{
+		LOG_ONCE(PLOG_DEBUG << "No direct command queue seen yet; overlay is waiting for ExecuteCommandLists");
+		return false;
+	}
+
+	if (!queueMatchesDevice(candidate, mDevice))
+	{
+		// Some other component in the process (an overlay, a video encoder) owns this queue.
+		// Leave the search active so a later frame gives us a different candidate.
+		LOG_ONCE(PLOG_DEBUG << "Candidate direct queue belongs to a different device; still searching");
+		candidate->Release();
+		return false;
+	}
+
+	mCommandQueue = candidate; // takes the reference the detour published
+	// The queue is found. Stop doing per-submission work in the ECL detour - from here it is one
+	// relaxed atomic load and a tail call.
+	mQueueSearchActive.store(false, std::memory_order_relaxed);
+
+	PLOG_INFO << "Captured the game's direct command queue: 0x" << std::hex << (uintptr_t)mCommandQueue;
+	return true;
+}
+
+#pragma endregion adoption
+
+
+#pragma region resource management
+
+bool D3D12Hook::anyBackBufferHeld() const
+{
+	for (const auto& backBuffer : mBackBuffers)
+	{
+		if (backBuffer.resource)
+			return true;
+	}
+	return false;
+}
+
+// Creates (or recreates) everything that depends on the swapchain's back buffers.
+// Safe to call repeatedly - used both for first init and after ResizeBuffers.
+// Caller MUST have flushed the GPU and released the old back buffer references first.
+void D3D12Hook::createBackBufferResources()
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+
+	if (!mSwapChain3 || !mDevice)
+		throw HCMInitException("createBackBufferResources called without a swapchain/device");
+
+	DXGI_SWAP_CHAIN_DESC swapDesc{};
+	if (FAILED(mSwapChain3->GetDesc(&swapDesc)))
+		throw HCMInitException("Failed to get the swapchain description");
+
+	const UINT newBufferCount = swapDesc.BufferCount;
+	if (newBufferCount == 0 || newBufferCount > 16)
+		throw HCMInitException(std::format("Implausible swapchain buffer count: {}", newBufferCount));
+
+	++mResourceGeneration;
+
+	// The number of FRAMES IN FLIGHT is whatever we told ImGui_ImplDX12_Init, and imgui's
+	// FrameContext array is fixed at that size for the life of its backend. The swapchain's buffer
+	// count, on the other hand, is free to change on a resize (UE5 does exactly that when toggling
+	// fullscreen / frame pacing). Freezing our render ring at the value imgui knows about is what
+	// keeps the two rings in step; growing it would make imgui recycle a frame too early.
+	if (mFramesInFlight == 0)
+	{
+		mFramesInFlight = newBufferCount;
+	}
+	else if (newBufferCount != mFramesInFlight)
+	{
+		PLOG_ERROR << "Swapchain buffer count changed (" << mFramesInFlight << " -> " << newBufferCount
+			<< ") but imgui's dx12 backend was initialised with NumFramesInFlight = " << mFramesInFlight
+			<< " and cannot be re-negotiated from here. Keeping the original frames-in-flight count.";
+	}
+
+	// If the buffer count changed we have to rebuild the back buffers and the RTV heap.
+	// The command allocators live in mRenderSlots and are deliberately NOT touched here - they are
+	// sized by mFramesInFlight, and mCommandList holds an internal reference to mRenderSlots[0]'s.
+	if (newBufferCount != mBufferCount)
+	{
+		for (auto& backBuffer : mBackBuffers)
+			safe_release(backBuffer.resource);
+		mBackBuffers.clear();
+		safe_release(mRtvHeap);
+		mBufferCount = newBufferCount;
+	}
+
+	mBackBuffers.resize(mBufferCount);
+	mRenderSlots.resize(mFramesInFlight);
+
+	if (!mRtvHeap)
+	{
+		D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
+		rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+		rtvHeapDesc.NumDescriptors = mBufferCount;
+		rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+		if (FAILED(mDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&mRtvHeap))) || !mRtvHeap)
+			throw HCMInitException("Failed to create the RTV descriptor heap");
+	}
+
+	mRtvDescriptorSize = mDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = mRtvHeap->GetCPUDescriptorHandleForHeapStart();
+
+	for (UINT i = 0; i < mBufferCount; ++i)
+	{
+		BackBuffer& backBuffer = mBackBuffers[i];
+
+		safe_release(backBuffer.resource);
+		if (FAILED(mSwapChain3->GetBuffer(i, IID_PPV_ARGS(&backBuffer.resource))) || !backBuffer.resource)
+			throw HCMInitException(std::format("Failed to get back buffer {}", i));
+
+		backBuffer.rtv = rtvHandle;
+
+		const D3D12_RESOURCE_DESC resourceDesc = backBuffer.resource->GetDesc();
+
+		// Build the RTV from the RESOURCE's format, and report that same format to imgui via
+		// getImGuiInitInfo(). If those two ever disagree, imgui's PSO won't match the render target
+		// and nothing draws (silently, unless the d3d12 debug layer is on).
+		D3D12_RENDER_TARGET_VIEW_DESC rtvViewDesc{};
+		rtvViewDesc.Format = resourceDesc.Format;
+		rtvViewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+		rtvViewDesc.Texture2D.MipSlice = 0;
+		rtvViewDesc.Texture2D.PlaneSlice = 0;
+		mDevice->CreateRenderTargetView(backBuffer.resource, &rtvViewDesc, backBuffer.rtv);
+
+		if (i == 0)
+		{
+			if (mRtvFormat != DXGI_FORMAT_UNKNOWN && mRtvFormat != resourceDesc.Format)
+			{
+				// imgui's pipeline state was built for the old format at ImGui_ImplDX12_Init time.
+				// We cannot rebuild it from here - that needs ImGuiManager to re-init its backend.
+				PLOG_ERROR << "Swapchain back buffer format changed (" << (int)mRtvFormat << " -> "
+					<< (int)resourceDesc.Format << "). The imgui dx12 pipeline state no longer matches "
+					<< "and the overlay may not draw until HCM is restarted.";
+			}
+			mRtvFormat = resourceDesc.Format;
+
+			// Screen size comes from the BACK BUFFER, not from the window client rect that
+			// ImGui_ImplWin32_NewFrame would give us - matching D3D11Hook, and correct under DPI
+			// scaling / dynamic resolution.
+			mScreenSize = { static_cast<float>(resourceDesc.Width), static_cast<float>(resourceDesc.Height) };
+			mScreenCenter = mScreenSize / 2;
+			PLOG_INFO << "Initializing screen size: " << resourceDesc.Width << ", " << resourceDesc.Height;
+		}
+
+		rtvHandle.ptr += mRtvDescriptorSize;
+	}
+
+	// One allocator PER FRAME IN FLIGHT. This is what makes the single-fence recycle correct: we
+	// only ever reset an allocator once the GPU has finished the submission that used it.
+	for (UINT i = 0; i < mFramesInFlight; ++i)
+	{
+		RenderSlot& slot = mRenderSlots[i];
+		if (!slot.allocator)
+		{
+			if (FAILED(mDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&slot.allocator))) || !slot.allocator)
+				throw HCMInitException(std::format("Failed to create command allocator {}", i));
+			slot.fenceValue = 0;
+		}
+	}
+
+	// ONE command list shared by every frame; the per-frame state lives in the allocators.
+	// Created HERE and not only in initializeD3Ddevice, because newDX12ResizeBuffers calls
+	// createBackBufferResources() directly - and releaseSwapChainResources() drops the list along
+	// with the allocators it references.
+	// D3D12 command lists are created in the recording state, so close it immediately - the Present
+	// path always Resets it before recording.
+	if (!mCommandList)
+	{
+		if (FAILED(mDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, mRenderSlots[0].allocator, nullptr, IID_PPV_ARGS(&mCommandList))) || !mCommandList)
+			throw HCMInitException("Failed to create the overlay command list");
+
+		if (FAILED(mCommandList->Close()))
+			throw HCMInitException("Failed to close the freshly created command list");
+	}
+
+	++mResourceGeneration;
+}
+
+// Drops ONLY the back buffer references. Mandatory before calling the game's ResizeBuffers:
+// IDXGISwapChain::ResizeBuffers fails with DXGI_ERROR_INVALID_CALL while any outstanding back
+// buffer reference exists, so an overlay that forgets this breaks every resolution change in the
+// game. (The reference overlay does exactly that - it never hooks ResizeBuffers at all.)
+void D3D12Hook::releaseBackBufferResources()
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+	++mResourceGeneration;
+	for (auto& backBuffer : mBackBuffers)
+		safe_release(backBuffer.resource);
+}
+
+// Releases everything tied to the current swapchain, keeping device-scoped objects alive.
+// NOTE mCommandList goes too: it was created from mRenderSlots[0].allocator and some drivers keep a
+// real internal reference to that allocator, so releasing the allocators without it trips
+// EXECUTION_ERROR "command allocator ... still referenced by ID3D12GraphicsCommandList".
+void D3D12Hook::releaseSwapChainResources(bool gpuIsIdle)
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+	++mResourceGeneration;
+
+	releaseOrAbandon(mCommandList, gpuIsIdle);
+
+	// ALWAYS a real release, never abandoned: these are references on resources the SWAPCHAIN owns,
+	// so dropping ours cannot destroy anything the GPU might be reading - and keeping even one of
+	// them makes every subsequent IDXGISwapChain::ResizeBuffers fail with DXGI_ERROR_INVALID_CALL,
+	// which UE5 turns into UE_LOG(Fatal). Killing the game is never the safer option.
+	for (auto& backBuffer : mBackBuffers)
+		safe_release(backBuffer.resource);
+	mBackBuffers.clear();
+
+	for (auto& slot : mRenderSlots)
+	{
+		releaseOrAbandon(slot.allocator, gpuIsIdle);
+		slot.fenceValue = 0;
+	}
+	mRenderSlots.clear();
+	// Resetting the ordinal is safe only because every caller has just flushed the GPU: it changes
+	// our slot index's constant offset from imgui's frameIndex, and the fresh slots all carry
+	// fenceValue 0 (i.e. no wait) for the first cycle after a rebuild.
+	mRenderOrdinal = 0;
+
+	releaseOrAbandon(mRtvHeap, gpuIsIdle);
+	safe_release(mSwapChain3); // a reference on the game's object; releasing ours destroys nothing
+	mAdoptedSwapChain = nullptr;
+	mBufferCount = 0;
+	mRtvDescriptorSize = 0;
+	isD3DdeviceInitialized = false;
+}
+
+// Everything above PLUS the fence and the command queue.
+// It deliberately does NOT touch mSrvHeap or mDevice once imgui's dx12 backend has been bound to
+// them: the backend keeps a raw, un-AddRef'd copy of them in its ImGui_ImplDX12_InitInfo and
+// dereferences them from ImGui_ImplDX12_Shutdown(). Only ~D3D12Hook - which runs AFTER
+// ~ImGuiManager, because App.h declares `d3d` before `imm` - may free them.
+void D3D12Hook::releaseD3Dresources(bool gpuIsIdle)
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+
+	releaseSwapChainResources(gpuIsIdle);
+
+	releaseOrAbandon(mFence, gpuIsIdle); // ours exclusively, and the GPU may still be signalling it
+
+	if (mFenceEvent)
+	{
+		// A pending SetEventOnCompletion still targets this handle, so only close it once we know
+		// the fence has retired past it.
+		if (gpuIsIdle)
+			CloseHandle(mFenceEvent);
+		else
+			PLOG_ERROR << "Abandoning (leaking) the overlay fence event because the GPU could not be flushed";
+		mFenceEvent = nullptr;
+	}
+
+	safe_release(mCommandQueue); // the game's queue; we only ever held a reference to it
+
+	mNextFenceValue = 1;
+
+	// The captured queue is gone, so re-arm the ExecuteCommandLists search - unless the overlay has
+	// been permanently disabled, in which case leaving it armed would make the detour do a virtual
+	// GetDesc() on every submission on every queue in the process for the rest of the session.
+	if (ID3D12CommandQueue* staleCandidate = mCandidateDirectQueue.exchange(nullptr, std::memory_order_acq_rel))
+		staleCandidate->Release();
+	mQueueSearchActive.store(!overlayPermanentlyDisabled && !shuttingDown.load(std::memory_order_relaxed), std::memory_order_relaxed);
+
+	if (!mHasFiredPresentEvent)
+	{
+		// imgui never bound anything to us, so there is nothing to keep alive.
+		releaseImGuiBoundResources(gpuIsIdle);
+	}
+	else
+	{
+		LOG_ONCE(PLOG_INFO << "Keeping the D3D12 device and SRV heap alive: imgui's dx12 backend still holds "
+			"raw pointers to them, and only ~D3D12Hook (which runs after ~ImGuiManager) may free them");
+	}
+}
+
+// The objects imgui's dx12 backend holds raw pointers to. ~D3D12Hook only.
+void D3D12Hook::releaseImGuiBoundResources(bool gpuIsIdle)
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+
+	// Close the gate BEFORE releasing: srvDescriptorAlloc/Free are static and are called with a
+	// stale InitInfo copy, so this flag is the only thing standing between them and a freed heap.
+	mSrvHeapLive.store(false, std::memory_order_release);
+	releaseOrAbandon(mSrvHeap, gpuIsIdle); // ours exclusively - the GPU may still be sampling it
+	safe_release(mDevice);                 // the game holds its own references; ours destroys nothing
+
+	mWindowHandle = nullptr;
+	mRtvFormat = DXGI_FORMAT_UNKNOWN;
+	mFramesInFlight = 0;
+}
+
+// THE single entry point for "give up on the overlay, permanently".
+//
+// Latching overlayPermanentlyDisabled while we still hold back-buffer references is a GAME-killing
+// bug, not an overlay bug: every path that checks the flag then passes ResizeBuffers straight
+// through to DXGI, which refuses with DXGI_ERROR_INVALID_CALL while any outstanding back buffer
+// reference exists - and UE5's FD3D12Viewport::Resize wraps that in VERIFYD3D12RESULT ->
+// UE_LOG(Fatal). So: release first, latch second, always through here.
+void D3D12Hook::disableOverlayPermanently(const char* reason)
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+
+	if (overlayPermanentlyDisabled)
+		return;
+
+	PLOG_FATAL << "Disabling the D3D12 overlay permanently: " << reason;
+
+	overlayPermanentlyDisabled = true;
+	isD3DdeviceInitialized = false;
+	// Stop the per-submission work in the ExecuteCommandLists detour for good.
+	mQueueSearchActive.store(false, std::memory_order_relaxed);
+
+	const bool gpuIsIdle = waitForGpuIdle();
+	releaseD3Dresources(gpuIsIdle);
+}
+
+// Signal + wait so no GPU work is still referencing anything we're about to release or reset.
+// Skipping this before releasing command allocators is the classic D3D12 unload crash.
+// Returns false when the flush could NOT be proven - the caller must then leak rather than free.
+bool D3D12Hook::waitForGpuIdle()
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+
+	// Whatever happens below, the per-slot fence values must not survive.
+	// A stale value that will never be reached makes newDX12Present burn the full
+	// kFenceWaitTimeoutMs on the game's RENDER THREAD every single frame - i.e. the game runs at
+	// 1 FPS - and skip the overlay forever.
+	struct ClearFenceValuesOnExit
+	{
+		std::vector<RenderSlot>& slots;
+		~ClearFenceValuesOnExit() { for (auto& slot : slots) slot.fenceValue = 0; }
+	} clearOnExit{ mRenderSlots };
+
+	if (!mFence || !mCommandQueue || !mFenceEvent)
+		return true; // nothing of ours was ever submitted, so the GPU is trivially idle w.r.t. us
+
+	const UINT64 flushValue = mNextFenceValue++;
+	if (FAILED(mCommandQueue->Signal(mFence, flushValue)))
+	{
+		PLOG_ERROR << "Fence signal failed during GPU flush";
+		checkDeviceRemoved(mDevice, "waitForGpuIdle");
+		return false;
+	}
+
+	if (mFence->GetCompletedValue() < flushValue)
+	{
+		// The event is auto-reset, and a previously timed-out wait can leave it signalled by a
+		// fence value we are no longer interested in. Clear it so this wait means what it says.
+		ResetEvent(mFenceEvent);
+
+		if (FAILED(mFence->SetEventOnCompletion(flushValue, mFenceEvent)))
+		{
+			PLOG_ERROR << "SetEventOnCompletion failed during GPU flush";
+			checkDeviceRemoved(mDevice, "waitForGpuIdle");
+			return false;
+		}
+
+		if (WaitForSingleObject(mFenceEvent, kGpuFlushTimeoutMs) != WAIT_OBJECT_0)
+		{
+			PLOG_ERROR << "Timed out waiting for the GPU to go idle; overlay resources will be abandoned rather than freed";
+			return false;
+		}
+	}
+
+	return true;
+}
+
+// Creates the D3D12 objects the overlay needs. Throws HCMInitException on any failure.
+// The caller is responsible for either latching the failure or rolling back - we must never allow
+// a partially-initialised renderer to be retried frame after frame (the reference did, and its
+// second pass re-installed a WndProc on top of itself, giving infinite recursion).
+void D3D12Hook::initializeD3Ddevice(IDXGISwapChain* pSwapChain)
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+
+	PLOG_DEBUG << "Initializing D3D12 renderer, swapchain: 0x" << std::hex << (uintptr_t)pSwapChain;
+
+	if (!mSwapChain3 || !mDevice || !mCommandQueue)
+		throw HCMInitException("initializeD3Ddevice called before the swapchain/device/queue were adopted");
+
+	createBackBufferResources();
+
+	if (mRenderSlots.empty() || !mRenderSlots[0].allocator || !mCommandList)
+		throw HCMInitException("No command allocator / command list after createBackBufferResources");
+
+	// Shader-visible SRV heap - imgui's font atlas SRV lives here and is sampled by its pixel
+	// shader, so SHADER_VISIBLE is not optional.
+	if (!mSrvHeap)
+	{
+		D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc{};
+		srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+		srvHeapDesc.NumDescriptors = SRV_DESCRIPTOR_COUNT;
+		srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+		if (FAILED(mDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvHeap))) || !mSrvHeap)
+			throw HCMInitException("Failed to create the shader-visible SRV descriptor heap");
+
+		resetSrvDescriptorAllocator();
+	}
+	// Opens the gate for the static SRV callbacks (see resetSrvDescriptorAllocator).
+	mSrvHeapLive.store(true, std::memory_order_release);
+
+	if (!mFence)
+	{
+		if (FAILED(mDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&mFence))) || !mFence)
+			throw HCMInitException("Failed to create the overlay fence");
+	}
+
+	if (!mFenceEvent)
+	{
+		mFenceEvent = CreateEventW(nullptr, FALSE /*auto-reset*/, FALSE, nullptr);
+		if (!mFenceEvent)
+			throw HCMInitException(std::format("CreateEventW for the fence event failed, error: {}", GetLastError()));
+	}
+
+	PLOG_INFO << "D3D12 renderer initialized: " << mBufferCount << " back buffers, "
+		<< mFramesInFlight << " frames in flight, format " << (int)mRtvFormat;
+}
+
+#pragma endregion resource management
+
+
+bool D3D12Hook::getImGuiInitInfo(ImGui_ImplDX12_InitInfo& outInfo) const
+{
+	if (!isD3DdeviceInitialized || !mDevice || !mCommandQueue || !mSrvHeap || mFramesInFlight == 0)
+	{
+		PLOG_ERROR << "getImGuiInitInfo called before the D3D12 renderer was initialized";
+		return false;
+	}
+
+	outInfo = ImGui_ImplDX12_InitInfo{}; // its default ctor memsets, so every field is defined
+	outInfo.Device = mDevice;
+	outInfo.CommandQueue = mCommandQueue; // used by the backend for its font texture upload
+	// Must match mRenderSlots.size() exactly - see the comment on RenderSlot.
+	outInfo.NumFramesInFlight = static_cast<int>(mFramesInFlight);
+	outInfo.RTVFormat = mRtvFormat;
+	outInfo.DSVFormat = DXGI_FORMAT_UNKNOWN;
+	outInfo.SrvDescriptorHeap = mSrvHeap;
+	outInfo.SrvDescriptorAllocFn = &D3D12Hook::srvDescriptorAlloc;
+	outInfo.SrvDescriptorFreeFn = &D3D12Hook::srvDescriptorFree;
+	return true;
+}
+
+
+#pragma region detours
+
+// static
+// The one shared body behind newDX12Present and newDX12Present1. Records and submits the overlay
+// for this frame; every failure path simply returns, leaving the caller to forward the call to the
+// game unchanged. It NEVER throws and it NEVER calls an original - the caller owns that.
+void D3D12Hook::renderOverlayFrame(IDXGISwapChain* pSwapChain, UINT presentFlags)
+{
+	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::renderOverlayFrame");
+
+	D3D12Hook* d3d = instance;
+	if (!d3d)
+		return;
+
+	// Set before ~D3D12Hook starts draining, so a detour that got in just ahead of the drain stops
+	// touching D3D12 and HCM state immediately.
+	if (shuttingDown.load(std::memory_order_acquire))
+		return;
+
+	// Once shutdown has begun, stop invoking HCM's render/overlay callbacks. The services they
+	// call into are being destroyed on the shutdown thread; firing render events here races with
+	// that teardown - it crashed on older builds, and now causes lock-contention that stalls
+	// shutdown for tens of seconds. That stall prevents the DLL from unloading, which is why HCM
+	// can't re-attach after being closed and reopened.
+	// We ALSO drop our back-buffer references exactly once here: the game keeps running (and can be
+	// alt-tabbed / resolution-changed) throughout that window, and ResizeBuffers fails while any
+	// outstanding back buffer reference exists.
+	if (GlobalKill::isKillSet())
+	{
+		if (!d3d->mReleasedForShutdown)
+		{
+			d3d->mReleasedForShutdown = true;
+			PLOG_INFO << "GlobalKill is set; releasing the D3D12 overlay's swapchain resources and passing every frame through";
+			const bool gpuIsIdle = d3d->waitForGpuIdle();
+			// NOT releaseD3Dresources: imgui's backend is still bound to mDevice/mSrvHeap and
+			// ~ImGuiManager has not run yet.
+			d3d->releaseSwapChainResources(gpuIsIdle);
+			d3d->mQueueSearchActive.store(false, std::memory_order_relaxed);
+		}
+		return;
+	}
+
+	// Latched after an unrecoverable failure. We keep the hooks installed (removing them from a
+	// detour is not safe) but never touch D3D12 again.
+	if (d3d->overlayPermanentlyDisabled)
+		return;
+
+	// DXGI_PRESENT_TEST is an occlusion poll: nothing is presented and GetCurrentBackBufferIndex()
+	// does NOT advance. DXGI_PRESENT_DO_NOT_SEQUENCE likewise does not flip. Rendering on those
+	// would advance imgui's frames-in-flight ring (and our own) against a back buffer that never
+	// moves, so imgui would overwrite a vertex/index buffer whose previous submission may still be
+	// executing. UE5/DXGI issue these routinely while the window is occluded.
+	if (presentFlags & (DXGI_PRESENT_TEST | DXGI_PRESENT_DO_NOT_SEQUENCE))
+		return;
+
+	// These are INLINE hooks on dxgi's shared Present/Present1, so we see every swapchain in the
+	// process. Everything below this point only runs for the one swapchain we adopted.
+	if (pSwapChain != d3d->mAdoptedSwapChain)
+	{
+		// Negative cache: without it every foreign swapchain (Steam / Discord / RTSS / EOS / any
+		// MediaFoundation surface) pays the full QueryInterface + GetDevice + GetDesc + IsWindow +
+		// GetWindowThreadProcessId battery on every one of its frames, forever.
+		if (pSwapChain == mRejectedSwapChain.load(std::memory_order_relaxed))
+		{
+			// ...but decay it: this is a raw pointer compare, and a rejected swapchain that gets
+			// destroyed can have its address reused by the game's real one.
+			if (mRejectedSwapChainSkips.fetch_add(1, std::memory_order_relaxed) + 1 < kRejectedSwapChainRecheckInterval)
+				return;
+			mRejectedSwapChainSkips.store(0, std::memory_order_relaxed);
+		}
+
+		if (!d3d->tryAdoptSwapChain(pSwapChain))
+		{
+			mRejectedSwapChain.store(pSwapChain, std::memory_order_relaxed);
+			return;
+		}
+
+		mRejectedSwapChain.store(nullptr, std::memory_order_relaxed);
+		mRejectedSwapChainSkips.store(0, std::memory_order_relaxed);
+	}
+
+	// No queue yet means ExecuteCommandLists hasn't handed us a validated one. Silent pass-through
+	// (NOT an exception) - this is a normal state for the first frame or two.
+	if (!d3d->mCommandQueue && !d3d->tryCaptureCommandQueue())
+		return;
+
+	if (!d3d->isD3DdeviceInitialized)
+	{
+		PLOG_DEBUG << "Initializing d3d device @ present";
+		try
+		{
+			d3d->initializeD3Ddevice(pSwapChain);
+			d3d->isD3DdeviceInitialized = true;
+			PLOG_DEBUG << "D3D device initialized t. newDX12Present";
+		}
+		catch (HCMInitException& ex)
+		{
+			PLOG_FATAL << "Failed to initialize d3d device, info: " << std::endl
+				<< ex.what() << std::endl
+				<< "HCM will now automatically close down";
+
+			// Roll all the way back rather than retrying a half-built renderer next frame.
+			d3d->disableOverlayPermanently("the D3D12 renderer failed to initialize");
+			GlobalKill::killMe();
+			return;
+		}
+
+		// fire a resizeborders event. Outside the try above so an exception from a SUBSCRIBER is not
+		// mistaken for an init failure, and never allowed to unwind into DXGI.
+		try
+		{
+			d3d->resizeBuffersHookEvent->operator()(mScreenSize);
+			PLOG_DEBUG << "resizeBuffersHookEvent fired";
+		}
+		catch (...)
+		{
+			PLOG_ERROR << "A resizeBuffersHookEvent subscriber threw; ignoring";
+		}
+	}
+
+	const UINT backBufferIndex = d3d->mSwapChain3->GetCurrentBackBufferIndex();
+	if (backBufferIndex >= d3d->mBackBuffers.size())
+	{
+		LOG_ONCE(PLOG_ERROR << "Back buffer index out of range; skipping the overlay this frame");
+		return;
+	}
+
+	if (d3d->mRenderSlots.empty() || !d3d->mCommandList || !d3d->mFence || !d3d->mFenceEvent)
+	{
+		LOG_ONCE(PLOG_ERROR << "Frame resources missing; skipping the overlay this frame");
+		return;
+	}
+
+	BackBuffer& backBuffer = d3d->mBackBuffers[backBufferIndex];
+	// Our render ring is keyed on OUR ordinal, not on the back buffer index, so that it stays in
+	// lockstep with imgui's (which only advances on frames it actually renders). See RenderSlot.
+	const size_t slotIndex = static_cast<size_t>(d3d->mRenderOrdinal % d3d->mRenderSlots.size());
+	RenderSlot& slot = d3d->mRenderSlots[slotIndex];
+
+	if (!backBuffer.resource || !slot.allocator)
+	{
+		LOG_ONCE(PLOG_ERROR << "Frame resources missing; skipping the overlay this frame");
+		return;
+	}
+
+	// Wait until the GPU has finished the last submission that used THIS render slot's allocator -
+	// which is also the last submission that touched imgui's vertex/index buffer for this slot.
+	// That single wait is the whole synchronisation model: one command list, N allocators, one
+	// monotonically increasing fence.
+	if (slot.fenceValue != 0 && d3d->mFence->GetCompletedValue() < slot.fenceValue)
+	{
+		ResetEvent(d3d->mFenceEvent); // auto-reset event, may be stale from a previous timeout
+
+		if (FAILED(d3d->mFence->SetEventOnCompletion(slot.fenceValue, d3d->mFenceEvent)))
+		{
+			LOG_ONCE(PLOG_ERROR << "SetEventOnCompletion failed; skipping the overlay this frame");
+			if (FAILED(checkDeviceRemoved(d3d->mDevice, "SetEventOnCompletion")))
+				d3d->disableOverlayPermanently("the D3D12 device was removed");
+			return;
+		}
+
+		// Bounded, unlike the reference's INFINITE wait: hanging the game's render thread forever
+		// on a wedged device is far worse than a dropped overlay frame.
+		if (WaitForSingleObject(d3d->mFenceEvent, kFenceWaitTimeoutMs) != WAIT_OBJECT_0)
+		{
+			LOG_ONCE(PLOG_ERROR << "Timed out waiting on the overlay fence; skipping the overlay this frame");
+			if (FAILED(checkDeviceRemoved(d3d->mDevice, "overlay fence wait")))
+				d3d->disableOverlayPermanently("the D3D12 device was removed");
+			return;
+		}
+	}
+
+	if (FAILED(slot.allocator->Reset()))
+	{
+		LOG_ONCE(PLOG_ERROR << "Command allocator reset failed; skipping the overlay this frame");
+		// A removed device fails this identically forever, so latch instead of retrying at 1 FPS.
+		if (FAILED(checkDeviceRemoved(d3d->mDevice, "allocator->Reset")))
+			d3d->disableOverlayPermanently("the D3D12 device was removed");
+		return;
+	}
+
+	if (FAILED(d3d->mCommandList->Reset(slot.allocator, nullptr)))
+	{
+		LOG_ONCE(PLOG_ERROR << "Command list reset failed; skipping the overlay this frame");
+		if (FAILED(checkDeviceRemoved(d3d->mDevice, "commandList->Reset")))
+			d3d->disableOverlayPermanently("the D3D12 device was removed");
+		return;
+	}
+
+	// Snapshot everything we will still need after the render event, and remember the resource
+	// generation. ImGuiManager's present handler runs a PeekMessage/DispatchMessage pump, so the
+	// game's WndProc - and therefore ResizeBuffers - can run re-entrantly from inside the event.
+	// If that happens our back buffers are released and rebuilt underneath us, and submitting this
+	// command list would have the GPU read freed memory.
+	ID3D12Resource* const backBufferResource = backBuffer.resource;
+	const D3D12_CPU_DESCRIPTOR_HANDLE backBufferRtv = backBuffer.rtv;
+	const uint64_t generationBefore = d3d->mResourceGeneration;
+
+	D3D12_RESOURCE_BARRIER toRenderTarget{};
+	toRenderTarget.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	toRenderTarget.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+	toRenderTarget.Transition.pResource = backBufferResource;
+	toRenderTarget.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+	toRenderTarget.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+	toRenderTarget.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+	d3d->mCommandList->ResourceBarrier(1, &toRenderTarget);
+
+	// No viewport / scissor / clear needed: imgui's dx12 backend sets its own in RenderDrawData.
+	// This is the D3D12 equivalent of D3D11's pDeviceContext->OMSetRenderTargets in
+	// ImGuiManager::onPresentHookEvent - done here, by the hook, because only the hook knows which
+	// back buffer this frame is.
+	d3d->mCommandList->OMSetRenderTargets(1, &backBufferRtv, FALSE, nullptr);
+
+	// Must be bound on the list BEFORE any draw references a GPU handle into it.
+	ID3D12DescriptorHeap* descriptorHeaps[] = { d3d->mSrvHeap };
+	d3d->mCommandList->SetDescriptorHeaps(1, descriptorHeaps);
+
+	LOG_ONCE(PLOG_VERBOSE << "invoking presentHookEvent callback");
+	// Set BEFORE the call: from here on we must assume imgui's dx12 backend may be bound to our
+	// device and SRV heap, so neither may be released outside ~D3D12Hook.
+	d3d->mHasFiredPresentEvent = true;
+	try
+	{
+		// Subscriber (ImGuiManager's dx12 branch) does:
+		//   ImGui_ImplDX12_NewFrame / ImGui_ImplWin32_NewFrame / ImGui::NewFrame
+		//   ... the four HCM render events ...
+		//   ImGui::EndFrame / ImGui::Render
+		//   ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), pCommandList)
+		d3d->presentHookEvent->operator()(d3d->mDevice, d3d->mCommandList, d3d->mSwapChain3, backBufferRtv);
+	}
+	catch (...)
+	{
+		// HCM cheats throw HCMRuntimeException freely and ImGuiManager does not guard the render
+		// event chain. Letting that unwind through DXGI/UE5 frames is not survivable, and leaving
+		// the command list in the recording state would make every subsequent Reset() fail with
+		// E_FAIL - i.e. the overlay would never come back.
+		PLOG_FATAL << "A presentHookEvent subscriber threw; abandoning the overlay frame and shutting HCM down";
+		if (d3d->mCommandList)
+			d3d->mCommandList->Close();
+		GlobalKill::killMe();
+		return;
+	}
+
+	if (d3d->mResourceGeneration != generationBefore)
+	{
+		// A ResizeBuffers ran re-entrantly from inside the render event. Our back buffer reference
+		// is stale; close the list and drop the frame rather than submitting it.
+		PLOG_ERROR << "Overlay resources were rebuilt from inside the present event; abandoning this frame";
+		if (d3d->mCommandList)
+			d3d->mCommandList->Close();
+		return;
+	}
+
+	D3D12_RESOURCE_BARRIER toPresent{};
+	toPresent.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	toPresent.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+	toPresent.Transition.pResource = backBufferResource;
+	toPresent.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+	toPresent.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+	toPresent.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+	d3d->mCommandList->ResourceBarrier(1, &toPresent);
+
+	if (FAILED(d3d->mCommandList->Close()))
+	{
+		// Nothing was submitted, so the unbalanced barrier never reaches the GPU. Next frame's
+		// Reset recovers the list.
+		LOG_ONCE(PLOG_ERROR << "Command list close failed; skipping the overlay this frame");
+		if (FAILED(checkDeviceRemoved(d3d->mDevice, "commandList->Close")))
+			d3d->disableOverlayPermanently("the D3D12 device was removed");
+		return;
+	}
+
+	// NOTE: this re-enters newDX12ExecuteCommandLists. That is harmless and cheap - by this point
+	// mQueueSearchActive is false, so the detour is one relaxed load and a tail call.
+	ID3D12CommandList* commandLists[] = { d3d->mCommandList };
+	d3d->mCommandQueue->ExecuteCommandLists(1, commandLists);
+
+	const UINT64 signalValue = d3d->mNextFenceValue++;
+	if (FAILED(d3d->mCommandQueue->Signal(d3d->mFence, signalValue)))
+	{
+		// The work IS submitted but nothing tracks it, so we can never safely reset this
+		// allocator again. Signal only fails on device removal, so disable rather than risk
+		// resetting an allocator the GPU is still reading. disableOverlayPermanently is what makes
+		// sure our back buffer references are dropped along with the flag.
+		PLOG_FATAL << "Fence signal failed; disabling the D3D12 overlay";
+		checkDeviceRemoved(d3d->mDevice, "commandQueue->Signal");
+		d3d->disableOverlayPermanently("the overlay fence could not be signalled");
+		return;
+	}
+
+	slot.fenceValue = signalValue;
+	// ONLY on frames we actually submitted, so this stays in lockstep with imgui's frameIndex.
+	++d3d->mRenderOrdinal;
+}
+
+
+// static
+HRESULT __stdcall D3D12Hook::newDX12Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
+{
+	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::newDX12Present");
+
+	// Must be the first statement. It is a real reader-writer lock (not the old wait-then-set
+	// atomic), which is what lets ~D3D12Hook prove nobody is inside a detour body before safetyhook
+	// frees the trampolines - and it doubles as the double-render guard for Present/Present1.
+	DetourEntryGuard entry(swapChainHookGuard);
+
+	if (entry.isOutermost())
+	{
+		renderOverlayFrame(pSwapChain, Flags);
+	}
+	else
+	{
+		// dxgi forwarded Present -> Present1 (or the game did). The outer entry already rendered
+		// and submitted this frame's overlay; rendering again would submit it twice.
+		LOG_ONCE(PLOG_DEBUG << "Nested Present detour entry; the outer frame owns the overlay");
+	}
+
+	return callOriginalPresent(pSwapChain, SyncInterval, Flags);
+}
+
+
+// static
+// UE5's FD3D12Viewport::PresentInternal calls IDXGISwapChain1::Present1 whenever it holds an
+// IDXGISwapChain1, which on Win10+ is always. This is therefore the detour that actually fires on
+// HaloCampaignEvolved.exe; the slot-8 hook above is kept for anything that presents the old way.
+HRESULT __stdcall D3D12Hook::newDX12Present1(IDXGISwapChain1* pSwapChain, UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters)
+{
+	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::newDX12Present1");
+
+	DetourEntryGuard entry(swapChainHookGuard);
+
+	if (entry.isOutermost())
+	{
+		// Upcast is a no-op in this single-inheritance COM chain, and mAdoptedSwapChain is only
+		// ever compared, never dereferenced through this type.
+		renderOverlayFrame(static_cast<IDXGISwapChain*>(pSwapChain), PresentFlags);
+	}
+	else
+	{
+		LOG_ONCE(PLOG_DEBUG << "Nested Present1 detour entry; the outer frame owns the overlay");
+	}
+
+	return callOriginalPresent1(pSwapChain, SyncInterval, PresentFlags, pPresentParameters);
+}
+
+
+// static
+// Shared front half of both resize detours.
+// Returns true if the caller should rebuild our resources once the game's resize has returned.
+//
+// Whatever else happens, this MUST leave us holding no back-buffer reference: DXGI refuses
+// ResizeBuffers with DXGI_ERROR_INVALID_CALL while one is outstanding, and UE5 turns that into
+// UE_LOG(Fatal). That is why the "we're shutting down / disabled / not initialised" cases release
+// first and only then bail out - the first draft returned early with the references still held.
+bool D3D12Hook::prepareForResize(IDXGISwapChain* pSwapChain)
+{
+	D3D12Hook* d3d = instance;
+	if (!d3d)
+		return false;
+
+	// Checked BEFORE any member access: ~D3D12Hook nulls `instance` and only then starts releasing,
+	// so a detour that was blocked on swapChainHookGuard could otherwise touch the object as it is
+	// being destroyed. This costs us nothing - renderOverlayFrame's GlobalKill branch has already
+	// dropped every back buffer reference long before shutdown reaches the destructor.
+	if (shuttingDown.load(std::memory_order_acquire))
+		return false;
+
+	if (pSwapChain != d3d->mAdoptedSwapChain)
+		return false;
+
+	if (d3d->anyBackBufferHeld())
+	{
+		//  1. flush the GPU first - those back buffers (and the allocators recording into them) may
+		//     still be in flight;
+		//  2. then drop our back buffer references.
+		const bool gpuIsIdle = d3d->waitForGpuIdle();
+		if (!gpuIsIdle)
+		{
+			// We could not prove the GPU is done with them, but we cannot keep them either without
+			// breaking the game's resize. Release anyway and give up on the overlay: this only
+			// happens on a wedged/removed device, where the overlay is finished regardless.
+			PLOG_ERROR << "Could not flush the GPU before the game's ResizeBuffers";
+			d3d->releaseBackBufferResources();
+			d3d->disableOverlayPermanently("the GPU could not be flushed before a swapchain resize");
+			return false;
+		}
+		d3d->releaseBackBufferResources();
+	}
+
+	if (GlobalKill::isKillSet() || d3d->overlayPermanentlyDisabled)
+	{
+		// One way: we have dropped the back buffers, and we will not be rebuilding them.
+		d3d->isD3DdeviceInitialized = false;
+		return false;
+	}
+
+	if (!d3d->isD3DdeviceInitialized)
+		return false;
+
+	return true;
+}
+
+
+// static
+void D3D12Hook::finishResize(HRESULT originalResult)
+{
+	D3D12Hook* d3d = instance;
+	if (!d3d)
+		return;
+
+	if (FAILED(originalResult))
+		PLOG_ERROR << "The game's ResizeBuffers failed with 0x" << std::hex << (ULONG)originalResult << "; rebuilding overlay resources anyway";
+
+	try
+	{
+		// Rebuilt from the swapchain description rather than the arguments: BufferCount == 0 means
+		// "keep the current count" and Width/Height == 0 mean "use the window's client area", so
+		// the arguments are not authoritative. D3D11Hook takes mScreenSize from the arguments and
+		// gets this subtly wrong.
+		d3d->createBackBufferResources();
+	}
+	catch (HCMInitException& ex)
+	{
+		// Throwing across the game's render thread is the exact failure mode we must avoid, so
+		// swallow it and shut HCM down the orderly way instead. disableOverlayPermanently is what
+		// guarantees we are not still holding back buffers when the flag goes up.
+		PLOG_FATAL << "Failed to rebuild overlay resources after ResizeBuffers: " << ex.what();
+		d3d->disableOverlayPermanently("overlay resources could not be rebuilt after a swapchain resize");
+		GlobalKill::killMe();
+		return;
+	}
+
+	// fire screen resize event
+	try
+	{
+		d3d->resizeBuffersHookEvent->operator()(mScreenSize);
+	}
+	catch (...)
+	{
+		PLOG_ERROR << "A resizeBuffersHookEvent subscriber threw; ignoring";
+	}
+}
+
+
+// static
+HRESULT __stdcall D3D12Hook::newDX12ResizeBuffers(IDXGISwapChain* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags)
+{
+	// NOTE, unlike Present, the work still runs when this is a NESTED entry (the game's WndProc can
+	// be reached from the PeekMessage pump ImGuiManager runs inside our present event). Skipping it
+	// would leave our back-buffer references outstanding across the game's resize, which fails it.
+	// The outer present frame notices via mResourceGeneration and abandons its command list.
+	DetourEntryGuard entry(swapChainHookGuard);
+
+	if (!shuttingDown.load(std::memory_order_acquire) && instance && pSwapChain == instance->mAdoptedSwapChain)
+		PLOG_INFO << "newDX12ResizeBuffers: " << Width << "x" << Height << ", buffers: " << BufferCount << ", format: " << (int)NewFormat;
+
+	const bool rebuild = prepareForResize(pSwapChain);
+
+	const HRESULT hr = callOriginalResizeBuffers(pSwapChain, BufferCount, Width, Height, NewFormat, SwapChainFlags);
+
+	if (rebuild)
+		finishResize(hr);
+
+	return hr;
+}
+
+
+// static
+// UE5's FD3D12Viewport::Resize uses IDXGISwapChain3::ResizeBuffers1 under an explicit multi-GPU
+// node mask. Same contract as newDX12ResizeBuffers - we only care that our back-buffer references
+// are gone before the call and rebuilt after it.
+HRESULT __stdcall D3D12Hook::newDX12ResizeBuffers1(IDXGISwapChain3* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format, UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue)
+{
+	DetourEntryGuard entry(swapChainHookGuard);
+
+	IDXGISwapChain* const asSwapChain = static_cast<IDXGISwapChain*>(pSwapChain);
+
+	if (!shuttingDown.load(std::memory_order_acquire) && instance && asSwapChain == instance->mAdoptedSwapChain)
+		PLOG_INFO << "newDX12ResizeBuffers1: " << Width << "x" << Height << ", buffers: " << BufferCount << ", format: " << (int)Format;
+
+	const bool rebuild = prepareForResize(asSwapChain);
+
+	const HRESULT hr = callOriginalResizeBuffers1(pSwapChain, BufferCount, Width, Height, Format, SwapChainFlags, pCreationNodeMask, ppPresentQueue);
+
+	if (rebuild)
+		finishResize(hr);
+
+	return hr;
+}
+
+
+// static
+// Runs on whatever thread the game submits from, for EVERY command queue in the process.
+// Deliberately does NOT take swapChainHookGuard (that would serialise every submission in the
+// process against our render work). Instead it takes executeCommandListsGuard shared, which is what
+// lets ~D3D12Hook guarantee no thread is inside this function when safetyhook frees the trampoline.
+void __stdcall D3D12Hook::newDX12ExecuteCommandLists(ID3D12CommandQueue* pCommandQueue, UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists)
+{
+	std::shared_lock<std::shared_mutex> guard(executeCommandListsGuard);
+
+	if (mQueueSearchActive.load(std::memory_order_relaxed)
+		&& pCommandQueue != nullptr
+		&& !shuttingDown.load(std::memory_order_relaxed)
+		&& !GlobalKill::isKillSet())
+	{
+		// THE COMMAND QUEUE CAPTURE. See D3D12Hook::tryCaptureCommandQueue for the full rationale:
+		// under late injection this is the only way to learn which ID3D12CommandQueue the game
+		// renders and presents with, and we need that exact queue so our overlay submission is
+		// ordered after the game's frame work.
+		// Only DIRECT queues can execute the graphics command list we build; COMPUTE and COPY
+		// queues (async compute, texture streaming) are filtered out here.
+		const D3D12_COMMAND_QUEUE_DESC queueDesc = pCommandQueue->GetDesc();
+		if (queueDesc.Type == D3D12_COMMAND_LIST_TYPE_DIRECT)
+		{
+			// Publish an OWNED reference. The consumer runs on the render thread one or more frames
+			// later; without this AddRef a transient DIRECT queue (an overlay, an encoder, one of
+			// UE5's own upload queues, RTSS) that submits once and is then released would leave that
+			// consumer calling a vtable on freed memory - a hard crash in the GAME.
+			// The exchange keeps the refcount balanced: we own the one we publish, and we release
+			// the one we displace (which nobody else can be holding, because the consumer also
+			// takes it by exchange).
+			pCommandQueue->AddRef();
+			if (ID3D12CommandQueue* previous = mCandidateDirectQueue.exchange(pCommandQueue, std::memory_order_acq_rel))
+				previous->Release();
+
+			// NOT LOG_ONCE: pch.h's once() checks and writes an unsynchronised `static bool` and
+			// this is a genuinely multi-threaded hot path.
+			static std::atomic_bool loggedCandidate = false;
+			if (!loggedCandidate.exchange(true, std::memory_order_relaxed))
+				PLOG_DEBUG << "Recorded a candidate direct command queue";
+		}
+	}
+
+	callOriginalExecuteCommandLists(pCommandQueue, NumCommandLists, ppCommandLists);
+}
+
+#pragma endregion detours
+
+
+// Safely destroys hooks, flushes the GPU, and releases every D3D12 object we acquired.
+D3D12Hook::~D3D12Hook()
+{
+	PLOG_DEBUG << "~D3D12Hook()";
+
+	// 1. Tell every detour to stop touching HCM/D3D12 state, BEFORE we start draining. A detour that
+	//    is already past its first instruction will see this and just forward to the original.
+	//    (It stays true afterwards on purpose - a straggler must never come back to life.)
+	shuttingDown.store(true, std::memory_order_release);
+	mQueueSearchActive.store(false, std::memory_order_relaxed);
+
+	// 2. Drain, then remove the swapchain hooks. Taking the guard EXCLUSIVELY is what proves no
+	//    thread is inside a detour body: the old ScopedAtomicBool was wait-then-set, so two threads
+	//    could both observe false and both proceed, and a new entrant could slip in between the
+	//    wait and the unhook. Assigning an empty hook destroys the existing one, which restores the
+	//    original bytes; safetyhook freezes threads and fixes any instruction pointer sitting inside
+	//    the relocated prologue while it does so.
+	{
+		PLOG_INFO << "Waiting for the D3D12 present/resize detours to finish execution";
+		std::unique_lock<std::shared_mutex> guard(swapChainHookGuard);
+		presentHook = {};
+		present1Hook = {};
+		resizeBuffersHook = {};
+		resizeBuffers1Hook = {};
+		gOriginalPresent.store(nullptr, std::memory_order_release);
+		gOriginalPresent1.store(nullptr, std::memory_order_release);
+		gOriginalResizeBuffers.store(nullptr, std::memory_order_release);
+		gOriginalResizeBuffers1.store(nullptr, std::memory_order_release);
+	}
+
+	// 3. Same for ExecuteCommandLists, under its own guard so it never serialised against Present.
+	{
+		std::unique_lock<std::shared_mutex> guard(executeCommandListsGuard);
+		executeCommandListsHook = {};
+		gOriginalExecuteCommandLists.store(nullptr, std::memory_order_release);
+	}
+
+	if (ID3D12CommandQueue* staleCandidate = mCandidateDirectQueue.exchange(nullptr, std::memory_order_acq_rel))
+		staleCandidate->Release();
+
+	// 4. No detour can reach us any more.
+	instance = nullptr;
+
+	// 5. Flush the GPU BEFORE releasing anything. Releasing a command allocator, a descriptor heap
+	//    or a back buffer while the GPU is still reading it is the classic D3D12 unload crash.
+	//    If the flush cannot be proven we LEAK instead of freeing - see releaseOrAbandon.
+	//    (~ImGuiManager has already run by this point - App.h declares d3d before imm, so imm is
+	//    destroyed first - which means ImGui_ImplDX12_Shutdown has already given back its
+	//    descriptors and released its own device objects. It is also the reason this is the only
+	//    place allowed to free mSrvHeap and mDevice.)
+	const bool gpuIsIdle = waitForGpuIdle();
+	releaseD3Dresources(gpuIsIdle);
+	releaseImGuiBoundResources(gpuIsIdle);
+
+	mRejectedSwapChain.store(nullptr, std::memory_order_relaxed);
+	mRejectedSwapChainSkips.store(0, std::memory_order_relaxed);
+}
+
+
+void D3D12Hook::setOBSBypass(bool enabled)
+{
+	PLOGV << "D3D12Hook::setOBSBypass called with value: " << enabled;
+
+	if (!enabled)
+		return; // nothing was ever installed, so nothing to remove
+
+	// The D3D11 bypass works by inline-hooking a known function inside OBS's graphics-hook64.dll,
+	// resolved from InternalPointerData.xml. OBS's D3D12 capture path is a different function
+	// entirely and we have no offset for it, and the watermark renderer (Renderer2D) is DirectXTK
+	// SpriteBatch, i.e. hard D3D11. So this is unsupported rather than broken.
+	// NOTE: deliberately does NOT set Lapua::lapuaGood = false - that would make OBSBypassManager
+	// report a misleading "Lapua service one failure" instead of this message.
+	PLOG_ERROR << "OBS bypass is not supported under DirectX 12";
+	throw HCMRuntimeException("The OBS bypass is not supported for this game (it renders with DirectX 12).");
+}

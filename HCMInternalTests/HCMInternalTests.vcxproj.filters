@@ -39,6 +39,9 @@
     <ClCompile Include="..\HCMInternal\D3D11Hook.cpp">
       <Filter>HCMInternalFiles</Filter>
     </ClCompile>
+    <ClCompile Include="..\HCMInternal\D3D12Hook.cpp">
+      <Filter>HCMInternalFiles</Filter>
+    </ClCompile>
     <ClCompile Include="..\HCMInternal\DynamicStruct.cpp">
       <Filter>HCMInternalFiles</Filter>
     </ClCompile>
@@ -318,6 +321,12 @@
       <Filter>HCMInternalFiles</Filter>
     </ClInclude>
     <ClInclude Include="..\HCMInternal\D3D11Hook.h">
+      <Filter>HCMInternalFiles</Filter>
+    </ClInclude>
+    <ClInclude Include="..\HCMInternal\D3D12Hook.h">
+      <Filter>HCMInternalFiles</Filter>
+    </ClInclude>
+    <ClInclude Include="..\HCMInternal\D3D12RenderEvent.h">
       <Filter>HCMInternalFiles</Filter>
     </ClInclude>
     <ClInclude Include="..\HCMInternal\Datum.h">

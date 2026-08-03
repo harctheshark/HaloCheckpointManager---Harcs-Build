@@ -2,7 +2,8 @@
 enum class MCCProcessType
 {
 	Steam,
-	WinStore
+	WinStore,
+	CampaignEvolved,   // Halo Campaign Evolved (HaloCampaignEvolved.exe) - not MCC at all; UE5 + D3D12
 };
 
 class IGetMCCVersion

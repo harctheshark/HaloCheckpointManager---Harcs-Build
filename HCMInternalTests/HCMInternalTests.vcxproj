@@ -198,6 +198,7 @@
     <ClCompile Include="..\HCMInternal\CheckpointInjectionLogger.cpp" />
     <ClCompile Include="..\HCMInternal\Conduit_ITCFont.cpp" />
     <ClCompile Include="..\HCMInternal\D3D11Hook.cpp" />
+    <ClCompile Include="..\HCMInternal\D3D12Hook.cpp" />
     <ClCompile Include="..\HCMInternal\DisableScreenEffects.cpp" />
     <ClCompile Include="..\HCMInternal\DisplayPlayerInfo.cpp" />
     <ClCompile Include="..\HCMInternal\DynamicStruct.cpp" />
@@ -306,6 +307,8 @@
     <ClInclude Include="..\HCMInternal\ControlServiceContainer.h" />
     <ClInclude Include="..\HCMInternal\CustomExceptions.h" />
     <ClInclude Include="..\HCMInternal\D3D11Hook.h" />
+    <ClInclude Include="..\HCMInternal\D3D12Hook.h" />
+    <ClInclude Include="..\HCMInternal\D3D12RenderEvent.h" />
     <ClInclude Include="..\HCMInternal\Datum.h" />
     <ClInclude Include="..\HCMInternal\DIContainer.h" />
     <ClInclude Include="..\HCMInternal\DifficultyEnum.h" />

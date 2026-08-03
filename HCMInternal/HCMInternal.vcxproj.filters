@@ -205,6 +205,9 @@
     <ClInclude Include="ForceRevert.h">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClInclude>
+    <ClInclude Include="HCECheckpointDetours.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
     <ClInclude Include="InjectCheckpoint.h">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClInclude>
@@ -245,6 +248,12 @@
       <Filter>Services\GUI</Filter>
     </ClInclude>
     <ClInclude Include="D3D11Hook.h">
+      <Filter>Services\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="D3D12Hook.h">
+      <Filter>Services\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="D3D12RenderEvent.h">
       <Filter>Services\Rendering</Filter>
     </ClInclude>
     <ClInclude Include="ImGuiManager.h">
@@ -1161,6 +1170,9 @@
     <ClCompile Include="D3D11Hook.cpp">
       <Filter>Services\Rendering</Filter>
     </ClCompile>
+    <ClCompile Include="D3D12Hook.cpp">
+      <Filter>Services\Rendering</Filter>
+    </ClCompile>
     <ClCompile Include="ImGuiManager.cpp">
       <Filter>Services\Rendering</Filter>
     </ClCompile>
@@ -1249,6 +1261,9 @@
       <Filter>Services\OptionalCheats\Implementations\Services</Filter>
     </ClCompile>
     <ClCompile Include="Medusa.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCECheckpointDetours.cpp">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClCompile>
     <ClCompile Include="NaturalCheckpointDisable.cpp">

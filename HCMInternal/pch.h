@@ -66,8 +66,17 @@
 #include <plog/Initializers/ConsoleInitializer.h>
 
 //https://github.com/Neargye/magic_enum/blob/master/doc/limitations.md
+// magic_enum can only reflect enumerators whose VALUE lands inside [MIN, MAX]; anything outside silently
+// reflects as an empty name (enum_name -> "") rather than failing to compile. GUIElementEnum is by far the
+// largest enum here - RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES1 (148) + ...2 (206 literal + 3 defFreeCameraInterpolator
+// uses x2 = 212) = 360 enumerators, values 0..359 - so the old bound of 256 left ~104 of them nameless in every
+// PLOG line, in the "you forgot a creation case label" message and in the GUIServiceInfo failure listings.
+// If you add another ~150 gui elements, raise this again.
+// NOTE: raising the bound is monotone - it can only ADD names, never renumber or remove them - and magic_enum
+// clamps the range to the underlying type (see reflected_max() in magic_enum.hpp), so byte-backed enums such as
+// LevelID and DifficultyEnum are pinned at 255 and are unaffected by this value.
 #define MAGIC_ENUM_RANGE_MIN 0
-#define MAGIC_ENUM_RANGE_MAX 256
+#define MAGIC_ENUM_RANGE_MAX 512
 #include "magic_enum\magic_enum_all.hpp" // enum reflection https://github.com/Neargye/magic_enum
 
 
@@ -91,6 +100,14 @@ using namespace DirectX;
 #include "boost\bimap.hpp"
 #include "boost\assign.hpp"
 
+// WARNING: these three raises DO NOT TAKE EFFECT. boost/stacktrace.hpp above already pulls in
+// boost/preprocessor/config/limits.hpp, and its include guard makes these #defines a no-op. Measured by
+// compiling this exact include order and printing the macros: VARIADIC=64, TUPLE=64, SEQ=256, MAG=256.
+// (Even on a clean include, SEQ 512 would be clamped back to 256 because limits.hpp caps SEQ at
+// BOOST_PP_LIMIT_MAG, which is left at 256.) Consequences worth knowing before you grow a macro list:
+//   - BOOST_PP_LIMIT_VARIADIC = 64  -> ALLOPTIONALCHEATS1 is at exactly 64 and is FULL (see OptionalCheatEnum.h)
+//   - BOOST_PP_LIMIT_SEQ      = 256 -> RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES2 is at 212 sequence elements
+// To actually raise them, these #defines must come BEFORE the first boost include in this file.
 #define BOOST_PP_LIMIT_TUPLE 128
 #define BOOST_PP_LIMIT_VARIADIC 128
 #define BOOST_PP_LIMIT_SEQ 512

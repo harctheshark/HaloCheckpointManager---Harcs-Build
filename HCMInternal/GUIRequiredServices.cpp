@@ -48,11 +48,20 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 			{OptionalCheatEnum::DisableBarriers}
 	},
 
-	{GUIElementEnum::forceCheckpointGUI, 
-			{OptionalCheatEnum::ForceCheckpoint} 
+	{GUIElementEnum::forceCheckpointGUI,
+			{OptionalCheatEnum::ForceCheckpoint}
+	},
+	// Halo Campaign Evolved has no simple "force checkpoint" flag to write - forcing one needs three code hooks,
+	// and those same hooks are what implements "disable natural checkpoints". So both HaloCE-only elements below
+	// share the single HCECheckpointDetours cheat (getOrMakeCheat caches per game+cheat pair, so only one is made).
+	{GUIElementEnum::hceForceCheckpointGUI,
+			{OptionalCheatEnum::HCECheckpointDetours}
+	},
+	{GUIElementEnum::hceNaturalCheckpointDisableGUI,
+			{OptionalCheatEnum::HCECheckpointDetours}
 	},
 	{GUIElementEnum::forceRevertGUI,
-			{OptionalCheatEnum::ForceRevert} 
+			{OptionalCheatEnum::ForceRevert}
 	},
 	{GUIElementEnum::forceDoubleRevertGUI,
 			{OptionalCheatEnum::ForceDoubleRevert} 

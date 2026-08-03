@@ -11,6 +11,9 @@
 		<Entry>1.3272.0.0</Entry>
 		<Entry>1.3385.0.0</Entry>
 		<Entry>1.3528.0.0</Entry>
+		<!--Halo Campaign Evolved. HaloSimulation_tag_release.dll carries NO version resource (reads 0.0.0.0),
+		    so HCM uses that as HCE's synthetic version key. See GetMCCVersion::evalVersion.-->
+		<Entry>0.0.0.0</Entry>
 	</SupportedGameVersions>
 
 
@@ -2190,6 +2193,17 @@
 				<Offset>0x293DEAB</Offset>
 			</Offsets>
 		</Version>
+
+		<!--Halo Campaign Evolved. RVA into HaloSimulation_tag_release.dll. HCE has no version resource so every
+		    build reports 0.0.0.0 - this offset is only valid for the build HCM_Evolved was reversed against.
+		    NOTE: ForceRevert writes a 4 byte int here for HaloCE (not a byte like the MCC games) to match the
+		    reference tool; see the comment in ForceRevert.h.-->
+		<Version Version="0.0.0.0" Game="HaloCE">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x135706A</Offset>
+			</Offsets>
+		</Version>
 	</VersionedEntry>
 
 	<!--+0x15 of revert flag. Only needed for h1, zeroes out the flag that a revert is queued up, for if you die then force a revert / core load.-->
@@ -3272,6 +3286,105 @@
 	</VersionedEntry>
 
 	<!-- #endregion naturalCheckpointDisable-->
+
+
+	<!-- #region hceCheckpointDetours-->
+	<!--
+		Halo Campaign Evolved (HaloCE) checkpoint detours. Everything here is an RVA into
+		HaloSimulation_tag_release.dll. Ported from the external python tool HCM_Evolved (detours.py), which
+		installed a hand assembled code cave; HCM uses three safetyhook midhooks instead - see
+		HCECheckpointDetours.cpp for the exact equivalence to the cave's code1/code2/code3.
+
+		The three sites and what the ORIGINAL game code does there:
+			gate1 0x1ADA2A : test al,al ; je 0x1AE475      "may a checkpoint happen right now?" predicate #1
+			gate2 0x1AE0A2 : cmp byte [0x135706D],0 ; je 0x1AE178   predicate #2 (global byte flag)
+			call  0x1AE0E2 : call 0x19D400                 the actual save_checkpoint call
+
+		Each ...Continue entry is simply the instruction AFTER the site (site + length of the original bytes);
+		the hook writes it into ctx.rip to skip the original instruction(s).
+
+		WARNING: HaloSimulation_tag_release.dll carries no version resource, so EVERY HCE build reports version
+		0.0.0.0 and the Version attribute cannot protect against a game update. That is why each site also has a
+		...OriginalBytes vector - HCECheckpointDetours verifies them the first time the user actually asks for
+		one of the two features (in ensureHooksAttached, NOT at construction: the module may not be loaded that
+		early) and refuses to install if the game has moved, reporting an on-screen HCMRuntimeException.
+		Do not remove those checks.
+	-->
+	<VersionedEntry Name="hceCheckpointGate1Function" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCE">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1ADA2A</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceCheckpointGate1Continue" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCE">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1ADA32</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--test al,al ; je 0x1AE475-->
+	<VersionedEntry Name="hceCheckpointGate1OriginalBytes" Type="Vector" Typename="byte">
+		<Version Version="0.0.0.0" Game="HaloCE">
+			<Data>0x84, 0xC0, 0x0F, 0x84, 0x43, 0x0A, 0x00, 0x00</Data>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceCheckpointGate2Function" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCE">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1AE0A2</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceCheckpointGate2Continue" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCE">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1AE0AF</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--cmp byte ptr [rip+0x11A8FC4 (=0x135706D)],0 ; je 0x1AE178-->
+	<VersionedEntry Name="hceCheckpointGate2OriginalBytes" Type="Vector" Typename="byte">
+		<Version Version="0.0.0.0" Game="HaloCE">
+			<Data>0x80, 0x3D, 0xC4, 0x8F, 0x1A, 0x01, 0x00, 0x0F, 0x84, 0xC9, 0x00, 0x00, 0x00</Data>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceCheckpointCallFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCE">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1AE0E2</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceCheckpointCallContinue" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCE">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1AE0E7</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--call 0x19D400 (save_checkpoint)-->
+	<VersionedEntry Name="hceCheckpointCallOriginalBytes" Type="Vector" Typename="byte">
+		<Version Version="0.0.0.0" Game="HaloCE">
+			<Data>0xE8, 0x19, 0xF3, 0xFE, 0xFF</Data>
+		</Version>
+	</VersionedEntry>
+	<!-- #endregion hceCheckpointDetours-->
 
 
 	<!-- #region checkpointLength-->

@@ -22,6 +22,7 @@ public:
 			{GameState::Value::Halo3ODST, {{}, 0}  },
 			{GameState::Value::HaloReach, {{}, 0}  },
 			{GameState::Value::Halo4, {{}, 0}  },
+			{GameState::Value::HaloCE, {{}, 0}  },   // REQUIRED: the loop below does an unguarded .at(game)
 			{GameState::Value::NoGame, {{}, 0}  },
 		};
 
@@ -31,10 +32,19 @@ public:
 
 		for (auto& [gameGuiPair, errorMessage] : guiFailures->getFailureMessagesMap())
 		{
-			guiFailureMap.at(gameGuiPair.first).second++; // increment error count
+			// Never let an unknown GameState escape as std::out_of_range - this ctor runs inside the modal
+			// dialog render callback, where an exception would take the game down with it.
+			auto entry = guiFailureMap.find(gameGuiPair.first);
+			if (entry == guiFailureMap.end())
+			{
+				PLOG_ERROR << "FailedOptionalCheatServicesDialog has no bucket for game " << gameGuiPair.first.toString() << ", skipping its failures";
+				continue;
+			}
+
+			entry->second.second++; // increment error count
 			totalErrors++;
 			anyErrorsAtAll = true;
-			guiFailureMap.at(gameGuiPair.first).first.emplace_back(std::pair<GUIElementEnum, std::string>{ gameGuiPair.second, errorMessage });
+			entry->second.first.emplace_back(std::pair<GUIElementEnum, std::string>{ gameGuiPair.second, errorMessage });
 		}
 	}
 
