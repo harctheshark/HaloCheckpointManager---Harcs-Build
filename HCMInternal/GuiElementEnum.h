@@ -10,15 +10,15 @@
 // Halo Campaign Evolved is deliberately NOT in ALL_SUPPORTED_GAMES: it is a separate title with its own
 // (almost entirely missing) pointer data, so opting every MCC gui element into it would just produce a few
 // hundred failed services. Opt elements in one at a time using these instead.
-#define ALL_SUPPORTED_GAMES_AND_HALOCE Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCE
-#define HALOCE_ONLY HaloCE
+#define ALL_SUPPORTED_GAMES_AND_HALOCER Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER
+#define HALOCER_ONLY HaloCER
 // Deliberately narrower than "widen ALL_GAMES_AND_MAINMENU": this is only for the handful of elements that are
-// pure HCM plumbing (no game pointer data at all) and that HaloCE genuinely needs. Right now that means the
+// pure HCM plumbing (no game pointer data at all) and that HaloCER genuinely needs. Right now that means the
 // Control heading and the "Show optional cheat service failures" button underneath it - without those two,
-// a HaloCE-only cheat that fails to construct makes its gui rows silently vanish with the reason visible
+// a HaloCER-only cheat that fails to construct makes its gui rows silently vanish with the reason visible
 // nowhere but the log file. The heading's other children stay MCC-only and each independently return nullopt;
 // GUIHeading::render early-outs when every child is nullopt, so this cannot produce an empty heading.
-#define ALL_GAMES_AND_MAINMENU_AND_HALOCE Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, NoGame, HaloCE
+#define ALL_GAMES_AND_MAINMENU_AND_HALOCER Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, NoGame, HaloCER
 #define FREE_CAMERA_SUPPORT Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4
 #define THIRD_GEN Halo3, Halo3ODST, HaloReach, Halo4
 #define ABILITY_GAMES HaloReach, Halo4
@@ -31,31 +31,50 @@
 
 // A sequence of pairs, where the first element of a pair is the GUIElementEnum name, and the second element is a tuple of supported games for that guielement
 // Indentation is cosmetic but indicates hiearchy of elements
+//
+// DO NOT put comments inside either sequence below - they are macro bodies, and a comment ends (or silently
+// mangles) the continuation. Notes go here instead.
+//
+// Halo Campaign Evolved: cheatsHeadingGUI / overlaysHeadingGUI / cameraHeadingGUI are ALL_SUPPORTED_GAMES_AND_HALOCER
+// so their hce* children can be constructed. That is not an MCC regression: every MCC-only child independently
+// returns std::nullopt for HaloCER (see the "does not support Game" early-out in GUIElementConstructor.cpp), and
+// GUIHeading sets hasElements = false and render() early-outs when every child is nullopt, so an all-nullopt
+// heading draws nothing. Same reasoning as ALL_GAMES_AND_MAINMENU_AND_HALOCER above. Keep the three of them in
+// sync with TOPGUIELEMENTS_RELEASE in GUIRequiredServices.h.
+//
+// requiredServicesPerGUIElement is keyed by GUIElementEnum ONLY, not by game, so an element cannot map to
+// AIFreeze on Halo2 and HCEFreezeAI on HaloCER. That is why HaloCER gets parallel hce* elements rather than the
+// MCC elements being widened - the same pattern hceForceCheckpointGUI already ships with.
+//
+// The hce* teleport/launch rows are absolute-coordinates only. HCE exposes no player view angle through any
+// chain the reference tool reversed, so there is no honest "relative to look direction" mode and hence no radio
+// group, applyToPlayer or customObject rows. They reuse the MCC settings/events/hotkeys because HaloCER and the
+// MCC games can never be in one process.
 #define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES1 \
 ((presetsHeadingGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((presetSaveButton, (ALL_GAMES_AND_MAINMENU)))\
 	((presetLoadButton, (ALL_GAMES_AND_MAINMENU)))\
-((controlHeadingGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCE)))\
+((controlHeadingGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((toggleGUIHotkeyGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((messagesFontSize, (ALL_GAMES_AND_MAINMENU)))\
 	((messagesFontColor, (ALL_GAMES_AND_MAINMENU)))\
-	((GUISettingsSubheading, (ALL_GAMES_AND_MAINMENU_AND_HALOCE)))\
-		((GUIShowingFreesCursor, (ALL_GAMES_AND_MAINMENU_AND_HALOCE)))\
-		((GUIShowingBlocksInput, (ALL_GAMES_AND_MAINMENU_AND_HALOCE)))\
+	((GUISettingsSubheading, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+		((GUIShowingFreesCursor, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+		((GUIShowingBlocksInput, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 		((GUIShowingPausesGame, (ALL_GAMES_AND_MAINMENU)))\
 	((togglePauseGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((togglePauseSettingsSubheading, (ALL_GAMES_AND_MAINMENU)))\
 		((advanceTicksGUI, (ALL_SUPPORTED_GAMES)))\
 		((pauseAlsoFreesCursorGUI, (ALL_GAMES_AND_MAINMENU)))\
 		((pauseAlsoBlocksInputGUI, (ALL_GAMES_AND_MAINMENU)))\
-	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCE)))\
+	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((OBSBypassToggleGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((HideWatermarkGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((HideWatermarkIncludeMessagesGUI, (ALL_GAMES_AND_MAINMENU)))\
-((saveManagementHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCE)))\
+((saveManagementHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((forceCheckpointGUI, (ALL_SUPPORTED_GAMES)))\
-	((hceForceCheckpointGUI, (HALOCE_ONLY)))\
-	((forceRevertGUI, (ALL_SUPPORTED_GAMES_AND_HALOCE)))\
+	((hceForceCheckpointGUI, (HALOCER_ONLY)))\
+	((forceRevertGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((forceDoubleRevertGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	((forceCoreSaveGUI, (Halo1)))\
 	((forceCoreLoadGUI, (Halo1)))\
@@ -81,7 +100,7 @@
 		((dumpCoreForcesSave, (Halo1)))\
 	((dumpCoreGUI, (Halo1)))\
 	((naturalCheckpointDisableGUI, (ALL_SUPPORTED_GAMES)))\
-	((hceNaturalCheckpointDisableGUI, (HALOCE_ONLY)))\
+	((hceNaturalCheckpointDisableGUI, (HALOCER_ONLY)))\
 	((forceFutureCheckpointGUI, (ALL_SUPPORTED_GAMES)))\
 		((forceFutureCheckpointToggle, (ALL_SUPPORTED_GAMES)))\
 		((forceFutureCheckpointTick, (ALL_SUPPORTED_GAMES)))\
@@ -94,7 +113,7 @@
 		((replayLoadFileGUI, (Halo2)))\
 		((replayPlayGUI, (Halo2)))\
 		((replayStopPlaybackGUI, (Halo2)))\
-((cheatsHeadingGUI, (ALL_SUPPORTED_GAMES)))\
+((cheatsHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((speedhackGUI, (ALL_SUPPORTED_GAMES)))\
 	((invulnGUI, (ALL_SUPPORTED_GAMES)))\
 	((invulnerabilitySettingsSubheading, (ALL_SUPPORTED_GAMES)))\
@@ -185,7 +204,7 @@
 
 
 #define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES2 \
-((overlaysHeadingGUI, (ALL_SUPPORTED_GAMES)))\
+((overlaysHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((renderDistance3DGUI, (ALL_SUPPORTED_GAMES)))\
 	((display2DInfoToggleGUI, (ALL_SUPPORTED_GAMES)))\
 	((display2DInfoSettingsInfoSubheading, (ALL_SUPPORTED_GAMES)))\
@@ -323,7 +342,7 @@
 				((abilityMeterCooldownBackgroundColor, (ABILITY_GAMES)))\
 				((abilityMeterCooldownForegroundColor, (ABILITY_GAMES)))\
 				((abilityMeterCooldownHighlightColor, (ABILITY_GAMES)))\
-((cameraHeadingGUI, (ALL_SUPPORTED_GAMES)))\
+((cameraHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((hideHUDToggle, (FREE_CAMERA_SUPPORT)))\
 	((editPlayerViewAngleSubheading, (ALL_SUPPORTED_GAMES)))\
 		((editPlayerViewAngleSet, (ALL_SUPPORTED_GAMES)))\
@@ -396,6 +415,50 @@
 	((getTagAddressGUI, (ALL_SUPPORTED_GAMES)))\
 
 
+// Halo Campaign Evolved gui elements.
+//
+// These live in their own sequence for a MEASURED reason, not tidiness: appending them to sequence 2
+// (which was already at 212 elements) made every translation unit that includes this header fail with
+// C1009 "compiler limit: macros nested too deeply" at the GUIElementEnum definition below. That is MSVC's
+// own preprocessor recursion limit, hit well before boost's BOOST_PP_LIMIT_SEQ of 256. Sequences 1 and 2
+// are therefore back at exactly their pre-HaloCER contents - if you add more elements to either and see
+// C1009, split again rather than trying to raise a limit.
+//
+// Sequence order does not imply gui order or hierarchy: both come from the createNestedElement child
+// lists in GUIElementConstructor.cpp. Grouped by owning heading here purely for readability.
+#define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES3 \
+	((hceAiFreezeGUI, (HALOCER_ONLY)))\
+	((hceForceTeleportGUI, (HALOCER_ONLY)))\
+	((hceForceTeleportSettingsSubheading, (HALOCER_ONLY)))\
+		((hceForceTeleportAbsoluteVec3, (HALOCER_ONLY)))\
+		((hceForceTeleportAbsoluteFillCurrent, (HALOCER_ONLY)))\
+		((hceForceTeleportAbsoluteCopy, (HALOCER_ONLY)))\
+		((hceForceTeleportAbsolutePaste, (HALOCER_ONLY)))\
+	((hceForceLaunchGUI, (HALOCER_ONLY)))\
+	((hceForceLaunchSettingsSubheading, (HALOCER_ONLY)))\
+		((hceForceLaunchAbsoluteVec3, (HALOCER_ONLY)))\
+	((hceSkullToggleGUI, (HALOCER_ONLY)))\
+	((hceDisplayInfoToggleGUI, (HALOCER_ONLY)))\
+	((hceDisplayInfoSettingsInfoSubheading, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowCoordinates, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowVelocity, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowLevel, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowBSP, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowTick, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowPlayerDatum, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowTEB, (HALOCER_ONLY)))\
+	((hceDisplayInfoSettingsVisualSubheading, (HALOCER_ONLY)))\
+			((hceDisplayInfoAnchorCorner, (HALOCER_ONLY)))\
+			((hceDisplayInfoScreenOffset, (HALOCER_ONLY)))\
+			((hceDisplayInfoFontSize, (HALOCER_ONLY)))\
+			((hceDisplayInfoFontColour, (HALOCER_ONLY)))\
+			((hceDisplayInfoFloatPrecision, (HALOCER_ONLY)))\
+			((hceDisplayInfoOutline, (HALOCER_ONLY)))\
+	((hceFreecamToggleGUI, (HALOCER_ONLY)))\
+	((hceFreecamTeleportToCamera, (HALOCER_ONLY)))
+
+
+
 #define DEBUGGUIELEMENTS_ANDSUPPORTEDGAMES \
 ((HCMDebugHeadingGUI, (ALL_SUPPORTED_GAMES)))\
 
@@ -421,11 +484,13 @@
 #define ALLGUIELEMENTS1 MAKE_ALL_FIRSTOFPAIR(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES1)
 
 #define ALLGUIELEMENTS2 MAKE_ALL_FIRSTOFPAIR(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES2)
+#define ALLGUIELEMENTS3 MAKE_ALL_FIRSTOFPAIR(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES3)
 #define ALLGUIELEMENTSDEBUG MAKE_ALL_FIRSTOFPAIR(DEBUGGUIELEMENTS_ANDSUPPORTEDGAMES)
 
 enum class GUIElementEnum {
 	ALLGUIELEMENTS1
 	ALLGUIELEMENTS2
+	ALLGUIELEMENTS3
 #ifdef HCM_DEBUG
 	ALLGUIELEMENTSDEBUG
 #endif

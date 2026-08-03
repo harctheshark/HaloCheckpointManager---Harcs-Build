@@ -52,7 +52,7 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 			{OptionalCheatEnum::ForceCheckpoint}
 	},
 	// Halo Campaign Evolved has no simple "force checkpoint" flag to write - forcing one needs three code hooks,
-	// and those same hooks are what implements "disable natural checkpoints". So both HaloCE-only elements below
+	// and those same hooks are what implements "disable natural checkpoints". So both HaloCER-only elements below
 	// share the single HCECheckpointDetours cheat (getOrMakeCheat caches per game+cheat pair, so only one is made).
 	{GUIElementEnum::hceForceCheckpointGUI,
 			{OptionalCheatEnum::HCECheckpointDetours}
@@ -149,6 +149,13 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{GUIElementEnum::aiFreezeGUI,
 			{OptionalCheatEnum::AIFreeze}
 	},
+	// Halo Campaign Evolved. This map is keyed by GUIElementEnum ONLY (not by game), so aiFreezeGUI cannot map
+	// to AIFreeze on MCC and HCEFreezeAI on HaloCER - hence the parallel hce* element, same as
+	// hceForceCheckpointGUI. Every hce* cheat also pulls in HCEGetPlayerState via resolveDependentCheat, so it
+	// does not need to be listed here.
+	{GUIElementEnum::hceAiFreezeGUI,
+			{OptionalCheatEnum::HCEFreezeAI}
+	},
 	{ GUIElementEnum::medusaGUI,
 	{OptionalCheatEnum::Medusa}
 	},
@@ -211,6 +218,34 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	},
 		{ GUIElementEnum::forceLaunchAbsoluteVec3,
 			{OptionalCheatEnum::ForceLaunch}
+	},
+
+	{ GUIElementEnum::hceForceTeleportGUI,
+			{OptionalCheatEnum::HCEForceTeleport}
+	},
+	{ GUIElementEnum::hceForceTeleportSettingsSubheading,
+			{OptionalCheatEnum::HCEForceTeleport}
+	},
+	{ GUIElementEnum::hceForceTeleportAbsoluteVec3,
+			{OptionalCheatEnum::HCEForceTeleport}
+	},
+	{ GUIElementEnum::hceForceTeleportAbsoluteFillCurrent,
+			{OptionalCheatEnum::HCEForceTeleport}
+	},
+	{ GUIElementEnum::hceForceTeleportAbsoluteCopy,
+			{OptionalCheatEnum::HCEForceTeleport}
+	},
+	{ GUIElementEnum::hceForceTeleportAbsolutePaste,
+			{OptionalCheatEnum::HCEForceTeleport}
+	},
+	{ GUIElementEnum::hceForceLaunchGUI,
+			{OptionalCheatEnum::HCEForceLaunch}
+	},
+	{ GUIElementEnum::hceForceLaunchSettingsSubheading,
+			{OptionalCheatEnum::HCEForceLaunch}
+	},
+	{ GUIElementEnum::hceForceLaunchAbsoluteVec3,
+			{OptionalCheatEnum::HCEForceLaunch}
 	},
 
 	{ GUIElementEnum::infiniteAmmoGUI,
@@ -440,6 +475,19 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 {OptionalCheatEnum::DisplayPlayerInfo, OptionalCheatEnum::GetPlayerDatum, OptionalCheatEnum::GetObjectAddress}
 	},
 
+	// Halo Campaign Evolved's own info overlay. Only HCEDisplayInfo - the MCC overlay's GetPlayerDatum /
+	// GetObjectAddress dependencies have no HaloCER pointer data and are not used here. The leaf rows are pure
+	// settings and need no entry.
+	{ GUIElementEnum::hceDisplayInfoToggleGUI,
+{OptionalCheatEnum::HCEDisplayInfo}
+	},
+	{ GUIElementEnum::hceDisplayInfoSettingsInfoSubheading,
+{OptionalCheatEnum::HCEDisplayInfo}
+	},
+	{ GUIElementEnum::hceDisplayInfoSettingsVisualSubheading,
+{OptionalCheatEnum::HCEDisplayInfo}
+	},
+
 
 
 			{ GUIElementEnum::display2DInfoShowAggro,
@@ -504,6 +552,15 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 
 		{ GUIElementEnum::freeCameraToggleGUI,
 {OptionalCheatEnum::FreeCamera}
+	},
+
+	// Halo Campaign Evolved freecam. Mirrors the {FreeCamera, ForceTeleport} pairing below - HCEFreecam calls
+	// HCEForceTeleport::teleportPlayerTo so the "teleport to camera" row must not appear without it.
+	{ GUIElementEnum::hceFreecamToggleGUI,
+{OptionalCheatEnum::HCEFreecam}
+	},
+	{ GUIElementEnum::hceFreecamTeleportToCamera,
+{OptionalCheatEnum::HCEFreecam, OptionalCheatEnum::HCEForceTeleport}
 	},
 
 			{ GUIElementEnum::freeCameraTeleportToCamera,
@@ -594,6 +651,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 
 		{ GUIElementEnum::skullToggleGUI,
 {OptionalCheatEnum::SkullToggler}
+		},
+
+		{ GUIElementEnum::hceSkullToggleGUI,
+{OptionalCheatEnum::HCESkullToggler}
 		},
 
 	{ GUIElementEnum::consoleCommandGUI,
@@ -691,6 +752,7 @@ const std::map<GUIElementEnum, std::set<GameState>> GUIRequiredServices::support
 {
 	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES1)
 	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES2)
+	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES3)
 #ifdef HCM_DEBUG
 	MAKE_ALL_MAPSET(DEBUGGUIELEMENTS_ANDSUPPORTEDGAMES)
 #endif

@@ -208,6 +208,30 @@
     <ClInclude Include="HCECheckpointDetours.h">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClInclude>
+    <ClInclude Include="HCEGetPlayerState.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HCEFreezeAI.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HCEDisplayInfo.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HCESkullToggler.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HCEForceTeleport.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HCEForceLaunch.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HCEFreecam.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HCESkullEnum.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
     <ClInclude Include="InjectCheckpoint.h">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClInclude>
@@ -695,6 +719,9 @@
       <Filter>Classes</Filter>
     </ClInclude>
     <ClInclude Include="GUISkullToggle.h">
+      <Filter>Services\GUI\GUIElements</Filter>
+    </ClInclude>
+    <ClInclude Include="GUIHCESkullToggle.h">
       <Filter>Services\GUI\GUIElements</Filter>
     </ClInclude>
     <ClInclude Include="SkullEnum.h">
@@ -1264,6 +1291,27 @@
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClCompile>
     <ClCompile Include="HCECheckpointDetours.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCEGetPlayerState.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCEFreezeAI.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCEDisplayInfo.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCESkullToggler.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCEForceTeleport.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCEForceLaunch.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCEFreecam.cpp">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClCompile>
     <ClCompile Include="NaturalCheckpointDisable.cpp">

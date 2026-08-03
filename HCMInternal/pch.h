@@ -107,6 +107,10 @@ using namespace DirectX;
 // BOOST_PP_LIMIT_MAG, which is left at 256.) Consequences worth knowing before you grow a macro list:
 //   - BOOST_PP_LIMIT_VARIADIC = 64  -> ALLOPTIONALCHEATS1 is at exactly 64 and is FULL (see OptionalCheatEnum.h)
 //   - BOOST_PP_LIMIT_SEQ      = 256 -> RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES2 is at 212 sequence elements
+//     ...but boost's limit is NOT the one you hit first. MSVC's own preprocessor recursion limit fires earlier:
+//     MEASURED, growing sequence 2 from 212 to 232 made every TU that includes GuiElementEnum.h fail with
+//     C1009 "compiler limit: macros nested too deeply". That is why RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES3
+//     exists. If you see C1009, split the sequence - do not try to raise a limit.
 // To actually raise them, these #defines must come BEFORE the first boost include in this file.
 #define BOOST_PP_LIMIT_TUPLE 128
 #define BOOST_PP_LIMIT_VARIADIC 128

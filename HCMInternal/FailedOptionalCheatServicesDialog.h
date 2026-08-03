@@ -22,7 +22,7 @@ public:
 			{GameState::Value::Halo3ODST, {{}, 0}  },
 			{GameState::Value::HaloReach, {{}, 0}  },
 			{GameState::Value::Halo4, {{}, 0}  },
-			{GameState::Value::HaloCE, {{}, 0}  },   // REQUIRED: the loop below does an unguarded .at(game)
+			{GameState::Value::HaloCER, {{}, 0}  },   // REQUIRED: the loop below does an unguarded .at(game)
 			{GameState::Value::NoGame, {{}, 0}  },
 		};
 

@@ -18,7 +18,7 @@ public:
 		// Halo Campaign Evolved - NOT an MCC game. Separate UE5 title (HaloCampaignEvolved.exe) whose Halo
 		// simulation lives in HaloSimulation_tag_release.dll. Value 8 is past MCC's gameIndicator range so it
 		// can never collide with one. Renders with D3D12 (MCC is D3D11) - see D3D12Hook.
-		HaloCE = 8,
+		HaloCER = 8,
 		NoGame = 255,
 	};
 	GameState() = delete; // no default construction
@@ -63,7 +63,7 @@ private:
 		(Value::Halo2MP, "Halo2MP")
 		(Value::Halo3ODST, "Halo3ODST")
 		(Value::HaloReach, "HaloReach")
-		(Value::HaloCE, "HaloCE")
+		(Value::HaloCER, "HaloCER")
 		(Value::NoGame, "NoGame");
 
 	static inline const std::map<Value, std::wstring> GameStateModuleNameMap =  // used in toModuleName
@@ -75,7 +75,7 @@ private:
 		(Value::Halo2MP, L"groundhog.dll")
 		(Value::Halo3ODST, L"halo3odst.dll")
 		(Value::HaloReach, L"haloreach.dll")
-		(Value::HaloCE, L"HaloSimulation_tag_release.dll");
+		(Value::HaloCER, L"HaloSimulation_tag_release.dll");
 };
 
 static inline const std::vector<GameState> AllGameStateValues
@@ -87,7 +87,7 @@ static inline const std::vector<GameState> AllGameStateValues
 		GameState::Value::Halo4,
 		GameState::Value::Halo3ODST,
 		GameState::Value::HaloReach,
-		GameState::Value::HaloCE,
+		GameState::Value::HaloCER,
 		GameState::Value::NoGame
 };
 
@@ -100,10 +100,10 @@ static inline const std::vector<GameState> AllSupportedGames
 		GameState::Value::Halo4,
 		GameState::Value::Halo3ODST,
 		GameState::Value::HaloReach,
-		GameState::Value::HaloCE,
+		GameState::Value::HaloCER,
 };
 
-static inline const std::vector<GameState> DoubleCheckpointGames // all except halo 1 (and HaloCE)
+static inline const std::vector<GameState> DoubleCheckpointGames // all except halo 1 (and HaloCER)
 {
 	GameState::Value::Halo2,
 	GameState::Value::Halo3,

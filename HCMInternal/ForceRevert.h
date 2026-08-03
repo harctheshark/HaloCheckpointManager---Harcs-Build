@@ -38,7 +38,7 @@ private:
 			if (mccStateHook->isGameCurrentlyPlaying(mGame) == false) return;
 			PLOG_DEBUG << "Force Revert called";
 
-			if (mGame.operator GameState::Value() == GameState::Value::HaloCE)
+			if (mGame.operator GameState::Value() == GameState::Value::HaloCER)
 			{
 				// Halo Campaign Evolved writes a 4 byte int, NOT a byte, deliberately.
 				// The reference tool (HCM_Evolved checkpoints.py force_revert -> pymem write_int) writes
@@ -52,7 +52,7 @@ private:
 				//
 				// RESIDUAL RISK: unlike HCECheckpointDetours, this write is not byte-verified against a known
 				// build (requiredServicesPerGUIElement is not game-keyed, so there is no clean place to hang a
-				// HaloCE-only check). HaloSimulation_tag_release.dll has no version resource, so if the game
+				// HaloCER-only check). HaloSimulation_tag_release.dll has no version resource, so if the game
 				// updates, this silently writes 4 bytes to whatever now lives at +0x135706A. Re-derive the
 				// address from HCM_Evolved's addresses.json when bumping HCE support.
 				int32_t enableFlag = 1;

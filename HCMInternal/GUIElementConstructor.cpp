@@ -33,6 +33,7 @@
 #include "GUIButtonAndInt.h"
 #include "GUIWaypointList.h"
 #include "GUISkullToggle.h"
+#include "GUIHCESkullToggle.h"
 #include "GUILabel.h"
 #include "GUIButtonAndBinaryInt.h"
 #include "GUIInvisible.h"
@@ -273,7 +274,7 @@ private:
 						(game, ToolTipCollection("Forces a checkpoint, regardless of if the player is safe or not"), RebindableHotkeyEnum::forceCheckpoint, "Force Checkpoint", settings->forceCheckpointEvent));
 
 				// Halo Campaign Evolved's own force checkpoint. Deliberately reuses forceCheckpointEvent (and so the
-				// existing forceCheckpoint hotkey) - HaloCE and the MCC games can never coexist in one process, so
+				// existing forceCheckpoint hotkey) - HaloCER and the MCC games can never coexist in one process, so
 				// exactly one listener exists at a time. "##hce" keeps the visible label but gives imgui a unique ID.
 				case GUIElementEnum::hceForceCheckpointGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -493,15 +494,21 @@ private:
 							createNestedElement(GUIElementEnum::havokDebuggerGUI),
 							createNestedElement(GUIElementEnum::masterTickrateEnableGUI),
 							createNestedElement(GUIElementEnum::aiFreezeGUI),
+							createNestedElement(GUIElementEnum::hceAiFreezeGUI),
 							createNestedElement(GUIElementEnum::medusaGUI),
 							createNestedElement(GUIElementEnum::forceTeleportGUI),
 							createNestedElement(GUIElementEnum::forceTeleportSettingsSubheading),
 							createNestedElement(GUIElementEnum::forceLaunchGUI),
 							createNestedElement(GUIElementEnum::forceLaunchSettingsSubheading),
+							createNestedElement(GUIElementEnum::hceForceTeleportGUI),
+							createNestedElement(GUIElementEnum::hceForceTeleportSettingsSubheading),
+							createNestedElement(GUIElementEnum::hceForceLaunchGUI),
+							createNestedElement(GUIElementEnum::hceForceLaunchSettingsSubheading),
 							createNestedElement(GUIElementEnum::switchBSPGUI),
 							createNestedElement(GUIElementEnum::switchBSPSetGUI),
 							createNestedElement(GUIElementEnum::setPlayerHealthSubheadingGUI),
 							createNestedElement(GUIElementEnum::skullToggleGUI),
+							createNestedElement(GUIElementEnum::hceSkullToggleGUI),
 							createNestedElement(GUIElementEnum::playerPositionToClipboardGUI),
 							createNestedElement(GUIElementEnum::consoleCommandGUI),
 							createNestedElement(GUIElementEnum::consoleCommandSettings),
@@ -688,6 +695,13 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Disables NPC AI, causing them to stand around like puppets"), RebindableHotkeyEnum::aiFreeze, "Freeze AI", settings->aiFreezeToggle));
 
+				// Halo Campaign Evolved's own Freeze AI. Same setting and same hotkey as the MCC one - HaloCER and
+				// MCC can never be in one process, so only one of the two cheats ever listens. "##hce" keeps the
+				// visible label identical while giving imgui a unique id.
+				case GUIElementEnum::hceAiFreezeGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Disables NPC AI, causing them to stand around like puppets. Re-applied automatically after checkpoint reverts."), RebindableHotkeyEnum::aiFreeze, "Freeze AI##hce", settings->aiFreezeToggle));
+
 				case GUIElementEnum::medusaGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Automatically kill enemies when they see the player"), RebindableHotkeyEnum::medusa, "Medusa", settings->medusaToggle));
@@ -837,6 +851,57 @@ private:
 								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
 									(game, ToolTipCollection("How much velocity to add, in absolute world-axes"), "Launch: ##forceLaunchAbsoluteVec3", settings->forceLaunchAbsoluteVec3));
 
+
+				// ---- Halo Campaign Evolved teleport / launch --------------------------------------------------
+				// Absolute world coordinates only. There is deliberately no radio group, no "relative to look
+				// direction" and no "apply to custom object": HCE exposes no player view angle and no object
+				// datum path through anything the reference tool reversed, and a relative mode built on a guessed
+				// forward vector would be worse than none. Settings, events and hotkeys are the MCC ones.
+				case GUIElementEnum::hceForceTeleportGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Teleports the player to the world coordinates set below"), RebindableHotkeyEnum::forceTeleport, "Force Teleport##hce", settings->forceTeleportEvent));
+
+				case GUIElementEnum::hceForceTeleportSettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection(""), "Force Teleport Settings##hce", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::hceForceTeleportAbsoluteVec3),
+							createNestedElement(GUIElementEnum::hceForceTeleportAbsoluteFillCurrent),
+							createNestedElement(GUIElementEnum::hceForceTeleportAbsoluteCopy),
+							createNestedElement(GUIElementEnum::hceForceTeleportAbsolutePaste),
+							}));
+
+					case GUIElementEnum::hceForceTeleportAbsoluteVec3:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+							(game, ToolTipCollection("The xyz world coordinates to teleport to"), "Teleport: ##hceForceTeleportAbsoluteVec3", settings->forceTeleportAbsoluteVec3));
+
+					case GUIElementEnum::hceForceTeleportAbsoluteFillCurrent:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+							(game, ToolTipCollection("Fill with the current xyz position of the player"), std::nullopt, "Fill with current position##hce", settings->forceTeleportAbsoluteFillCurrent));
+
+					case GUIElementEnum::hceForceTeleportAbsoluteCopy:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+							(game, ToolTipCollection("Copy the position above to your clipboard"), std::nullopt, "Copy to Clipboard##hce", settings->forceTeleportAbsoluteCopy));
+
+					case GUIElementEnum::hceForceTeleportAbsolutePaste:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+							(game, ToolTipCollection("Paste a position from your clipboard into above"), std::nullopt, "Paste from Clipboard##hce", settings->forceTeleportAbsolutePaste));
+
+				case GUIElementEnum::hceForceLaunchGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Sets the player's velocity to the value below"), RebindableHotkeyEnum::forceLaunch, "Force Launch##hce", settings->forceLaunchEvent));
+
+				case GUIElementEnum::hceForceLaunchSettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection(""), "Force Launch Settings##hce", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::hceForceLaunchAbsoluteVec3),
+							}));
+
+					case GUIElementEnum::hceForceLaunchAbsoluteVec3:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+							(game, ToolTipCollection("The velocity to set, in absolute world-axes. This REPLACES your current velocity rather than adding to it."), "Launch: ##hceForceLaunchAbsoluteVec3", settings->forceLaunchAbsoluteVec3));
+
 				case GUIElementEnum::switchBSPGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIButtonAndInt<true>>
 						(game, ToolTipCollection("Loads a different part of the map by index"), RebindableHotkeyEnum::switchBSP, 
@@ -909,6 +974,14 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISkullToggle<false>>
 						(game, ToolTipCollection("Set skull state. Note that skull state is saved/loaded by checkpoints"),
 							"Skull Toggles",
+							settings));
+
+				// Halo Campaign Evolved skulls: 56 of them, addressed by bit index, 25 with no SkullEnum
+				// equivalent - so a separate widget rather than widening GUISkullToggle. See HCESkullEnum.h.
+				case GUIElementEnum::hceSkullToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHCESkullToggle<false>>
+						(game, ToolTipCollection("Set skull state. Some skulls do not work. Skull state is reset by checkpoint loads; HCM re-applies your choices."),
+							"Skull Toggles##hce",
 							settings));
 
 				case GUIElementEnum::playerPositionToClipboardGUI:
@@ -1016,6 +1089,9 @@ private:
 							createNestedElement(GUIElementEnum::display2DInfoToggleGUI),
 							createNestedElement(GUIElementEnum::display2DInfoSettingsInfoSubheading),
 							createNestedElement(GUIElementEnum::display2DInfoSettingsVisualSubheading),
+							createNestedElement(GUIElementEnum::hceDisplayInfoToggleGUI),
+							createNestedElement(GUIElementEnum::hceDisplayInfoSettingsInfoSubheading),
+							createNestedElement(GUIElementEnum::hceDisplayInfoSettingsVisualSubheading),
 							createNestedElement(GUIElementEnum::waypoint3DGUIToggle),
 							createNestedElement(GUIElementEnum::waypoint3DGUIList),
 							createNestedElement(GUIElementEnum::waypoint3DGUISettings),
@@ -1266,6 +1342,91 @@ private:
 					case GUIElementEnum::display2DInfoOutline:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 							(game, ToolTipCollection("Adds a black outline to text (has a small negative performance impact)"), std::nullopt, "Info Font Outline", settings->display2DInfoOutline));
+
+
+				// ---- Halo Campaign Evolved 2D info overlay ----------------------------------------------------
+				// Same toggle, same hotkey and the SAME six visual settings as the MCC overlay - only the row
+				// list is HaloCER-specific, because HCE can supply nothing but these seven values.
+				case GUIElementEnum::hceDisplayInfoToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Displays player and game information as text on your screen"), RebindableHotkeyEnum::display2DInfo, "Display 2D Game Info##hce", settings->display2DInfoToggle));
+
+				case GUIElementEnum::hceDisplayInfoSettingsInfoSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Control what information should be displayed"), "Info Settings##hce", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowCoordinates),
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowVelocity),
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowLevel),
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowBSP),
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowTick),
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowPlayerDatum),
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowTEB),
+							}));
+
+					case GUIElementEnum::hceDisplayInfoShowCoordinates:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show the player's xyz world position"), std::nullopt, "Show Coordinates", settings->hceDisplayInfoShowCoordinates));
+
+					case GUIElementEnum::hceDisplayInfoShowVelocity:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show the player's xyz velocity"), std::nullopt, "Show Velocity", settings->hceDisplayInfoShowVelocity));
+
+					case GUIElementEnum::hceDisplayInfoShowLevel:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show the currently loaded level (scenario) name"), std::nullopt, "Show Current Level", settings->hceDisplayInfoShowLevel));
+
+					case GUIElementEnum::hceDisplayInfoShowBSP:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show the current BSP index"), std::nullopt, "Show Current BSP", settings->hceDisplayInfoShowBSP));
+
+					case GUIElementEnum::hceDisplayInfoShowTick:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show the engine's tick counter"), std::nullopt, "Show Tick Counter", settings->hceDisplayInfoShowTick));
+
+					case GUIElementEnum::hceDisplayInfoShowPlayerDatum:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show the player's datum (unique ID). Reads (dead) when the player has no object."), std::nullopt, "Show Player Datum", settings->hceDisplayInfoShowPlayerDatum));
+
+					case GUIElementEnum::hceDisplayInfoShowTEB:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Diagnostic: the game thread's TEB address. If this shows an address, HCM has found the game thread and every other Halo Campaign Evolved feature can work."), std::nullopt, "Show TEB Base (debug)", settings->hceDisplayInfoShowTEB));
+
+				case GUIElementEnum::hceDisplayInfoSettingsVisualSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Cosmetic/visual settings for how the info should be displayed"), "Visual Settings##hce", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::hceDisplayInfoAnchorCorner),
+							createNestedElement(GUIElementEnum::hceDisplayInfoScreenOffset),
+							createNestedElement(GUIElementEnum::hceDisplayInfoFontSize),
+							createNestedElement(GUIElementEnum::hceDisplayInfoFontColour),
+							createNestedElement(GUIElementEnum::hceDisplayInfoFloatPrecision),
+							createNestedElement(GUIElementEnum::hceDisplayInfoOutline),
+							}));
+
+					case GUIElementEnum::hceDisplayInfoAnchorCorner:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::ScreenAnchorEnum, 100.f>>
+							(game, ToolTipCollection(""), "Corner to Anchor to##hce", settings->display2DInfoAnchorCorner));
+
+					case GUIElementEnum::hceDisplayInfoScreenOffset:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared < GUIVec2 < false, false, 0, SliderParam<SimpleMath::Vector2>({ 0.f, 0.f }, { 1600.f, 1000.f }, ImGuiSliderFlags_None) >>
+							(game, ToolTipCollection(""), "Pixel Offset from Corner##hce", settings->display2DInfoScreenOffset, "Horizontal", "Vertical"));
+
+					case GUIElementEnum::hceDisplayInfoFontSize:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(6.f, 120.f)>>
+							(game, ToolTipCollection(""), "Info Font Size##hce", settings->display2DInfoFontSize));
+
+					case GUIElementEnum::hceDisplayInfoFontColour:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
+							(game, ToolTipCollection(""), "Colour##hce2dinfo", settings->display2DInfoFontColour));
+
+					case GUIElementEnum::hceDisplayInfoFloatPrecision:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<SliderParam<int>(0, 10)>>
+							(game, ToolTipCollection(""), "Info Decimal Precision##hce", settings->display2DInfoFloatPrecision));
+
+					case GUIElementEnum::hceDisplayInfoOutline:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Adds a black outline to text (has a small negative performance impact)"), std::nullopt, "Info Font Outline##hce", settings->display2DInfoOutline));
 
 				case GUIElementEnum::waypoint3DGUIToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -1809,6 +1970,8 @@ private:
 							createNestedElement(GUIElementEnum::hideHUDToggle),
 							createNestedElement(GUIElementEnum::editPlayerViewAngleSubheading),
 							createNestedElement(GUIElementEnum::editPlayerViewAngleIDSubheading),
+							createNestedElement(GUIElementEnum::hceFreecamToggleGUI),
+							createNestedElement(GUIElementEnum::hceFreecamTeleportToCamera),
 							createNestedElement(GUIElementEnum::freeCameraToggleGUI),
 							createNestedElement(GUIElementEnum::freeCameraSettingsSimpleSubheading),
 							createNestedElement(GUIElementEnum::freeCameraSettingsAdvancedSubheading),
@@ -1933,6 +2096,18 @@ private:
 				case GUIElementEnum::freeCameraToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection(""), RebindableHotkeyEnum::freeCamera, "Free Camera", settings->freeCameraToggle));
+
+				// ---- Halo Campaign Evolved free camera -------------------------------------------------------
+				// Two rows, which is the whole feature: HCE's freecam is a single engine byte and the ENGINE flies
+				// the camera. None of the MCC free camera's ~50 settings rows (input bindings, interpolators, FOV
+				// curves, object anchoring) apply, because HCM never drives this camera. See HCEFreecam.h.
+				case GUIElementEnum::hceFreecamToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Detaches the camera from the player. The game itself controls the camera; HCM only turns it on. Re-applied automatically after checkpoint reverts."), RebindableHotkeyEnum::freeCamera, "Free Camera##hce", settings->freeCameraToggle));
+
+				case GUIElementEnum::hceFreecamTeleportToCamera:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Teleports the player to the cameras position"), RebindableHotkeyEnum::freeCameraTeleportToCameraHotkey, "Teleport to Camera##hce", settings->freeCameraTeleportToCameraEvent));
 
 				case GUIElementEnum::freeCameraSettingsSimpleSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>

@@ -9,7 +9,7 @@
 //   - module not loaded            -> MainMenu (the UE5 shell is up but no Halo sim yet)
 //   - loaded, tick counter frozen  -> Loading
 //   - loaded, tick counter ticking -> Ingame
-// currentGameState is always HaloCE while the sim is loaded. HCE is a remake of the Halo CE campaign, so the
+// currentGameState is always HaloCER while the sim is loaded. HCE is a remake of the Halo CE campaign, so the
 // halo1 LevelIDs are the semantically correct mapping for currentLevelID.
 //
 // Offsets are RVAs into HaloSimulation_tag_release.dll (from the HCM_Evolved RE):

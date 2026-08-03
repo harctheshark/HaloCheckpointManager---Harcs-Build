@@ -2196,9 +2196,9 @@
 
 		<!--Halo Campaign Evolved. RVA into HaloSimulation_tag_release.dll. HCE has no version resource so every
 		    build reports 0.0.0.0 - this offset is only valid for the build HCM_Evolved was reversed against.
-		    NOTE: ForceRevert writes a 4 byte int here for HaloCE (not a byte like the MCC games) to match the
+		    NOTE: ForceRevert writes a 4 byte int here for HaloCER (not a byte like the MCC games) to match the
 		    reference tool; see the comment in ForceRevert.h.-->
-		<Version Version="0.0.0.0" Game="HaloCE">
+		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
 				<Offset>0x135706A</Offset>
@@ -3290,7 +3290,7 @@
 
 	<!-- #region hceCheckpointDetours-->
 	<!--
-		Halo Campaign Evolved (HaloCE) checkpoint detours. Everything here is an RVA into
+		Halo Campaign Evolved (HaloCER) checkpoint detours. Everything here is an RVA into
 		HaloSimulation_tag_release.dll. Ported from the external python tool HCM_Evolved (detours.py), which
 		installed a hand assembled code cave; HCM uses three safetyhook midhooks instead - see
 		HCECheckpointDetours.cpp for the exact equivalence to the cave's code1/code2/code3.
@@ -3311,7 +3311,7 @@
 		Do not remove those checks.
 	-->
 	<VersionedEntry Name="hceCheckpointGate1Function" Type="MultilevelPointer::ModuleOffset">
-		<Version Version="0.0.0.0" Game="HaloCE">
+		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
 				<Offset>0x1ADA2A</Offset>
@@ -3320,7 +3320,7 @@
 	</VersionedEntry>
 
 	<VersionedEntry Name="hceCheckpointGate1Continue" Type="MultilevelPointer::ModuleOffset">
-		<Version Version="0.0.0.0" Game="HaloCE">
+		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
 				<Offset>0x1ADA32</Offset>
@@ -3330,13 +3330,13 @@
 
 	<!--test al,al ; je 0x1AE475-->
 	<VersionedEntry Name="hceCheckpointGate1OriginalBytes" Type="Vector" Typename="byte">
-		<Version Version="0.0.0.0" Game="HaloCE">
+		<Version Version="0.0.0.0" Game="HaloCER">
 			<Data>0x84, 0xC0, 0x0F, 0x84, 0x43, 0x0A, 0x00, 0x00</Data>
 		</Version>
 	</VersionedEntry>
 
 	<VersionedEntry Name="hceCheckpointGate2Function" Type="MultilevelPointer::ModuleOffset">
-		<Version Version="0.0.0.0" Game="HaloCE">
+		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
 				<Offset>0x1AE0A2</Offset>
@@ -3345,7 +3345,7 @@
 	</VersionedEntry>
 
 	<VersionedEntry Name="hceCheckpointGate2Continue" Type="MultilevelPointer::ModuleOffset">
-		<Version Version="0.0.0.0" Game="HaloCE">
+		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
 				<Offset>0x1AE0AF</Offset>
@@ -3355,13 +3355,13 @@
 
 	<!--cmp byte ptr [rip+0x11A8FC4 (=0x135706D)],0 ; je 0x1AE178-->
 	<VersionedEntry Name="hceCheckpointGate2OriginalBytes" Type="Vector" Typename="byte">
-		<Version Version="0.0.0.0" Game="HaloCE">
+		<Version Version="0.0.0.0" Game="HaloCER">
 			<Data>0x80, 0x3D, 0xC4, 0x8F, 0x1A, 0x01, 0x00, 0x0F, 0x84, 0xC9, 0x00, 0x00, 0x00</Data>
 		</Version>
 	</VersionedEntry>
 
 	<VersionedEntry Name="hceCheckpointCallFunction" Type="MultilevelPointer::ModuleOffset">
-		<Version Version="0.0.0.0" Game="HaloCE">
+		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
 				<Offset>0x1AE0E2</Offset>
@@ -3370,7 +3370,7 @@
 	</VersionedEntry>
 
 	<VersionedEntry Name="hceCheckpointCallContinue" Type="MultilevelPointer::ModuleOffset">
-		<Version Version="0.0.0.0" Game="HaloCE">
+		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
 				<Offset>0x1AE0E7</Offset>
@@ -3380,11 +3380,280 @@
 
 	<!--call 0x19D400 (save_checkpoint)-->
 	<VersionedEntry Name="hceCheckpointCallOriginalBytes" Type="Vector" Typename="byte">
-		<Version Version="0.0.0.0" Game="HaloCE">
+		<Version Version="0.0.0.0" Game="HaloCER">
 			<Data>0xE8, 0x19, 0xF3, 0xFE, 0xFF</Data>
 		</Version>
 	</VersionedEntry>
 	<!-- #endregion hceCheckpointDetours-->
+
+
+	<!-- #region blockGameInputHCE-->
+	<!--
+		Halo Campaign Evolved raw-input window procedure. ExeOffset into HaloCampaignEvolved.exe
+		(PE ImageBase 0x140000000, so IDA 0x1439FCDD0 -> RVA 0x39FCDD0). ExeOffset, NOT ModuleOffset: the
+		parser rejects any ModuleOffset whose Module element differs from the entry game's module name, and for
+		Game="HaloCER" that is HaloSimulation_tag_release.dll. ExeOffset resolves through GetModuleHandleA(NULL),
+		which is exactly the HCE exe base, and is ASLR proof.
+
+		This is the WndProc of the MESSAGE-ONLY window created by sub_1439FD050: class
+		"UnrealWindowsRawInputHandler", title "UnrealWindowsRawInputWindow", parent HWND_MESSAGE. That function
+		is the process's ONLY RegisterRawInputDevices caller and registers exactly two devices, both
+		RIDEV_INPUTSINK (0x100) targeted at that window: usagePage 1 / usage 2 (mouse = look) and
+		usagePage 1 / usage 6 (keyboard = movement).
+
+		It is NOT the swapchain window HCM subclasses (D3D12Hook -> swapDesc.OutputWindow ->
+		ImGuiManager::mNewWndProc), which is why ImGuiManager::setSwallowGameInput alone does not stop look or
+		movement - those messages are delivered to a window our subclass never sees.
+
+		The hook suppresses uMsg 0xFF (WM_INPUT) ONLY, returning DefWindowProcW exactly as the original does on
+		every path. uMsg 0x81 (WM_NCCREATE) must always pass through - it stores the handler object in
+		GWLP_USERDATA (-21) that the WM_INPUT path later dereferences, and DefWindowProcW must return TRUE there
+		or CreateWindowExW fails outright.
+
+		HCE has no version resource, so every build reports 0.0.0.0 and the Version attribute cannot detect a
+		game update (same problem as hceCheckpointDetours). The site is therefore byte-verified against
+		blockGameInputHCEWndProcOriginalBytes before the hook is installed - hooking the middle of an
+		instruction in a WndProc is an instant crash for every user. Do not remove that check.
+	-->
+	<VersionedEntry Name="blockGameInputHCEWndProcFunction" Type="MultilevelPointer::ExeOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offsets>
+				<Offset>0x39FCDD0</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--mov [rsp+20h],r9 ; mov [rsp+18h],r8 ; mov [rsp+10h],edx ; mov [rsp+8],rcx ;
+	    push rbp ; push rsi ; push rdi ; push r14 ; sub rsp,78h
+	    28 bytes, all position independent - the next instruction (cmp byte ptr [rip+0x9A8E43E],0) is
+	    rip-relative, so the run of relocation-free bytes stops exactly here. Verified against the shipped
+	    exe: RVA 0x39FCDD0 is file offset 0x39FC3D0 (.text VA 0x1000, raw 0x600).-->
+	<VersionedEntry Name="blockGameInputHCEWndProcOriginalBytes" Type="Vector" Typename="byte">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x4C, 0x89, 0x4C, 0x24, 0x20, 0x4C, 0x89, 0x44, 0x24, 0x18, 0x89, 0x54, 0x24, 0x10, 0x48, 0x89, 0x4C, 0x24, 0x08, 0x55, 0x56, 0x57, 0x41, 0x56, 0x48, 0x83, 0xEC, 0x78</Data>
+		</Version>
+	</VersionedEntry>
+	<!-- #endregion blockGameInputHCE-->
+
+
+	<!-- #region hcePlayerState-->
+	<!--
+		Halo Campaign Evolved player/game state. Everything with a <Module> is an RVA into
+		HaloSimulation_tag_release.dll; everything typed int64_t is a plain structural offset. All of it is
+		consumed by HCEGetPlayerState, which is the only place that knows how to walk these chains, and every
+		other HaloCER cheat goes through it.
+
+		WHY THERE IS NO MultilevelPointer FOR MOST OF THIS: almost every HCE datum hangs off the GAME THREAD's
+		thread-local storage block. MultilevelPointer only has ExeOffset / BaseOffset / ModuleOffset / Resolved -
+		there is no TLS specialisation, and adding one would mean editing MultilevelPointer.h/.cpp,
+		PointerDataParser.cpp and PointerDataParserInstantiators.h, which every MCC game shares. So the walk is
+		C++ in HCEGetPlayerState.cpp and only the raw numbers live here.
+
+		The walk (memory.py get_tls / _find_game_thread_teb):
+			tlsIndex = *(int32*)(simBase + hceTlsIndex)
+			teb      = TEB of the thread whose win32 start address == simBase + hceGameThreadEntrypoint
+			tlsArray = *(uintptr*)(teb + hceTebTlsArrayOffset)
+			tlsBase  = *(uintptr*)(tlsArray + tlsIndex * 8)
+		EVERY tls-relative offset below is a POINTER SLOT (deref, then apply the second offset). The single
+		exception is hceAiEnabledTlsOffset, whose slot points straight at the boolean.
+
+		WARNING: HaloSimulation_tag_release.dll carries no version resource, so every HCE build reports version
+		0.0.0.0 and the Version attribute cannot detect a game update. Unlike hceCheckpointDetours there is no
+		byte verification here because none of these features patch code - the safety net is that every single
+		link is null-checked and every read/write goes through HCEGetPlayerState::tryReadRaw / tryWriteRaw,
+		which VirtualQuery the page first and wrap the access in SEH. A moved offset degrades to an on-screen
+		"not available right now" message, never a crash.
+	-->
+
+	<!--Address OF the module's TLS index (an int32), not the index itself.-->
+	<VersionedEntry Name="hceTlsIndex" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0xD72730</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--The win32 start address that identifies the game thread. Present in HCM_Evolved's addresses.json as
+	    "game_thread_entrypoint". Without this we cannot tell the game thread from HCM's own threads, and the
+	    wrong thread's TLS block yields plausible-looking but completely wrong pointers.-->
+	<VersionedEntry Name="hceGameThreadEntrypoint" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x9E60</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--TEB.ThreadLocalStoragePointer (x64).-->
+	<VersionedEntry Name="hceTebTlsArrayOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x58</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<!--tls + this = a pointer slot pointing AT the ai_enabled byte. 0 = AI frozen, 1 = AI running.-->
+	<VersionedEntry Name="hceAiEnabledTlsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x40</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<!--skull bitfield: *(tls + hceSkullArrayTlsOffset) + hceSkullArrayOffset. 56 bits = 7 bytes, LSB first.-->
+	<VersionedEntry Name="hceSkullArrayTlsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x60</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceSkullArrayOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x1EBE0</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<!--player datum: *(uint32*)( *(tls + hcePlayerDatumTlsOffset) + hcePlayerDatumOffset ).
+	    low word == 0xFFFF means the player is dead / not spawned.-->
+	<VersionedEntry Name="hcePlayerDatumTlsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x30</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePlayerDatumOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x98</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<!--player object: *( *( *(tls + hceObjectTableTlsOffset) + hceObjectTableOffset )
+	                       + playerIndex * hceObjectTableStride + hceObjectTableEntryOffset ).
+	    These four are hard-coded in the reference tool's common.py and are absent from its addresses.json;
+	    they are here so the layout stays maintainable from one file.-->
+	<VersionedEntry Name="hceObjectTableTlsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x20</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceObjectTableOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x50</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceObjectTableStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x18</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceObjectTableEntryOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x10</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<!--physics entry. This chain is HYBRID - the index comes off the player object (TLS side), the table is
+	    module relative:
+	        havokIndex   = *(int16*)(playerObject + hceHavokIndexOffset)    SIGNED; < 0 means no physics body
+	        physicsRoot  = *(uintptr*)(simBase + hcePhysicsTable)
+	        physicsTable = *(uintptr*)(physicsRoot + hcePhysicsRootOffset)
+	        entry        = physicsTable + havokIndex * hcePhysicsEntryStride
+	        physicsEntry = *(uintptr*)( *(uintptr*)(entry + hcePhysicsEntryOffset) + hcePhysicsEntryOffset2 )
+	    Field offsets off physicsEntry (0x1A0/0x1B0/0x1C0/0x230/0x250/0x260) and off playerObject
+	    (0x20/0x30/0x44) are constants in HCEGetPlayerState.cpp: they are one struct and are only meaningful
+	    together, as the teleport write sequence shows.-->
+	<VersionedEntry Name="hceHavokIndexOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0xCC</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePhysicsTable" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x10CCC90</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePhysicsRootOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x50</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePhysicsEntryStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0xC0</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePhysicsEntryOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x30</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePhysicsEntryOffset2" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x40</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<!--freecam: *(tls + hceFreecamToggleTlsOffset) + hceFreecamToggleOffset is ONE BYTE, 1 = freecam on.
+	    The engine flies the camera once this is set; HCM writes nothing else.-->
+	<VersionedEntry Name="hceFreecamToggleTlsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0xB8</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceFreecamToggleOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x9C8</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<!--camera entries: cameraEntries = *(tls + hceCameraEntriesTlsOffset), entry = cameraEntries + slot*stride
+	    for the first slot 0..3 whose qword is non-null. The entry BASE is the entry - the qword at it is only
+	    the liveness test. Position is 3 floats at entry + 0x20 (a constant in HCEFreecam.cpp).
+	    Both of these are hard-coded in player_camera.py and absent from addresses.json.-->
+	<VersionedEntry Name="hceCameraEntriesTlsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x148</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceCameraEntryStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x1AC</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<!--Info overlay sources. Note all three are shaped differently, which has caught people out before:
+	        hceCurrentLevel     a NUL-terminated ASCII STRING (<=40 bytes), NOT an index and NOT a pointer
+	        hceCurrentBSP       an int32 read DIRECTLY at the address, no dereference
+	        hceTickCounterSlot  a POINTER to the int32 - dereference once, then read
+	    HCEStateHook.cpp documents reading the tick counter in place as the bug that made HCM report "Loading"
+	    forever.-->
+	<VersionedEntry Name="hceCurrentLevel" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0xCA2F00</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceCurrentBSP" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x9A14E0</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceTickCounterSlot" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x12944C8</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<!-- #endregion hcePlayerState-->
 
 
 	<!-- #region checkpointLength-->

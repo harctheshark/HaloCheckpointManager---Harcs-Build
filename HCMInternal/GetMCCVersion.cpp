@@ -32,7 +32,7 @@ VersionInfo GetMCCVersion::evalVersion()
             PLOG_DEBUG << "HaloSimulation_tag_release.dll not loaded yet; using synthetic version";
         }
         // Synthetic fallback so a missing/blank version resource can't block init. Must match the version
-        // string used by the HaloCE entries in the pointer data XML.
+        // string used by the HaloCER entries in the pointer data XML.
         outCurrentMCCVersion.major = 0; outCurrentMCCVersion.minor = 0;
         outCurrentMCCVersion.build = 0; outCurrentMCCVersion.revision = 0;
         return outCurrentMCCVersion;
@@ -98,7 +98,7 @@ MCCProcessType GetMCCVersion::evalVersionType()
         return MCCProcessType::Steam;
     }
     // Halo Campaign Evolved: a separate (non-MCC) UE5 title. Its Halo simulation lives in
-    // HaloSimulation_tag_release.dll, which is where all our HaloCE offsets are relative to.
+    // HaloSimulation_tag_release.dll, which is where all our HaloCER offsets are relative to.
     else if (boost::iequals(mccName, "HaloCampaignEvolved.exe"))
     {
         PLOG_DEBUG << "setting process type to CampaignEvolved";

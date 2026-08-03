@@ -4,7 +4,7 @@
 #include "GameState.h"
 #include "DIContainer.h"
 
-// Halo Campaign Evolved ONLY (GameState::Value::HaloCE).
+// Halo Campaign Evolved ONLY (GameState::Value::HaloCER).
 //
 // Owns the three code hooks that Halo Campaign Evolved needs for checkpoint control, and drives BOTH
 // "Force Checkpoint" (settings->forceCheckpointEvent) and "Disable Natural Checkpoints"

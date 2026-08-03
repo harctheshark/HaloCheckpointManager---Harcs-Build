@@ -144,8 +144,24 @@ HCECheckpointDetours,\
 PresetManager
 
 
+// Halo Campaign Evolved. ALLOPTIONALCHEATS2 was at 60 of the hard 64 when these were added, i.e. 4 free slots
+// for 7 cheats, so they get their own list rather than overrunning (which produces a wall of unrelated
+// preprocessor noise, not a clean error). Remember to add a matching MAKECASE line in OptionalCheatManager.cpp.
+// HCEGetPlayerState is the foundation - it owns the game-thread TLS walk and every one of the others
+// resolveDependentCheat()s it.
+#define ALLOPTIONALCHEATS3	\
+HCEGetPlayerState,\
+HCEFreezeAI,\
+HCEDisplayInfo,\
+HCESkullToggler,\
+HCEForceTeleport,\
+HCEForceLaunch,\
+HCEFreecam
+
+
 enum class OptionalCheatEnum {
 	ALLOPTIONALCHEATS1,
 	ALLOPTIONALCHEATS2,
+	ALLOPTIONALCHEATS3,
 };
 

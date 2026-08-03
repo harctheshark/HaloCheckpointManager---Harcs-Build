@@ -197,6 +197,15 @@ public:
 	std::map<SkullEnum, BitBoolPointer> skullBitBoolCollection; // pointer data is cached and updated on MCC gamestate change
 	std::atomic_bool skullBitBoolCollectionInUse = false; // locked while cache is being updated or in use by gui
 
+	// Halo Campaign Evolved skulls. Deliberately separate from the three members above: HCE has 56 skulls
+	// addressed by BIT INDEX into one contiguous bitfield rather than MCC's per-skull MultilevelPointers, and 25
+	// of them have no SkullEnum entry at all (see HCESkullEnum.h). Kept HaloCER-only so nothing MCC-side moves.
+	// GUIHCESkullToggle reads/writes only these; HCESkullToggler owns every memory access.
+	std::shared_ptr<eventpp::CallbackList<void(GameState)>> hceSkullUpdateEvent = std::make_shared<eventpp::CallbackList<void(GameState)>>(); // gui -> cheat: refresh hceSkullEngineState from game memory
+	std::shared_ptr<eventpp::CallbackList<void(int, bool)>> hceSkullSetEvent = std::make_shared<eventpp::CallbackList<void(int, bool)>>();     // gui -> cheat: user toggled bit N
+	std::array<bool, 56> hceSkullEngineState{}; // last read of the engine's bitfield. Not a shadow copy - refreshed every render.
+	bool hceSkullStateValid = false;            // false => chain is down, gui shows "waiting for game"
+
 
 	// hotkeys for each skull
 	std::shared_ptr<ActionEvent> skullAngerToggleHotkeyEvent = std::make_shared<ActionEvent>();
@@ -1102,6 +1111,60 @@ public:
 			true,
 			[](bool in) { return true; },
 			nameof(display2DInfoOutline)
+		);
+
+	// Halo Campaign Evolved 2D info overlay content toggles. HCEDisplayInfo reuses display2DInfoToggle and every
+	// display2DInfo* VISUAL setting (anchor/offset/size/colour/precision/outline) - only the row list differs,
+	// because HCE can supply nothing but these seven things. See HCEDisplayInfo.cpp.
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowCoordinates = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowCoordinates)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowVelocity = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowVelocity)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowLevel = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowLevel)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowBSP = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowBSP)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowTick = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowTick)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowPlayerDatum = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowPlayerDatum)
+		);
+
+	// Diagnostic row. If this shows an address, the game-thread TLS walk is alive and so is every other HCE
+	// feature; if it does not, none of them can work. Worth keeping even though it means nothing to a player.
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowTEB = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowTEB)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> hideHUDToggle = std::make_shared<BinarySetting<bool>>
@@ -2412,6 +2475,13 @@ public:
 		display2DInfoFontColour,
 		display2DInfoFloatPrecision,
 		display2DInfoOutline,
+		hceDisplayInfoShowCoordinates,
+		hceDisplayInfoShowVelocity,
+		hceDisplayInfoShowLevel,
+		hceDisplayInfoShowBSP,
+		hceDisplayInfoShowTick,
+		hceDisplayInfoShowPlayerDatum,
+		hceDisplayInfoShowTEB,
 		editPlayerViewAngleVec2,
 		editPlayerViewAngleAdjustFactor,
 		editPlayerViewAngleIDInt,

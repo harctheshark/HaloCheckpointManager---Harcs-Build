@@ -78,7 +78,7 @@ namespace
 class HCEStateHook::HCEStateHookImpl
 {
 private:
-	MCCState mCurrentState{ GameState::Value::HaloCE, PlayState::MainMenu, LevelID::no_map_loaded };
+	MCCState mCurrentState{ GameState::Value::HaloCER, PlayState::MainMenu, LevelID::no_map_loaded };
 	std::shared_ptr<eventpp::CallbackList<void(const MCCState&)>> mStateChangedEvent
 		= std::make_shared<eventpp::CallbackList<void(const MCCState&)>>();
 
@@ -160,7 +160,7 @@ private:
 		}
 
 		bool changed = false;
-		MCCState snapshot{ GameState::Value::HaloCE, newPlay, newLevel };
+		MCCState snapshot{ GameState::Value::HaloCER, newPlay, newLevel };
 		{
 			std::scoped_lock lock(mStateMutex);
 			if (mCurrentState.currentPlayState != newPlay || mCurrentState.currentLevelID != newLevel)
@@ -211,7 +211,7 @@ public:
 		std::scoped_lock lock(mStateMutex);
 		// explicit cast: GameState has both operator==(GameState) and operator Value(), so comparing a
 		// GameState directly against a Value is ambiguous (C2666).
-		return static_cast<GameState::Value>(gameToCheck) == GameState::Value::HaloCE
+		return static_cast<GameState::Value>(gameToCheck) == GameState::Value::HaloCER
 			&& mCurrentState.currentPlayState == PlayState::Ingame;
 	}
 

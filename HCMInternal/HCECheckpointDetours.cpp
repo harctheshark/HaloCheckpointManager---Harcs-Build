@@ -13,7 +13,7 @@
 #include <string>
 
 // ================================================================================================================
-// Halo Campaign Evolved (HaloCE) checkpoint control.
+// Halo Campaign Evolved (HaloCER) checkpoint control.
 //
 // Ported from the external python tool HCM_Evolved (detours.py). That tool VirtualAllocEx'd a 4 KiB RWX code
 // cave near the game code and hand assembled four blobs into it. HCM does not need any of that: safetyhook
@@ -159,10 +159,10 @@ private:
 	{
 		auto resolveOrThrow = [](const std::shared_ptr<MultilevelPointer>& mlp, const char* what) -> uintptr_t
 			{
-				if (!mlp) throw HCMRuntimeException(std::format("No pointer data for HaloCE {}", what));
+				if (!mlp) throw HCMRuntimeException(std::format("No pointer data for HaloCER {}", what));
 				uintptr_t address = 0;
 				if (!mlp->resolve(&address) || address == 0)
-					throw HCMRuntimeException(std::format("Could not resolve HaloCE {}: {}", what, MultilevelPointer::GetLastError()));
+					throw HCMRuntimeException(std::format("Could not resolve HaloCER {}: {}", what, MultilevelPointer::GetLastError()));
 				return address;
 			};
 
@@ -194,7 +194,7 @@ private:
 			verifyOriginalBytes(nameof(hceCheckpointGate2Function), mGate2Function, mGate2ExpectedBytes);
 			verifyOriginalBytes(nameof(hceCheckpointCallFunction), mCallFunction, mCallExpectedBytes);
 			mVerified = true;
-			PLOG_INFO << "HaloCE checkpoint sites matched their expected original bytes";
+			PLOG_INFO << "HaloCER checkpoint sites matched their expected original bytes";
 		}
 
 		mGate1Hook->setWantsToBeAttached(true);
@@ -212,7 +212,7 @@ private:
 		}
 
 		mHooksAttached = true;
-		PLOG_INFO << "HaloCE checkpoint detours installed";
+		PLOG_INFO << "HaloCER checkpoint detours installed";
 	}
 
 	// primary event callback: Force Checkpoint
@@ -256,7 +256,7 @@ private:
 		{
 			lockOrThrow(mccStateHookWeak, mccStateHook);
 			lockOrThrow(messagesGUIWeak, messagesGUI);
-			PLOG_DEBUG << "HaloCE naturalCheckpointDisable toggle: newval: " << newValue;
+			PLOG_DEBUG << "HaloCER naturalCheckpointDisable toggle: newval: " << newValue;
 
 			if (newValue)
 			{
@@ -283,24 +283,24 @@ private:
 	// sees, unlike an init failure (which needs the Control heading's "Show optional cheat service failures").
 	static void verifyOriginalBytes(const char* siteName, const std::shared_ptr<MultilevelPointer>& site, const std::shared_ptr<std::vector<byte>>& expectedPtr)
 	{
-		if (!site) throw HCMRuntimeException(std::format("No pointer data for HaloCE checkpoint site {}", siteName));
-		if (!expectedPtr || expectedPtr->empty()) throw HCMRuntimeException(std::format("No expected original bytes for HaloCE checkpoint site {}", siteName));
+		if (!site) throw HCMRuntimeException(std::format("No pointer data for HaloCER checkpoint site {}", siteName));
+		if (!expectedPtr || expectedPtr->empty()) throw HCMRuntimeException(std::format("No expected original bytes for HaloCER checkpoint site {}", siteName));
 
 		const std::vector<byte>& expected = *expectedPtr;
 		std::vector<byte> actual(expected.size());
 		if (!site->readArrayData(actual.data(), actual.size()))
-			throw HCMRuntimeException(std::format("Could not read HaloCE checkpoint site {}: {}", siteName, MultilevelPointer::GetLastError()));
+			throw HCMRuntimeException(std::format("Could not read HaloCER checkpoint site {}: {}", siteName, MultilevelPointer::GetLastError()));
 
 		if (actual != expected)
 			throw HCMRuntimeException(std::format(
-				"HaloCE checkpoint site {} did not match its expected original bytes - this build of Halo Campaign Evolved is not supported. Expected [{}], found [{}]",
+				"HaloCER checkpoint site {} did not match its expected original bytes - this build of Halo Campaign Evolved is not supported. Expected [{}], found [{}]",
 				siteName, bytesToString(expected), bytesToString(actual)));
 	}
 
 	// Declared LAST on purpose - see mReady. A ScopedCallback subscribes in its own constructor, so any member
 	// it touches has to already exist; declaring these first (as the other cheats do) meant onForceCheckpoint
 	// could run against uninitialised weak_ptrs and null hook pointers.
-	// Both features deliberately reuse the existing MCC settings/events - HaloCE and the MCC games can never be
+	// Both features deliberately reuse the existing MCC settings/events - HaloCER and the MCC games can never be
 	// in the same process, so there is only ever one listener.
 	ScopedCallback<ActionEvent> mForceCheckpointCallbackHandle;
 	ScopedCallback<ToggleEvent> mNaturalCheckpointDisableCallbackHandle;
@@ -317,7 +317,7 @@ public:
 	{
 		// explicit cast: GameState has both operator==(GameState) and operator Value(), so comparing a
 		// GameState directly against a Value is ambiguous (C2666).
-		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCE)
+		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER)
 			throw HCMInitException("HCECheckpointDetours only supports Halo Campaign Evolved");
 
 		// Everything below is a PointerDataStore (XML) lookup or an unattached ModuleMidHook. Deliberately no
@@ -348,8 +348,8 @@ public:
 		// NOTE: there is deliberately no "the toggle might already be on" handling here. naturalCheckpointDisable
 		// defaults to false, is not in SettingsStateAndEvents::allSerialisableOptions (so it is never restored
 		// from disk), and PresetManager - the only other thing that can write it - is never constructed in a
-		// HaloCE process (presetSaveButton/presetLoadButton are ALL_GAMES_AND_MAINMENU, so the
-		// {HaloCE, PresetManager} pair never enters requiredServices). If any of those three facts ever change,
+		// HaloCER process (presetSaveButton/presetLoadButton are ALL_GAMES_AND_MAINMENU, so the
+		// {HaloCER, PresetManager} pair never enters requiredServices). If any of those three facts ever change,
 		// the value must be applied through onNaturalCheckpointDisableToggle - NOT by calling
 		// ensureHooksAttached from this constructor, which is exactly the module-load race described above.
 

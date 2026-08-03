@@ -12,6 +12,15 @@
 #include "ForceDoubleRevert.h"
 #include "HCECheckpointDetours.h"
 
+// Halo Campaign Evolved (ALLOPTIONALCHEATS3)
+#include "HCEGetPlayerState.h"
+#include "HCEFreezeAI.h"
+#include "HCEDisplayInfo.h"
+#include "HCESkullToggler.h"
+#include "HCEForceTeleport.h"
+#include "HCEForceLaunch.h"
+#include "HCEFreecam.h"
+
 #include "InjectCheckpoint.h"
 #include "InjectCore.h"
 #include "DumpCheckpoint.h"
@@ -239,7 +248,7 @@ public:
 
 		for (const std::pair<GameState, OptionalCheatEnum>& gameCheatPair : reqSer->getAllRequiredServices())
 		{
-			const bool pairIsHaloCE = (static_cast<GameState::Value>(gameCheatPair.first) == GameState::Value::HaloCE);
+			const bool pairIsHaloCE = (static_cast<GameState::Value>(gameCheatPair.first) == GameState::Value::HaloCER);
 			if (pairIsHaloCE != isCampaignEvolvedProcess) continue; // wrong title for this process - skip silently
 
 			auto& th = createCheatThreads.emplace_back(std::thread([gameCheatPair, cheatStore,info, this]() {
@@ -355,6 +364,7 @@ case OptionalCheatEnum::_var:																	\
 	{
 		MAKECASE(ALLOPTIONALCHEATS1);
 		MAKECASE(ALLOPTIONALCHEATS2);
+		MAKECASE(ALLOPTIONALCHEATS3);
 		/* Expands to:
 		 
 		 case OptionalCheatEnum::ForceCheckpoint: 
