@@ -67,6 +67,31 @@ private:
 			return std::nullopt; // don't construct for unsupported game
 		}
 
+		// Halo Campaign Evolved is a SEPARATE TITLE from MCC - the two can never be the same process. HCMInternal
+		// still knows about every game, so without this the CER process builds GUI elements for all six MCC games
+		// (and MCC builds the HaloCER ones), and each of those resolves optional cheats that OptionalCheatManager
+		// deliberately never created for this process. That surfaced as ~471 bogus entries in the "Failed optional
+		// cheat services" dialog on a perfectly healthy launch.
+		//
+		// Note this must mirror the filter in OptionalCheatManager::createCheats exactly - the two are the same
+		// decision made in two places, and if they ever disagree you get either phantom failures (element built,
+		// cheat wasn't) or silently missing UI (cheat built, element wasn't).
+		{
+			const bool processIsCampaignEvolved = (mProcType == MCCProcessType::CampaignEvolved);
+			const auto elementGame = game.operator GameState::Value();
+			const bool elementIsHaloCER = (elementGame == GameState::Value::HaloCER);
+
+			// NoGame (255) is the GAME-AGNOSTIC bucket - global settings elements that belong to neither title.
+			// It must be exempt: it is not HaloCER, so a naive test would skip every one of them inside the CER
+			// process and take the global UI with it.
+			if (elementGame != GameState::Value::NoGame && elementIsHaloCER != processIsCampaignEvolved)
+			{
+				PLOG_DEBUG << "GUIElementEnum::" << magic_enum::enum_name(guielementenum) << " for Game::"
+					<< game.toString() << " belongs to the other title, skipping construction";
+				return std::nullopt;
+			}
+		}
+
 		if (cacheFailedServices.contains(std::make_pair(guielementenum, game))) // ignore elements that have already failed construction
 		{
 			PLOG_DEBUG << "GUIElementEnum::" << magic_enum::enum_name(guielementenum) << " for Game::" << game.toString() << " already failed construction, skipping construction";

@@ -251,8 +251,13 @@ public:
 
 		for (const std::pair<GameState, OptionalCheatEnum>& gameCheatPair : reqSer->getAllRequiredServices())
 		{
-			const bool pairIsHaloCE = (static_cast<GameState::Value>(gameCheatPair.first) == GameState::Value::HaloCER);
-			if (pairIsHaloCE != isCampaignEvolvedProcess) continue; // wrong title for this process - skip silently
+			// NoGame (255) is the GAME-AGNOSTIC bucket and must be exempt from the title filter: it is not
+			// HaloCER, so the naive test skipped every NoGame cheat inside the CER process, which then surfaced
+			// as NoGame GUI elements failing for want of services that were never built.
+			const auto pairGame = static_cast<GameState::Value>(gameCheatPair.first);
+			const bool pairIsHaloCE = (pairGame == GameState::Value::HaloCER);
+			if (pairGame != GameState::Value::NoGame && pairIsHaloCE != isCampaignEvolvedProcess)
+				continue; // wrong title for this process - skip silently
 
 			auto& th = createCheatThreads.emplace_back(std::thread([gameCheatPair, cheatStore,info, this]() {
 				try
