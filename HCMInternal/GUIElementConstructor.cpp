@@ -2218,11 +2218,14 @@ private:
 						(game, ToolTipCollection("Settings for the trigger overlay"), "Trigger Overlay Settings##hce", headerChildElements
 							{
 								createNestedElement(GUIElementEnum::hceTriggerOverlaySpeedrunOnly),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayTypesShownSubheading),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayRenderStyle),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayRenderDistance),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayHighlightActive),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayActiveColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayBspColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayKillColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlaySafeZoneColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayLabelColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayShowVertex),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayVertexColour),
@@ -2251,6 +2254,32 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
 						(game, ToolTipCollection("Colour of trigger volumes a mission script has tested in the last few seconds."), "Active Trigger Color", settings->hceTriggerOverlayActiveColor));
 
+				case GUIElementEnum::hceTriggerOverlayTypesShownSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Which kinds of trigger volume to draw"), "Types Shown##hce", headerChildElements
+							{
+								createNestedElement(GUIElementEnum::hceTriggerOverlayShowRegular),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayShowSector),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayShowKill),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayShowZoneSet),
+							}));
+
+				case GUIElementEnum::hceTriggerOverlayShowRegular:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Ordinary box trigger volumes - anything that is not a sector, a kill volume or a zone-set switch."), std::nullopt, "Regular Triggers", settings->hceTriggerOverlayShowRegular));
+
+				case GUIElementEnum::hceTriggerOverlayShowSector:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Sector volumes - an XY polygon extruded between two heights, rather than a box."), std::nullopt, "Sector Triggers", settings->hceTriggerOverlayShowSector));
+
+				case GUIElementEnum::hceTriggerOverlayShowKill:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Kill volumes - the ones that kill you for leaving the intended play space."), std::nullopt, "Kill Triggers", settings->hceTriggerOverlayShowKill));
+
+				case GUIElementEnum::hceTriggerOverlayShowZoneSet:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("BSP / zone-set switch volumes - crossing one loads and unloads whole areas."), std::nullopt, "Zoneset Triggers", settings->hceTriggerOverlayShowZoneSet));
+
 				case GUIElementEnum::hceTriggerOverlaySpeedrunOnly:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Draws ONLY the trigger volumes a speedrun has to hit, from the community completion-requirement lists. Everything else is hidden. Note this is a fixed name list, not something read from the level - if a game update renames a volume it will silently stop being shown, so do not treat it as proof that nothing else matters."), std::nullopt, "Speedrun Triggers Only", settings->hceTriggerOverlaySpeedrunOnly));
@@ -2258,6 +2287,14 @@ private:
 				case GUIElementEnum::hceTriggerOverlayBspColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
 						(game, ToolTipCollection("Colour of BSP / zone-set switching volumes - the ones that load and unload whole areas. Identified by NAME (anything containing bsp or zoneset), because Halo's scenario format has no flag for it, so this can miss an oddly-named one."), "BSP / Zone-set Color", settings->hceTriggerOverlayBspColor));
+
+				case GUIElementEnum::hceTriggerOverlayKillColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of KILL volumes - the ones that kill you for going IN. Read from the scenario's kill trigger block, not guessed from names."), "Kill Volume Color", settings->hceTriggerOverlayKillColor));
+
+				case GUIElementEnum::hceTriggerOverlaySafeZoneColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of SAFE ZONES, which mean the OPPOSITE of a kill volume: the game kills you when you are inside NONE of them. Shown under the same Kill Triggers toggle, but deliberately a different colour so the two are never confused."), "Safe Zone Color", settings->hceTriggerOverlaySafeZoneColor));
 
 				case GUIElementEnum::hceTriggerOverlayLabelColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -2276,8 +2313,11 @@ private:
 						(game, ToolTipCollection("Size of the sphere drawn at the players trigger vertex"), "Trigger Vertex Scale", settings->triggerOverlayPositionScale));
 
 				case GUIElementEnum::hceTriggerOverlayRenderDistance:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 500.f)>>
-						(game, ToolTipCollection("How far away a trigger volume is still drawn, in WORLD UNITS (1 world unit = 10 feet). The whole level's volumes at once is usually unreadable."), "Render Distance (world units)", settings->hceTriggerOverlayRenderDistance));
+					// Slider goes to the setting's full validated range. It used to stop at 500, which silently
+					// capped big levels: on The Maw the speedrun volumes are far enough away that they matched
+					// the filter but were culled before drawing, which looks exactly like "this level has none".
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 2000.f)>>
+						(game, ToolTipCollection("How far away a trigger volume is still drawn, in WORLD UNITS (1 world unit = 10 feet, so 2000 is the whole map). Drawing the entire level at once is usually unreadable - but turn it up if a filter looks empty, because a volume that is filtered IN can still be culled OUT by distance."), "Render Distance (world units)", settings->hceTriggerOverlayRenderDistance));
 
 				case GUIElementEnum::hceTriggerOverlayShowLabels:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>

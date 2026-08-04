@@ -52,20 +52,102 @@ namespace
 	std::atomic<uint32_t> gPovSequence{ 0 };   // even = stable, odd = mid-write. 0 = nothing captured yet.
 	PovSnapshot gPovSnapshot{};
 
+	// ---- Which assignment is OUR camera -------------------------------------------------------------------
+	// Validating the VALUES fixed the constant flicker, but not a residual one every 10-15 seconds: an occasional
+	// FOREIGN view info carries values that are perfectly plausible in isolation (a finite position, an FOV
+	// inside our range) and gets adopted for a frame, yanking the overlay somewhere else. No value test can
+	// catch that, because the values are legitimate - just not ours.
+	//
+	// So also filter by DESTINATION. The render camera's POV is a persistent object written EVERY frame; a
+	// foreign camera writes somewhere else, and much less often. Adopt one destination and accept only writes to
+	// it. If the adopted one goes quiet (we picked wrong, or it was torn down) it is released and the next write
+	// re-adopts - so the frequently-written destination naturally wins without us having to identify it.
+	//
+	// This is NOT the earlier "latch a pointer and read it later" design that failed: we still capture the values
+	// at assignment time. The pointer is used only to decide WHICH assignment to believe.
+	// ⚠ "Adopt the first destination, release it only when it goes QUIET" was not enough. If we ever adopt the
+	// wrong object while it is being written every frame - a cutscene//video view info, say - it never goes
+	// stale, so it is never released, and the overlay stays wrong FOREVER (observed: after the mid-level
+	// cutscene on Keyes the overlay stopped rendering and toggling it off and on did not recover it).
+	//
+	// So choose by FREQUENCY over a rolling window instead of by arrival order. Every assignment is tallied;
+	// each window the most-written destination wins the next window. The render camera is written every frame,
+	// so it wins any contest against an occasional foreign camera - and when the game genuinely switches
+	// cameras, the new one takes over within a window instead of never.
+	constexpr size_t kDestinationSlots = 6;      // more than enough; the loser slots churn harmlessly
+	constexpr uint32_t kElectionWindowMs = 500;  // fast enough to follow a real camera change without flapping
+
+	struct DestinationTally { uintptr_t destination; uint32_t writes; };
+	DestinationTally gTally[kDestinationSlots]{};
+	std::atomic<uintptr_t> gPreferredDestination{ 0 };
+	uint32_t gWindowStartTick = 0;
+
 	void cameraManagerUpdateHook(SafetyHookContext& ctx)
 	{
 		gCameraManagerHookFires.fetch_add(1, std::memory_order_relaxed);
 
-		const PovSnapshot* source = reinterpret_cast<const PovSnapshot*>(ctx.rdx);
-		if (source == nullptr) return;
+		const uint32_t now = GetTickCount();
+		const uintptr_t destination = ctx.rcx;
 
-		const PovSnapshot candidate = *source;
+		// ⚠ VALIDATE BEFORE TALLYING. The candidate must earn its place in the election, not just show up.
+		//
+		// Observed in game: a foreign view info sitting at EXACTLY the world origin (FOV 90) is written often
+		// enough to win elections against the real render camera (FOV 100). The consumer then rejected the
+		// origin and skipped the frame, so the overlay switched itself off for seconds at a time and came back
+		// when the real camera happened to win a window. Rejecting bad candidates at the CONSUMER is too late -
+		// by then they have already displaced the good one. They must never enter the tally.
+		const PovSnapshot* candidateSource = reinterpret_cast<const PovSnapshot*>(ctx.rdx);
+		if (candidateSource == nullptr) return;
+		const PovSnapshot candidate = *candidateSource;
 
-		// Reject foreign/garbage view infos HERE, so a bad one is simply never adopted - rather than being
-		// adopted and then rejected later, which is what cost us a drawn frame.
 		if (!std::isfinite(candidate.fov) || candidate.fov <= 10.f || candidate.fov >= 170.f) return;
 		for (double d : candidate.location) if (!std::isfinite(d)) return;
 		for (double d : candidate.rotation) if (!std::isfinite(d)) return;
+
+		// Exactly the world origin is never a real camera in a loaded level - it is an unset/default view info.
+		if (candidate.location[0] == 0.0 && candidate.location[1] == 0.0 && candidate.location[2] == 0.0) return;
+
+		// Tally this write. Only the hook thread touches gTally/gWindowStartTick, so no synchronisation is
+		// needed on them - only the elected result is published atomically.
+		size_t slot = kDestinationSlots;
+		for (size_t i = 0; i < kDestinationSlots; ++i)
+		{
+			if (gTally[i].destination == destination) { slot = i; break; }
+			if (gTally[i].destination == 0 && slot == kDestinationSlots) slot = i;
+		}
+		if (slot == kDestinationSlots)
+		{
+			// All slots taken by other destinations - evict the weakest, so a burst of one-off view infos can
+			// never lock out the real camera.
+			size_t weakest = 0;
+			for (size_t i = 1; i < kDestinationSlots; ++i)
+				if (gTally[i].writes < gTally[weakest].writes) weakest = i;
+			slot = weakest;
+			gTally[slot] = { destination, 0 };
+		}
+		if (gTally[slot].destination == 0) gTally[slot] = { destination, 0 };
+		++gTally[slot].writes;
+
+		// Wrap-safe unsigned arithmetic across GetTickCount's 49-day rollover.
+		if (gWindowStartTick == 0) gWindowStartTick = now;
+		if (now - gWindowStartTick >= kElectionWindowMs)
+		{
+			size_t winner = 0;
+			for (size_t i = 1; i < kDestinationSlots; ++i)
+				if (gTally[i].writes > gTally[winner].writes) winner = i;
+
+			if (gTally[winner].writes > 0)
+				gPreferredDestination.store(gTally[winner].destination, std::memory_order_release);
+
+			for (auto& t : gTally) t.writes = 0;   // keep the destinations, reset the counts
+			gWindowStartTick = now;
+		}
+
+		const uintptr_t preferred = gPreferredDestination.load(std::memory_order_acquire);
+		if (preferred == 0)
+			gPreferredDestination.store(destination, std::memory_order_release);   // first frames, before any election
+		else if (destination != preferred)
+			return;                                                                // not our camera this window
 
 		// Seqlock: readers retry if they catch a torn write. Cheaper than a mutex on a per-frame game-thread
 		// path, and a hook callback must never block.

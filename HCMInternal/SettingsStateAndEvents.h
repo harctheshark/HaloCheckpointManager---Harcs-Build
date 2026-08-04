@@ -1235,12 +1235,61 @@ public:
 			nameof(hceTriggerOverlayBspColor)
 		);
 
+	// Kill volumes ("stay OUT") and safe zones ("stay IN") are the same feature family and share one toggle, but
+	// they mean OPPOSITE things - the engine kills you when you are inside no safe zone - so drawing them the
+	// same colour would be actively misleading. Red for lethal-to-enter, blue for lethal-to-leave.
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceTriggerOverlayKillColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(1.f, 0.15f, 0.15f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceTriggerOverlayKillColor)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceTriggerOverlaySafeZoneColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(0.25f, 0.6f, 1.f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceTriggerOverlaySafeZoneColor)
+		);
+
 	// Show ONLY the volumes a speedrun has to hit (the community completion-requirement lists).
 	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlaySpeedrunOnly = std::make_shared<BinarySetting<bool>>
 		(
 			false,
 			[](bool in) { return true; },
 			nameof(hceTriggerOverlaySpeedrunOnly)
+		);
+
+	// "Types Shown" - per-category visibility. A level can carry hundreds of volumes and most of them are
+	// irrelevant to whatever you are looking at, so these are a filter, not a style.
+	// A volume is categorised ONCE (see HCETriggerOverlay), and the categories are checked in the same priority
+	// the colours use, so a zone-set switch that is also a sector counts as a zone-set switch for both.
+	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowRegular = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceTriggerOverlayShowRegular)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowSector = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceTriggerOverlayShowSector)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowKill = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceTriggerOverlayShowKill)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowZoneSet = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceTriggerOverlayShowZoneSet)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> hideHUDToggle = std::make_shared<BinarySetting<bool>>
@@ -2565,7 +2614,13 @@ public:
 		hceTriggerOverlayActiveColor,
 		hceTriggerOverlayLabelColor,
 		hceTriggerOverlayBspColor,
+		hceTriggerOverlayKillColor,
+		hceTriggerOverlaySafeZoneColor,
 		hceTriggerOverlaySpeedrunOnly,
+		hceTriggerOverlayShowRegular,
+		hceTriggerOverlayShowSector,
+		hceTriggerOverlayShowKill,
+		hceTriggerOverlayShowZoneSet,
 		editPlayerViewAngleVec2,
 		editPlayerViewAngleAdjustFactor,
 		editPlayerViewAngleIDInt,

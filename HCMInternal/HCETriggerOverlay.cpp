@@ -327,7 +327,11 @@ namespace
 	{
 		// Classified ONCE at tag-refresh time, not per frame: both are string work, and the name cannot change
 		// without a refresh anyway.
-		bool isBspSwitch = false;    // name heuristic - see HCESpeedrunTriggerNames.h
+		bool isBspSwitch = false;    // from the scenario's zone-set switch block (name heuristic as fallback)
+		bool isKill = false;         // scenario kill trigger block (name heuristic as fallback)
+		// ⚠ OPPOSITE MEANING to isKill: a kill volume is "stay out", a safe zone is "stay in" - the engine kills
+		// you when you are inside NO safe zone. Same toggle, deliberately different colour.
+		bool isSafeZone = false;
 		bool isSpeedrun = false;     // on the community completion-requirement list
 
 		std::string name;
@@ -617,6 +621,14 @@ private:
 	int64_t mScenarioZoneSetSwitchBlock = 0x29C;
 	int64_t mZoneSetSwitchStride = 0x8;
 	int64_t mZoneSetSwitchTriggerVolumeIndexOffset = 0x4;
+
+	// Kill volumes and safe zones - same shape, opposite meaning. See InternalPointerData.xml.
+	uint32_t mLoggedEmptySpeedrunFor = 0;   // encoded block address we last warned about, see refreshVolumes
+
+	int64_t mScenarioKillTriggerBlock = 0x45C;
+	int64_t mScenarioSafeZoneTriggerBlock = 0x468;
+	int64_t mKillTriggerStride = 0x4;
+	int64_t mKillTriggerVolumeIndexOffset = 0x0;
 	int64_t mTriggerVolumeStride = 0x7C;
 	int64_t mTriggerVolumeNameOffset = 0x00;
 	int64_t mTriggerVolumeTypeOffset = 0x0C;
@@ -693,6 +705,39 @@ private:
 	// Optional: if the tracker failed to construct (an unrecognised build fails its patches closed), the overlay
 	// still draws, everything just reads as dormant.
 	std::optional<std::weak_ptr<HCETriggerActivity>> mTriggerActivityOptionalWeak;
+
+	// The per-category "Types Shown" filter, read once per frame so neither draw path pays for it per volume.
+	struct TypeFilter
+	{
+		bool speedrunOnly = false;
+		bool showRegular = true, showSector = true, showKill = true, showZoneSet = true;
+	};
+
+	static TypeFilter readTypeFilter(const std::shared_ptr<SettingsStateAndEvents>& settings)
+	{
+		TypeFilter f;
+		f.speedrunOnly = settings->hceTriggerOverlaySpeedrunOnly->GetValue();
+		f.showRegular = settings->hceTriggerOverlayShowRegular->GetValue();
+		f.showSector = settings->hceTriggerOverlayShowSector->GetValue();
+		f.showKill = settings->hceTriggerOverlayShowKill->GetValue();
+		f.showZoneSet = settings->hceTriggerOverlayShowZoneSet->GetValue();
+		return f;
+	}
+
+	// ONE definition of "is this volume drawn", shared by the 3D and ImGui paths so they cannot drift apart.
+	// Categories are tested in the SAME priority the colours use - zone-set switch, then kill, then sector, then
+	// regular - so a volume that is both a zone-set switch and a sector is governed by the zone-set toggle and
+	// drawn in the zone-set colour. Anything else would let a volume be hidden by one toggle while wearing the
+	// colour of another.
+	static bool shouldDrawVolume(const HceTriggerVolume& volume, const TypeFilter& filter)
+	{
+		if (filter.speedrunOnly && !volume.isSpeedrun) return false;
+
+		if (volume.isBspSwitch)              return filter.showZoneSet;
+		if (volume.isKill || volume.isSafeZone) return filter.showKill;   // one toggle, two colours
+		if (volume.isSector)                 return filter.showSector;
+		return filter.showRegular;
+	}
 
 	bool isVolumeActive(uint32_t volumeIndex) const
 	{
@@ -796,25 +841,37 @@ private:
 		// truth rather than the name heuristic - a volume that switches the world without "bsp" in its name is
 		// still caught. The name heuristic stays as a FALLBACK below for the case where this block is empty or
 		// unreadable, because a missed switch volume is worse than a false positive.
-		std::unordered_set<uint32_t> zoneSetSwitchVolumes;
-		{
-			const int32_t switchCount = readI32(scenario + mScenarioZoneSetSwitchBlock);
-			const uint32_t switchEncoded = readU32(scenario + mScenarioZoneSetSwitchBlock + 4);
-			if (switchCount > 0 && switchCount <= 8192 && switchEncoded != 0 && switchEncoded != 0xFFFFFFFFu)
+		// Every one of these blocks has the same shape: count, encoded address, then N elements each carrying a
+		// trigger-volume index with 0xFFFF meaning "none". Read them the same way.
+		auto collectVolumeIndices = [&](int64_t blockOffset, int64_t stride, int64_t indexOffset)
 			{
-				const uintptr_t switchBase = resolveTagBlock(switchEncoded);
-				if (plausiblePointer(switchBase))
+				std::unordered_set<uint32_t> indices;
+				const int32_t blockCount = readI32(scenario + blockOffset);
+				const uint32_t blockEncoded = readU32(scenario + blockOffset + 4);
+
+				// Loose gate, deliberately: the numeric max for the kill/safe blocks is not reliably readable
+				// from their definitions, so this only has to reject "we are not looking at a scenario".
+				if (blockCount <= 0 || blockCount > 8192 || blockEncoded == 0 || blockEncoded == 0xFFFFFFFFu)
+					return indices;
+
+				const uintptr_t blockBase = resolveTagBlock(blockEncoded);
+				if (!plausiblePointer(blockBase)) return indices;
+
+				for (int32_t e = 0; e < blockCount; ++e)
 				{
-					for (int32_t s = 0; s < switchCount; ++s)
-					{
-						const uint16_t volumeIndex = readU16(switchBase + (uintptr_t)mZoneSetSwitchStride * s
-							+ mZoneSetSwitchTriggerVolumeIndexOffset);
-						if (volumeIndex == 0xFFFF) continue;   // the engine's own "none" sentinel
-						zoneSetSwitchVolumes.insert(volumeIndex);
-					}
+					const uint16_t volumeIndex = readU16(blockBase + (uintptr_t)stride * e + indexOffset);
+					if (volumeIndex == 0xFFFF) continue;   // the engine's own "none" sentinel
+					indices.insert(volumeIndex);
 				}
-			}
-		}
+				return indices;
+			};
+
+		const std::unordered_set<uint32_t> zoneSetSwitchVolumes =
+			collectVolumeIndices(mScenarioZoneSetSwitchBlock, mZoneSetSwitchStride, mZoneSetSwitchTriggerVolumeIndexOffset);
+		const std::unordered_set<uint32_t> killVolumes =
+			collectVolumeIndices(mScenarioKillTriggerBlock, mKillTriggerStride, mKillTriggerVolumeIndexOffset);
+		const std::unordered_set<uint32_t> safeZoneVolumes =
+			collectVolumeIndices(mScenarioSafeZoneTriggerBlock, mKillTriggerStride, mKillTriggerVolumeIndexOffset);
 
 		std::vector<HceTriggerVolume> built;
 		built.reserve((size_t)count);
@@ -880,12 +937,44 @@ private:
 			// Classify once, here - never per frame. Tag data first, name heuristic only as a fallback.
 			volume.isBspSwitch = zoneSetSwitchVolumes.contains(volume.index)
 				|| HCESpeedrunTriggerNames::isBspOrZoneSetTrigger(volume.name);
+			// Tag truth. The name heuristic is only a fallback for kill volumes, and safe zones have no name
+			// convention at all - they can ONLY be found by walking the block.
+			volume.isKill = killVolumes.contains(volume.index)
+				|| HCESpeedrunTriggerNames::isKillTrigger(volume.name);
+			volume.isSafeZone = safeZoneVolumes.contains(volume.index);
 			volume.isSpeedrun = HCESpeedrunTriggerNames::isSpeedrunTrigger(volume.name);
 
 			built.push_back(std::move(volume));
 		}
 
 		mVolumes = std::move(built);
+
+		// If the speedrun filter would hide EVERYTHING, say so and dump what the level actually calls its
+		// volumes. The filter is a fixed name list transcribed from the community completion-requirement docs,
+		// and the failure mode is silent: a level whose volumes are named differently just renders empty, which
+		// looks identical to "this level has no speedrun triggers". Observed on The Maw.
+		// Latched per scenario (mLoggedEmptySpeedrunFor), so this cannot spam on the 4x/second refresh.
+		{
+			size_t speedrunMatches = 0;
+			for (const auto& v : mVolumes) if (v.isSpeedrun) ++speedrunMatches;
+
+			if (speedrunMatches == 0 && !mVolumes.empty() && mLoggedEmptySpeedrunFor != encoded)
+			{
+				mLoggedEmptySpeedrunFor = encoded;
+				std::string names;
+				size_t listed = 0;
+				for (const auto& v : mVolumes)
+				{
+					if (listed >= 80) { names += " ...(truncated)"; break; }
+					if (!names.empty()) names += ", ";
+					names += v.name;
+					++listed;
+				}
+				PLOG_WARNING << "HCE Trigger Overlay: NONE of this level's " << mVolumes.size()
+					<< " trigger volumes matched the speedrun name list, so 'Speedrun Triggers Only' will draw "
+					"nothing here. The level's actual volume names are: " << names;
+			}
+		}
 		mCachedCount = count;
 		mCachedEncodedAddress = encoded;
 		return !mVolumes.empty();
@@ -1131,7 +1220,7 @@ private:
 				{
 					return ImGui::ColorConvertFloat4ToU32(ImVec4(c.x, c.y, c.z, std::clamp(c.w * alpha, 0.f, 1.f)));
 				};
-			const bool speedrunOnly = settings->hceTriggerOverlaySpeedrunOnly->GetValue();
+			const TypeFilter typeFilter = readTypeFilter(settings);
 			const SimpleMath::Vector4 bspBase = settings->hceTriggerOverlayBspColor->GetValue();
 			const SimpleMath::Vector4 labelColour = settings->hceTriggerOverlayLabelColor->GetValue();
 			const ImU32 labelPacked = pack(labelColour, 1.f);
@@ -1141,6 +1230,12 @@ private:
 			const ImU32 activeWire = pack(activeColour, wireAlpha);
 			const ImU32 bspWire = pack(bspBase, wireAlpha);
 			const ImU32 bspFill = pack(bspBase, solidAlpha);
+			const SimpleMath::Vector4 killBase = settings->hceTriggerOverlayKillColor->GetValue();
+			const SimpleMath::Vector4 safeBase = settings->hceTriggerOverlaySafeZoneColor->GetValue();
+			const ImU32 killWire = pack(killBase, wireAlpha);
+			const ImU32 killFill = pack(killBase, solidAlpha);
+			const ImU32 safeWire = pack(safeBase, wireAlpha);
+			const ImU32 safeFill = pack(safeBase, solidAlpha);
 			const ImU32 boxFill = pack(normalColour, solidAlpha);
 			const ImU32 sectorFill = pack(sectorBase, solidAlpha);
 			const ImU32 activeFill = pack(activeColour, solidAlpha);
@@ -1160,13 +1255,21 @@ private:
 				mCameraSpace.reserve(volume.vertices.size());
 				for (const auto& v : volume.vertices) mCameraSpace.push_back(toCameraSpace(camera, v));
 
-				if (speedrunOnly && !volume.isSpeedrun) continue;
+				if (!shouldDrawVolume(volume, typeFilter)) continue;
 
 				// Colour priority: ACTIVE beats everything (it is transient and the most urgent thing to see),
 				// then BSP/zone-set (crossing one reloads the world), then sector, then plain.
 				const bool isLive = highlightActive && isVolumeActive(volume.index);
-				const ImU32 colour = isLive ? activeWire : volume.isBspSwitch ? bspWire : (volume.isSector ? sectorWire : boxWire);
-				const ImU32 fill = isLive ? activeFill : volume.isBspSwitch ? bspFill : (volume.isSector ? sectorFill : boxFill);
+				const ImU32 colour = isLive ? activeWire
+					: volume.isBspSwitch ? bspWire
+					: volume.isKill ? killWire
+					: volume.isSafeZone ? safeWire
+					: (volume.isSector ? sectorWire : boxWire);
+				const ImU32 fill = isLive ? activeFill
+					: volume.isBspSwitch ? bspFill
+					: volume.isKill ? killFill
+					: volume.isSafeZone ? safeFill
+					: (volume.isSector ? sectorFill : boxFill);
 
 				// SOLID. There is no depth buffer on this D3D12 path, so faces are sorted back-to-front by
 				// centroid depth (painter's algorithm) to look right against EACH OTHER. They are still not
@@ -1360,10 +1463,16 @@ private:
 			const SimpleMath::Vector4 activeFill = withAlpha(activeColour, solidAlpha);
 
 			// Kept in lockstep with the ImGui path above - same settings, same priority, same filter.
-			const bool speedrunOnly = settings->hceTriggerOverlaySpeedrunOnly->GetValue();
+			const TypeFilter typeFilter = readTypeFilter(settings);
 			const SimpleMath::Vector4 bspBase = settings->hceTriggerOverlayBspColor->GetValue();
 			const SimpleMath::Vector4 bspWire = withAlpha(bspBase, wireAlpha);
 			const SimpleMath::Vector4 bspFill = withAlpha(bspBase, solidAlpha);
+			const SimpleMath::Vector4 killBase = settings->hceTriggerOverlayKillColor->GetValue();
+			const SimpleMath::Vector4 safeBase = settings->hceTriggerOverlaySafeZoneColor->GetValue();
+			const SimpleMath::Vector4 killWire = withAlpha(killBase, wireAlpha);
+			const SimpleMath::Vector4 killFill = withAlpha(killBase, solidAlpha);
+			const SimpleMath::Vector4 safeWire = withAlpha(safeBase, wireAlpha);
+			const SimpleMath::Vector4 safeFill = withAlpha(safeBase, solidAlpha);
 			const ImU32 labelPacked = packU32(settings->hceTriggerOverlayLabelColor->GetValue());
 
 			const SimpleMath::Vector3 cameraPosition = renderer->getCameraPosition();
@@ -1383,11 +1492,19 @@ private:
 				// with its bounding box.
 				if (!cameraFrustum.Intersects(DirectX::BoundingSphere(volume.center, volume.radius))) continue;
 
-				if (speedrunOnly && !volume.isSpeedrun) continue;
+				if (!shouldDrawVolume(volume, typeFilter)) continue;
 
 				const bool isLive = highlightActive && isVolumeActive(volume.index);
-				const SimpleMath::Vector4& wireColour = isLive ? activeWire : volume.isBspSwitch ? bspWire : (volume.isSector ? sectorWire : boxWire);
-				const SimpleMath::Vector4& fillColour = isLive ? activeFill : volume.isBspSwitch ? bspFill : (volume.isSector ? sectorFill : boxFill);
+				const SimpleMath::Vector4& wireColour = isLive ? activeWire
+					: volume.isBspSwitch ? bspWire
+					: volume.isKill ? killWire
+					: volume.isSafeZone ? safeWire
+					: (volume.isSector ? sectorWire : boxWire);
+				const SimpleMath::Vector4& fillColour = isLive ? activeFill
+					: volume.isBspSwitch ? bspFill
+					: volume.isKill ? killFill
+					: volume.isSafeZone ? safeFill
+					: (volume.isSector ? sectorFill : boxFill);
 
 				const HceTriggerVolumeModel model(volume);
 
@@ -1638,6 +1755,10 @@ public:
 		hceOffset(mScenarioZoneSetSwitchBlock, hceScenarioZoneSetSwitchTriggerVolumeBlock);
 		hceOffset(mZoneSetSwitchStride, hceZoneSetSwitchStride);
 		hceOffset(mZoneSetSwitchTriggerVolumeIndexOffset, hceZoneSetSwitchTriggerVolumeIndexOffset);
+		hceOffset(mScenarioKillTriggerBlock, hceScenarioKillTriggerBlock);
+		hceOffset(mScenarioSafeZoneTriggerBlock, hceScenarioSafeZoneTriggerBlock);
+		hceOffset(mKillTriggerStride, hceKillTriggerStride);
+		hceOffset(mKillTriggerVolumeIndexOffset, hceKillTriggerVolumeIndexOffset);
 		hceOffset(mTriggerVolumeStride, hceTriggerVolumeStride);
 		hceOffset(mTriggerVolumeNameOffset, hceTriggerVolumeNameOffset);
 		hceOffset(mTriggerVolumeTypeOffset, hceTriggerVolumeTypeOffset);

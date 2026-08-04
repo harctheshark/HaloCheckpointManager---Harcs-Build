@@ -122,6 +122,20 @@ namespace HCESpeedrunTriggerNames
 	// ⚠ This is therefore a HEURISTIC, not a fact read out of the tag. It can miss a differently-named switch
 	// volume, and it can flag a volume that merely has "bsp" in its name for another reason. It is only used to
 	// pick a COLOUR, so a wrong answer is cosmetic.
+	// Kill volumes. ⚠ CURRENTLY A NAME HEURISTIC, pending the scenario block that marks them authoritatively
+	// (the same way zone-set switches turned out to have their own block referencing volumes by index). Halo's
+	// convention is names like "kill", "kill_soft", "kill_volume_*". Replace this the moment the real block is
+	// known - a heuristic here can both miss a kill volume and flag an innocent one.
+	inline bool isKillTrigger(const std::string& volumeName)
+	{
+		std::string lower;
+		lower.reserve(volumeName.size());
+		for (unsigned char c : volumeName) lower.push_back((char)(c >= 'A' && c <= 'Z' ? c + 32 : c));
+
+		return lower.find("kill") != std::string::npos
+			|| lower.find("death") != std::string::npos;
+	}
+
 	inline bool isBspOrZoneSetTrigger(const std::string& volumeName)
 	{
 		std::string lower;

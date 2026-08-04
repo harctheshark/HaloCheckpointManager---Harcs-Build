@@ -674,6 +674,19 @@ bool Renderer3DImplD3D12::appendIndices(const uint16_t* indices, size_t count, D
 void Renderer3DImplD3D12::logCameraSourceIfChanged(CameraSource source, const SimpleMath::Vector3& position, float horizontalFovDegrees)
 {
 	if (source == mLoggedCameraSource) return;
+
+	// ⚠ "Log on change" alone is NOT rate limiting. At a menu the camera legitimately sits at the world origin,
+	// so the resolved source ALTERNATES between UePov and OriginRejected every single frame - and a change-latch
+	// fires on every flip. That produced 1237 lines in ~40 seconds and buried the diagnostics these logs exist
+	// for. Rate-limit as well: a genuine state change still reports promptly, but a flapping one reports once
+	// and then stays quiet until it settles.
+	const uint32_t now = GetTickCount();
+	if (mLastCameraSourceLogTick != 0 && (now - mLastCameraSourceLogTick) < kCameraSourceLogMinIntervalMs)
+	{
+		mLoggedCameraSource = source;   // still track it, just do not narrate every flip
+		return;
+	}
+	mLastCameraSourceLogTick = now;
 	mLoggedCameraSource = source;
 
 	switch (source)

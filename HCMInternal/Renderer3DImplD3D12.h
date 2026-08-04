@@ -209,6 +209,9 @@ private:
 	// the answer CHANGES. There is deliberately no per-frame logging on this path.
 	enum class CameraSource { Unknown, UePov, SimFallback, NoCameraService, NoFallbackAvailable, FallbackThrew, RejectedValues, OriginRejected };
 	CameraSource mLoggedCameraSource = CameraSource::Unknown;
+	// Rate limit on top of the change-latch - see logCameraSourceIfChanged for why the latch alone is not enough.
+	uint32_t mLastCameraSourceLogTick = 0;
+	static constexpr uint32_t kCameraSourceLogMinIntervalMs = 3000;
 	void logCameraSourceIfChanged(CameraSource source, const SimpleMath::Vector3& position, float horizontalFovDegrees);
 
 	// Latched: the sim camera-entry position read back degenerate and we substituted the player position.

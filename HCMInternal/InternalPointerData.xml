@@ -3580,6 +3580,76 @@
 		</Version>
 	</VersionedEntry>
 
+	<!--Kill volumes and safe zones. Same shape as the zone-set switch block above: a scenario block that
+	    references trigger volumes BY INDEX, in the same index space as everything else here.
+
+	        scenario + 0x45C   "scenario kill triggers"       count int32, encoded addr uint32 @ +0x460
+	        scenario + 0x468   "scenario safe zone triggers"  count int32, encoded addr uint32 @ +0x46C
+
+	    Both elements are 4 bytes and the struct walk closes exactly at 4:
+	        +0x00 trigger volume  short block index -> "trigger volumes"   (0xFFFF = none)
+	        +0x02 flags           byte_flags, bit 0 = "don't kill immediately"
+	        +0x03 pad
+	    They share the same kill_volume_flags definition.
+
+	    ⚠ KILL AND SAFE ZONES MEAN OPPOSITE THINGS. A kill volume is "stay OUT"; a safe zone is "stay IN" -
+	    sub_1803526A0 kills you when you are inside NO safe zone (and sub_18019CDB0 returns "inside a safe zone"
+	    = true when the count is zero). Drawing them the same colour would be actively misleading, so HCM gives
+	    them separate colours even though one toggle governs both.
+
+	    Verified in code, three independent sites per block, all using stride 4 (4 * (enc + i)):
+	      sub_1803526A0 (rva 0x3526A0) reads count at scenario+1116 (=0x45C) and loops the block;
+	      sub_1803525D0 (rva 0x3525D0) reads element +0x00 as int16, tests != -1, and passes it VERBATIM to
+	        sub_1802E45F0 (rva 0x2E45F0 = hceTriggerVolumeTestPointFunction), then branches on element[+0x02] & 1;
+	      sub_1803A0CC0 (rva 0x3A0CC0) does the same with an explicit != 0xFFFF.
+	      Safe zones: sub_18019CDB0 (rva 0x19CDB0) reads count 1128 / addr 1132 (=0x468 / 0x46C).
+
+	    ⚠⚠ THE STRUCT WALK USED TO DERIVE THESE NEEDED TWO WIDTH FIXES, and without them every offset past
+	    scenario+0x3B4 is wrong by 112 bytes (a naive walk puts kill at 0x4CC, not 0x45C):
+	        type 0x0F (byte_flags) = 1 byte. Decisive test over all 366 structs: at width 1, 186 close and 0
+	          mismatch; at 0/2/4, 178 close and 8 mismatch.
+	        type 0x33 (tag_data) = 20, not 132  -> {int32 size; int32 flags; int32 stream_position;
+	          uint32 address; uint32 definition}, the same 32-bit-address cache convention that makes tag_block 12.
+	        type 0x3B (inline array) is NOT a fixed 16 - it is count * element_size, count at definition+0x08.
+	          player appearance customizations = 4 -> 16, but object_salts* = 32 -> 128.
+	    The two errors are -112 and +112 and CANCEL in the total, so the old widths closed at the declared 1780
+	    by luck, with compensating errors that happen to bracket these blocks. The corrected widths close at 1780
+	    AND reproduce three independently code-verified offsets: kill 0x45C, safe 0x468, mopp code 0x474.
+	    hceScenarioZoneSetSwitchTriggerVolumeBlock (0x29C) is BELOW 0x3B4 and is unaffected.
+
+	    Other things established while looking, so nobody re-derives them:
+	      * The trigger volume "type" field at +0x0C does NOT encode kill/safe - the enum has exactly two
+	        entries, {0 bounding box, 1 sector}.
+	      * scenario_trigger_volume + 0x78 is a "kill trigger volume*" back-reference (uint16 index into the kill
+	        block, 0xFFFF = not a kill volume), read only by kill_volume_enable / kill_volume_disable. It is a
+	        tool-generated (*) field and may not be populated in shipped cache data - prefer the block.
+	      * Soft ceilings (scenario+0x248) are a DIFFERENT system: triangle meshes, enum
+	        {acceleration, soft kill, slip surface}. Do not merge them with trigger volumes.
+	      * Runtime enable/disable lives in a thread-local bit vector at TLSblock+0x340 indexed by kill-trigger
+	        ELEMENT ordinal, where a SET bit means DISABLED. The safe-zone loop does not consult it.
+	      * UNVERIFIED: the numeric max element count for these two blocks (their blockdef+0x38 slot is occupied
+	        by an inline flags definition). Use a loose sanity gate, as the trigger volume reader does.-->
+	<VersionedEntry Name="hceScenarioKillTriggerBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x45C</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceScenarioSafeZoneTriggerBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x468</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceKillTriggerStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x4</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceKillTriggerVolumeIndexOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x0</Data>
+		</Version>
+	</VersionedEntry>
+
 
 	<!-- #region hceCameraManager-->
 	<!--
