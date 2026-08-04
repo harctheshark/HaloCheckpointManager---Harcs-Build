@@ -151,6 +151,7 @@ PresetManager
 // resolveDependentCheat()s it.
 #define ALLOPTIONALCHEATS3	\
 HCEGetPlayerState,\
+HCEGetCameraData,\
 HCEFreezeAI,\
 HCEDisplayInfo,\
 HCESkullToggler,\

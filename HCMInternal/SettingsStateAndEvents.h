@@ -1216,6 +1216,33 @@ public:
 			nameof(hceTriggerOverlayActiveColor)
 		);
 
+	// Labels used to inherit the volume's own colour, which made them unreadably dark against the world
+	// (a wireframe colour that reads fine as a thin line is far too dark as text). Own setting, bright default.
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceTriggerOverlayLabelColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(1.f, 1.f, 1.f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceTriggerOverlayLabelColor)
+		);
+
+	// BSP / zone-set switching volumes, coloured separately because hitting one unloads and loads whole areas -
+	// it is the single most consequential kind of volume to cross by accident. See HCESpeedrunTriggerNames.h:
+	// the classification is a NAME HEURISTIC, because Halo's scenario format has no flag for it.
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceTriggerOverlayBspColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(1.f, 0.35f, 0.9f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceTriggerOverlayBspColor)
+		);
+
+	// Show ONLY the volumes a speedrun has to hit (the community completion-requirement lists).
+	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlaySpeedrunOnly = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceTriggerOverlaySpeedrunOnly)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> hideHUDToggle = std::make_shared<BinarySetting<bool>>
 		(
 			false,
@@ -2536,6 +2563,9 @@ public:
 		hceTriggerOverlayShowVertex,
 		hceTriggerOverlayHighlightActive,
 		hceTriggerOverlayActiveColor,
+		hceTriggerOverlayLabelColor,
+		hceTriggerOverlayBspColor,
+		hceTriggerOverlaySpeedrunOnly,
 		editPlayerViewAngleVec2,
 		editPlayerViewAngleAdjustFactor,
 		editPlayerViewAngleIDInt,

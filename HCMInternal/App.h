@@ -202,7 +202,10 @@ public:
             // set up optional cheats and optional gui elements
             auto guireq = std::make_shared<GUIRequiredServices>(); PLOGV << "guireq init"; // defines the gui elements we want to build and which optional cheats they will require
             auto cheatfail = std::make_shared<OptionalCheatInfo>(); PLOGV << "cheatfail init"; // stores info about failed optionalCheat construction (starts empty, obviously)
-            auto optionalCheats = std::make_shared<OptionalCheatManager>(guireq, cheatfail, settings, ptrStore, ver, mccStateHook, sharedMem, mes, exp, dirPath, modal, control, imm->BackgroundRenderEvent, imm->ForegroundDirectXRenderEvent, hkd); PLOGV << "optionalCheats init"; // constructs and stores required optional cheats. Needs a lot of dependencies, cheats will only keep what they need.
+            // Both DirectX render events go in. ImGuiManager fires exactly one of them for the lifetime of the
+            // process (D3D11 for MCC, D3D12 for HaloCER - see D3D12RenderEvent.h), and cheats only resolve the
+            // one their own game uses, so passing both is inert on either path.
+            auto optionalCheats = std::make_shared<OptionalCheatManager>(guireq, cheatfail, settings, ptrStore, ver, mccStateHook, sharedMem, mes, exp, dirPath, modal, control, imm->BackgroundRenderEvent, imm->ForegroundDirectXRenderEvent, imm->ForegroundD3D12RenderEvent, hkd); PLOGV << "optionalCheats init"; // constructs and stores required optional cheats. Needs a lot of dependencies, cheats will only keep what they need.
 
             auto guistore = std::make_shared<GUIElementStore>(); PLOGV << "guistore init"; // collection starts empty, populated later by GUIElementConstructor
             auto GUICon = std::make_shared<GUIElementConstructor>(guireq, cheatfail, guistore, guifail, settings, ver->getMCCProcessType(), exp); PLOGV << "GUIMan init"; // constructs gui elements, pushing them into guistore

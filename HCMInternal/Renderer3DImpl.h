@@ -96,7 +96,6 @@ private:
 	std::shared_ptr<RuntimeExceptionHandler> runtimeExceptions;
 
 	// funcs
-	virtual bool updateCameraData(ID3D11Device* pDevice, ID3D11DeviceContext* pDeviceContext, SimpleMath::Vector2 screenSize, ID3D11RenderTargetView* pMainRenderTargetView) override;
 	RECTF drawSpriteImpl(TextureEnum texture, SimpleMath::Vector2 screenPosition, float spriteScale, SimpleMath::Vector4 spriteColor, bool shouldCenter);
 	friend class Render3DEventProvider;
 
@@ -106,6 +105,13 @@ private:
 public:
 	Renderer3DImpl(GameState game, IDIContainer& dicon);
 	~Renderer3DImpl();
+
+	// The per-frame camera update. This used to be a private virtual on IRenderer3D; it is now a
+	// plain public method on this concrete class, because its parameters are D3D11-only and
+	// IRenderer3D has to stay graphics-API-neutral so a D3D12 implementation can sit behind it.
+	// The BODY is unchanged (see Renderer3DImpl_updateCameraData.cpp) and the only caller is still
+	// Render3DEventProvider, which now calls it on the concrete type.
+	bool updateCameraData(ID3D11Device* pDevice, ID3D11DeviceContext* pDeviceContext, SimpleMath::Vector2 screenSize, ID3D11RenderTargetView* pMainRenderTargetView);
 
 	virtual SimpleMath::Vector3 worldPointToScreenPosition(SimpleMath::Vector3 worldPointPosition, bool shouldFlipBehind) override;
 	virtual SimpleMath::Vector3 worldPointToScreenPositionClamped(SimpleMath::Vector3 worldPointPosition, int screenEdgeOffset, bool* appliedClamp) override;

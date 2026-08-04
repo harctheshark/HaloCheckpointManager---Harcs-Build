@@ -12,6 +12,7 @@
 #include "IMakeOrGetCheat.h"
 #include "HotkeyDefinitions.h"
 #include "DirectXRenderEvent.h"
+#include "D3D12RenderEvent.h"
 // constructs and stores optionalcheats, updating OptionalCheatInfoManager as it constructs
 
 class OptionalCheatConstructor;
@@ -40,6 +41,8 @@ public:
 		std::shared_ptr<ControlServiceContainer> control,
 		std::shared_ptr<RenderEvent> overlayRenderEvent,
 		std::shared_ptr<DirectXRenderEvent> foregroundDirectXRenderEvent,
+		// Halo Campaign Evolved / D3D12 only; inert on the MCC path (see D3D12RenderEvent.h).
+		std::shared_ptr<D3D12RenderEvent> foregroundD3D12RenderEvent,
 		std::shared_ptr<HotkeyDefinitions> hotkeyDefinitions);
 	;
 	~OptionalCheatManager();

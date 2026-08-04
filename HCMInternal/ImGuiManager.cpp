@@ -460,7 +460,12 @@ void ImGuiManager::onPresentHookEventD3D12(ID3D12Device* pDevice, ID3D12Graphics
 	// ForegroundDirectXRenderEvent is deliberately NOT fired: its payload is live ID3D11Device /
 	// ID3D11DeviceContext / ID3D11RenderTargetView pointers which do not exist under D3D12, and every
 	// one of its subscribers dereferences them immediately. Its D3D12 counterpart is fired instead.
-	ForegroundD3D12RenderEvent->operator()(pDevice, pCommandList, screenSize, backBufferRTV);
+	// The back buffer format comes off the hook: a D3D12 subscriber that records its own draws needs
+	// it to build a PSO, and it cannot be recovered from the RTV descriptor handle. DXGI_FORMAT_UNKNOWN
+	// if the hook has gone away, which subscribers must treat as "do not render this frame".
+	DXGI_FORMAT backBufferFormat = DXGI_FORMAT_UNKNOWN;
+	if (auto d3d12 = m_d3d12.lock()) backBufferFormat = d3d12->getRenderTargetFormat();
+	ForegroundD3D12RenderEvent->operator()(pDevice, pCommandList, screenSize, backBufferRTV, backBufferFormat);
 
 	// Finish ImGui frame
 	ImGui::EndFrame();

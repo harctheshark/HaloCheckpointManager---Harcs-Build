@@ -11,13 +11,17 @@
 // boxes and SECTOR volumes as their real extruded polygon prism (the external CER tool drew sectors as boxes,
 // which is wrong for the L-shaped and curved ones).
 //
-// It renders through ImGui's background draw list rather than HCM's IRenderer3D. That is not laziness: HCM's 3D
-// renderer is DirectXTK-11 all the way down (IRenderer3D::updateCameraData takes an ID3D11Device*), and HaloCER
-// is a D3D12 title - Render3DEventProvider throws "not impl yet" for it. Everything drawn on an ImGui draw list
-// works unchanged on the D3D12 backend, which is the same reason HCEDisplayInfo uses RenderTextHelper.
+// TWO DRAWING PATHS.
 //
-// The cost of that choice: there is no depth buffer, so volumes are not occluded by walls and cannot be filled
-// convincingly (faces would sort by emission order). Wireframe only, deliberately.
+// PRIMARY: HCM's own IRenderer3D, through Render3DEventProvider. On HaloCER that is Renderer3DImplD3D12 - a real
+// D3D12 renderer that records depth-tested triangles and lines into the command list D3D12Hook already owns. Solid
+// faces are properly triangulated (sector caps are often CONCAVE, which ImGui's convex-polygon fill cannot handle),
+// and the player's trigger test point is a real sphere. As on MCC, volumes depth-sort against EACH OTHER only - the
+// renderer owns its depth buffer and clears it every frame; nothing is occluded by world geometry.
+//
+// FALLBACK: the original ImGui background-draw-list implementation, kept intact. It takes over automatically
+// whenever the 3D path has not drawn recently - the D3D12 renderer failing to initialise, Render3DEventProvider
+// failing to construct, or the graphics hook not being up yet. So the overlay is never lost, only downgraded.
 // ================================================================================================================
 class HCETriggerOverlay : public IOptionalCheat
 {

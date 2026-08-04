@@ -358,6 +358,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="PointerDataStore.h" />
     <ClInclude Include="Render3DEventProvider.h" />
     <ClInclude Include="Renderer3DImpl.h" />
+    <ClInclude Include="Renderer3DImplD3D12.h" />
     <ClInclude Include="RenderTextHelper.h" />
     <ClInclude Include="ScopedImFontScaler.h" />
     <ClInclude Include="SensDriftOverlay.h" />
@@ -543,6 +544,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="ForceRevert.h" />
     <ClInclude Include="HCECheckpointDetours.h" />
     <ClInclude Include="HCEGetPlayerState.h" />
+    <ClInclude Include="HCEGetCameraData.h" />
     <ClInclude Include="HCEFreezeAI.h" />
     <ClInclude Include="HCEDisplayInfo.h" />
     <ClInclude Include="HCESkullToggler.h" />
@@ -707,6 +709,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     </ClCompile>
     <ClCompile Include="Renderer3DImpl_Sprites.cpp" />
     <ClCompile Include="Renderer3DImpl_WorldToScreen.cpp" />
+    <ClCompile Include="Renderer3DImplD3D12.cpp" />
     <ClCompile Include="RenderTextHelper.cpp" />
     <ClCompile Include="ScopedImFontScaler.cpp" />
     <ClCompile Include="SensDriftOverlay.cpp" />
@@ -847,6 +850,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="GetPlayerDatum.cpp" />
     <ClCompile Include="HCECheckpointDetours.cpp" />
     <ClCompile Include="HCEGetPlayerState.cpp" />
+    <ClCompile Include="HCEGetCameraData.cpp" />
     <ClCompile Include="HCEFreezeAI.cpp" />
     <ClCompile Include="HCEDisplayInfo.cpp" />
     <ClCompile Include="HCESkullToggler.cpp" />

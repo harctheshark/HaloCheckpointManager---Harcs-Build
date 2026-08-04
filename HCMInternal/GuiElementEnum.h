@@ -484,6 +484,9 @@
 			((hceTriggerOverlayVertexScale, (HALOCER_ONLY)))\
 			((hceTriggerOverlayHighlightActive, (HALOCER_ONLY)))\
 			((hceTriggerOverlayActiveColour, (HALOCER_ONLY)))\
+			((hceTriggerOverlaySpeedrunOnly, (HALOCER_ONLY)))\
+			((hceTriggerOverlayLabelColour, (HALOCER_ONLY)))\
+			((hceTriggerOverlayBspColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlayAlpha, (HALOCER_ONLY)))\
 			((hceTriggerOverlayShowLabels, (HALOCER_ONLY)))\
 			((hceTriggerOverlayLabelScale, (HALOCER_ONLY)))\

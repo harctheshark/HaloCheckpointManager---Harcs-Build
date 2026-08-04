@@ -28,4 +28,14 @@
 //     Signal(), no ResourceBarrier back to PRESENT. D3D12Hook owns all of that.
 //   - a subscriber that throws costs the whole overlay: D3D12Hook catches, closes the list and
 //     kills HCM, because an exception unwinding through DXGI/UE5 frames is not survivable.
-typedef eventpp::CallbackList<void(ID3D12Device* pDevice, ID3D12GraphicsCommandList* pCommandList, SimpleMath::Vector2 screenSize, D3D12_CPU_DESCRIPTOR_HANDLE backBufferRTV)> D3D12RenderEvent;
+//
+// WHY backBufferFormat IS PART OF THE PAYLOAD: a D3D12 PSO bakes in RTVFormats[0], and there is no
+// way to recover a resource's format from a D3D12_CPU_DESCRIPTOR_HANDLE. A subscriber that wants to
+// record its own draws (Renderer3DImplD3D12) therefore cannot build a pipeline state at all without
+// being told the swap chain's format - and guessing it wrong is not a cosmetic bug, it is a GPU
+// validation failure in the GAME's command queue. D3D12Hook already knows it
+// (D3D12Hook::getRenderTargetFormat), so ImGuiManager passes it through.
+//
+// This event is NEVER constructed-into or fired on the D3D11/MCC path, so its signature is free to
+// change without touching any MCC behaviour.
+typedef eventpp::CallbackList<void(ID3D12Device* pDevice, ID3D12GraphicsCommandList* pCommandList, SimpleMath::Vector2 screenSize, D3D12_CPU_DESCRIPTOR_HANDLE backBufferRTV, DXGI_FORMAT backBufferFormat)> D3D12RenderEvent;

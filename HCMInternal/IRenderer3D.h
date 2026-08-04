@@ -21,17 +21,29 @@ enum class CullingOption
 };
 
 /// <summary>
-/// Provides functions for rendering in 3D. Implemented by Renderer3DImpl.h
+/// Provides functions for rendering in 3D.
+///
+/// This interface is deliberately GRAPHICS-API-NEUTRAL: it contains only drawing and
+/// projection/query calls, no D3D11 or D3D12 types. There are two independent implementations and
+/// they share NOTHING:
+///   * Renderer3DImpl.h   - D3D11 / DirectXTK, used by the six MCC games. Untouched.
+///   * Renderer3DImplD3D12.h - D3D12, used only by Halo Campaign Evolved (HaloCER).
+///
+/// The per-frame camera update is NOT on this interface, because it is the one call that is
+/// inherently API-specific (the D3D11 implementation needs a device/context/RTV, the D3D12 one needs
+/// a device/command list/RTV handle/format). Each implementation exposes its own concrete
+/// `updateCameraData` / `beginFrame`, and Render3DEventProvider - which is the only caller, and which
+/// constructs the concrete type - calls it on the concrete type.
 /// <see cref="Renderer3DImpl.h"/>
+/// <see cref="Renderer3DImplD3D12.h"/>
 /// </summary>
+///
+/// NOTE - NO VIRTUAL DESTRUCTOR, DELIBERATELY. This class never had one, and adding one now would
+/// start running ~Renderer3DImpl (releasing DirectXTK/D3D11 state on the HCM shutdown thread) for the
+/// six MCC games, on a path that has never executed. That is a behaviour change to shipped, working
+/// code, so it is not made here. Instead Render3DEventProvider owns the D3D12 renderer through a
+/// unique_ptr to its CONCRETE type, so that one is destroyed correctly.
 class IRenderer3D {
-private:
-	/// <summary>
-	/// Called once per frame to update the internal camera state.
-	/// </summary>
-	/// <returns>False if an exception occurs.</returns>
-	virtual bool updateCameraData(ID3D11Device* pDevice, ID3D11DeviceContext* pDeviceContext, SimpleMath::Vector2 screenSize, ID3D11RenderTargetView* pMainRenderTargetView) = 0;
-	friend class Render3DEventProvider;
 public:
 
 	/// <summary>

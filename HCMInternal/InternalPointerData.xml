@@ -3498,28 +3498,130 @@
 	<!-- #endregion blockGameInputHCE-->
 
 
+	<!--Game tick. THE ONE THE CHECKPOINT RESTORES.
+	    tick = *(int32*)( *(tls + hceGameTimeGlobalsTlsOffset) + hceGameTimeOffset ).
+
+	    s_game_time_globals (60 bytes) is registered by sub_18020FE20 (rva 0x20FE20) with
+	    game_state_data_new(pool=4, "game time globals", size=0x3C) and its address is cached at tls + 0x98.
+	    Pool 4 is gameStateBase+0x6A0000..+0xC00000, i.e. inside the 0xC10000 block that the revert
+	    (sub_18019D730, rva 0x19D730) memcpys back from the checkpoint, so it rewinds. Field +0xC is the tick:
+	    game_time_get_seconds (rva 0x210000) does vcvtsi2ss xmm0, dword [rcx+0Ch] then vmulss by dword [rcx+8]
+	    (ticks * seconds-per-tick), and it is incremented at rva 0x208954 (inc dword ptr [rcx+0Ch], rcx =
+	    tls[0x98]) inside the per-tick update sub_180206D60. Zeroed on map load, so it is level relative, which
+	    is what MCC's tickCounter shows.
+
+	    DO NOT use hceTickCounterSlot for this. That is the base of game-state POOL 5, and the revert copies the
+	    whole 64 KiB pool ASIDE, restores the game state over the top, then copies the pool BACK verbatim, so
+	    nothing in pool 5 can ever rewind by construction. Its first dword is the campaign metagame play clock
+	    (incremented at rva 0x2D0EC8, gated on campaign_metagame_time_pause). It advances once per game tick,
+	    which is exactly why it passed for a tick counter until someone reverted.-->
+	<VersionedEntry Name="hceGameTimeGlobalsTlsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x98</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceGameTimeOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0xC</Data>
+		</Version>
+	</VersionedEntry>
+
+
+	<!--Zone-set switch trigger volumes: which trigger volumes actually switch BSP / zone set.
+
+	    AUTHORITATIVE, not a name guess. The scenario has its own block for this, and it references trigger
+	    volumes BY INDEX - in the SAME index space HceTriggerVolume::index and trigger_volume_test_point use, so
+	    the indices line up 1:1 with what HCETriggerActivity already keys on.
+
+	        count           int32   @ scenario + 0x29C
+	        encoded address uint32  @ scenario + 0x2A0      (resolve exactly like the trigger volume block:
+	        definition      uint32  @ scenario + 0x2A4       base = tagAddressTable[enc>>28] + 4*enc)
+
+	    Element is 8 bytes (s_scenario_zone_set_switch_trigger_volume, declared size 8, and the field walk closes
+	    exactly at 8):
+	        +0x00 flags            word_flags   (bit 0 = "teleport vehicles", the flags definition declares 1 bit)
+	        +0x02 begin zone set   short block index -> "zone sets" (scenario + 0xD0)
+	        +0x04 trigger volume   short block index -> "trigger volumes" (scenario + 0x278)
+	        +0x06 commit zone set  short block index -> "zone sets"
+	    ⚠ 0xFFFF means "none" in all three index fields - skip those elements (the engine tests v16[2] != -1).
+
+	    HOW THIS WAS VERIFIED (the offset is structural, so it matters that the method was checked):
+	    the same 146-field walk of scenario_block_struct closes exactly at its declared 0x6F4 AND reproduces
+	    every independently code-verified anchor we already trust - trigger volumes 0x278 (== the value in
+	    hceScenarioTriggerVolumeBlock below), structure bsps 0x60, structure designs 0x6C, soft ceilings 0x248.
+	    The sibling scenario_trigger_volume_struct walk likewise closes at 0x7C and reproduces every field offset
+	    already in this file. 0x29C sits two blocks past a value the method reproduces exactly.
+
+	    Code proof that +0x04 indexes the trigger volume block, from two independent functions:
+	      sub_18018F870 (rva 0x18F870, the zone-set switch evaluator) does
+	          v20 = v16[2];                        // elem + 0x04
+	          if ( sub_1802E45F0(v20, -1, v23) )   // rva 0x2E45F0 == hceTriggerVolumeTestPointFunction
+	        i.e. it passes the field VERBATIM to the same API that takes a scenario trigger-volume index.
+	      sub_1801B31D0 (rva 0x1B31D0) multiplies it by the trigger-volume stride (31 dwords = 124 bytes) off the
+	        trigger-volume block's own encoded address to read that volume's name string_id.
+
+	    ⚠ Do NOT trust the block definition's max-element slot: its max symbol is MAXIMUM_TRIGGER_VOLUMES_PER_
+	    SCENARIO (shared with the trigger volume block, not a distinct cap) and the dword that reads 64 for this
+	    block decodes as a pointer fragment for "zone sets". Use a loose sanity gate, as the trigger volume
+	    reader already does.-->
+	<VersionedEntry Name="hceScenarioZoneSetSwitchTriggerVolumeBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x29C</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceZoneSetSwitchStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x8</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceZoneSetSwitchTriggerVolumeIndexOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x4</Data>
+		</Version>
+	</VersionedEntry>
+
+
 	<!-- #region hceCameraManager-->
 	<!--
 		The UE5 render camera, for the trigger overlay's field of view.
 
-		HaloCampaignEvolved.exe RVA 0x64B3B60 is APlayerCameraManager::DoUpdateCamera. It is midhooked purely to
-		capture `this` (RCX at entry) once per frame; nothing about the camera update is modified. From that
-		pointer the POV is a plain read:
+		⚠⚠ RVA 0x64B3B60 (APlayerCameraManager::DoUpdateCamera) WAS USED HERE AND IS WRONG - DO NOT GO BACK TO IT.
+		It is a real function and its prologue bytes verify, but IT IS NEVER EXECUTED on this build. Proven in
+		game: the midhook installs (the site reads back E9 <rel32>, i.e. a jmp into safetyhook's trampoline, so
+		the patch physically landed) yet the callback's fire counter stays at 0 for an entire session and every
+		consumer silently runs on the sim fallback camera. That fallback follows the player's AIM rather than the
+		render camera, which shows up as the overlay desyncing during a death cam (the view is locked but the
+		overlay still turns) and as a hardcoded 78 degree FOV that makes volumes look pasted on rather than
+		rendered into the world.
 
-			PCM + 0x14A0   FCameraCacheEntry CameraCachePrivate   (float Timestamp at +0x00)
-			PCM + 0x14B0   POV.Location   (3 x double, UE centimetres)
-			PCM + 0x14C8   POV.Rotation   (3 x double, DEGREES - Pitch, Yaw, Roll)
-			PCM + 0x14E0   POV.FOV        (float, HORIZONTAL degrees)   <- the only field we read
+		RVA 0x5AA7BB0 is FMinimalViewInfo::operator=, which is what the external CER tool hooks - a DEMONSTRABLY
+		WORKING reference for this exact game. Prologue: mov [rsp+8],rbx ; push rdi ; sub rsp,20h ; mov rdi,rdx ;
+		mov rbx,rcx - so RCX is the DESTINATION FMinimalViewInfo and RDX is the source. We capture RCX and read
+		it on a LATER frame, by which time the assignment has completed: staleness is at most one frame, and we
+		never dereference a source temporary.
+
+		⚠ The first 238 bytes of this function are DUPLICATED at RVA 0x7ECC950 (verified against the shipped exe:
+		both start 48 89 5C 24 08 57 48 83 EC 20 48 8B FA 48 8B D9). A byte SIGNATURE therefore matches TWICE,
+		which is why this entry is a fixed RVA and must never be converted to a scan without a disambiguator.
+
+		⚠ operator= fires for EVERY FMinimalViewInfo assignment in the process, so this is last-write-wins and an
+		unrelated copy can poison it. The FOV range and finite checks in getUeCamera are what filter that - keep
+		them. The reference tool carries the same hazard and works.
+
+		The captured pointer IS the FMinimalViewInfo, so the POV is a plain read from it:
+
+			POV + 0x00   Location   (3 x double, UE centimetres)
+			POV + 0x18   Rotation   (3 x double, DEGREES - Pitch, Yaw, Roll)
+			POV + 0x30   FOV        (float, HORIZONTAL degrees)
 
 		The offsets come from the exe's own UE reflection metadata (FGenericPropertyParams, Offset at +0x32 of
 		each record): DesiredFOV = 0x34 within FMinimalViewInfo, so FOV = 0x30, and the struct sits at +0x10
 		inside FCameraCacheEntry. Cross-checked independently: reflection puts CameraCachePrivate at 0x14A0 and
 		LastFrameCameraCachePrivate at 0x1D10, and 0x14A0 + sizeof(FCameraCacheEntry) 0x870 == 0x1D10 exactly.
 
-		WHY NOT FMinimalViewInfo::operator= (RVA 0x5AA7BB0), which the external CER tool hooks: its first 238
-		bytes are DUPLICATED at RVA 0x7ECC950, so a byte signature matches twice. DoUpdateCamera has no such
-		twin, and hooking it once per frame is also far cheaper than firing on every POV assignment in the
-		process - the operator= hook is last-write-wins and can be poisoned by an unrelated copy.
+		(The reasoning above is retained because the FMinimalViewInfo layout it establishes is still what we read.
+		Its ORIGINAL conclusion - "hook DoUpdateCamera, it has no twin and is cheaper than operator=" - was
+		disproven in game: cheaper is worthless if the function never runs. See the warning at the top.)
 
 		The FOV is HORIZONTAL. FMinimalViewInfo::CalculateProjectionMatrixGivenViewRectangle (RVA 0x5D5AF10)
 		uses XAxisMultiplier = 1.0 whenever the constraint is MaintainXFOV or (MajorAxisFOV and width > height),
@@ -3530,7 +3632,7 @@
 	<VersionedEntry Name="hceCameraManagerUpdateFunction" Type="MultilevelPointer::ExeOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Offsets>
-				<Offset>0x64B3B60</Offset>
+				<Offset>0x5AA7BB0</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -3542,13 +3644,16 @@
 	    file offset 0x64B3160 (.text VA 0x1000, raw 0x600).-->
 	<VersionedEntry Name="hceCameraManagerUpdateOriginalBytes" Type="Vector" Typename="byte">
 		<Version Version="0.0.0.0" Game="HaloCER">
-			<Data>0x48, 0x89, 0x5C, 0x24, 0x20, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8D, 0x6C, 0x24, 0xD9, 0x48, 0x81, 0xEC, 0xD0, 0x00, 0x00, 0x00</Data>
+			<Data>0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B, 0xFA, 0x48, 0x8B, 0xD9</Data>
 		</Version>
 	</VersionedEntry>
 
+	<!--The captured pointer IS an FMinimalViewInfo, so the FOV is at its own struct offset 0x30 and the code's
+	    "pov = captured + fovOffset - 0x30" resolves to the captured pointer itself. Location +0x00 (3 doubles),
+	    Rotation +0x18 (3 doubles, DEGREES), FOV +0x30 (float, HORIZONTAL degrees).-->
 	<VersionedEntry Name="hceCameraManagerPovFovOffset" Type="int64_t">
 		<Version Version="0.0.0.0" Game="HaloCER">
-			<Data>0x14E0</Data>
+			<Data>0x30</Data>
 		</Version>
 	</VersionedEntry>
 	<!-- #endregion hceCameraManager-->

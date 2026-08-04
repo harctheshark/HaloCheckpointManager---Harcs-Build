@@ -14,6 +14,7 @@
 
 // Halo Campaign Evolved (ALLOPTIONALCHEATS3)
 #include "HCEGetPlayerState.h"
+#include "HCEGetCameraData.h"
 #include "HCEFreezeAI.h"
 #include "HCEDisplayInfo.h"
 #include "HCESkullToggler.h"
@@ -163,7 +164,7 @@ private:
 	// This collection is the central owner keeping all the optional cheats alive until HCM shuts down. 
 		// Once the OptionalCheatManager goes out of scope in App.h, the OptionalCheatStore destructor will be called, this cheatCollection will be reset, and thus all the IOptionalCheats will in turn have their destructors called etc etc
 	std::shared_ptr<CheatCollection> cheatCollection = std::make_shared<CheatCollection>();
-	DIContainer<IMakeOrGetCheat, SettingsStateAndEvents, PointerDataStore, IGetMCCVersion, IMCCStateHook, ISharedMemory, IMessagesGUI, RuntimeExceptionHandler, DirPathContainer, ModalDialogRenderer, ControlServiceContainer, RenderEvent, DirectXRenderEvent, HotkeyDefinitions> dicon;
+	DIContainer<IMakeOrGetCheat, SettingsStateAndEvents, PointerDataStore, IGetMCCVersion, IMCCStateHook, ISharedMemory, IMessagesGUI, RuntimeExceptionHandler, DirPathContainer, ModalDialogRenderer, ControlServiceContainer, RenderEvent, DirectXRenderEvent, D3D12RenderEvent, HotkeyDefinitions> dicon;
 
 
 public:
@@ -180,11 +181,15 @@ public:
 		std::shared_ptr<ControlServiceContainer> control,
 		std::shared_ptr<RenderEvent> overlayRenderEvent,
 		std::shared_ptr<DirectXRenderEvent> foregroundDirectXRenderEvent,
+		// Halo Campaign Evolved / D3D12 only. ImGuiManager fires exactly ONE of these two DirectX events for
+		// the lifetime of the process (see D3D12RenderEvent.h), so registering both is inert on either path:
+		// the MCC games never resolve the D3D12 one, and HaloCER never resolves the D3D11 one.
+		std::shared_ptr<D3D12RenderEvent> foregroundD3D12RenderEvent,
 		std::shared_ptr<HotkeyDefinitions> hotkeyDefinitions)
 		:
 		// Create a Dependency-Injection container with the dependencies that the cheats will need.
 		// Remember: you need to register types as the base interface the optionalCheats will want to resolve
-		dicon(cheatConstructor, settings, ptr, ver, mccStateHook, sharedMem, mes, exp, std::make_shared<DirPathContainer>(dirPath), modal, control, overlayRenderEvent, foregroundDirectXRenderEvent, hotkeyDefinitions)
+		dicon(cheatConstructor, settings, ptr, ver, mccStateHook, sharedMem, mes, exp, std::make_shared<DirPathContainer>(dirPath), modal, control, overlayRenderEvent, foregroundDirectXRenderEvent, foregroundD3D12RenderEvent, hotkeyDefinitions)
 	{ 
 		
 	}
@@ -324,11 +329,12 @@ OptionalCheatManager::OptionalCheatManager(std::shared_ptr<IGUIRequiredServices>
 	std::shared_ptr<ControlServiceContainer> control,
 	std::shared_ptr<RenderEvent> overlayRenderEvent,
 	std::shared_ptr<DirectXRenderEvent> foregroundDirectXRenderEvent,
+	std::shared_ptr<D3D12RenderEvent> foregroundD3D12RenderEvent,
 	std::shared_ptr<HotkeyDefinitions> hotkeyDefinitions)
 	: constructorPimpl(std::make_shared<OptionalCheatConstructor>())
 
 {
-	storePimpl = std::make_shared<OptionalCheatStore>(constructorPimpl, settings, ptr, ver, mccStateHook, sharedMem, mes, exp, dirPath, modal, control, overlayRenderEvent, foregroundDirectXRenderEvent, hotkeyDefinitions);
+	storePimpl = std::make_shared<OptionalCheatStore>(constructorPimpl, settings, ptr, ver, mccStateHook, sharedMem, mes, exp, dirPath, modal, control, overlayRenderEvent, foregroundDirectXRenderEvent, foregroundD3D12RenderEvent, hotkeyDefinitions);
 
 	// Ah yes a cyclic dependency? But actually the storePimpl will go in as a weak ptr, and it doesn't keep it after the method finishes anyway
 	constructorPimpl->createCheats(storePimpl, reqSer, info);

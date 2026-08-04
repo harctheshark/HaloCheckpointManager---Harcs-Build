@@ -111,6 +111,11 @@ private:
 	int64_t mSkullArrayTlsOffset = 0x60;
 	int64_t mSkullArrayOffset = 0x1EBE0;
 	int64_t mPlayerDatumTlsOffset = 0x30;
+
+	// s_game_time_globals: tls + 0x98 -> struct, tick at +0xC. See getTickCounter for why this is NOT
+	// hceTickCounterSlot.
+	int64_t mGameTimeGlobalsTlsOffset = 0x98;
+	int64_t mGameTimeOffset = 0x0C;
 	int64_t mPlayerDatumOffset = 0x98;
 	int64_t mObjectTableTlsOffset = 0x20;
 	int64_t mObjectTableOffset = 0x50;
@@ -232,6 +237,8 @@ public:
 		hceOffset(mSkullArrayTlsOffset, hceSkullArrayTlsOffset);
 		hceOffset(mSkullArrayOffset, hceSkullArrayOffset);
 		hceOffset(mPlayerDatumTlsOffset, hcePlayerDatumTlsOffset);
+		hceOffset(mGameTimeGlobalsTlsOffset, hceGameTimeGlobalsTlsOffset);
+		hceOffset(mGameTimeOffset, hceGameTimeOffset);
 		hceOffset(mPlayerDatumOffset, hcePlayerDatumOffset);
 		hceOffset(mObjectTableTlsOffset, hceObjectTableTlsOffset);
 		hceOffset(mObjectTableOffset, hceObjectTableOffset);
@@ -525,15 +532,25 @@ public:
 
 	int32_t getTickCounter() // throws
 	{
-		// A POINTER to the counter, not the counter. Reading it in place is what made HCEStateHook report
-		// "Loading" forever before it was fixed - see HCEStateHook.cpp.
-		const uintptr_t slot = resolveOrThrow(mTickCounterSlot, nameof(hceTickCounterSlot));
-		uintptr_t target = 0;
-		if (!HCEGetPlayerState::tryReadRaw(slot, &target, sizeof(target)) || !target)
-			throw HCMRuntimeException("Could not read the HaloCER tick counter pointer");
+		// s_game_time_globals lives in game-state POOL 4, which the checkpoint revert restores wholesale, so
+		// this value REWINDS with a revert - matching what the MCC games display.
+		//
+		// ⚠ Do NOT go back to hceTickCounterSlot for this. That is the base of game-state POOL 5, and the
+		// revert (sub_18019D730) memcpys the whole 64 KiB pool ASIDE, restores the game state over the top,
+		// then memcpys the pool BACK verbatim - so nothing in pool 5 can ever rewind, by construction. Its
+		// first dword is the campaign metagame play clock, which ticks once per game tick (which is exactly
+		// why it passed for a tick counter until someone reverted) but must never rewind, or save-scumming
+		// would rewind metagame scoring.
+		const uintptr_t gameTimeGlobals = readTlsSlot(mGameTimeGlobalsTlsOffset, "game time globals");
+
+		// +0x00 is the "initialised" bool the engine's own game_time_get_seconds checks before using +0xC.
+		uint8_t initialised = 0;
+		if (!HCEGetPlayerState::tryReadRaw(gameTimeGlobals, &initialised, sizeof(initialised)) || !initialised)
+			throw HCMRuntimeException("HaloCER game time is not running yet");
+
 		int32_t value = 0;
-		if (!HCEGetPlayerState::tryReadRaw(target, &value, sizeof(value)))
-			throw HCMRuntimeException("Could not read the HaloCER tick counter");
+		if (!HCEGetPlayerState::tryReadRaw(gameTimeGlobals + mGameTimeOffset, &value, sizeof(value)))
+			throw HCMRuntimeException("Could not read the HaloCER game time");
 		return value;
 	}
 

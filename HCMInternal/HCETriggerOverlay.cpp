@@ -6,16 +6,22 @@
 #include "RuntimeExceptionHandler.h"
 #include "IMakeOrGetCheat.h"
 #include "HCEGetPlayerState.h"
+#include "HCEGetCameraData.h"
 #include "HCETriggerActivity.h"
+#include "HCESpeedrunTriggerNames.h"
 #include "PointerDataStore.h"
 #include "RenderTextHelper.h"
 #include "GlobalKill.h"
 #include "ModuleHook.h"
 #include "MultilevelPointer.h"
+#include "Render3DEventProvider.h"
+#include "IRenderer3D.h"
+#include "IModel.h"
 #include "imgui.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <unordered_set>
 
 // ================================================================================================================
 // Halo Campaign Evolved trigger volume overlay.
@@ -92,12 +98,31 @@
 //     (which moves the observer without touching s_player_control, so the overlay's rotation would stop
 //     tracking). Fixing that properly means taking the whole camera from one source; see below.
 //
+// HOW IT DRAWS - TWO PATHS, 3D FIRST
+// ----------------------------------
+// PRIMARY: HCM's own IRenderer3D, via Render3DEventProvider. On HaloCER that resolves to Renderer3DImplD3D12,
+// which records real depth-tested triangles and lines into the command list D3D12Hook already owns. Solid faces
+// are ear-clipped into actual triangles (sector caps are frequently CONCAVE - L-shaped rooms - which ImGui's
+// AddConvexPolyFilled cannot fill correctly), the player's trigger test point is a real sphere, and volumes sort
+// against EACH OTHER through a depth buffer the renderer owns and clears every frame. Exactly like MCC's
+// TriggerOverlay, they are NOT occluded by world geometry - that is deliberate, not a limitation to fix here.
+//
+// FALLBACK: the original ImGui background-draw-list path below, unchanged. It runs whenever the 3D path has not
+// drawn a frame recently - which covers Renderer3DImplD3D12 failing to initialise (no PSO, no device, an
+// unsupported back buffer format), Render3DEventProvider failing to construct at all, or the D3D12 hook not being
+// up yet. The ImGui RenderEvent fires EARLIER in the frame than the D3D12 render event, so "did the 3D path draw
+// recently" is a timestamp check rather than a same-frame flag.
+//
 // THE FIELD OF VIEW
 // -----------------
 // Camera position (camera entry + 0x20) and orientation (s_player_control + 0x14/+0x18) come from the sim. The
 // FOV does NOT exist in the sim in a usable form, and is read live from the UE5 renderer instead: a midhook on
 // APlayerCameraManager::DoUpdateCamera (exe RVA 0x64B3B60) captures `this`, and POV.FOV is a float at +0x14E0.
 // See InternalPointerData.xml, region hceCameraManager, for the derivation and the offset cross-check.
+//
+// THAT MIDHOOK NOW LIVES IN HCEGetCameraData, not here - both this overlay's fallback path and the D3D12 renderer
+// need the camera, and installing the same midhook twice is not something to discover at runtime. The maths moved
+// verbatim; see HCEGetCameraData.h, which carries the full derivation.
 //
 // This used to be a user setting (hceTriggerOverlayFOV) and is not any more - nobody should have to eyeball a
 // slider until boxes line up.
@@ -126,34 +151,6 @@
 
 namespace
 {
-	// ---------------------------------------------------------------------------------------------------------
-	// The UE5 render camera's field of view.
-	//
-	// APlayerCameraManager::DoUpdateCamera (exe RVA 0x64B3B60) is midhooked ONLY to capture `this` - RCX at the
-	// function entry, before the prologue has moved anything. Nothing about the camera update is changed. The
-	// POV's horizontal FOV is then a plain read at PCM + 0x14E0 (see InternalPointerData.xml for the full
-	// derivation and the cross-check that validates the offset).
-	//
-	// This runs on the game thread once per frame, so it does the absolute minimum: one atomic store.
-	// ---------------------------------------------------------------------------------------------------------
-	std::atomic<uintptr_t> gCameraManager{ 0 };
-
-	void cameraManagerUpdateHook(SafetyHookContext& ctx)
-	{
-		gCameraManager.store(ctx.rcx, std::memory_order_release);
-	}
-
-	std::string bytesToString(const std::vector<byte>& bytes)
-	{
-		std::string out;
-		for (auto b : bytes)
-		{
-			if (!out.empty()) out += ' ';
-			out += std::format("{:02X}", (uint32_t)(unsigned char)b);
-		}
-		return out;
-	}
-
 	// ---------------------------------------------------------------------------------------------------------
 	// Byte-signature scanning.
 	//
@@ -328,6 +325,11 @@ namespace
 	// ---------------------------------------------------------------------------------------------------------
 	struct HceTriggerVolume
 	{
+		// Classified ONCE at tag-refresh time, not per frame: both are string work, and the name cannot change
+		// without a refresh anyway.
+		bool isBspSwitch = false;    // name heuristic - see HCESpeedrunTriggerNames.h
+		bool isSpeedrun = false;     // on the community completion-requirement list
+
 		std::string name;
 		bool isSector = false;
 		SimpleMath::Vector3 center{};
@@ -342,7 +344,166 @@ namespace
 		// Scenario trigger-volume block index. This is the identity the engine itself uses (it is what sits in
 		// ECX at trigger_volume_test_point's call sites), so it is what the activity tracker is keyed on.
 		uint32_t index = 0;
+
+		// ---- geometry for the 3D renderer path, built once per refresh so the render thread allocates nothing.
+		// Same points as `vertices`, plus index buffers: `faces` triangulated, and `edges` flattened.
+		VertexCollection renderVertices;
+		IndexCollection triangleIndices;
+		IndexCollection edgeIndices;
 	};
+
+	// Feeds one volume's cached geometry to IRenderer3D::drawTriangleCollection / drawEdgeCollection. Holds a
+	// reference to the volume, so it is only ever a stack temporary inside the render callback (which holds
+	// mVolumesMutex for its whole duration).
+	class HceTriggerVolumeModel : public IModelTriangles, public IModelEdges
+	{
+	public:
+		explicit HceTriggerVolumeModel(const HceTriggerVolume& volume) : mVolume(volume) {}
+		const VertexCollection& getTriangleVertices() const override { return mVolume.renderVertices; }
+		const IndexCollection& getTriangleIndices() const override { return mVolume.triangleIndices; }
+		const VertexCollection& getEdgeVertices() const override { return mVolume.renderVertices; }
+		const IndexCollection& getEdgeIndices() const override { return mVolume.edgeIndices; }
+	private:
+		const HceTriggerVolume& mVolume;
+	};
+
+	// Ear clipping. A sector cap polygon may be CONCAVE (L-shaped rooms are common), so a triangle fan is simply
+	// wrong for it - which is the same reason the ImGui path's AddConvexPolyFilled fills those caps incorrectly.
+	// This runs on the tag-refresh path (4x a second at most), never per frame.
+	//
+	// Everything is drawn with CullingOption::CullNone, exactly as MCC's TriggerOverlay does, so the winding of
+	// the emitted triangles does not affect visibility - only their coverage matters.
+	void triangulateFace(const std::vector<SimpleMath::Vector3>& vertices, const std::vector<uint16_t>& face,
+		IndexCollection& out)
+	{
+		const size_t n = face.size();
+		if (n < 3) return;
+		for (uint16_t vi : face) if (vi >= vertices.size()) return;
+
+		if (n == 3)
+		{
+			out.push_back(face[0]); out.push_back(face[1]); out.push_back(face[2]);
+			return;
+		}
+
+		// Newell's method: a plane normal that stays sane for concave and slightly non-planar polygons, which a
+		// single edge cross product does not.
+		SimpleMath::Vector3 normal{};
+		for (size_t i = 0; i < n; ++i)
+		{
+			const SimpleMath::Vector3& a = vertices[face[i]];
+			const SimpleMath::Vector3& b = vertices[face[(i + 1) % n]];
+			normal.x += (a.y - b.y) * (a.z + b.z);
+			normal.y += (a.z - b.z) * (a.x + b.x);
+			normal.z += (a.x - b.x) * (a.y + b.y);
+		}
+		if (normal.LengthSquared() < 1e-20f) return;   // degenerate face, nothing to fill
+		normal.Normalize();
+
+		// A 2D basis on the polygon's plane, so the clipping itself is plain 2D geometry.
+		SimpleMath::Vector3 axisU = (std::abs(normal.z) < 0.9f)
+			? SimpleMath::Vector3::UnitZ.Cross(normal)
+			: SimpleMath::Vector3::UnitX.Cross(normal);
+		if (axisU.LengthSquared() < 1e-20f) return;
+		axisU.Normalize();
+		const SimpleMath::Vector3 axisV = normal.Cross(axisU);
+
+		std::vector<SimpleMath::Vector2> flat(n);
+		for (size_t i = 0; i < n; ++i)
+			flat[i] = SimpleMath::Vector2(vertices[face[i]].Dot(axisU), vertices[face[i]].Dot(axisV));
+
+		float signedArea2 = 0.f;
+		for (size_t i = 0; i < n; ++i)
+		{
+			const SimpleMath::Vector2& a = flat[i];
+			const SimpleMath::Vector2& b = flat[(i + 1) % n];
+			signedArea2 += a.x * b.y - b.x * a.y;
+		}
+
+		std::vector<size_t> remaining(n);
+		for (size_t i = 0; i < n; ++i) remaining[i] = i;
+		// Ear clipping below assumes counter-clockwise input; reverse if this projection came out clockwise.
+		if (signedArea2 < 0.f) std::reverse(remaining.begin(), remaining.end());
+
+		auto cross2 = [](const SimpleMath::Vector2& o, const SimpleMath::Vector2& a, const SimpleMath::Vector2& b)
+			{ return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); };
+
+		size_t guard = 0;
+		const size_t guardLimit = n * n + 16;   // hard bound: a malformed polygon must not spin the tag refresh
+		while (remaining.size() > 3 && guard++ < guardLimit)
+		{
+			bool clippedAnEar = false;
+			const size_t m = remaining.size();
+			for (size_t i = 0; i < m; ++i)
+			{
+				const size_t ia = remaining[(i + m - 1) % m];
+				const size_t ib = remaining[i];
+				const size_t ic = remaining[(i + 1) % m];
+				if (cross2(flat[ia], flat[ib], flat[ic]) <= 0.f) continue;   // reflex or collinear: not an ear
+
+				bool containsAnother = false;
+				for (size_t k = 0; k < m; ++k)
+				{
+					const size_t ip = remaining[k];
+					if (ip == ia || ip == ib || ip == ic) continue;
+					const SimpleMath::Vector2& p = flat[ip];
+					if (cross2(flat[ia], flat[ib], p) >= 0.f
+						&& cross2(flat[ib], flat[ic], p) >= 0.f
+						&& cross2(flat[ic], flat[ia], p) >= 0.f)
+					{
+						containsAnother = true;
+						break;
+					}
+				}
+				if (containsAnother) continue;
+
+				out.push_back(face[ia]); out.push_back(face[ib]); out.push_back(face[ic]);
+				remaining.erase(remaining.begin() + (ptrdiff_t)i);
+				clippedAnEar = true;
+				break;
+			}
+			if (!clippedAnEar) break;   // self-intersecting or numerically degenerate; fall through to the fan
+		}
+
+		if (remaining.size() == 3)
+		{
+			out.push_back(face[remaining[0]]); out.push_back(face[remaining[1]]); out.push_back(face[remaining[2]]);
+		}
+		else if (remaining.size() > 3)
+		{
+			// Ear clipping stalled. A fan is wrong for a concave remainder, but it is never a crash and the
+			// wireframe still conveys the true shape.
+			for (size_t i = 1; i + 1 < remaining.size(); ++i)
+			{
+				out.push_back(face[remaining[0]]);
+				out.push_back(face[remaining[i]]);
+				out.push_back(face[remaining[i + 1]]);
+			}
+		}
+	}
+
+	void buildRenderGeometry(HceTriggerVolume& volume)
+	{
+		volume.renderVertices.clear();
+		volume.triangleIndices.clear();
+		volume.edgeIndices.clear();
+		if (volume.vertices.empty() || volume.vertices.size() > 0xFFFFu) return;
+
+		volume.renderVertices.reserve(volume.vertices.size());
+		for (const auto& v : volume.vertices)
+			volume.renderVertices.push_back(DirectX::VertexPosition(DirectX::XMFLOAT3(v.x, v.y, v.z)));
+
+		volume.edgeIndices.reserve(volume.edges.size() * 2);
+		for (const auto& [a, b] : volume.edges)
+		{
+			if (a >= volume.vertices.size() || b >= volume.vertices.size()) continue;
+			volume.edgeIndices.push_back(a);
+			volume.edgeIndices.push_back(b);
+		}
+
+		for (const auto& face : volume.faces)
+			triangulateFace(volume.vertices, face, volume.triangleIndices);
+	}
 
 	void finaliseBounds(HceTriggerVolume& volume)
 	{
@@ -450,20 +611,21 @@ private:
 	// Structural offsets, from InternalPointerData.xml. The two ADDRESSES are resolved by signature instead -
 	// see the header comment.
 	int64_t mScenarioTriggerVolumeBlock = 0x278;
+
+	// Zone-set switch trigger volumes. See InternalPointerData.xml for the derivation and the code proof that
+	// the index field lives in the same index space as HceTriggerVolume::index.
+	int64_t mScenarioZoneSetSwitchBlock = 0x29C;
+	int64_t mZoneSetSwitchStride = 0x8;
+	int64_t mZoneSetSwitchTriggerVolumeIndexOffset = 0x4;
 	int64_t mTriggerVolumeStride = 0x7C;
 	int64_t mTriggerVolumeNameOffset = 0x00;
 	int64_t mTriggerVolumeTypeOffset = 0x0C;
-	// UE5 render camera. mCameraManagerHook is attached only while the overlay is on.
-	std::shared_ptr<MultilevelPointer> mCameraManagerFunction;
-	std::shared_ptr<std::vector<byte>> mCameraManagerOriginalBytes;
-	std::shared_ptr<ModuleMidHook> mCameraManagerHook;
-	int64_t mPovFovOffset = 0x14E0;
-	std::mutex mCameraHookMutex;
-	bool mCameraHookVerified = false;   // guarded by mCameraHookMutex, sticky once the site matches
 
-	// Last FOV that read back as plausible. Seeded with a sane default so the overlay still draws on the very
-	// first frames, before DoUpdateCamera has run even once.
-	std::atomic<float> mLastGoodFov{ 78.f };
+	// UE5 render camera. The midhook and the POV read live in HCEGetCameraData now, because the D3D12 renderer
+	// needs exactly the same camera and there must only ever be one hook on DoUpdateCamera. Optional: without it
+	// the overlay still draws, using the sim's player-aim camera and a default FOV.
+	std::optional<std::weak_ptr<HCEGetCameraData>> mCameraDataOptionalWeak;
+	bool mCameraHookRequested = false;   // so a redundant release cannot unbalance the reference count
 
 	int64_t mTriggerVolumeForwardOffset = 0x10;
 	int64_t mTriggerVolumeUpOffset = 0x1C;
@@ -501,6 +663,28 @@ private:
 	// Reused per volume so solid rendering allocates nothing per frame.
 	std::vector<std::pair<float, size_t>> mFaceOrder;   // (centroid depth, face index), sorted far -> near
 	std::vector<ImVec2> mPoly;
+
+	// ---- the 3D renderer path ----
+	// Optional in every sense: Render3DEventProvider may fail to construct (no camera service, no D3D12
+	// renderer), and Renderer3DImplD3D12 may fail to initialise later, on the render thread. Either way the
+	// ImGui path below keeps working.
+	std::optional<std::weak_ptr<Render3DEventProvider>> mRender3DProviderOptionalWeak;
+	std::unique_ptr<ScopedCallback<Render3DEvent>> mRender3DEventCallback;
+	std::atomic_bool mCurrentlyRendering3D{ false };   // waited on before the subscription is dropped
+
+	// GetTickCount64 of the last frame the 3D path actually drew. The ImGui RenderEvent fires EARLIER in the
+	// frame than the D3D12 render event, so the fallback cannot ask "did 3D draw this frame" - it asks "has 3D
+	// drawn recently", which is also exactly the right question when the 3D path dies mid-session.
+	std::atomic<uint64_t> mLast3DDrawTick{ 0 };
+	static constexpr uint64_t kFallbackAfterMs = 500;
+
+	bool threeDPathIsLive() const
+	{
+		const uint64_t last = mLast3DDrawTick.load(std::memory_order_acquire);
+		if (last == 0) return false;
+		const uint64_t now = GetTickCount64();
+		return (now >= last) && (now - last) < kFallbackAfterMs;
+	}
 
 	// Whether a mission script has tested this volume recently. Supplied by HCETriggerActivity, which patches
 	// the 8 HaloScript call sites of trigger_volume_test_point (NOT its prologue - 15 of its 23 call sites are
@@ -608,6 +792,30 @@ private:
 		const uintptr_t base = resolveTagBlock(encoded);
 		if (!plausiblePointer(base)) { mVolumes.clear(); return false; }
 
+		// Which volumes actually switch zone set / BSP. Read from the scenario's own block, so this is tag
+		// truth rather than the name heuristic - a volume that switches the world without "bsp" in its name is
+		// still caught. The name heuristic stays as a FALLBACK below for the case where this block is empty or
+		// unreadable, because a missed switch volume is worse than a false positive.
+		std::unordered_set<uint32_t> zoneSetSwitchVolumes;
+		{
+			const int32_t switchCount = readI32(scenario + mScenarioZoneSetSwitchBlock);
+			const uint32_t switchEncoded = readU32(scenario + mScenarioZoneSetSwitchBlock + 4);
+			if (switchCount > 0 && switchCount <= 8192 && switchEncoded != 0 && switchEncoded != 0xFFFFFFFFu)
+			{
+				const uintptr_t switchBase = resolveTagBlock(switchEncoded);
+				if (plausiblePointer(switchBase))
+				{
+					for (int32_t s = 0; s < switchCount; ++s)
+					{
+						const uint16_t volumeIndex = readU16(switchBase + (uintptr_t)mZoneSetSwitchStride * s
+							+ mZoneSetSwitchTriggerVolumeIndexOffset);
+						if (volumeIndex == 0xFFFF) continue;   // the engine's own "none" sentinel
+						zoneSetSwitchVolumes.insert(volumeIndex);
+					}
+				}
+			}
+		}
+
 		std::vector<HceTriggerVolume> built;
 		built.reserve((size_t)count);
 
@@ -659,12 +867,20 @@ private:
 
 			if (volume.vertices.empty()) continue;
 			finaliseBounds(volume);
+			// Vertex/index buffers for the 3D renderer, built HERE (4x a second at most) so the render thread
+			// never triangulates and never allocates.
+			buildRenderGeometry(volume);
 
 			if (mStringIdText && readPtr(mStringIdTableSlot) != 0
 				&& callStringIdText(mStringIdText, readU32(element + mTriggerVolumeNameOffset), nameBuffer, sizeof(nameBuffer)))
 				volume.name = nameBuffer;
 			else
 				volume.name = std::format("trigger_{}", i);
+
+			// Classify once, here - never per frame. Tag data first, name heuristic only as a fallback.
+			volume.isBspSwitch = zoneSetSwitchVolumes.contains(volume.index)
+				|| HCESpeedrunTriggerNames::isBspOrZoneSetTrigger(volume.name);
+			volume.isSpeedrun = HCESpeedrunTriggerNames::isSpeedrunTrigger(volume.name);
 
 			built.push_back(std::move(volume));
 		}
@@ -698,18 +914,12 @@ private:
 	static Camera makeCamera(const SimpleMath::Vector3& position, const SimpleMath::Vector2& viewAngle,
 		const SimpleMath::Vector2& screenSize, float horizontalFovDegrees)
 	{
-		const float yaw = viewAngle.x;
-		const float pitch = viewAngle.y;
-		const float cosYaw = std::cos(yaw), sinYaw = std::sin(yaw);
-		const float cosPitch = std::cos(pitch), sinPitch = std::sin(pitch);
-
 		Camera camera;
 		camera.position = position;
-		camera.forward = SimpleMath::Vector3(cosPitch * cosYaw, cosPitch * sinYaw, sinPitch);
-		// forward x UnitZ. Blam's +Y is LEFT, so the camera's right is -Y at yaw 0 - the opposite of the
-		// external CER tool's UE-frame (-sin, cos, 0). Do not "restore" that; it mirrors the whole overlay.
-		camera.right = SimpleMath::Vector3(sinYaw, -cosYaw, 0.f);
-		camera.up = SimpleMath::Vector3(-sinPitch * cosYaw, -sinPitch * sinYaw, cosPitch);
+		// The basis maths moved to HCEGetCameraData so the D3D12 renderer and this fallback cannot drift apart.
+		// It is the SAME code, verbatim - including the (sin, -cos, 0) right vector whose sign is the whole
+		// difference from the external CER tool.
+		HCEGetCameraData::simViewAngleToBlamBasis(viewAngle, camera.forward, camera.right, camera.up);
 
 		const float fov = DirectX::XMConvertToRadians(std::clamp(horizontalFovDegrees, 10.f, 170.f));
 		camera.focalPixels = screenSize.x / (2.f * std::tan(fov * 0.5f));
@@ -731,30 +941,11 @@ private:
 	static Camera makeCameraFromUe(const SimpleMath::Vector3& positionBlam, float pitchDeg, float yawDeg,
 		float rollDeg, const SimpleMath::Vector2& screenSize, float horizontalFovDegrees)
 	{
-		const float pitch = DirectX::XMConvertToRadians(pitchDeg);
-		const float yaw = DirectX::XMConvertToRadians(yawDeg);
-		const float roll = DirectX::XMConvertToRadians(rollDeg);
-		const float cosPitch = std::cos(pitch), sinPitch = std::sin(pitch);
-		const float cosYaw = std::cos(yaw), sinYaw = std::sin(yaw);
-
-		SimpleMath::Vector3 forwardUe(cosPitch * cosYaw, cosPitch * sinYaw, sinPitch);
-		SimpleMath::Vector3 rightUe(-sinYaw, cosYaw, 0.f);
-		SimpleMath::Vector3 upUe(-sinPitch * cosYaw, -sinPitch * sinYaw, cosPitch);
-
-		if (std::abs(roll) > 1e-6f)
-		{
-			const float cosRoll = std::cos(roll), sinRoll = std::sin(roll);
-			const SimpleMath::Vector3 rolledRight = rightUe * cosRoll + upUe * sinRoll;
-			const SimpleMath::Vector3 rolledUp = upUe * cosRoll - rightUe * sinRoll;
-			rightUe = rolledRight;
-			upUe = rolledUp;
-		}
-
 		Camera camera;
 		camera.position = positionBlam;
-		camera.forward = SimpleMath::Vector3(forwardUe.x, -forwardUe.y, forwardUe.z);
-		camera.right = SimpleMath::Vector3(rightUe.x, -rightUe.y, rightUe.z);
-		camera.up = SimpleMath::Vector3(upUe.x, -upUe.y, upUe.z);
+		// Again, the basis maths lives in HCEGetCameraData now - moved verbatim, including the single Y negation
+		// that IS the UE->Blam handedness change, and the roll about the forward axis the reference tool drops.
+		HCEGetCameraData::ueRotationToBlamBasis(pitchDeg, yawDeg, rollDeg, camera.forward, camera.right, camera.up);
 
 		const float fov = DirectX::XMConvertToRadians(std::clamp(horizontalFovDegrees, 10.f, 170.f));
 		camera.focalPixels = screenSize.x / (2.f * std::tan(fov * 0.5f));
@@ -801,90 +992,76 @@ private:
 	// flip is folded in, so EVERYTHING downstream stays in the Blam frame exactly as before. Rotation is left in
 	// degrees for makeCameraFromUe.
 	//
-	// The finite/range checks make a wrong offset or a changed build FAIL SOFT rather than draw nonsense.
-	static constexpr float kUeCmPerWorldUnit = 304.8f;
-
+	// The finite/range checks that make a wrong offset or a changed build FAIL SOFT live in
+	// HCEGetCameraData::getUeCamera now; this is a thin adapter onto the shape the drawing code below wants.
 	bool readUeCamera(SimpleMath::Vector3& outPositionBlam, float& outPitchDeg, float& outYawDeg,
 		float& outRollDeg, float& outFovDeg)
 	{
-		const uintptr_t cameraManager = gCameraManager.load(std::memory_order_acquire);
-		if (cameraManager == 0) return false;
+		if (!mCameraDataOptionalWeak.has_value()) return false;
+		auto cameraData = mCameraDataOptionalWeak.value().lock();
+		if (!cameraData) return false;
 
-		// FMinimalViewInfo base. The FOV offset is the anchor we store in pointer data; Location and Rotation sit
-		// at fixed offsets INSIDE the same struct (Location +0x00, Rotation +0x18, FOV +0x30), so deriving the
-		// base from the FOV offset keeps all three in lockstep if the struct ever moves.
-		const uintptr_t pov = cameraManager + mPovFovOffset - 0x30;
+		HCEGetCameraData::UeCamera camera;
+		if (!cameraData->getUeCamera(camera)) return false;
 
-		struct RawPov { double location[3]; double rotation[3]; float fov; } raw{};
-		if (!HCEGetPlayerState::tryReadRaw(pov, &raw, offsetof(RawPov, fov) + sizeof(float))) return false;
-
-		if (!std::isfinite(raw.fov) || raw.fov <= 10.f || raw.fov >= 170.f) return false;
-		for (double d : raw.location) if (!std::isfinite(d)) return false;
-		for (double d : raw.rotation) if (!std::isfinite(d)) return false;
-
-		outPositionBlam = SimpleMath::Vector3(
-			(float)(raw.location[0] / kUeCmPerWorldUnit),
-			-(float)(raw.location[1] / kUeCmPerWorldUnit),   // UE +Y is RIGHT, Blam +Y is LEFT
-			(float)(raw.location[2] / kUeCmPerWorldUnit));
-
-		outPitchDeg = (float)raw.rotation[0];
-		outYawDeg = (float)raw.rotation[1];
-		outRollDeg = (float)raw.rotation[2];
-		outFovDeg = raw.fov;
-		mLastGoodFov.store(raw.fov, std::memory_order_release);
+		outPositionBlam = camera.positionBlam;
+		outPitchDeg = camera.pitchDegrees;
+		outYawDeg = camera.yawDegrees;
+		outRollDeg = camera.rollDegrees;
+		outFovDeg = camera.horizontalFovDegrees;
 		return true;
 	}
 
-	// Refuse to hook a build we do not recognise, exactly as HCEInvulnerability does. Throws on mismatch.
+	float lastGoodFov() const
+	{
+		if (mCameraDataOptionalWeak.has_value())
+			if (auto cameraData = mCameraDataOptionalWeak.value().lock())
+				return cameraData->getLastGoodHorizontalFov();
+		return 78.f;
+	}
+
+	// Refuse to hook a build we do not recognise. HCEGetCameraData owns the byte verification and the reference
+	// count; this just makes sure THIS overlay's request is added/removed exactly once. Throws on mismatch.
 	void attachCameraHook()
 	{
-		if (!mCameraManagerFunction || !mCameraManagerHook) return;
+		if (!mCameraDataOptionalWeak.has_value())
+			throw HCMRuntimeException("The Halo Campaign Evolved camera service is unavailable, so the trigger "
+				"overlay cannot read the render camera");
+		auto cameraData = mCameraDataOptionalWeak.value().lock();
+		if (!cameraData)
+			throw HCMRuntimeException("The Halo Campaign Evolved camera service is unavailable, so the trigger "
+				"overlay cannot read the render camera");
 
-		std::scoped_lock lock(mCameraHookMutex);
-		if (!mCameraHookVerified)
-		{
-			if (!mCameraManagerOriginalBytes || mCameraManagerOriginalBytes->empty())
-				throw HCMRuntimeException("No expected original bytes for the HaloCER camera manager");
-
-			const std::vector<byte>& expected = *mCameraManagerOriginalBytes;
-			std::vector<byte> actual(expected.size());
-			if (!mCameraManagerFunction->readArrayData(actual.data(), actual.size()))
-				throw HCMRuntimeException(std::format("Could not read the HaloCER camera manager site: {}",
-					MultilevelPointer::GetLastError()));
-
-			if (actual != expected)
-				throw HCMRuntimeException(std::format(
-					"The HaloCER camera manager site did not match its expected original bytes - this build of "
-					"Halo Campaign Evolved is not supported. Expected [{}], found [{}]",
-					bytesToString(expected), bytesToString(actual)));
-
-			mCameraHookVerified = true;
-			PLOG_INFO << "HaloCER camera manager site matched its expected original bytes";
-		}
-
-		mCameraManagerHook->setWantsToBeAttached(true);
-		if (!mCameraManagerHook->isHookInstalled())
-		{
-			mCameraManagerHook->setWantsToBeAttached(false);
-			throw HCMRuntimeException("Failed to install the Halo Campaign Evolved camera manager hook");
-		}
+		if (mCameraHookRequested) return;
+		cameraData->setHookWanted(this, true);   // may throw; the request is only recorded once it did not
+		mCameraHookRequested = true;
 	}
 
 	void detachCameraHook()
 	{
-		if (!mCameraManagerHook) return;
-		mCameraManagerHook->setWantsToBeAttached(false);
-		// The captured pointer belongs to the level that is unloading. Drop it so a stale APlayerCameraManager
-		// is never read back on the next level - currentFov falls through to the last good value instead.
-		gCameraManager.store(0, std::memory_order_release);
+		if (!mCameraHookRequested) return;
+		mCameraHookRequested = false;
+		if (!mCameraDataOptionalWeak.has_value()) return;
+		if (auto cameraData = mCameraDataOptionalWeak.value().lock())
+		{
+			try { cameraData->setHookWanted(this, false); }
+			catch (HCMRuntimeException) {}   // releasing a request cannot meaningfully fail
+		}
 	}
 
+	// ---------------------------------------------------------------------------------------------------------
+	// FALLBACK PATH: ImGui background draw list. Unchanged from the original implementation except for the
+	// "is the 3D path alive?" gate at the top. See the file header for when each path runs.
+	// ---------------------------------------------------------------------------------------------------------
 	void onRenderEvent(SimpleMath::Vector2 screenSize)
 	{
 		if (!mReady.load(std::memory_order_acquire)) return;
 		if (!mIsActive) return;
 		if (GlobalKill::isKillSet()) return;
 		if (screenSize.x < 1.f || screenSize.y < 1.f) return;
+
+		// The 3D renderer is drawing, so drawing here too would double every volume.
+		if (threeDPathIsLive()) return;
 
 		try
 		{
@@ -922,8 +1099,13 @@ private:
 				SimpleMath::Vector2 viewAngle;
 				playerState->getCameraView(cameraPosition, viewAngle);   // ONE tls walk for both
 				camera = makeCamera(cameraPosition, viewAngle, screenSize,
-					mLastGoodFov.load(std::memory_order_acquire));
+					lastGoodFov());
 			}
+
+			// EXACTLY the world origin means whichever source we used handed back a zeroed/unresolved position
+			// rather than a real camera - no loaded level ever puts the camera there. Skip the frame instead of
+			// drawing the whole overlay from (0,0,0), which is what the user actually saw.
+			if (camera.position == SimpleMath::Vector3::Zero) return;
 
 			const float renderDistance = settings->hceTriggerOverlayRenderDistance->GetValue();
 			const bool wantLabels = settings->hceTriggerOverlayShowLabels->GetValue();
@@ -949,9 +1131,16 @@ private:
 				{
 					return ImGui::ColorConvertFloat4ToU32(ImVec4(c.x, c.y, c.z, std::clamp(c.w * alpha, 0.f, 1.f)));
 				};
+			const bool speedrunOnly = settings->hceTriggerOverlaySpeedrunOnly->GetValue();
+			const SimpleMath::Vector4 bspBase = settings->hceTriggerOverlayBspColor->GetValue();
+			const SimpleMath::Vector4 labelColour = settings->hceTriggerOverlayLabelColor->GetValue();
+			const ImU32 labelPacked = pack(labelColour, 1.f);
+
 			const ImU32 boxWire = pack(normalColour, wireAlpha);
 			const ImU32 sectorWire = pack(sectorBase, wireAlpha);
 			const ImU32 activeWire = pack(activeColour, wireAlpha);
+			const ImU32 bspWire = pack(bspBase, wireAlpha);
+			const ImU32 bspFill = pack(bspBase, solidAlpha);
 			const ImU32 boxFill = pack(normalColour, solidAlpha);
 			const ImU32 sectorFill = pack(sectorBase, solidAlpha);
 			const ImU32 activeFill = pack(activeColour, solidAlpha);
@@ -971,9 +1160,13 @@ private:
 				mCameraSpace.reserve(volume.vertices.size());
 				for (const auto& v : volume.vertices) mCameraSpace.push_back(toCameraSpace(camera, v));
 
+				if (speedrunOnly && !volume.isSpeedrun) continue;
+
+				// Colour priority: ACTIVE beats everything (it is transient and the most urgent thing to see),
+				// then BSP/zone-set (crossing one reloads the world), then sector, then plain.
 				const bool isLive = highlightActive && isVolumeActive(volume.index);
-				const ImU32 colour = isLive ? activeWire : (volume.isSector ? sectorWire : boxWire);
-				const ImU32 fill = isLive ? activeFill : (volume.isSector ? sectorFill : boxFill);
+				const ImU32 colour = isLive ? activeWire : volume.isBspSwitch ? bspWire : (volume.isSector ? sectorWire : boxWire);
+				const ImU32 fill = isLive ? activeFill : volume.isBspSwitch ? bspFill : (volume.isSector ? sectorFill : boxFill);
 
 				// SOLID. There is no depth buffer on this D3D12 path, so faces are sorted back-to-front by
 				// centroid depth (painter's algorithm) to look right against EACH OTHER. They are still not
@@ -1036,8 +1229,10 @@ private:
 						// still legible. Deliberately not RenderTextHelper::scaleTextDistance, which is tuned
 						// for MCC's world scale - one HCE world unit is 10 feet.
 						const float sizeScale = std::clamp(3.f / std::max(distance, 0.5f), 0.35f, 1.f);
+						// Label colour is its OWN setting, not the volume's - a wireframe colour that reads
+						// fine as a thin line is far too dark as text.
 						RenderTextHelper::drawCenteredOutlinedText(volume.name,
-							SimpleMath::Vector2(screen.x, screen.y), colour, labelScale * sizeScale);
+							SimpleMath::Vector2(screen.x, screen.y), labelPacked, labelScale * sizeScale);
 					}
 				}
 			}
@@ -1082,6 +1277,204 @@ private:
 		}
 	}
 
+
+	// ---------------------------------------------------------------------------------------------------------
+	// PRIMARY PATH: HCM's IRenderer3D (Renderer3DImplD3D12 under HaloCER).
+	//
+	// Every setting the ImGui path honours is honoured here, and the colours are computed the same way. What
+	// differs is what the pixels are made of:
+	//   * solid faces are REAL depth-tested triangles (ear-clipped at refresh time, so concave sector caps fill
+	//     correctly) instead of ImGui convex polygons sorted back-to-front by centroid,
+	//   * edges are real 3D lines, clipped by the GPU rather than by hand against a near plane,
+	//   * the player's trigger test point is a real sphere, exactly like MCC's TriggerOverlay.
+	// Labels still go through RenderTextHelper (ImGui text) - the MCC overlay does the same thing.
+	//
+	// Runs on the game's render thread, inside D3D12Hook's command list. It must never throw: everything is
+	// caught here, and Render3DEventProvider catches anything that somehow escapes.
+	// ---------------------------------------------------------------------------------------------------------
+	void onRender3DEvent(GameState game, IRenderer3D* renderer)
+	{
+		if (!mReady.load(std::memory_order_acquire)) return;
+		if (!mIsActive) return;
+		if (GlobalKill::isKillSet()) return;
+		if (!renderer) return;
+		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER) return;
+
+		ScopedAtomicBool renderingLock(mCurrentlyRendering3D);
+
+		try
+		{
+			lockOrThrow(settingsWeak, settings);
+
+			if (!mAnchorsGood) return;
+
+			std::scoped_lock volumesLock(mVolumesMutex);
+
+			// Same 4-per-second tag re-read as the ImGui path; the cached geometry is drawn every frame.
+			const auto now = std::chrono::steady_clock::now();
+			if (mLastRefresh.time_since_epoch().count() == 0 || (now - mLastRefresh) >= std::chrono::milliseconds(250))
+			{
+				mLastRefresh = now;
+				refreshVolumes();
+			}
+			if (mVolumes.empty()) return;
+
+			const SettingsEnums::TriggerRenderStyle renderStyle = settings->triggerOverlayRenderStyle->GetValue();
+			if (renderStyle == SettingsEnums::TriggerRenderStyle::None)
+			{
+				// Nothing to draw, but the 3D path IS alive - claim the frame so the ImGui fallback stays quiet.
+				mLast3DDrawTick.store(GetTickCount64(), std::memory_order_release);
+				return;
+			}
+			const bool wantSolid = renderStyle == SettingsEnums::TriggerRenderStyle::Solid
+				|| renderStyle == SettingsEnums::TriggerRenderStyle::SolidAndWireframe;
+			const bool wantWire = renderStyle == SettingsEnums::TriggerRenderStyle::Wireframe
+				|| renderStyle == SettingsEnums::TriggerRenderStyle::SolidAndWireframe;
+
+			const float renderDistance = settings->hceTriggerOverlayRenderDistance->GetValue();
+			const bool wantLabels = settings->hceTriggerOverlayShowLabels->GetValue();
+			const float labelScale = settings->triggerOverlayLabelScale->GetValue();
+
+			const bool highlightActive = settings->hceTriggerOverlayHighlightActive->GetValue();
+			const SimpleMath::Vector4 activeColour = settings->hceTriggerOverlayActiveColor->GetValue();
+			const SimpleMath::Vector4 normalColour = settings->triggerOverlayNormalColor->GetValue();
+			const SimpleMath::Vector4 sectorBase = settings->triggerOverlaySectorColor->GetValue();
+			const float wireAlpha = std::clamp(settings->triggerOverlayWireframeAlpha->GetValue(), 0.f, 1.f);
+			const float solidAlpha = std::clamp(settings->triggerOverlayAlpha->GetValue(), 0.f, 1.f);
+
+			auto withAlpha = [](SimpleMath::Vector4 c, float alpha)
+				{
+					c.w = std::clamp(c.w * alpha, 0.f, 1.f);
+					return c;
+				};
+			auto packU32 = [](const SimpleMath::Vector4& c)
+				{
+					return ImGui::ColorConvertFloat4ToU32(ImVec4(c.x, c.y, c.z, c.w));
+				};
+
+			const SimpleMath::Vector4 boxWire = withAlpha(normalColour, wireAlpha);
+			const SimpleMath::Vector4 sectorWire = withAlpha(sectorBase, wireAlpha);
+			const SimpleMath::Vector4 activeWire = withAlpha(activeColour, wireAlpha);
+			const SimpleMath::Vector4 boxFill = withAlpha(normalColour, solidAlpha);
+			const SimpleMath::Vector4 sectorFill = withAlpha(sectorBase, solidAlpha);
+			const SimpleMath::Vector4 activeFill = withAlpha(activeColour, solidAlpha);
+
+			// Kept in lockstep with the ImGui path above - same settings, same priority, same filter.
+			const bool speedrunOnly = settings->hceTriggerOverlaySpeedrunOnly->GetValue();
+			const SimpleMath::Vector4 bspBase = settings->hceTriggerOverlayBspColor->GetValue();
+			const SimpleMath::Vector4 bspWire = withAlpha(bspBase, wireAlpha);
+			const SimpleMath::Vector4 bspFill = withAlpha(bspBase, solidAlpha);
+			const ImU32 labelPacked = packU32(settings->hceTriggerOverlayLabelColor->GetValue());
+
+			const SimpleMath::Vector3 cameraPosition = renderer->getCameraPosition();
+			const DirectX::BoundingFrustum& cameraFrustum = renderer->getCameraFrustum();
+
+			for (const HceTriggerVolume& volume : mVolumes)
+			{
+				if (volume.renderVertices.empty()) continue;
+
+				const float distance = (volume.center - cameraPosition).Length();
+				if (distance - volume.radius > renderDistance) continue;
+
+				// Whole-volume reject against the real world-space frustum, tested as the volume's BOUNDING
+				// SPHERE - not its centre. Testing the centre would make a big volume vanish the moment you
+				// stepped inside it, which is precisely when you most want to see it (the ImGui path guards the
+				// same case with `centre.z + radius < near`). This is the same test MCC's TriggerOverlay does
+				// with its bounding box.
+				if (!cameraFrustum.Intersects(DirectX::BoundingSphere(volume.center, volume.radius))) continue;
+
+				if (speedrunOnly && !volume.isSpeedrun) continue;
+
+				const bool isLive = highlightActive && isVolumeActive(volume.index);
+				const SimpleMath::Vector4& wireColour = isLive ? activeWire : volume.isBspSwitch ? bspWire : (volume.isSector ? sectorWire : boxWire);
+				const SimpleMath::Vector4& fillColour = isLive ? activeFill : volume.isBspSwitch ? bspFill : (volume.isSector ? sectorFill : boxFill);
+
+				const HceTriggerVolumeModel model(volume);
+
+				// CullNone, exactly as MCC's TriggerOverlay does - a trigger volume must look the same whether
+				// you are inside it or outside it, and the tag data has no reliable winding convention.
+				if (wantSolid && !volume.triangleIndices.empty())
+					renderer->drawTriangleCollection(&model, fillColour, CullingOption::CullNone, std::nullopt);
+
+				if (wantWire && !volume.edgeIndices.empty())
+					renderer->drawEdgeCollection(&model, wireColour);
+
+				if (wantLabels && !renderer->pointBehindCamera(volume.center))
+				{
+					const SimpleMath::Vector3 screen = renderer->worldPointToScreenPosition(volume.center, false);
+					// Deliberately NOT RenderTextHelper::scaleTextDistance, which is tuned for MCC's world scale
+					// - one HaloCER world unit is 10 feet. Same falloff the ImGui path uses.
+					const float sizeScale = std::clamp(3.f / std::max(distance, 0.5f), 0.35f, 1.f);
+					// Own colour, not the volume's - see the ImGui path.
+					RenderTextHelper::drawCenteredOutlinedText(volume.name,
+						SimpleMath::Vector2(screen.x, screen.y), labelPacked, labelScale * sizeScale);
+				}
+			}
+
+			// The player's trigger test point, last so nothing overdraws it. A real sphere here, plus the
+			// second 1/10th-scale denser sphere MCC's TriggerOverlay draws.
+			if (settings->hceTriggerOverlayShowVertex->GetValue())
+			{
+				try
+				{
+					lockOrThrow(playerStateWeak, playerState);
+					SimpleMath::Vector3 vertexPosition, unusedVelocity;
+					playerState->getPlayerPositionAndVelocity(vertexPosition, unusedVelocity);
+
+					SimpleMath::Vector4 vertexColour = settings->triggerOverlayPositionColor->GetValue();
+					const float vertexScale = settings->triggerOverlayPositionScale->GetValue();
+					const bool isWireframe = settings->triggerOverlayPositionWireframe->GetValue();
+
+					renderer->renderSphere(vertexPosition, vertexColour, vertexScale, isWireframe);
+					vertexColour.w += (1.f - vertexColour.w) / 2.f;
+					renderer->renderSphere(vertexPosition, vertexColour, vertexScale / 10.f, isWireframe);
+				}
+				catch (HCMRuntimeException) {}   // dead, or mid-load. Must not abort what was already drawn.
+			}
+
+			// Claim the frame LAST, so the ImGui fallback only stands down once this path really did draw.
+			mLast3DDrawTick.store(GetTickCount64(), std::memory_order_release);
+		}
+		catch (HCMRuntimeException)
+		{
+			// Expected constantly (no level loaded, mid-load). Skipping the frame here also lets the ImGui
+			// fallback take over after kFallbackAfterMs, which is exactly what should happen.
+		}
+		catch (...)
+		{
+			LOG_ONCE(PLOG_ERROR << "HCETriggerOverlay's 3D render path threw an unknown exception; suppressing further reports");
+		}
+	}
+
+	// Subscribes/unsubscribes the 3D render event. Subscribing is what makes Render3DEventProvider do its
+	// per-frame camera work at all, so it is kept off unless the overlay is actually on.
+	void set3DRenderingEnabled(bool enabled)
+	{
+		if (!enabled)
+		{
+			if (mRender3DEventCallback)
+			{
+				if (mCurrentlyRendering3D) mCurrentlyRendering3D.wait(true);
+				mRender3DEventCallback.reset();
+			}
+			mLast3DDrawTick.store(0, std::memory_order_release);
+			return;
+		}
+
+		if (mRender3DEventCallback) return;   // already subscribed
+		if (!mRender3DProviderOptionalWeak.has_value()) return;   // no 3D path in this build/process
+
+		auto provider = mRender3DProviderOptionalWeak.value().lock();
+		if (!provider) return;
+
+		// If the D3D12 renderer has already latched an initialisation failure there is no point subscribing -
+		// it would never draw, and the ImGui fallback is what the user should get.
+		if (provider->d3d12RendererHasFailed()) return;
+
+		mRender3DEventCallback = provider->getRender3DEvent()->subscribe(
+			[this](GameState g, IRenderer3D* r) { onRender3DEvent(g, r); });
+	}
+
 	void onToggleEvent(bool& newValue)
 	{
 		if (!mReady.load(std::memory_order_acquire)) return;
@@ -1095,6 +1488,7 @@ private:
 			if (!newValue)
 			{
 				mIsActive = false;
+				set3DRenderingEnabled(false);
 				detachCameraHook();
 				setActivityTracking(false);
 				messagesGUI->addMessage("Disabling Trigger Overlay.");
@@ -1107,6 +1501,9 @@ private:
 			// here is worth surfacing rather than silently falling back.
 			attachCameraHook();
 			setActivityTracking(true);
+			// Subscribing is also what makes Render3DEventProvider start doing per-frame camera work. If it
+			// cannot be subscribed (no provider, or the D3D12 renderer already failed) the ImGui path runs.
+			set3DRenderingEnabled(true);
 
 			// Resolve on the TOGGLE, never on the render thread: the scan walks the whole executable image and
 			// would be a visible hitch every frame. It is a one-off per session; a failure is re-tried on the
@@ -1192,7 +1589,17 @@ private:
 			}
 			catch (HCMRuntimeException) {}
 
+			// Self-heal: attachCameraHook() is a no-op once this overlay has already registered its request, so
+			// if anything detached the midhook behind our back (a module reload, a teardown that ran early) it
+			// would stay detached for the rest of the session and every consumer would silently drop to the sim's
+			// player-aim camera. This runs on the state-hook thread, never the render thread.
+			if (want && mCameraDataOptionalWeak.has_value())
+				if (auto cameraData = mCameraDataOptionalWeak.value().lock())
+					cameraData->ensureHookLive();
+
 			setActivityTracking(want);
+			// Same reasoning again: the 3D subscription has to follow the level, not just the toggle.
+			set3DRenderingEnabled(want);
 
 			mIsActive = want && mAnchorsGood;
 		}
@@ -1228,6 +1635,9 @@ public:
 		auto ptr = dicon.Resolve<PointerDataStore>().lock();
 #define hceOffset(member, name) member = *ptr->getData<std::shared_ptr<int64_t>>(nameof(name), mGame)
 		hceOffset(mScenarioTriggerVolumeBlock, hceScenarioTriggerVolumeBlock);
+		hceOffset(mScenarioZoneSetSwitchBlock, hceScenarioZoneSetSwitchTriggerVolumeBlock);
+		hceOffset(mZoneSetSwitchStride, hceZoneSetSwitchStride);
+		hceOffset(mZoneSetSwitchTriggerVolumeIndexOffset, hceZoneSetSwitchTriggerVolumeIndexOffset);
 		hceOffset(mTriggerVolumeStride, hceTriggerVolumeStride);
 		hceOffset(mTriggerVolumeNameOffset, hceTriggerVolumeNameOffset);
 		hceOffset(mTriggerVolumeTypeOffset, hceTriggerVolumeTypeOffset);
@@ -1238,7 +1648,6 @@ public:
 		hceOffset(mTriggerVolumeSectorPointsBlock, hceTriggerVolumeSectorPointsBlock);
 		hceOffset(mTriggerVolumeSectorPointStride, hceTriggerVolumeSectorPointStride);
 		hceOffset(mTriggerVolumeBoundsOffset, hceTriggerVolumeBoundsOffset);
-		hceOffset(mPovFovOffset, hceCameraManagerPovFovOffset);
 #undef hceOffset
 
 		// Optional dependency: the overlay is still useful without active/inactive colouring, so a tracker that
@@ -1253,12 +1662,30 @@ public:
 				"active/inactive trigger colouring";
 		}
 
-		mCameraManagerFunction = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(hceCameraManagerUpdateFunction), mGame);
-		mCameraManagerOriginalBytes = ptr->getVectorData<byte>(nameof(hceCameraManagerUpdateOriginalBytes), mGame);
+		// The UE render camera. Optional: without it the overlay falls back to the sim's player-aim camera and
+		// the default FOV, exactly as it does on the frames before DoUpdateCamera has run. The midhook is not
+		// installed by constructing this - nothing is patched until the overlay is switched on.
+		try
+		{
+			mCameraDataOptionalWeak = resolveDependentCheat(HCEGetCameraData);
+		}
+		catch (HCMInitException)
+		{
+			PLOG_ERROR << "HCETriggerOverlay could not resolve HCEGetCameraData; the overlay will use the sim's "
+				"player camera and a default field of view";
+		}
 
-		// startEnabled = false, and the hook is on the EXE (L"main"), not the sim dll. Nothing is patched until
-		// the overlay is actually switched on.
-		mCameraManagerHook = ModuleMidHook::make(L"main", mCameraManagerFunction, &cameraManagerUpdateHook, false);
+		// The 3D renderer. Optional in the strongest sense: if this fails to construct - or succeeds and then
+		// fails to initialise on the render thread - the ImGui drawing path below carries the whole feature.
+		try
+		{
+			mRender3DProviderOptionalWeak = resolveDependentCheat(Render3DEventProvider);
+		}
+		catch (HCMInitException)
+		{
+			PLOG_ERROR << "HCETriggerOverlay could not resolve Render3DEventProvider; falling back to ImGui "
+				"drawing for the trigger overlay";
+		}
 
 		mReady.store(true, std::memory_order_release);
 	}
@@ -1267,6 +1694,9 @@ public:
 	{
 		mReady.store(false, std::memory_order_release);
 		mIsActive = false;
+		// Drop the 3D subscription FIRST, and wait for any in-flight render callback: it touches every member
+		// below this point.
+		set3DRenderingEnabled(false);
 		detachCameraHook();
 		setActivityTracking(false);
 		mRenderEventCallback.removeCallback();

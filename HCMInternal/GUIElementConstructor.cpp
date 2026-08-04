@@ -2217,10 +2217,13 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
 						(game, ToolTipCollection("Settings for the trigger overlay"), "Trigger Overlay Settings##hce", headerChildElements
 							{
+								createNestedElement(GUIElementEnum::hceTriggerOverlaySpeedrunOnly),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayRenderStyle),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayRenderDistance),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayHighlightActive),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayActiveColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayBspColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayLabelColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayShowVertex),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayVertexColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayVertexScale),
@@ -2247,6 +2250,18 @@ private:
 				case GUIElementEnum::hceTriggerOverlayActiveColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
 						(game, ToolTipCollection("Colour of trigger volumes a mission script has tested in the last few seconds."), "Active Trigger Color", settings->hceTriggerOverlayActiveColor));
+
+				case GUIElementEnum::hceTriggerOverlaySpeedrunOnly:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Draws ONLY the trigger volumes a speedrun has to hit, from the community completion-requirement lists. Everything else is hidden. Note this is a fixed name list, not something read from the level - if a game update renames a volume it will silently stop being shown, so do not treat it as proof that nothing else matters."), std::nullopt, "Speedrun Triggers Only", settings->hceTriggerOverlaySpeedrunOnly));
+
+				case GUIElementEnum::hceTriggerOverlayBspColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of BSP / zone-set switching volumes - the ones that load and unload whole areas. Identified by NAME (anything containing bsp or zoneset), because Halo's scenario format has no flag for it, so this can miss an oddly-named one."), "BSP / Zone-set Color", settings->hceTriggerOverlayBspColor));
+
+				case GUIElementEnum::hceTriggerOverlayLabelColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of the trigger volume name labels. Separate from the volume colours, which are too dark to read as text."), "Label Text Color", settings->hceTriggerOverlayLabelColor));
 
 				case GUIElementEnum::hceTriggerOverlayShowVertex:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
