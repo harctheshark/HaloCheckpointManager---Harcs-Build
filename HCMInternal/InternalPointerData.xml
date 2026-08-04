@@ -1339,6 +1339,47 @@
 				<Offset>0x610A6</Offset>
 			</Offsets>
 		</Version>
+
+		<!--Halo Campaign Evolved. RVA into HaloSimulation_tag_release.dll (IDA 0x180210175 -> RVA 0x210175).
+
+		    The site is sub_180210040 = game_time_update(real dt, real* outSeconds, long* outTicks) -> bool. It
+		    is the only function that decides how many simulation ticks the main loop runs, and it has exactly
+		    ONE caller: rva 0x1AEA67 in sub_1801AE530 (the main loop body). That caller keeps outTicks in r13d
+		    and at 0x1AEB78 does `test r13d,r13d ; jle 0x1AECFD`, so ZERO TICKS SKIPS the whole per-tick loop
+		    0x1AEB90..0x1AECBA - the loop that calls sub_180206D60, the per-tick simulation update (which also
+		    holds the game-time increment at 0x208954).
+
+		    game_time_update already contains the engine's OWN pause path, and we just force it:
+		        0x210170  E8 CB 02 00 00      call sub_180210440   ; game_time_get_paused()
+		        0x210175  84 C0               test al, al          <- WE PATCH THIS
+		        0x210177  0F 85 5F 02 00 00   jnz  0x2103DC        ; "paused - no time passed this frame"
+
+		    ⚠ We deliberately do NOT patch sub_180210440 (game_time_get_paused) itself: it has ~40 callers
+		    across audio, HUD, AI and script, and forcing it true globally would change far more than the
+		    simulation. We lie only to its consumer here.
+
+		    0x2103DC is the shared "no time this frame" tail that five other early exits in this function
+		    already use: it stores leftover = 0.0 to game_time_globals+0x14, *outSeconds = 0.0, *outTicks = 0,
+		    returns false. Because leftover is reset every frame there is NO ACCUMULATED-TIME BURST on unpause.
+		    sub_1802108A0, the engine's own per-frame pause-flag recompute, runs at 0x210080 BEFORE this site,
+		    so normal pause/unpause logic still works and the patch reverts cleanly.
+
+		    Why 2 bytes here rather than rewriting the 6-byte jnz: IDA reports ZERO base relocations in
+		    0x210100..0x210200, no code xref targets 0x210175 or 0x210177 (fall-through only, so the patch
+		    cannot be bypassed or entered mid-instruction), and two bytes at ...175 sit entirely within one
+		    8-byte-aligned block (0x210170..0x210177) - so ModulePatch's UNSUSPENDED write cannot be observed
+		    torn by the game thread. A 6-byte patch would straddle that boundary.
+
+		    ⚠ HaloSimulation_tag_release.dll has NO VERSION RESOURCE, so every HCE build reports 0.0.0.0 and the
+		    Version attribute cannot protect against a game update. ModulePatch also does not verify expected
+		    original bytes the way the other HaloCER features do. Verified against the shipped DLL,
+		    MD5 E8B0A01BE43A7B805912474A13F0954F, 14,668,560 bytes.-->
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x210175</Offset>
+			</Offsets>
+		</Version>
 	</VersionedEntry>
 
 
@@ -1381,6 +1422,14 @@
 
 		<Version Version="All" Game="Halo4">
 			<Data>0x90, 0x90, 0x90, 0x90, 0x90</Data>
+		</Version>
+
+		<!--Halo Campaign Evolved: `or al, 1`, replacing `test al, al` (original bytes 0x84, 0xC0) at
+		    rva 0x210175. Unconditionally clears ZF so the following `jnz 0x2103DC` at 0x210177 always takes
+		    the engine's own "game time is paused" exit out of game_time_update. al is dead on that path.
+		    See the matching pauseGameFunction comment for the full derivation.-->
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x0C, 0x01</Data>
 		</Version>
 	</VersionedEntry>
 
@@ -2248,7 +2297,38 @@
 
 	<!-- #endregion forceRevertFlag-->
 	<!-- #region doubleRevertFlag-->
+	<!--Halo Campaign Evolved: this is the CHECKPOINT RING INDEX, and flipping it is exactly what a double
+	    revert is. Checkpoints are a ring of TWO slots (the literal ring size 2 is written at init,
+	    sub_180009E60 rva 0x9E60: `mov dword ptr cs:ymmword_181294590+4, 2`), and save_checkpoint advances it
+	    with `idx = (idx + 1) % 2` at rva 0x19D493. The revert (sub_18019D730) reads this index and nothing else
+	    to choose a slot - at rva 0x19D7B9, 0x19D824 and 0x19DAF4 - so toggling it makes the next revert restore
+	    the OTHER slot, i.e. one checkpoint further back. ForceDoubleRevert.h already does exactly this, so
+	    HaloCER needs no code, only this entry.
+
+	    Control block ymmword_181294590 (rva 0x1294590), for reference:
+	        +0x00 byte  checkpoint system initialised
+	        +0x04 dword ring size (2)
+	        +0x08 byte  a checkpoint exists          (revert aborts if 0)
+	        +0x09 byte  the PREVIOUS checkpoint also exists  <- the double-revert guard
+	        +0x0C dword THE RING INDEX               <- this entry
+	        +0x10       game time of the last checkpoint
+
+	    ⚠ THERE IS NO THIRD SLOT. Going back more than two checkpoints is not possible.
+	    ⚠ DOUBLE REVERT IS IMPOSSIBLE IN COOP: at rva 0x19D4B4/0x19D4BB the engine forces ctrl+9 = 0 and
+	      ctrl+0xC = 0 when coop is active, so slot 1 is never used.
+	    ⚠⚠ A REVERT THAT THE ENGINE REJECTS DOES NOT FAIL SOFTLY - every failure path in sub_18019D730 falls to
+	      LABEL_95, which sets word_181357067 = 1 and byte_181357069 = 1, and the checkpoint host at 0x1ADB83
+	      turns that into sub_18020C910, A LEVEL RESTART. So double-reverting when the previous checkpoint does
+	      not exist costs the run. The guard byte at rva 0x1294599 (ctrl+9) is set from ctrl+8 BEFORE the ring
+	      advances (0x19D477: movzx eax,[ctrl+8] / 0x19D47E: mov [ctrl+9],al), so it means precisely "two
+	      checkpoints exist" and is correct in both the local and provider storage paths.-->
 	<VersionedEntry Name="doubleRevertFlag" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x129459C</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.2448.0.0" Game="Halo2">
 			<Module>halo2.dll</Module>
 			<Offsets>

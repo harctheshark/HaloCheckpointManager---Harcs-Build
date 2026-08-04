@@ -7,6 +7,10 @@
 // game set tuples
 #define ALL_SUPPORTED_GAMES Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4
 #define ALL_GAMES_AND_MAINMENU Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, NoGame
+// Pause works on HaloCER too (see pauseGameFunction/pauseGameCode in InternalPointerData.xml), but the plain
+// ALL_GAMES_AND_MAINMENU list predates HaloCER, so the pause elements were never offered for it and the toggle
+// simply did not appear. Widened for those elements only, rather than changing the shared macro.
+#define ALL_GAMES_AND_MAINMENU_AND_HALOCER Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, NoGame, HaloCER
 // Halo Campaign Evolved is deliberately NOT in ALL_SUPPORTED_GAMES: it is a separate title with its own
 // (almost entirely missing) pointer data, so opting every MCC gui element into it would just produce a few
 // hundred failed services. Opt elements in one at a time using these instead.
@@ -70,12 +74,12 @@
 	((GUISettingsSubheading, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 		((GUIShowingFreesCursor, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 		((GUIShowingBlocksInput, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
-		((GUIShowingPausesGame, (ALL_GAMES_AND_MAINMENU)))\
-	((togglePauseGUI, (ALL_GAMES_AND_MAINMENU)))\
+		((GUIShowingPausesGame, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+	((togglePauseGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((togglePauseSettingsSubheading, (ALL_GAMES_AND_MAINMENU)))\
 		((advanceTicksGUI, (ALL_SUPPORTED_GAMES)))\
-		((pauseAlsoFreesCursorGUI, (ALL_GAMES_AND_MAINMENU)))\
-		((pauseAlsoBlocksInputGUI, (ALL_GAMES_AND_MAINMENU)))\
+		((pauseAlsoFreesCursorGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+		((pauseAlsoBlocksInputGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((OBSBypassToggleGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((HideWatermarkGUI, (ALL_GAMES_AND_MAINMENU)))\
@@ -84,7 +88,7 @@
 	((forceCheckpointGUI, (ALL_SUPPORTED_GAMES)))\
 	((hceForceCheckpointGUI, (HALOCER_ONLY)))\
 	((forceRevertGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
-	((forceDoubleRevertGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+	((forceDoubleRevertGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER)))\
 	((forceCoreSaveGUI, (Halo1)))\
 	((forceCoreLoadGUI, (Halo1)))\
 	((injectCheckpointGUI, (ALL_SUPPORTED_GAMES)))\

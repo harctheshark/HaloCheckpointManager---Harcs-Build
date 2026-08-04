@@ -505,6 +505,10 @@ private:
 					(game, ToolTipCollection("Stuff like invulnerabiltiy, speedhack, teleport, ai disable etc"), "Useful Cheats", headerChildElements
 						{
 							createNestedElement(GUIElementEnum::speedhackGUI),
+							// Havok Debugger sits between speedhack and invulnerability by request - it is a
+							// HaloCER-facing tool and belongs near the top rather than buried among the MCC
+							// rendering fixes below.
+							createNestedElement(GUIElementEnum::havokDebuggerGUI),
 							createNestedElement(GUIElementEnum::invulnGUI),
 							createNestedElement(GUIElementEnum::invulnerabilitySettingsSubheading),
 							createNestedElement(GUIElementEnum::infiniteAmmoGUI),
@@ -516,7 +520,6 @@ private:
 							createNestedElement(GUIElementEnum::fpScaleFixLegSizeGUI),
 							createNestedElement(GUIElementEnum::fpScaleFixLegTuckGUI),
 							createNestedElement(GUIElementEnum::animationFixesToggle),
-							createNestedElement(GUIElementEnum::havokDebuggerGUI),
 							createNestedElement(GUIElementEnum::masterTickrateEnableGUI),
 							createNestedElement(GUIElementEnum::aiFreezeGUI),
 							createNestedElement(GUIElementEnum::hceAiFreezeGUI),
@@ -525,10 +528,11 @@ private:
 							createNestedElement(GUIElementEnum::forceTeleportSettingsSubheading),
 							createNestedElement(GUIElementEnum::forceLaunchGUI),
 							createNestedElement(GUIElementEnum::forceLaunchSettingsSubheading),
-							createNestedElement(GUIElementEnum::hceForceTeleportGUI),
-							createNestedElement(GUIElementEnum::hceForceTeleportSettingsSubheading),
+							// Launch before Teleport, by request.
 							createNestedElement(GUIElementEnum::hceForceLaunchGUI),
 							createNestedElement(GUIElementEnum::hceForceLaunchSettingsSubheading),
+							createNestedElement(GUIElementEnum::hceForceTeleportGUI),
+							createNestedElement(GUIElementEnum::hceForceTeleportSettingsSubheading),
 							createNestedElement(GUIElementEnum::switchBSPGUI),
 							createNestedElement(GUIElementEnum::switchBSPSetGUI),
 							createNestedElement(GUIElementEnum::setPlayerHealthSubheadingGUI),
