@@ -3387,6 +3387,68 @@
 	<!-- #endregion hceCheckpointDetours-->
 
 
+	<!-- #region hceInvulnerability-->
+	<!--
+		Halo Campaign Evolved invulnerability. Full derivation is at the top of HCEInvulnerability.cpp; the short
+		version is that the engine's own damage applier (sub_18066F760) already has an invulnerability branch,
+		driven by bit 7 of the object flags dword at object + 0x128 (the bit HaloScript's
+		object_cannot_take_damage sets). We hook the `setnz cl` that reads the result of that test and force the
+		zero flag clear, so the engine takes its own no-damage path and zeroes shield/body/third damage itself.
+
+		Site rva 0x66FF24, in context:
+			0x66FF0E  mov   r15, [rbp+280h]    ; the object about to be damaged
+			0x66FF1B  mov   eax, [r15+128h]    ; object flags
+			0x66FF22  test  al, 80h            ; bit 7 = cannot take damage
+			0x66FF24  setnz cl                 <- hooked (3 bytes) + bt eax,14h (4 bytes) = 7 >= 5 for the jmp
+			0x66FF42  jnz   0x670178           ; taken => damage zeroed
+
+		Both instructions safetyhook relocates are IP independent, and nothing branches into the middle of them
+		(the only nearby targets are 0x66FF3D and 0x66FF40).
+
+		NOTE THE FLAG VALUE IS false, THE OPPOSITE OF ALL SIX MCC GAMES. We need `setnz` to fire, which means ZF
+		must be CLEAR. Do not "fix" this to match invulnerabilityFunctionFlagSetter.
+
+		The one parameter is the DAMAGED OBJECT'S ADDRESS in r15, not a datum - it is the exact object the engine
+		is gating, so no assumption about argument semantics is needed. HCEInvulnerability compares it against
+		HCEGetPlayerState::getPlayerObject().
+
+		WARNING: HaloSimulation_tag_release.dll carries no version resource, so EVERY HCE build reports version
+		0.0.0.0 and the Version attribute cannot protect against a game update - hence hceInvulnerabilityOriginalBytes,
+		verified on first toggle. Do not remove that check.
+	-->
+	<VersionedEntry Name="hceInvulnerabilityFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x66FF24</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--setnz cl ; bt eax, 14h ; jnb short 0x66FF3D-->
+	<VersionedEntry Name="hceInvulnerabilityOriginalBytes" Type="Vector" Typename="byte">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x0F, 0x95, 0xC1, 0x0F, 0xBA, 0xE0, 0x14, 0x73, 0x10</Data>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInvulnerabilityFunctionContext" Type="MidhookContextInterpreter">
+		<Version Version="All" Game="HaloCER">
+			<Parameters>
+				<damagedObjectAddress>r15</damagedObjectAddress>
+			</Parameters>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInvulnerabilityFunctionFlagSetter" Type="MidhookFlagInterpreter">
+		<Version Version="All" Game="HaloCER">
+			<rflag>zero</rflag>
+			<value>false</value>
+		</Version>
+	</VersionedEntry>
+	<!-- #endregion hceInvulnerability-->
+
+
 	<!-- #region blockGameInputHCE-->
 	<!--
 		Halo Campaign Evolved raw-input window procedure. ExeOffset into HaloCampaignEvolved.exe
@@ -3434,6 +3496,62 @@
 		</Version>
 	</VersionedEntry>
 	<!-- #endregion blockGameInputHCE-->
+
+
+	<!-- #region hceCameraManager-->
+	<!--
+		The UE5 render camera, for the trigger overlay's field of view.
+
+		HaloCampaignEvolved.exe RVA 0x64B3B60 is APlayerCameraManager::DoUpdateCamera. It is midhooked purely to
+		capture `this` (RCX at entry) once per frame; nothing about the camera update is modified. From that
+		pointer the POV is a plain read:
+
+			PCM + 0x14A0   FCameraCacheEntry CameraCachePrivate   (float Timestamp at +0x00)
+			PCM + 0x14B0   POV.Location   (3 x double, UE centimetres)
+			PCM + 0x14C8   POV.Rotation   (3 x double, DEGREES - Pitch, Yaw, Roll)
+			PCM + 0x14E0   POV.FOV        (float, HORIZONTAL degrees)   <- the only field we read
+
+		The offsets come from the exe's own UE reflection metadata (FGenericPropertyParams, Offset at +0x32 of
+		each record): DesiredFOV = 0x34 within FMinimalViewInfo, so FOV = 0x30, and the struct sits at +0x10
+		inside FCameraCacheEntry. Cross-checked independently: reflection puts CameraCachePrivate at 0x14A0 and
+		LastFrameCameraCachePrivate at 0x1D10, and 0x14A0 + sizeof(FCameraCacheEntry) 0x870 == 0x1D10 exactly.
+
+		WHY NOT FMinimalViewInfo::operator= (RVA 0x5AA7BB0), which the external CER tool hooks: its first 238
+		bytes are DUPLICATED at RVA 0x7ECC950, so a byte signature matches twice. DoUpdateCamera has no such
+		twin, and hooking it once per frame is also far cheaper than firing on every POV assignment in the
+		process - the operator= hook is last-write-wins and can be poisoned by an unrelated copy.
+
+		The FOV is HORIZONTAL. FMinimalViewInfo::CalculateProjectionMatrixGivenViewRectangle (RVA 0x5D5AF10)
+		uses XAxisMultiplier = 1.0 whenever the constraint is MaintainXFOV or (MajorAxisFOV and width > height),
+		and the live scene-view builder at RVA 0x7EADAA0 defaults the constraint to MaintainXFOV. So
+		focal = width / (2*tan(FOV/2)) is not an approximation, it is the engine's own projection, and it stays
+		correct at any landscape aspect ratio including ultrawide.
+	-->
+	<VersionedEntry Name="hceCameraManagerUpdateFunction" Type="MultilevelPointer::ExeOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offsets>
+				<Offset>0x64B3B60</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--mov [rsp+20h],rbx ; push rbp ; push rsi ; push rdi ; push r12 ; push r13 ; push r14 ; push r15 ;
+	    lea rbp,[rsp-27h] ; sub rsp,0D0h
+	    28 bytes, all position independent - the next instruction (mov rax,[rip+...]) is rip-relative, so the
+	    run of relocation-free bytes stops exactly here. Verified against the shipped exe: RVA 0x64B3B60 is
+	    file offset 0x64B3160 (.text VA 0x1000, raw 0x600).-->
+	<VersionedEntry Name="hceCameraManagerUpdateOriginalBytes" Type="Vector" Typename="byte">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x48, 0x89, 0x5C, 0x24, 0x20, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8D, 0x6C, 0x24, 0xD9, 0x48, 0x81, 0xEC, 0xD0, 0x00, 0x00, 0x00</Data>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceCameraManagerPovFovOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x14E0</Data>
+		</Version>
+	</VersionedEntry>
+	<!-- #endregion hceCameraManager-->
 
 
 	<!-- #region hcePlayerState-->
@@ -3622,6 +3740,159 @@
 			<Offset>0x1AC</Offset>
 		</Version>
 	</VersionedEntry>
+	<VersionedEntry Name="hceCameraPositionOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x20</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<!--PLAYER VIEW ANGLE (s_player_control).
+
+	        playerControlGlobals = *(tls + hcePlayerControlTlsOffset)                      0x9D0 bytes
+	        control              = playerControlGlobals + hcePlayerControlArrayOffset + hcePlayerControlStride * localPlayer
+	        unitDatum            = *(uint32*)(control + hcePlayerControlUnitDatumOffset)   0xFFFFFFFF = no unit
+	        yaw                  = *(float*) (control + hcePlayerControlYawOffset)         RADIANS
+	        pitch                = *(float*) (control + hcePlayerControlPitchOffset)       RADIANS
+
+	    The TLS slot is the SAME 0xB8 block hceFreecamToggleTlsOffset uses - the freecam byte at +0x9C8 is
+	    simply the last flag byte of these player-control globals. It is named separately because it is a
+	    different structure within that block, not a different pointer.
+
+	    FRAME: right-handed, Z-up, +X forward at yaw 0, +Y LEFT, +pitch = looking up, yaw measured from +X
+	    toward +Y, and the SAME world frame as the position/velocity above. That is not an assumption - the
+	    engine's autoaim code builds these angles with atan2 over WORLD-SPACE position differences and then
+	    subtracts these very fields, and player_control_set_facing writes them from a world-space forward/up
+	    basis. yaw is normalised into [0, 2pi) by the setter; pitch is clamped to +-pi/2.
+
+	    ALL THREE AXES, because specifying only two is what caused the mirrored trigger overlay:
+
+	        forward = ( cos(pitch)*cos(yaw),  cos(pitch)*sin(yaw), sin(pitch) )
+	        right   = ( sin(yaw),            -cos(yaw),            0          )   == forward x UnitZ
+	        up      = (-sin(pitch)*cos(yaw), -sin(pitch)*sin(yaw), cos(pitch) )   == right x forward
+
+	    RIGHT IS (+sin, -cos, 0), NOT (-sin, +cos, 0). The latter is UE5's formula, correct only in UE5's
+	    LEFT-handed +Y-is-right frame; in Blam it is the LEFT vector. The engine agrees: its real_matrix4x3
+	    basis builder (sim rva 0x2E41B0) writes up X forward - the LEFT row - into the matrix at +0x10.
+
+	    NOTE: the divide-by-304.8 / negate-Y transform used by the external CER trigger overlay does NOT apply
+	    here. That maps the sim's world into the UE5 camera's centimetres. Everything on this path (trigger
+	    volume tag data, player position, camera entry position, these angles) is one consistent Blam world
+	    frame. Be careful WHY it does not apply: the 304.8 is a unit conversion and cancels in any perspective
+	    divide, but the negate-Y is a HANDEDNESS change. Skipping the transform is right, and it is exactly why
+	    the right vector above is the negation of UE's - the two changes go together or neither does.
+
+	    yaw and pitch are contiguous, so HCEGetPlayerState reads them as a single 8-byte load.-->
+	<VersionedEntry Name="hcePlayerControlTlsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0xB8</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePlayerControlArrayOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x80</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePlayerControlStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x198</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePlayerControlUnitDatumOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x0</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePlayerControlYawOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x14</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePlayerControlPitchOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x18</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<!--TRIGGER VOLUMES (HCETriggerOverlay).
+
+	    Structural offsets only. The two ADDRESSES this needs - the scenario tag-data pointer slot and the tag
+	    block address table - are deliberately NOT here: they move between game builds (the address table is
+	    0x2C2DCC0 on one build and 0x2C2CCC0 on another) and HCE reports version 0.0.0.0 on every build, so a
+	    Version attribute cannot tell them apart. HCETriggerOverlay resolves both by unique byte signature
+	    instead, and refuses to draw rather than guessing. See the comment block in HCETriggerOverlay.cpp.
+
+	        count = *(int32*) (scenario + hceScenarioTriggerVolumeBlock)
+	        enc   = *(uint32*)(scenario + hceScenarioTriggerVolumeBlock + 4)
+	        base  = tagAddressTable[enc >> 28] + 4 * enc
+	        elem  = base + hceTriggerVolumeStride * i
+
+	    Every offset below is CODE-PROVEN, not inferred: the engine's trigger_volume_test_point (sim rva
+	    0x2E45F0) indexes `31 * i` DWORDs off `*(uint32*)(scenarioData + 636)` and resolves it with exactly
+	    the table[enc >> 28] + 4*enc expression above, and the basis builder it calls (rva 0x2E41B0) copies
+	    forward from +0x10, up from +0x1C and position from +0x28 into the transform, then compares the
+	    projected point against +0x34. NOTE there is deliberately no zSink entry: the float at +0x40 is NOT
+	    subtracted from the position by the engine, whatever the external CER tool does.-->
+	<VersionedEntry Name="hceScenarioTriggerVolumeBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x278</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceTriggerVolumeStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x7C</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--string_id of the volume's name.-->
+	<VersionedEntry Name="hceTriggerVolumeNameOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x0</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--uint16. 1 = SECTOR (an XY polygon extruded between z bounds); anything else is drawn as the box.-->
+	<VersionedEntry Name="hceTriggerVolumeTypeOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0xC</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceTriggerVolumeForwardOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x10</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceTriggerVolumeUpOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x1C</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceTriggerVolumePositionOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x28</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--3 floats. x runs along forward, y along up X forward (Blam's LEFT, NOT right), z along up. The box
+	    spans [0, extents] FROM position, it is not centred on it.-->
+	<VersionedEntry Name="hceTriggerVolumeExtentsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x34</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--sector points tag block: count @ +0x44, encoded address @ +0x48, stride 20, xy floats at +0.-->
+	<VersionedEntry Name="hceTriggerVolumeSectorPointsBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x44</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceTriggerVolumeSectorPointStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x14</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--six floats x0,x1,y0,y1,z0,z1; a sector prism is extruded between the last two.-->
+	<VersionedEntry Name="hceTriggerVolumeBoundsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x5C</Offset>
+		</Version>
+	</VersionedEntry>
 
 	<!--Info overlay sources. Note all three are shaped differently, which has caught people out before:
 	        hceCurrentLevel     a NUL-terminated ASCII STRING (<=40 bytes), NOT an index and NOT a pointer
@@ -3654,6 +3925,190 @@
 		</Version>
 	</VersionedEntry>
 	<!-- #endregion hcePlayerState-->
+
+
+	<!-- #region hceTriggerActivity-->
+	<!--
+		Halo Campaign Evolved scenario trigger-volume ACTIVITY (are the mission scripts testing this volume right
+		now?). Consumed by HCETriggerActivity.cpp; read that file's header for the full rationale. Everything
+		here is an RVA into HaloSimulation_tag_release.dll (PE ImageBase 0x180000000, so an IDA VA 0x1802E45F0
+		is RVA 0x2E45F0).
+
+		THE FUNCTION =========================================================================================
+		RVA 0x2E45F0 is trigger_volume_test_point:
+
+			bool trigger_volume_test_point(int volumeIndex, int objectIndexOrMinusOne, const float* point)
+
+		Derivation, not folklore. The function is identified by how it consumes its first argument:
+
+			0x2E4609  48 63 D9              movsxd rbx, ecx         ; arg1
+			0x2E4634  4C 6B FB 1F           imul   r15, rbx, 1Fh    ; 31 dwords == the 124-byte scenario
+			0x2E4638  8B 88 7C 02 00 00     mov    ecx, [rax+27Ch]  ;   trigger-volume stride
+			0x2E464C  0F BF 4C BE 0C        movsx  ecx, [rsi+rdi*4+0Ch]
+
+		so ECX at any call site IS the scenario trigger-volume block index - no conversion, no datum.
+		hceTriggerVolumeTestPointOriginalBytes below is the function's first 0x48 bytes; with the four
+		rip-relative displacements wildcarded that pattern matches EXACTLY ONCE across the whole 0x78E000-byte
+		.text section, and the byte values were read back out of the shipped DLL FILE (RVA 0x2E45F0 -> file
+		offset 0x2E39F0; .text VA 0x1000, raw 0x400) rather than trusted from a disassembly database.
+
+		The four rip-relative displacements are deliberately INCLUDED rather than truncated away the way
+		blockGameInputHCEWndProcOriginalBytes is. This entry is a build fingerprint, not a hook trampoline
+		source: rip-relative operands carry no base relocation, so their bytes in memory are identical to their
+		bytes on disk at any ASLR base (verified - the rebased database and the raw file agree on all 0x48
+		bytes), and having them in the pattern is what makes it a one-in-.text match.
+
+		WHY EIGHT CALL SITES AND NOT THE PROLOGUE ============================================================
+		trigger_volume_test_point has 23 call sites and only EIGHT are HaloScript. The other fifteen are AI,
+		object placement, damage and safe-zone code that poll volumes every tick regardless of what the mission
+		script is doing, so a prologue detour reports EVERY volume as live and destroys the whole live/dormant
+		distinction. Patching the call sites also leaves .pdata / UNWIND_INFO untouched, which a trampoline over
+		the prologue would not.
+
+		The split is derived, not guessed. HaloCER's HaloScript function table lives in .rdata as 0x50-byte
+		records: +0x00 const char* name, +0x10 parse fn (always RVA 0x350490), +0x18 evaluate fn. Walking every
+		.rdata record with RVA 0x350490 at +0x10 yields 1660 script functions; cross-referencing the 23 callers
+		against that table gives exactly these eight and no others:
+
+			site RVA   containing fn   HaloScript function it implements
+			0x1B275A   0x1B2630        volume_teleport_players_not_inside
+			0x1B2884   0x1B2820        volume_test_object
+			0x1B29A9   0x1B28B0        volume_test_objects
+			0x1B2B09   0x1B2A10        volume_test_objects_all
+			0x1B2C61   0x1B2B70        volume_test_players
+			0x1B2DC5   0x1B2CD0        volume_test_players_all
+			0x1B3178   0x1B2ED0        volume_return_objects_by_campaign_type
+			0x2E50D6   0x2E4E90        (helper; its ONLY two code callers are the evaluate fns of
+			                            volume_return_objects at 0x1B2E30 and
+			                            volume_return_objects_by_type at 0x1B2E80)
+
+		Every other caller is absent from the script table and is reached from engine systems instead:
+		0x133610, 0x14CBE0, 0x18F870 (x2, AI), 0x19CDB0, 0x304B80, 0x3050C0, 0x3525D0, 0x3526A0 (x2),
+		0x3A0CC0 (x2), 0x67FC30 (11 callers, object/damage), 0x69C590 (x2). None of them is patched.
+
+		Each site is a 5-byte `E8 rel32` whose rel32 already resolves to 0x2E45F0 - HCETriggerActivity verifies
+		BOTH of those facts, on every site, before it writes anything, and refuses as a set if any one fails.
+		None of the eight displacements straddles a 64-byte cache line ((site+1) & 63 is 27, 5, 42, 10, 34, 6,
+		57 and 23), so each 4-byte rewrite is a single atomic store.
+
+		HCE has no version resource, so every build reports 0.0.0.0 and the Version attribute cannot detect a
+		game update - which is exactly why the byte verification above is not optional. Same problem, same
+		mitigation, as hceCheckpointDetours and hceInvulnerability.
+	-->
+	<VersionedEntry Name="hceTriggerVolumeTestPointFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x2E45F0</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--push rbp ; push rbx ; push rsi ; push rdi ; push r12 ; push r13 ; push r14 ; push r15 ;
+	    lea rbp,[rsp-18h] ; sub rsp,118h ; movsxd rbx,ecx ; mov r14,r8 ; mov ecx,[rip+6BCECFh] ;
+	    vmovaps [rsp+100h],xmm6 ; movsxd r12,edx ; call 0x2040D0 ; mov rax,[rip+0DDEF2Bh] ;
+	    lea r13,[rip+294868Ch] ; imul r15,rbx,1Fh
+	    0x48 bytes, ending on the imul that is the whole reason we can recognise this function.-->
+	<VersionedEntry Name="hceTriggerVolumeTestPointOriginalBytes" Type="Vector" Typename="byte">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x40, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8D, 0x6C, 0x24, 0xE8, 0x48, 0x81, 0xEC, 0x18, 0x01, 0x00, 0x00, 0x48, 0x63, 0xD9, 0x4D, 0x8B, 0xF0, 0x8B, 0x0D, 0xCF, 0xCE, 0x6B, 0x00, 0xC5, 0xF8, 0x29, 0xB4, 0x24, 0x00, 0x01, 0x00, 0x00, 0x4C, 0x63, 0xE2, 0xE8, 0xAA, 0xFA, 0xF1, 0xFF, 0x48, 0x8B, 0x05, 0x2B, 0xEF, 0xDD, 0x00, 0x4C, 0x8D, 0x2D, 0x8C, 0x86, 0x94, 0x02, 0x4C, 0x6B, 0xFB, 0x1F</Data>
+		</Version>
+	</VersionedEntry>
+
+	<!--volume_teleport_players_not_inside (evaluate fn 0x1B2630). Stock bytes E8 91 1E 13 00.
+	    Preceded by `mov ecx,r15d ; lea r8,[rsp+20h] ; mov edx,0FFFFFFFFh`.-->
+	<VersionedEntry Name="hceTriggerVolumeTestPointScriptCallSite1" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1B275A</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--volume_test_object (evaluate fn 0x1B2820). Stock bytes E8 67 1D 13 00. Preceded by `mov ecx,ebx`.-->
+	<VersionedEntry Name="hceTriggerVolumeTestPointScriptCallSite2" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1B2884</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--volume_test_objects (evaluate fn 0x1B28B0). Stock bytes E8 42 1C 13 00. Preceded by `mov ecx,edi`.-->
+	<VersionedEntry Name="hceTriggerVolumeTestPointScriptCallSite3" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1B29A9</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--volume_test_objects_all (evaluate fn 0x1B2A10). Stock bytes E8 E2 1A 13 00. Preceded by `mov ecx,edi`.-->
+	<VersionedEntry Name="hceTriggerVolumeTestPointScriptCallSite4" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1B2B09</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--volume_test_players (evaluate fn 0x1B2B70). Stock bytes E8 8A 19 13 00. Preceded by `mov ecx,ebp`.-->
+	<VersionedEntry Name="hceTriggerVolumeTestPointScriptCallSite5" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1B2C61</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--volume_test_players_all (evaluate fn 0x1B2CD0). Stock bytes E8 26 18 13 00. Preceded by `mov ecx,ebp`.-->
+	<VersionedEntry Name="hceTriggerVolumeTestPointScriptCallSite6" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1B2DC5</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--volume_return_objects_by_campaign_type (evaluate fn 0x1B2ED0). Stock bytes E8 73 14 13 00.
+	    Preceded by `mov ecx,r12d`.-->
+	<VersionedEntry Name="hceTriggerVolumeTestPointScriptCallSite7" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1B3178</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--Inside helper 0x2E4E90, whose only two code callers are the evaluate fns of volume_return_objects
+	    (0x1B2E30) and volume_return_objects_by_type (0x1B2E80) - i.e. it is reachable ONLY from HaloScript.
+	    Stock bytes E8 15 F5 FF FF. Preceded by `mov ecx,r15d`.-->
+	<VersionedEntry Name="hceTriggerVolumeTestPointScriptCallSite8" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x2E50D6</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--How long after its last script test a volume still counts as live, in WALL CLOCK milliseconds of
+	    GetTickCount - deliberately not simulation ticks. HaloScript's sleep_until only re-evaluates its
+	    condition every N ticks, so a script that is genuinely watching a volume tests it in bursts; a
+	    tick-counted window makes those live triggers flicker dormant between their own polls.-->
+	<VersionedEntry Name="hceTriggerActivityWindowMilliseconds" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>3000</Data>
+		</Version>
+	</VersionedEntry>
+	<!-- #endregion hceTriggerActivity-->
 
 
 	<!-- #region checkpointLength-->

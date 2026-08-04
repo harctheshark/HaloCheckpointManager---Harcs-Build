@@ -513,6 +513,7 @@ private:
 							createNestedElement(GUIElementEnum::consoleCommandGUI),
 							createNestedElement(GUIElementEnum::consoleCommandSettings),
 							createNestedElement(GUIElementEnum::disableBarriersToggle),
+							createNestedElement(GUIElementEnum::hceDisableBarriersGUI),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterToggle),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterSettings),
 							createNestedElement(GUIElementEnum::dropShadowsOnObjectsToggle),
@@ -534,7 +535,7 @@ private:
 
 				case GUIElementEnum::speedhackGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISpeedhack>
-						(game, ToolTipCollection("Multiply the games clock speed by this value (1 = normal speed). \nFor non-stuttery framerates at low speedhack values, make sure you're running MCC with uncapped framerate."), RebindableHotkeyEnum::speedhack, settings));
+						(game, ToolTipCollection("Multiply the games clock speed by this value (1 = normal speed). \nFor non-stuttery framerates at low speedhack values, make sure the game is running with an uncapped framerate."), RebindableHotkeyEnum::speedhack, settings));
 
 				case GUIElementEnum::invulnGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInvulnerability>
@@ -670,7 +671,7 @@ private:
 
 				case GUIElementEnum::havokDebuggerGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Starts an in-process Havok Visual Debugger server. Connect the Havok Visual Debugger client to 127.0.0.1:25001. Halo 3: live Havok world (collision, broadphase, islands, soft ceilings). Halo 2: static world BSP collision (in the 'BSP Collision' tab). Re-establishes on each enable so map switches don't need a restart."), std::nullopt, "Havok Debugger", settings->havokDebuggerToggle
+						(game, ToolTipCollection("Starts an in-process Havok Visual Debugger server. Connect the Havok Visual Debugger client to 127.0.0.1:25001. Halo 3: live Havok world (collision, broadphase, islands, soft ceilings). Halo 2: static world BSP collision (in the 'BSP Collision' tab). Halo Campaign Evolved: live object collision, static world collision, centre of mass, havok islands, trigger volumes and soft ceilings - note the first world walk hitches the game for a moment while it is built. Re-establishes on each enable so map switches don't need a restart."), std::nullopt, "Havok Debugger", settings->havokDebuggerToggle
 						));
 
 				case GUIElementEnum::masterTickrateEnableGUI:
@@ -853,54 +854,116 @@ private:
 
 
 				// ---- Halo Campaign Evolved teleport / launch --------------------------------------------------
-				// Absolute world coordinates only. There is deliberately no radio group, no "relative to look
-				// direction" and no "apply to custom object": HCE exposes no player view angle and no object
-				// datum path through anything the reference tool reversed, and a relative mode built on a guessed
-				// forward vector would be worse than none. Settings, events and hotkeys are the MCC ones.
+				// Mirrors the MCC layout above, minus "apply to custom object": MCC reaches an arbitrary object
+				// through GetObjectPhysics, which validates the datum, and HCE has no equivalent - the write
+				// sequences were reversed against the player biped specifically. Everything else, including the
+				// relative-to-look-direction mode, is here. Settings, events and hotkeys are the MCC ones.
 				case GUIElementEnum::hceForceTeleportGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Teleports the player to the world coordinates set below"), RebindableHotkeyEnum::forceTeleport, "Force Teleport##hce", settings->forceTeleportEvent));
+						(game, ToolTipCollection("Teleports the player, either to absolute coordinates or relative to where they are looking"), RebindableHotkeyEnum::forceTeleport, "Force Teleport##hce", settings->forceTeleportEvent));
 
 				case GUIElementEnum::hceForceTeleportSettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
 						(game, ToolTipCollection(""), "Force Teleport Settings##hce", headerChildElements
 							{
-							createNestedElement(GUIElementEnum::hceForceTeleportAbsoluteVec3),
-							createNestedElement(GUIElementEnum::hceForceTeleportAbsoluteFillCurrent),
-							createNestedElement(GUIElementEnum::hceForceTeleportAbsoluteCopy),
-							createNestedElement(GUIElementEnum::hceForceTeleportAbsolutePaste),
+							createNestedElement(GUIElementEnum::hceForceTeleportSettingsRadioGroup),
 							}));
 
-					case GUIElementEnum::hceForceTeleportAbsoluteVec3:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
-							(game, ToolTipCollection("The xyz world coordinates to teleport to"), "Teleport: ##hceForceTeleportAbsoluteVec3", settings->forceTeleportAbsoluteVec3));
+					case GUIElementEnum::hceForceTeleportSettingsRadioGroup:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioGroup>
+							(game, ToolTipCollection(""), "Force Teleport Radio Group##hce", headerChildElements
+								{
+								createNestedElement(GUIElementEnum::hceForceTeleportForward),
+								createNestedElement(GUIElementEnum::hceForceTeleportManual)
+								}));
 
-					case GUIElementEnum::hceForceTeleportAbsoluteFillCurrent:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-							(game, ToolTipCollection("Fill with the current xyz position of the player"), std::nullopt, "Fill with current position##hce", settings->forceTeleportAbsoluteFillCurrent));
+						case GUIElementEnum::hceForceTeleportForward:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Teleport relative to the players position and look-direction"), std::nullopt, "Teleport Relative to Player##hce", settings->forceTeleportForward, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::hceForceTeleportRelativeVec3),
+									createNestedElement(GUIElementEnum::hceForceTeleportForwardIgnoreZ)
+									}));
 
-					case GUIElementEnum::hceForceTeleportAbsoluteCopy:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-							(game, ToolTipCollection("Copy the position above to your clipboard"), std::nullopt, "Copy to Clipboard##hce", settings->forceTeleportAbsoluteCopy));
+							case GUIElementEnum::hceForceTeleportRelativeVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("How far forward/right/up to teleport the player, relative to their look-direction"), "Teleport: ##hceForceTeleportRelativeVec3", settings->forceTeleportRelativeVec3, "Forward", "Right", "Up"));
 
-					case GUIElementEnum::hceForceTeleportAbsolutePaste:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-							(game, ToolTipCollection("Paste a position from your clipboard into above"), std::nullopt, "Paste from Clipboard##hce", settings->forceTeleportAbsolutePaste));
+							case GUIElementEnum::hceForceTeleportForwardIgnoreZ:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+									(game, ToolTipCollection("Will ignore the vertical component of your look direction (ie pretends you're looking at the horizon)"), std::nullopt, "Ignore vertical look angle##hceTeleport", settings->forceTeleportForwardIgnoreZ));
+
+						case GUIElementEnum::hceForceTeleportManual:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Teleport to absolute world coordinates"), std::nullopt, "Teleport to Manual Coordinates##hce", settings->forceTeleportManual, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::hceForceTeleportAbsoluteVec3),
+									createNestedElement(GUIElementEnum::hceForceTeleportAbsoluteFillCurrent),
+									createNestedElement(GUIElementEnum::hceForceTeleportAbsoluteCopy),
+									createNestedElement(GUIElementEnum::hceForceTeleportAbsolutePaste),
+									}));
+
+							case GUIElementEnum::hceForceTeleportAbsoluteVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("The xyz world coordinates to teleport to"), "Teleport: ##hceForceTeleportAbsoluteVec3", settings->forceTeleportAbsoluteVec3));
+
+							case GUIElementEnum::hceForceTeleportAbsoluteFillCurrent:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+									(game, ToolTipCollection("Fill with the current xyz position of the player"), std::nullopt, "Fill with current position##hce", settings->forceTeleportAbsoluteFillCurrent));
+
+							case GUIElementEnum::hceForceTeleportAbsoluteCopy:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+									(game, ToolTipCollection("Copy the position above to your clipboard"), std::nullopt, "Copy to Clipboard##hce", settings->forceTeleportAbsoluteCopy));
+
+							case GUIElementEnum::hceForceTeleportAbsolutePaste:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+									(game, ToolTipCollection("Paste a position from your clipboard into above"), std::nullopt, "Paste from Clipboard##hce", settings->forceTeleportAbsolutePaste));
 
 				case GUIElementEnum::hceForceLaunchGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Sets the player's velocity to the value below"), RebindableHotkeyEnum::forceLaunch, "Force Launch##hce", settings->forceLaunchEvent));
+						(game, ToolTipCollection("Boosts the players velocity"), RebindableHotkeyEnum::forceLaunch, "Force Launch##hce", settings->forceLaunchEvent));
 
 				case GUIElementEnum::hceForceLaunchSettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
 						(game, ToolTipCollection(""), "Force Launch Settings##hce", headerChildElements
 							{
-							createNestedElement(GUIElementEnum::hceForceLaunchAbsoluteVec3),
+							createNestedElement(GUIElementEnum::hceForceLaunchSettingsRadioGroup),
 							}));
 
-					case GUIElementEnum::hceForceLaunchAbsoluteVec3:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
-							(game, ToolTipCollection("The velocity to set, in absolute world-axes. This REPLACES your current velocity rather than adding to it."), "Launch: ##hceForceLaunchAbsoluteVec3", settings->forceLaunchAbsoluteVec3));
+					case GUIElementEnum::hceForceLaunchSettingsRadioGroup:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioGroup>
+							(game, ToolTipCollection(""), "Force Launch Radio Group##hce", headerChildElements
+								{
+								createNestedElement(GUIElementEnum::hceForceLaunchForward),
+								createNestedElement(GUIElementEnum::hceForceLaunchManual)
+								}));
+
+						case GUIElementEnum::hceForceLaunchForward:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Add velocity relative to the players look-direction"), std::nullopt, "Launch relative to player facing##hce", settings->forceLaunchForward, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::hceForceLaunchRelativeVec3),
+									createNestedElement(GUIElementEnum::hceForceLaunchForwardIgnoreZ)
+									}));
+
+							case GUIElementEnum::hceForceLaunchRelativeVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("How much velocity to ADD in the forward/right/up directions, relative to the players look-direction"), "Launch: ##hceForceLaunchRelativeVec3", settings->forceLaunchRelativeVec3, "Forward", "Right", "Up"));
+
+							case GUIElementEnum::hceForceLaunchForwardIgnoreZ:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+									(game, ToolTipCollection("Will ignore the vertical component of your look direction (ie pretends you're looking at the horizon)"), std::nullopt, "Ignore vertical look angle##hceLaunch", settings->forceLaunchForwardIgnoreZ));
+
+						case GUIElementEnum::hceForceLaunchManual:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Set velocity along the absolute world-axes"), std::nullopt, "Launch with absolute velocity##hce", settings->forceLaunchManual, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::hceForceLaunchAbsoluteVec3),
+									}));
+
+							case GUIElementEnum::hceForceLaunchAbsoluteVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("The velocity to set, in absolute world-axes. This REPLACES your current velocity rather than adding to it."), "Launch: ##hceForceLaunchAbsoluteVec3", settings->forceLaunchAbsoluteVec3));
 
 				case GUIElementEnum::switchBSPGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIButtonAndInt<true>>
@@ -1040,6 +1103,12 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Disable Barriers (aka Soft Ceilings)"), RebindableHotkeyEnum::disableBarriers, "Disable Barriers", settings->disableBarriersToggle));
 
+				// Halo Campaign Evolved. Same setting and same hotkey as the MCC row above, but its own element
+				// so it can map to the HCEDisableBarriers cheat - see GUIRequiredServices.cpp.
+				case GUIElementEnum::hceDisableBarriersGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Disable Barriers (aka Soft Ceilings). Clears the engine's own soft-ceiling enable bits, so nothing pushes you back at the level boundaries. Re-applied automatically after checkpoint reverts."), RebindableHotkeyEnum::disableBarriers, "Disable Barriers##hce", settings->disableBarriersToggle));
+
 				case GUIElementEnum::soundClassGainAdjusterToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Adjust in-game volume levels by sound type"), std::nullopt, "Sound Gain Adjuster", settings->soundClassGainAdjusterToggle));
@@ -1100,6 +1169,8 @@ private:
 							createNestedElement(GUIElementEnum::viewAngleLine3DGUISettings),
 							createNestedElement(GUIElementEnum::triggerOverlayToggle),
 							createNestedElement(GUIElementEnum::triggerOverlaySettings),
+							createNestedElement(GUIElementEnum::hceTriggerOverlayToggleGUI),
+							createNestedElement(GUIElementEnum::hceTriggerOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::softCeilingOverlayToggle),
 							createNestedElement(GUIElementEnum::softCeilingOverlaySettings),
 							createNestedElement(GUIElementEnum::placementPointsOverlayToggle),
@@ -2108,6 +2179,85 @@ private:
 				case GUIElementEnum::hceFreecamTeleportToCamera:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
 						(game, ToolTipCollection("Teleports the player to the cameras position"), RebindableHotkeyEnum::freeCameraTeleportToCameraHotkey, "Teleport to Camera##hce", settings->freeCameraTeleportToCameraEvent));
+
+				// Halo Campaign Evolved trigger overlay. Every row here drives the SAME settings object as the MCC
+				// trigger overlay (HaloCER and MCC can never share a process), so presets and the existing Trigger
+				// Overlay hotkey carry over. Only the three hce* settings are new, and FOV is new because it is the
+				// one piece of HCE's camera that is not resolved - see HCETriggerOverlay.cpp.
+				case GUIElementEnum::hceTriggerOverlayToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Draws every trigger volume in the level as a wireframe box (or, for sector volumes, their real extruded polygon) with its name. Wireframe only: HaloCER renders through D3D12, where HCM has no depth buffer to sort filled faces against, so volumes are not hidden by walls."), RebindableHotkeyEnum::triggerOverlayToggleHotkey, "Trigger Overlay##hce", settings->triggerOverlayToggle));
+
+				case GUIElementEnum::hceTriggerOverlaySettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Settings for the trigger overlay"), "Trigger Overlay Settings##hce", headerChildElements
+							{
+								createNestedElement(GUIElementEnum::hceTriggerOverlayRenderStyle),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayRenderDistance),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayHighlightActive),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayActiveColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayShowVertex),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayVertexColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayVertexScale),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayAlpha),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayShowLabels),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayLabelScale),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayBoxColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlaySectorColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayWireframeAlpha),
+							}));
+
+				case GUIElementEnum::hceTriggerOverlayRenderStyle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::TriggerRenderStyle, 150.f>>
+						(game, ToolTipCollection("What style to render trigger volumes as. Halo Campaign Evolved renders through D3D12, where HCM has no depth buffer, so SOLID faces are sorted back-to-front against each other but are NOT hidden by walls."), "Render trigger volumes as: ", settings->triggerOverlayRenderStyle));
+
+				case GUIElementEnum::hceTriggerOverlayAlpha:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.1, 1.f)>>
+						(game, ToolTipCollection("Multiplies how opaque the SOLID faces are, from 0 (fully transparent) to 1 (fully opaque). Wireframe opacity is separate."), "Trigger Opacity Multiplier", settings->triggerOverlayAlpha));
+
+				case GUIElementEnum::hceTriggerOverlayHighlightActive:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Colour trigger volumes that the mission scripts are ACTIVELY testing right now differently from dormant ones. Most volumes lie dormant until a script wakes them, so this shows what could actually fire."), std::nullopt, "Highlight Active Triggers", settings->hceTriggerOverlayHighlightActive));
+
+				case GUIElementEnum::hceTriggerOverlayActiveColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of trigger volumes a mission script has tested in the last few seconds."), "Active Trigger Color", settings->hceTriggerOverlayActiveColor));
+
+				case GUIElementEnum::hceTriggerOverlayShowVertex:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Draws a sphere at the point the game uses to test the player against trigger volumes."), std::nullopt, "Show Trigger Vertex", settings->hceTriggerOverlayShowVertex));
+
+				case GUIElementEnum::hceTriggerOverlayVertexColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Color of the sphere drawn at the players trigger vertex"), "Trigger Vertex Color", settings->triggerOverlayPositionColor));
+
+				case GUIElementEnum::hceTriggerOverlayVertexScale:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.01f, 4.f)>>
+						(game, ToolTipCollection("Size of the sphere drawn at the players trigger vertex"), "Trigger Vertex Scale", settings->triggerOverlayPositionScale));
+
+				case GUIElementEnum::hceTriggerOverlayRenderDistance:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 500.f)>>
+						(game, ToolTipCollection("How far away a trigger volume is still drawn, in WORLD UNITS (1 world unit = 10 feet). The whole level's volumes at once is usually unreadable."), "Render Distance (world units)", settings->hceTriggerOverlayRenderDistance));
+
+				case GUIElementEnum::hceTriggerOverlayShowLabels:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Draw each volume's scripting name at its centre. Volumes whose name cannot be resolved are labelled trigger_<index>."), std::nullopt, "Show Labels##hce", settings->hceTriggerOverlayShowLabels));
+
+				case GUIElementEnum::hceTriggerOverlayLabelScale:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(6.f, 120.f)>>
+						(game, ToolTipCollection("How large the font size of the label should be, in pts"), "Label Font Size##hce", settings->triggerOverlayLabelScale));
+
+				case GUIElementEnum::hceTriggerOverlayBoxColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
+						(game, ToolTipCollection("Colour for box trigger volumes"), "Trigger Box Colour##hce", settings->triggerOverlayNormalColor));
+
+				case GUIElementEnum::hceTriggerOverlaySectorColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
+						(game, ToolTipCollection("Colour for sector trigger volumes (the ones whose footprint is a polygon rather than a box)"), "Trigger Sector Colour##hce", settings->triggerOverlaySectorColor));
+
+				case GUIElementEnum::hceTriggerOverlayWireframeAlpha:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("Opacity of the wireframe lines"), "Wireframe Opacity##hce", settings->triggerOverlayWireframeAlpha));
 
 				case GUIElementEnum::freeCameraSettingsSimpleSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>

@@ -5,6 +5,7 @@
 #include "IMCCStateHook.h"
 #include "RuntimeExceptionHandler.h"
 #include <TlHelp32.h>
+#include <cmath>
 
 // ================================================================================================================
 // Halo Campaign Evolved state resolution. Ported from HCM_Evolved (memory.py, action_sections/common.py).
@@ -49,37 +50,6 @@ namespace
 		LONG      BasePriority;
 	};
 
-	// Same idea as the reference tool's D3DHook GameMemory::IsReadable: ask the memory manager rather than
-	// poking the page. IsBadWritePtr in particular is not safe to use for this - it WRITES to test.
-	bool regionAllows(uintptr_t address, size_t size, bool needWrite)
-	{
-		if (address == 0 || size == 0) return false;
-		const uintptr_t end = address + size;
-		if (end < address) return false;
-
-		uintptr_t cursor = address;
-		while (cursor < end)
-		{
-			MEMORY_BASIC_INFORMATION mbi{};
-			if (VirtualQuery((void*)cursor, &mbi, sizeof(mbi)) == 0) return false;
-			if (mbi.State != MEM_COMMIT) return false;
-			if (mbi.Protect & PAGE_GUARD) return false;
-			if (mbi.Protect == PAGE_NOACCESS) return false;
-
-			constexpr DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY
-				| PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
-			constexpr DWORD writable = PAGE_READWRITE | PAGE_WRITECOPY
-				| PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
-
-			if ((mbi.Protect & (needWrite ? writable : readable)) == 0) return false;
-
-			const uintptr_t regionEnd = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
-			if (regionEnd <= cursor) return false;
-			cursor = regionEnd;
-		}
-		return true;
-	}
-
 	// SEH only. No C++ objects with destructors may live in these two - MSVC rejects __try in a function that
 	// requires object unwinding (C2712).
 	bool sehCopy(void* dest, const void* src, size_t size)
@@ -99,19 +69,24 @@ namespace
 
 bool HCEGetPlayerState::tryReadRaw(uintptr_t address, void* out, size_t size)
 {
-	// NOTE: deliberately NO regionAllows()/VirtualQuery precheck on the READ path.
-	// sehCopy already makes a bad read harmless - catching the access violation IS the safety mechanism - so the
-	// VirtualQuery was a kernel transition per read that bought nothing. It cost real frames: one position fetch
-	// walks TEB -> tls index -> tls array -> tls base -> player datum -> object -> havok index -> physics root ->
-	// table -> entry -> floats, and the info overlay did that for position AND velocity every refresh.
-	// Writes KEEP the precheck (tryWriteRaw): scribbling on a wrong-but-committed page is not recoverable by SEH.
+	// NOTE: deliberately NO VirtualQuery precheck. sehCopy already makes a bad read harmless - catching the access
+	// violation IS the safety mechanism - so the VirtualQuery was a kernel transition per read that bought nothing.
+	// It cost real frames: one position fetch walks TEB -> tls index -> tls array -> tls base -> player datum ->
+	// object -> havok index -> physics root -> table -> entry -> floats, and the info overlay did that for
+	// position AND velocity every refresh.
 	if (address == 0 || size == 0) return false;
 	return sehCopy(out, (const void*)address, size);
 }
 
 bool HCEGetPlayerState::tryWriteRaw(uintptr_t address, const void* in, size_t size)
 {
-	if (!regionAllows(address, size, true)) return false;
+	// The write path used to gate on regionAllows() while the read path did not. That asymmetry cost us a real
+	// bug: invulnerability's cannot_die write was the FIRST HCE feature to ever exercise this function, it
+	// returned false silently, and a silent false is indistinguishable from a successful write to every caller.
+	// Every address reaching here has been produced by a fully null-checked pointer walk out of the engine's own
+	// object table, so the VirtualQuery bought no safety that sehCopy does not already provide - it only added a
+	// kernel transition and a silent failure mode.
+	if (address == 0 || size == 0) return false;
 	return sehCopy((void*)address, in, size);
 }
 
@@ -150,6 +125,16 @@ private:
 	int64_t mFreecamToggleOffset = 0x9C8;
 	int64_t mCameraEntriesTlsOffset = 0x148;
 	int64_t mCameraEntryStride = 0x1AC;
+	int64_t mCameraPositionOffset = 0x20;
+	// s_player_control. The TLS slot is the SAME 0xB8 block the freecam toggle byte lives in (its +0x9C8 is
+	// the last flag byte of these player-control globals); it is named separately because it is a different
+	// structure inside that block, not because it is a different pointer.
+	int64_t mPlayerControlTlsOffset = 0xB8;
+	int64_t mPlayerControlArrayOffset = 0x80;
+	int64_t mPlayerControlStride = 0x198;
+	int64_t mPlayerControlUnitDatumOffset = 0x00;
+	int64_t mPlayerControlYawOffset = 0x14;
+	int64_t mPlayerControlPitchOffset = 0x18;
 
 	std::mutex mCacheMutex;
 	uintptr_t mCachedTeb = 0;
@@ -261,6 +246,13 @@ public:
 		hceOffset(mFreecamToggleOffset, hceFreecamToggleOffset);
 		hceOffset(mCameraEntriesTlsOffset, hceCameraEntriesTlsOffset);
 		hceOffset(mCameraEntryStride, hceCameraEntryStride);
+		hceOffset(mCameraPositionOffset, hceCameraPositionOffset);
+		hceOffset(mPlayerControlTlsOffset, hcePlayerControlTlsOffset);
+		hceOffset(mPlayerControlArrayOffset, hcePlayerControlArrayOffset);
+		hceOffset(mPlayerControlStride, hcePlayerControlStride);
+		hceOffset(mPlayerControlUnitDatumOffset, hcePlayerControlUnitDatumOffset);
+		hceOffset(mPlayerControlYawOffset, hcePlayerControlYawOffset);
+		hceOffset(mPlayerControlPitchOffset, hcePlayerControlPitchOffset);
 #undef hceOffset
 	}
 
@@ -342,11 +334,22 @@ public:
 
 	uintptr_t getFreecamToggleAddress() { return readTlsSlot(mFreecamToggleTlsOffset, "camera state") + mFreecamToggleOffset; }
 
-	uintptr_t getActiveCameraEntry() // throws
+	// Same walk as readTlsSlot but starting from an ALREADY resolved tls block, so a caller that wants two
+	// things out of the TLS pays for the TEB/index/array/base walk once. See getCameraView.
+	uintptr_t readSlotOf(uintptr_t tls, int64_t slotOffset, const char* what) // throws
 	{
-		const uintptr_t cameraEntries = readTlsSlot(mCameraEntriesTlsOffset, "camera list");
+		uintptr_t value = 0;
+		if (!HCEGetPlayerState::tryReadRaw(tls + slotOffset, &value, sizeof(value)) || !value)
+			throw HCMRuntimeException(std::format("HaloCER {} is not available right now", what));
+		return value;
+	}
 
-		// The slot BASE is the entry; the qword AT the slot is only the liveness test. First live slot wins.
+	uintptr_t activeCameraEntryOf(uintptr_t tls) // throws
+	{
+		const uintptr_t cameraEntries = readSlotOf(tls, mCameraEntriesTlsOffset, "camera list");
+
+		// The slot BASE is the entry; the qword AT the slot is only the liveness test (it is the director
+		// object's vtable pointer). First live slot wins.
 		for (int slot = 0; slot < 4; ++slot)
 		{
 			const uintptr_t candidate = cameraEntries + (uintptr_t)slot * mCameraEntryStride;
@@ -357,14 +360,87 @@ public:
 		throw HCMRuntimeException("No active HaloCER camera was found");
 	}
 
-	uint32_t getPlayerDatum() // throws
+	uintptr_t getActiveCameraEntry() { return activeCameraEntryOf(getTlsBase()); }
+
+	// s_player_control for the local player. Campaign is always index 0, but the array is scanned for the slot
+	// whose unit datum matches the player's so a co-op/observer setup cannot silently give us slot 0's angles.
+	// Falls back to slot 0 if no slot matches (the datum is 0xFFFFFFFF while dead / mid-load).
+	uintptr_t playerControlEntryOf(uintptr_t tls) // throws
 	{
-		const uintptr_t playerTable = readTlsSlot(mPlayerDatumTlsOffset, "player table");
+		const uintptr_t globals = readSlotOf(tls, mPlayerControlTlsOffset, "player control state");
+		const uintptr_t table = globals + mPlayerControlArrayOffset;
+
+		uint32_t wantDatum = 0xFFFFFFFFu;
+		try { wantDatum = playerDatumOf(tls); }
+		catch (HCMRuntimeException) { /* dead or mid-load: slot 0 is still the right guess */ }
+
+		if (wantDatum != 0xFFFFFFFFu)
+		{
+			for (int i = 0; i < 4; ++i)
+			{
+				const uintptr_t candidate = table + (uintptr_t)i * mPlayerControlStride;
+				uint32_t datum = 0;
+				if (HCEGetPlayerState::tryReadRaw(candidate + mPlayerControlUnitDatumOffset, &datum, sizeof(datum))
+					&& datum == wantDatum)
+					return candidate;
+			}
+		}
+		return table;
+	}
+
+	uintptr_t getPlayerControlEntry() { return playerControlEntryOf(getTlsBase()); }
+
+	// yaw and pitch are eight CONTIGUOUS bytes (a real_euler_angles3d whose roll at +0x1C is always 0 for the
+	// player), so they come back as one read.
+	SimpleMath::Vector2 viewAngleOf(uintptr_t control) // throws
+	{
+		float angles[2]{};
+		if (mPlayerControlPitchOffset == mPlayerControlYawOffset + 4)
+		{
+			if (!HCEGetPlayerState::tryReadRaw(control + mPlayerControlYawOffset, angles, sizeof(angles)))
+				throw HCMRuntimeException("Could not read the HaloCER view angle");
+		}
+		else
+		{
+			if (!HCEGetPlayerState::tryReadRaw(control + mPlayerControlYawOffset, &angles[0], sizeof(float))
+				|| !HCEGetPlayerState::tryReadRaw(control + mPlayerControlPitchOffset, &angles[1], sizeof(float)))
+				throw HCMRuntimeException("Could not read the HaloCER view angle");
+		}
+
+		// Radians. Anything outside these bounds means we are reading the wrong thing (or a half-written
+		// struct), and silently returning it would point every 3D overlay in a random direction.
+		if (!std::isfinite(angles[0]) || !std::isfinite(angles[1])
+			|| std::abs(angles[0]) > 7.f || std::abs(angles[1]) > 1.58f)
+			throw HCMRuntimeException("The HaloCER view angle is not available right now");
+
+		return SimpleMath::Vector2(angles[0], angles[1]);
+	}
+
+	SimpleMath::Vector2 getPlayerViewAngle() { return viewAngleOf(playerControlEntryOf(getTlsBase())); }
+
+	void getCameraView(SimpleMath::Vector3& outCameraPosition, SimpleMath::Vector2& outViewAngle) // throws
+	{
+		const uintptr_t tls = getTlsBase();     // ONE walk for both, see the PERF note at the top of this file
+		const uintptr_t cameraEntry = activeCameraEntryOf(tls);
+
+		float coords[3]{};
+		if (!HCEGetPlayerState::tryReadRaw(cameraEntry + mCameraPositionOffset, coords, sizeof(coords)))
+			throw HCMRuntimeException("Could not read the HaloCER camera position");
+		outCameraPosition = SimpleMath::Vector3(coords[0], coords[1], coords[2]);
+
+		outViewAngle = viewAngleOf(playerControlEntryOf(tls));
+	}
+
+	uint32_t playerDatumOf(uintptr_t tls) // throws
+	{
+		const uintptr_t playerTable = readSlotOf(tls, mPlayerDatumTlsOffset, "player table");
 		uint32_t datum = 0;
 		if (!HCEGetPlayerState::tryReadRaw(playerTable + mPlayerDatumOffset, &datum, sizeof(datum)))
 			throw HCMRuntimeException("Could not read the HaloCER player datum");
 		return datum;
 	}
+
+	uint32_t getPlayerDatum() { return playerDatumOf(getTlsBase()); }
 
 	uintptr_t getPlayerObject() // throws
 	{
@@ -507,17 +583,31 @@ public:
 		write3(getPlayerPhysicsEntry() + kVelocity, velocity, "player velocity");
 	}
 
+	// Read-modify-write on ONE chain walk. Composing this out of getPlayerVelocity + setPlayerVelocity would
+	// walk TLS->object->physics twice and could straddle a physics tick between the two.
+	SimpleMath::Vector3 addPlayerVelocity(SimpleMath::Vector3 delta) // throws
+	{
+		const uintptr_t entry = getPlayerPhysicsEntry();
+		const SimpleMath::Vector3 result = read3(entry + kVelocity, "player velocity") + delta;
+		write3(entry + kVelocity, result, "player velocity");
+		return result;
+	}
+
 	// The teleport. This is NOT a single position write: the havok body's centre and the biped object's origin
 	// sit at different points, and the delta between them has to be preserved or the biped snaps back / desyncs
 	// from its physics body on the next tick. Reproduces player_camera.py::_teleport_player_to_coordinates
 	// including the deliberate asymmetry - the OBJECT fields get the centre-compensated worldTranslation while
 	// the MOTION fields at 0x1B0/0x1C0/0x250/0x260 get the raw target.
-	void teleportPlayerTo(SimpleMath::Vector3 target) // throws
+	// relative == true means "value is an offset from the CURRENT position" - resolved here rather than by the
+	// caller so the whole thing still costs one chain walk and cannot straddle a physics tick. Returns the
+	// absolute position that was actually written.
+	SimpleMath::Vector3 teleportPlayerInternal(SimpleMath::Vector3 value, bool relative) // throws
 	{
 		const uintptr_t physicsEntry = getPlayerPhysicsEntry();
 		const uintptr_t playerObject = getPlayerObject();
 
 		const SimpleMath::Vector3 current = read3(physicsEntry + kPosition, "player position");
+		const SimpleMath::Vector3 target = relative ? (current + value) : value;
 		const SimpleMath::Vector3 translation = read3(physicsEntry + kMotionTranslation, "physics transform");
 
 		const SimpleMath::Vector3 centerOffset = current - translation;
@@ -538,8 +628,48 @@ public:
 		write3(physicsEntry + kPosition, target, "physics position");
 		write3(physicsEntry + kMotionExtra1, target, "physics position");
 		write3(physicsEntry + kMotionExtra2, target, "physics position");
+
+		return target;
 	}
+
+	void teleportPlayerTo(SimpleMath::Vector3 target) { teleportPlayerInternal(target, false); }
+	SimpleMath::Vector3 teleportPlayerBy(SimpleMath::Vector3 offset) { return teleportPlayerInternal(offset, true); }
 };
+
+
+// Pure math. Same basis MCC's ForceTeleport/ForceLaunch build, and the same one the engine itself uses: HCE's
+// sub_1802767D0 derives an up vector from a forward vector as (-f.z*f.x/r, -f.z*f.y/r, r) with r = |f.xy|,
+// which is algebraically identical to right x forward below.
+SimpleMath::Vector3 HCEGetPlayerState::lookRelativeOffset(SimpleMath::Vector2 viewAngle, SimpleMath::Vector3 forwardRightUp, bool ignoreVerticalLook)
+{
+	const float yaw = viewAngle.x;
+	const float pitch = viewAngle.y;
+
+	// Flattening onto the horizon is exact here, not a renormalisation: forward.xy is literally
+	// cos(pitch) * (cos(yaw), sin(yaw)), so dropping the cos(pitch) factor IS the horizontal direction. MCC
+	// instead divides by |x| + |y|, which is an L1 norm and leaves the vector between 0.71 and 1.0 long - so
+	// "forward 5" there actually moves 3.5 to 5. Doing it this way also removes MCC's divide-by-zero when the
+	// player is looking straight up or straight down.
+	SimpleMath::Vector3 forward = ignoreVerticalLook
+		? SimpleMath::Vector3(std::cos(yaw), std::sin(yaw), 0.f)
+		: SimpleMath::Vector3(std::cos(pitch) * std::cos(yaw), std::cos(pitch) * std::sin(yaw), std::sin(pitch));
+	forward.Normalize();
+
+	// right = forward x UnitZ. That cross product degenerates at both poles; substitute its exact limit rather
+	// than MCC's arbitrary UnitX, and cover the DOWN pole too (MCC only tests against +UnitZ, so looking
+	// straight down silently zeroes the right and up components there).
+	SimpleMath::Vector3 right = std::abs(forward.z) > 0.9999f
+		? SimpleMath::Vector3(std::sin(yaw), -std::cos(yaw), 0.f)
+		: forward.Cross(SimpleMath::Vector3::UnitZ);
+	right.Normalize();
+
+	SimpleMath::Vector3 up = right.Cross(forward);
+	up.Normalize();
+
+	return (forward * forwardRightUp.x)   // forward component of user input
+		+ (right * forwardRightUp.y)      // right component of user input
+		+ (up * forwardRightUp.z);        // up component of user input
+}
 
 
 HCEGetPlayerState::HCEGetPlayerState(GameState game, IDIContainer& dicon)
@@ -559,6 +689,9 @@ uintptr_t HCEGetPlayerState::getAiEnabledAddress() { return pimpl->getAiEnabledA
 uintptr_t HCEGetPlayerState::getSkullFlagsAddress() { return pimpl->getSkullFlagsAddress(); }
 uintptr_t HCEGetPlayerState::getFreecamToggleAddress() { return pimpl->getFreecamToggleAddress(); }
 uintptr_t HCEGetPlayerState::getActiveCameraEntry() { return pimpl->getActiveCameraEntry(); }
+uintptr_t HCEGetPlayerState::getPlayerControlEntry() { return pimpl->getPlayerControlEntry(); }
+SimpleMath::Vector2 HCEGetPlayerState::getPlayerViewAngle() { return pimpl->getPlayerViewAngle(); }
+void HCEGetPlayerState::getCameraView(SimpleMath::Vector3& outCameraPosition, SimpleMath::Vector2& outViewAngle) { pimpl->getCameraView(outCameraPosition, outViewAngle); }
 uint32_t  HCEGetPlayerState::getPlayerDatum() { return pimpl->getPlayerDatum(); }
 uintptr_t HCEGetPlayerState::getPlayerObject() { return pimpl->getPlayerObject(); }
 uintptr_t HCEGetPlayerState::getPlayerPhysicsEntry() { return pimpl->getPlayerPhysicsEntry(); }
@@ -567,6 +700,8 @@ SimpleMath::Vector3 HCEGetPlayerState::getPlayerVelocity() { return pimpl->getPl
 void HCEGetPlayerState::getPlayerPositionAndVelocity(SimpleMath::Vector3& outPosition, SimpleMath::Vector3& outVelocity) { pimpl->getPlayerPositionAndVelocity(outPosition, outVelocity); }
 void HCEGetPlayerState::setPlayerVelocity(SimpleMath::Vector3 velocity) { pimpl->setPlayerVelocity(velocity); }
 void HCEGetPlayerState::teleportPlayerTo(SimpleMath::Vector3 target) { pimpl->teleportPlayerTo(target); }
+SimpleMath::Vector3 HCEGetPlayerState::teleportPlayerBy(SimpleMath::Vector3 offset) { return pimpl->teleportPlayerBy(offset); }
+SimpleMath::Vector3 HCEGetPlayerState::addPlayerVelocity(SimpleMath::Vector3 delta) { return pimpl->addPlayerVelocity(delta); }
 std::string HCEGetPlayerState::getCurrentLevelName() { return pimpl->getCurrentLevelName(); }
 int32_t HCEGetPlayerState::getCurrentBSP() { return pimpl->getCurrentBSP(); }
 int32_t HCEGetPlayerState::getTickCounter() { return pimpl->getTickCounter(); }

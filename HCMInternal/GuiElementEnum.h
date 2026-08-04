@@ -46,10 +46,19 @@
 // AIFreeze on Halo2 and HCEFreezeAI on HaloCER. That is why HaloCER gets parallel hce* elements rather than the
 // MCC elements being widened - the same pattern hceForceCheckpointGUI already ships with.
 //
-// The hce* teleport/launch rows are absolute-coordinates only. HCE exposes no player view angle through any
-// chain the reference tool reversed, so there is no honest "relative to look direction" mode and hence no radio
-// group, applyToPlayer or customObject rows. They reuse the MCC settings/events/hotkeys because HaloCER and the
-// MCC games can never be in one process.
+// The hce* teleport/launch rows are absolute-coordinates only, so there is no radio group, applyToPlayer or
+// customObject row. (The player view angle IS now resolved - see hcePlayerControl* in InternalPointerData.xml
+// and HCEGetPlayerState::getPlayerViewAngle, which the trigger overlay uses - so a "relative to look direction"
+// mode is possible; it just hasn't been built yet.) They reuse the MCC settings/events/hotkeys because HaloCER
+// and the MCC games can never be in one process.
+//
+// TWO EXCEPTIONS to the "parallel hce* element" rule above, both deliberate:
+//   havokDebuggerGUI just gains HaloCER in its own tuple. requiredServicesPerGUIElement maps it to
+//   OptionalCheatEnum::HavokDebugger, which IS the correct cheat for HaloCER - HavokDebugger branches to
+//   HceHavokDebuggerBridge internally. Same for speedhackGUI -> OptionalCheatEnum::Speedhack, whose mechanism
+//   (hooking the timing exports) is engine-agnostic. Widening a tuple also costs no macro-nesting depth.
+//   The trigger overlay does NOT qualify: OptionalCheatEnum::TriggerOverlay is MCC-only code, so HaloCER gets
+//   parallel hceTriggerOverlay* elements in sequence 3 driving the SAME triggerOverlay* settings.
 #define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES1 \
 ((presetsHeadingGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((presetSaveButton, (ALL_GAMES_AND_MAINMENU)))\
@@ -114,10 +123,10 @@
 		((replayPlayGUI, (Halo2)))\
 		((replayStopPlaybackGUI, (Halo2)))\
 ((cheatsHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
-	((speedhackGUI, (ALL_SUPPORTED_GAMES)))\
-	((invulnGUI, (ALL_SUPPORTED_GAMES)))\
-	((invulnerabilitySettingsSubheading, (ALL_SUPPORTED_GAMES)))\
-	((invulnNPCGUI, (ALL_SUPPORTED_GAMES)))\
+	((speedhackGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
+	((invulnGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
+	((invulnerabilitySettingsSubheading, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
+	((invulnNPCGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((infiniteAmmoGUI, (Halo1, Halo2)))\
 	((bottomlessClipGUI, (Halo1, Halo2)))\
 	((season7PhysicsToggle, (Halo2)))\
@@ -142,7 +151,7 @@
 	((fpScaleFixLegSizeGUI, (Halo2)))\
 	((fpScaleFixLegTuckGUI, (Halo2)))\
 	((animationFixesToggle, (Halo2)))\
-	((havokDebuggerGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+	((havokDebuggerGUI, (Halo2, Halo3, Halo3ODST, HaloReach, HaloCER)))\
 	((masterTickrateEnableGUI, (Halo2)))\
 	((masterTickrateToggleGUI, (Halo2)))\
 	((masterTickrateCustomGUI, (Halo2)))\
@@ -430,13 +439,23 @@
 	((hceAiFreezeGUI, (HALOCER_ONLY)))\
 	((hceForceTeleportGUI, (HALOCER_ONLY)))\
 	((hceForceTeleportSettingsSubheading, (HALOCER_ONLY)))\
-		((hceForceTeleportAbsoluteVec3, (HALOCER_ONLY)))\
-		((hceForceTeleportAbsoluteFillCurrent, (HALOCER_ONLY)))\
-		((hceForceTeleportAbsoluteCopy, (HALOCER_ONLY)))\
-		((hceForceTeleportAbsolutePaste, (HALOCER_ONLY)))\
+		((hceForceTeleportSettingsRadioGroup, (HALOCER_ONLY)))\
+		((hceForceTeleportForward, (HALOCER_ONLY)))\
+			((hceForceTeleportRelativeVec3, (HALOCER_ONLY)))\
+			((hceForceTeleportForwardIgnoreZ, (HALOCER_ONLY)))\
+		((hceForceTeleportManual, (HALOCER_ONLY)))\
+			((hceForceTeleportAbsoluteVec3, (HALOCER_ONLY)))\
+			((hceForceTeleportAbsoluteFillCurrent, (HALOCER_ONLY)))\
+			((hceForceTeleportAbsoluteCopy, (HALOCER_ONLY)))\
+			((hceForceTeleportAbsolutePaste, (HALOCER_ONLY)))\
 	((hceForceLaunchGUI, (HALOCER_ONLY)))\
 	((hceForceLaunchSettingsSubheading, (HALOCER_ONLY)))\
-		((hceForceLaunchAbsoluteVec3, (HALOCER_ONLY)))\
+		((hceForceLaunchSettingsRadioGroup, (HALOCER_ONLY)))\
+		((hceForceLaunchForward, (HALOCER_ONLY)))\
+			((hceForceLaunchRelativeVec3, (HALOCER_ONLY)))\
+			((hceForceLaunchForwardIgnoreZ, (HALOCER_ONLY)))\
+		((hceForceLaunchManual, (HALOCER_ONLY)))\
+			((hceForceLaunchAbsoluteVec3, (HALOCER_ONLY)))\
 	((hceSkullToggleGUI, (HALOCER_ONLY)))\
 	((hceDisplayInfoToggleGUI, (HALOCER_ONLY)))\
 	((hceDisplayInfoSettingsInfoSubheading, (HALOCER_ONLY)))\
@@ -455,7 +474,23 @@
 			((hceDisplayInfoFloatPrecision, (HALOCER_ONLY)))\
 			((hceDisplayInfoOutline, (HALOCER_ONLY)))\
 	((hceFreecamToggleGUI, (HALOCER_ONLY)))\
-	((hceFreecamTeleportToCamera, (HALOCER_ONLY)))
+	((hceFreecamTeleportToCamera, (HALOCER_ONLY)))\
+	((hceTriggerOverlayToggleGUI, (HALOCER_ONLY)))\
+	((hceTriggerOverlaySettingsSubheading, (HALOCER_ONLY)))\
+			((hceTriggerOverlayRenderStyle, (HALOCER_ONLY)))\
+			((hceTriggerOverlayRenderDistance, (HALOCER_ONLY)))\
+			((hceTriggerOverlayShowVertex, (HALOCER_ONLY)))\
+			((hceTriggerOverlayVertexColour, (HALOCER_ONLY)))\
+			((hceTriggerOverlayVertexScale, (HALOCER_ONLY)))\
+			((hceTriggerOverlayHighlightActive, (HALOCER_ONLY)))\
+			((hceTriggerOverlayActiveColour, (HALOCER_ONLY)))\
+			((hceTriggerOverlayAlpha, (HALOCER_ONLY)))\
+			((hceTriggerOverlayShowLabels, (HALOCER_ONLY)))\
+			((hceTriggerOverlayLabelScale, (HALOCER_ONLY)))\
+			((hceTriggerOverlayBoxColour, (HALOCER_ONLY)))\
+			((hceTriggerOverlaySectorColour, (HALOCER_ONLY)))\
+			((hceTriggerOverlayWireframeAlpha, (HALOCER_ONLY)))\
+	((hceDisableBarriersGUI, (HALOCER_ONLY)))
 
 
 

@@ -11,7 +11,8 @@
 
 // ================================================================================================================
 // Halo Campaign Evolved 2D info overlay. Rows come from HCM_Evolved information.py, and ONLY what that file can
-// actually provide - there is no view angle, health, shields, tag name or custom-object tracking on HCE.
+// actually provide - no health, shields, tag name or custom-object tracking on HCE yet. (A view angle IS
+// available now, via HCEGetPlayerState::getPlayerViewAngle - it just has no row here.)
 //
 // Three of the seven rows are asymmetric in a way that has already cost time once (see HCEStateHook.cpp):
 //     current_level  simBase + 0xCA2F00   a NUL-terminated ASCII STRING (<=40 bytes), not an index

@@ -549,6 +549,11 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HCEForceTeleport.h" />
     <ClInclude Include="HCEForceLaunch.h" />
     <ClInclude Include="HCEFreecam.h" />
+    <ClInclude Include="HCETriggerOverlay.h" />
+    <ClInclude Include="HCETriggerActivity.h" />
+    <ClInclude Include="HCEInvulnerability.h" />
+    <ClInclude Include="HCEDisableBarriers.h" />
+    <ClInclude Include="HCEHavokDebuggerBridge.h" />
     <ClInclude Include="HCESkullEnum.h" />
     <ClInclude Include="GUIHCESkullToggle.h" />
     <ClInclude Include="HCEStateHook.h" />
@@ -749,6 +754,19 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">G:\SteamLibrary\steamapps\common\H3EK\havok-v5.1.0r1-b2007.09.19-main\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">HCM_HAVOK_AVAILABLE;TARGET_H3;_CRT_SECURE_NO_WARNINGS;__w64=;_FARQ=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <!-- Halo Campaign Evolved Havok VDB payload. Mirrors HavokDebuggerImpl.cpp above, with two deliberate
+         differences: NO TARGET_H3 (that gates the MCC-only code paths), and ExceptionHandling=Async - the
+         ported payload uses __try inside functions that hold C++ objects, which is C2712 under /EHsc. -->
+    <ClCompile Include="HCEHavokDebuggerImpl.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp14</LanguageStandard>
+      <ConformanceMode>false</ConformanceMode>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ExceptionHandling>Async</ExceptionHandling>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">G:\SteamLibrary\steamapps\common\H3EK\havok-v5.1.0r1-b2007.09.19-main\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">HCM_HAVOK_AVAILABLE;_CRT_SECURE_NO_WARNINGS;__w64=;_FARQ=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
     <ClCompile Include="AnimationFixes.cpp" />
     <ClCompile Include="SunScaleFix.cpp" />
     <ClCompile Include="MasterTickrate.cpp" />
@@ -835,6 +853,10 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="HCEForceTeleport.cpp" />
     <ClCompile Include="HCEForceLaunch.cpp" />
     <ClCompile Include="HCEFreecam.cpp" />
+    <ClCompile Include="HCETriggerOverlay.cpp" />
+    <ClCompile Include="HCETriggerActivity.cpp" />
+    <ClCompile Include="HCEInvulnerability.cpp" />
+    <ClCompile Include="HCEDisableBarriers.cpp" />
     <ClCompile Include="NaturalCheckpointDisable.cpp" />
     <ClCompile Include="PauseGame.cpp" />
     <ClCompile Include="ProggyVectorRegularFont.cpp" />

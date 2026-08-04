@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "HavokDebugger.h"
 #include "HavokDebuggerBridge.h"
+#include "HCEHavokDebuggerBridge.h"
 #include "IMCCStateHook.h"
 #include "IMessagesGUI.h"
 #include "SettingsStateAndEvents.h"
@@ -32,16 +33,39 @@ private:
 					return;
 				}
 
-				// 0 = Halo 3 (live Havok world), 1 = Halo 2 (static world BSP from tag), 2 = Halo 3: ODST (same engine), 3 = Halo Reach (newer Havok)
-				constexpr int gameId = (mGame == GameState::Value::Halo2) ? 1 : (mGame == GameState::Value::Halo3ODST) ? 2 : (mGame == GameState::Value::HaloReach) ? 3 : 0;
-				if (!HavokDebuggerBridge::start(gameId))
-					throw HCMRuntimeException("Couldn't start the Havok Debugger (game module not loaded).");
+				// Halo Campaign Evolved is a completely different engine (UE5 shell + HaloSimulation_tag_release.dll)
+				// and has its own ported payload behind its own bridge. See HCEHavokDebuggerBridge.h for why it is
+				// not just another game id.
+				if constexpr (mGame == GameState::Value::HaloCER)
+				{
+					if (!HceHavokDebuggerBridge::start())
+						throw HCMRuntimeException("Couldn't start the Havok Debugger. Either the Halo simulation dll isn't loaded yet (load a level first), or this game build moved the code the debugger locates by byte signature - check HCM_HCEHavokDebugger.log next to HCMInternal.dll.");
 
-				messagesGUI->addMessage("Havok Debugger on. Connect the Havok Visual Debugger to 127.0.0.1:25001.");
+					const int unresolved = HceHavokDebuggerBridge::unresolvedAnchorCount();
+					if (unresolved > 0)
+						messagesGUI->addMessage(std::format("Havok Debugger on, but {} engine signature(s) did not resolve - some viewers will be empty. See HCM_HCEHavokDebugger.log.", unresolved));
+					else
+						messagesGUI->addMessage("Havok Debugger on. Connect the Havok Visual Debugger to 127.0.0.1:25001. Viewers: Object Collision, World Collision, Center of Mass, Havok Islands, Trigger Volumes, Soft Ceilings.");
+
+					messagesGUI->addMessage("Note: the first world walk runs on the engine thread and will hitch the game for a moment.");
+				}
+				else
+				{
+					// 0 = Halo 3 (live Havok world), 1 = Halo 2 (static world BSP from tag), 2 = Halo 3: ODST (same engine), 3 = Halo Reach (newer Havok)
+					constexpr int gameId = (mGame == GameState::Value::Halo2) ? 1 : (mGame == GameState::Value::Halo3ODST) ? 2 : (mGame == GameState::Value::HaloReach) ? 3 : 0;
+					if (!HavokDebuggerBridge::start(gameId))
+						throw HCMRuntimeException("Couldn't start the Havok Debugger (game module not loaded).");
+
+					messagesGUI->addMessage("Havok Debugger on. Connect the Havok Visual Debugger to 127.0.0.1:25001.");
+				}
 			}
 			else
 			{
-				HavokDebuggerBridge::stop();
+				if constexpr (mGame == GameState::Value::HaloCER)
+					HceHavokDebuggerBridge::stop();
+				else
+					HavokDebuggerBridge::stop();
+
 				if (mccStateHook->isGameCurrentlyPlaying(mGame))
 					messagesGUI->addMessage("Havok Debugger off.");
 			}
@@ -78,13 +102,19 @@ HavokDebugger::HavokDebugger(GameState gameImpl, IDIContainer& dicon)
 	case GameState::Value::HaloReach:
 		pimpl = std::make_unique<HavokDebuggerImpl<GameState::Value::HaloReach>>(dicon);
 		break;
+	case GameState::Value::HaloCER:
+		pimpl = std::make_unique<HavokDebuggerImpl<GameState::Value::HaloCER>>(dicon);
+		break;
 	default:
-		throw HCMInitException("Havok Debugger supports Halo 2, Halo 3, Halo 3: ODST, and Halo Reach");
+		throw HCMInitException("Havok Debugger supports Halo 2, Halo 3, Halo 3: ODST, Halo Reach, and Halo Campaign Evolved");
 	}
 }
 
 HavokDebugger::~HavokDebugger()
 {
 	PLOG_VERBOSE << "~" << getName();
+	// Both are safe to call unconditionally - each is a no-op when its payload was never started, and
+	// the two games can never share a process anyway.
 	HavokDebuggerBridge::stop();
+	HceHavokDebuggerBridge::stop();
 }

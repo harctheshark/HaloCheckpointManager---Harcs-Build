@@ -4,12 +4,12 @@
 #include "GameState.h"
 #include "DIContainer.h"
 
-// Halo Campaign Evolved ONLY. Teleports the player to absolute world coordinates.
+// Halo Campaign Evolved ONLY. Teleports the player, either to absolute world coordinates or by a
+// forward/right/up offset relative to their look direction - the same two modes MCC's ForceTeleport offers.
 //
-// SCOPE NOTE: unlike MCC's ForceTeleport there is no "relative to player look direction" mode and no
-// "apply to custom object" mode. HCE exposes no player view angle through any chain the reference tool
-// reversed (HCM_Evolved's own teleport is absolute-coordinates only), and there is no object-datum path either.
-// Shipping a relative mode would mean guessing at a forward vector, which is worse than not shipping one.
+// SCOPE NOTE: player only. MCC additionally offers "apply to custom object", which needs a validated
+// datum -> object physics resolver; HCE has none, and the eight-write teleport sequence was reversed against
+// the player biped specifically.
 //
 // teleportPlayerTo is public so HCEFreecam can reuse it, mirroring how MCC's FreeCamera calls ForceTeleport.
 class HCEForceTeleport : public IOptionalCheat

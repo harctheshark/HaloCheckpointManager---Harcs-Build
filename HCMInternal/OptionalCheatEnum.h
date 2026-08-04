@@ -156,7 +156,10 @@ HCEDisplayInfo,\
 HCESkullToggler,\
 HCEForceTeleport,\
 HCEForceLaunch,\
-HCEFreecam
+HCEFreecam,\
+HCETriggerOverlay,\
+HCETriggerActivity,\
+HCEDisableBarriers
 
 
 enum class OptionalCheatEnum {

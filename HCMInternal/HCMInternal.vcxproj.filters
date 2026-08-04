@@ -229,6 +229,21 @@
     <ClInclude Include="HCEFreecam.h">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClInclude>
+    <ClInclude Include="HCETriggerOverlay.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HCETriggerActivity.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HCEInvulnerability.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HCEDisableBarriers.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HCEHavokDebuggerBridge.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
     <ClInclude Include="HCESkullEnum.h">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClInclude>
@@ -1312,6 +1327,21 @@
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClCompile>
     <ClCompile Include="HCEFreecam.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCEInvulnerability.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCEDisableBarriers.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCETriggerOverlay.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCETriggerActivity.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HCEHavokDebuggerImpl.cpp">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClCompile>
     <ClCompile Include="NaturalCheckpointDisable.cpp">

@@ -20,6 +20,9 @@
 #include "HCEForceTeleport.h"
 #include "HCEForceLaunch.h"
 #include "HCEFreecam.h"
+#include "HCETriggerOverlay.h"
+#include "HCETriggerActivity.h"
+#include "HCEDisableBarriers.h"
 
 #include "InjectCheckpoint.h"
 #include "InjectCore.h"

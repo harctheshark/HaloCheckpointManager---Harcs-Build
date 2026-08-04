@@ -1167,6 +1167,55 @@ public:
 			nameof(hceDisplayInfoShowTEB)
 		);
 
+	// Halo Campaign Evolved trigger overlay. It reuses triggerOverlayToggle (and therefore the existing
+	// Trigger Overlay hotkey), triggerOverlayNormalColor, triggerOverlaySectorColor and
+	// triggerOverlayLabelScale verbatim; only these two are HCE-specific.
+	//
+	// There is deliberately no FOV setting: the overlay reads the UE5 render camera's horizontal FOV live
+	// (APlayerCameraManager::DoUpdateCamera midhook -> POV.FOV). See HCETriggerOverlay.cpp.
+
+	// WORLD units (1 world unit = 10 feet), NOT the MCC-scaled renderDistance3D. 50 matches the reference
+	// tool's default.
+	std::shared_ptr<BinarySetting<float>> hceTriggerOverlayRenderDistance = std::make_shared<BinarySetting<float>>
+		(
+			50.f,
+			[](float in) { return in >= 1.f && in <= 2000.f; },
+			nameof(hceTriggerOverlayRenderDistance)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowLabels = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceTriggerOverlayShowLabels)
+		);
+
+	// The player's trigger test point, drawn as a sphere - HCE's equivalent of the MCC overlay's
+	// triggerOverlayPositionToggle. Reuses triggerOverlayPositionColor and triggerOverlayPositionScale.
+	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowVertex = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceTriggerOverlayShowVertex)
+		);
+
+	// Colour volumes the mission scripts are ACTIVELY testing differently from dormant ones. "Active" means a
+	// HaloScript thread evaluated the volume within the last few seconds - see HCETriggerActivity. Volumes that
+	// are never tested stay the normal colour, so this reads as "what could actually fire right now".
+	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayHighlightActive = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceTriggerOverlayHighlightActive)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceTriggerOverlayActiveColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(0.f, 1.f, 0.2f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceTriggerOverlayActiveColor)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> hideHUDToggle = std::make_shared<BinarySetting<bool>>
 		(
 			false,
@@ -2482,6 +2531,11 @@ public:
 		hceDisplayInfoShowTick,
 		hceDisplayInfoShowPlayerDatum,
 		hceDisplayInfoShowTEB,
+		hceTriggerOverlayRenderDistance,
+		hceTriggerOverlayShowLabels,
+		hceTriggerOverlayShowVertex,
+		hceTriggerOverlayHighlightActive,
+		hceTriggerOverlayActiveColor,
 		editPlayerViewAngleVec2,
 		editPlayerViewAngleAdjustFactor,
 		editPlayerViewAngleIDInt,

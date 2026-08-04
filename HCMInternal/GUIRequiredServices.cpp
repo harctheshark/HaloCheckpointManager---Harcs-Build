@@ -226,6 +226,21 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{ GUIElementEnum::hceForceTeleportSettingsSubheading,
 			{OptionalCheatEnum::HCEForceTeleport}
 	},
+	{ GUIElementEnum::hceForceTeleportSettingsRadioGroup,
+			{OptionalCheatEnum::HCEForceTeleport}
+	},
+	{ GUIElementEnum::hceForceTeleportForward,
+			{OptionalCheatEnum::HCEForceTeleport}
+	},
+	{ GUIElementEnum::hceForceTeleportRelativeVec3,
+			{OptionalCheatEnum::HCEForceTeleport}
+	},
+	{ GUIElementEnum::hceForceTeleportForwardIgnoreZ,
+			{OptionalCheatEnum::HCEForceTeleport}
+	},
+	{ GUIElementEnum::hceForceTeleportManual,
+			{OptionalCheatEnum::HCEForceTeleport}
+	},
 	{ GUIElementEnum::hceForceTeleportAbsoluteVec3,
 			{OptionalCheatEnum::HCEForceTeleport}
 	},
@@ -242,6 +257,21 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 			{OptionalCheatEnum::HCEForceLaunch}
 	},
 	{ GUIElementEnum::hceForceLaunchSettingsSubheading,
+			{OptionalCheatEnum::HCEForceLaunch}
+	},
+	{ GUIElementEnum::hceForceLaunchSettingsRadioGroup,
+			{OptionalCheatEnum::HCEForceLaunch}
+	},
+	{ GUIElementEnum::hceForceLaunchForward,
+			{OptionalCheatEnum::HCEForceLaunch}
+	},
+	{ GUIElementEnum::hceForceLaunchRelativeVec3,
+			{OptionalCheatEnum::HCEForceLaunch}
+	},
+	{ GUIElementEnum::hceForceLaunchForwardIgnoreZ,
+			{OptionalCheatEnum::HCEForceLaunch}
+	},
+	{ GUIElementEnum::hceForceLaunchManual,
 			{OptionalCheatEnum::HCEForceLaunch}
 	},
 	{ GUIElementEnum::hceForceLaunchAbsoluteVec3,
@@ -561,6 +591,25 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	},
 	{ GUIElementEnum::hceFreecamTeleportToCamera,
 {OptionalCheatEnum::HCEFreecam, OptionalCheatEnum::HCEForceTeleport}
+	},
+
+	// Halo Campaign Evolved trigger overlay. Parallel hce* elements rather than widening triggerOverlayToggle,
+	// because requiredServicesPerGUIElement is keyed by ELEMENT only - reusing the MCC element would map
+	// HaloCER onto the MCC TriggerOverlay cheat, which has no HaloCER pointer data at all. The SETTINGS are
+	// still shared (HaloCER and MCC can never be the same process), so the leaf rows hang off the same
+	// triggerOverlay* settings the MCC overlay uses and need no service entry of their own.
+	{ GUIElementEnum::hceTriggerOverlayToggleGUI,
+{OptionalCheatEnum::HCETriggerOverlay}
+	},
+	{ GUIElementEnum::hceTriggerOverlaySettingsSubheading,
+{OptionalCheatEnum::HCETriggerOverlay}
+	},
+
+	// Same reasoning as the trigger overlay above: the MCC disableBarriersToggle element is keyed to the MCC
+	// DisableBarriers cheat (a code patch with no HaloCER pointer data), so HaloCER needs its own element. The
+	// disableBarriersToggle SETTING and hotkey are still shared.
+	{ GUIElementEnum::hceDisableBarriersGUI,
+{OptionalCheatEnum::HCEDisableBarriers}
 	},
 
 			{ GUIElementEnum::freeCameraTeleportToCamera,

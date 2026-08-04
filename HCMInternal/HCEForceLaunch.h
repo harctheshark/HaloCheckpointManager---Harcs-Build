@@ -4,12 +4,14 @@
 #include "GameState.h"
 #include "DIContainer.h"
 
-// Halo Campaign Evolved ONLY. Sets the player's world-space velocity (physicsEntry + 0x230).
+// Halo Campaign Evolved ONLY. Changes the player's world-space velocity (physicsEntry + 0x230).
 //
-// SCOPE NOTE: absolute world-axis velocity only. MCC's ForceLaunch also offers a look-direction-relative mode,
-// which needs a player view angle - HCE exposes none through any chain the reference tool reversed. Note also
-// that HCE's primitive is a SET, not an add: this replaces the velocity rather than adding to it, matching
-// HCM_Evolved player_camera.py::set_player_velocity and MCC's own absolute branch.
+// Same two modes as MCC's ForceLaunch, including MCC's deliberate asymmetry: the absolute mode SETS the
+// velocity, the look-relative mode ADDS to it.
+//
+// SCOPE NOTE: player only. MCC additionally offers "apply to custom object", which needs a validated
+// datum -> object physics resolver; HCE has none, and the velocity field offset was reversed against the
+// player biped.
 class HCEForceLaunch : public IOptionalCheat
 {
 private:

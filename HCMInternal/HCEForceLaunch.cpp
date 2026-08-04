@@ -10,8 +10,16 @@
 // Halo Campaign Evolved Force Launch. One 12-byte write at physicsEntry + 0x230
 // (HCM_Evolved player_camera.py::set_player_velocity). No re-apply - it is a one-shot, like MCC's.
 //
-// Reuses forceLaunchEvent / forceLaunchAbsoluteVec3 and the forceLaunch hotkey; HaloCER and MCC can never share a
+// Reuses forceLaunchEvent / forceLaunch* settings and the forceLaunch hotkey; HaloCER and MCC can never share a
 // process, so there is only ever one listener.
+//
+// Two modes, mirroring MCC exactly - including the asymmetry, which is deliberate on MCC's side and kept here:
+//   * Manual   - REPLACES the velocity with the absolute world-axis vector.
+//   * Relative - ADDS forward/right/up relative to the player's look direction, with an optional "ignore
+//                vertical look angle". Basis from HCEGetPlayerState::lookRelativeOffset; the view angle is in
+//                the same world frame as the velocity field (see the comment on that function).
+//
+// NOT ported: "apply to custom object" - see the same note in HCEForceTeleport.cpp.
 
 class HCEForceLaunch::HCEForceLaunchImpl
 {
@@ -37,11 +45,38 @@ private:
 			lockOrThrow(settingsWeak, settings);
 			lockOrThrow(playerStateWeak, playerState);
 
-			const auto velocity = settings->forceLaunchAbsoluteVec3->GetValue();
-			playerState->setPlayerVelocity(velocity);
+			// Shared with MCC, so the pair can arrive invalid (neither set, or both). XOR is true exactly when
+			// the state is valid. Same repair MCC's ForceLaunch does.
+			if ((settings->forceLaunchManual->GetValue() ^ settings->forceLaunchForward->GetValue()) == false)
+			{
+				settings->forceLaunchManual->GetValueDisplay() = false;
+				settings->forceLaunchManual->UpdateValueWithInput();
+				settings->forceLaunchForward->GetValueDisplay() = true;
+				settings->forceLaunchForward->UpdateValueWithInput();
+				lockOrThrow(messagesGUIWeak, messagesGUI);
+				messagesGUI->addMessage("Force Launch radio button was in invalid state. \nHCM has set it to a valid state (relative)");
+			}
+
+			SimpleMath::Vector3 velocity;
+			if (settings->forceLaunchManual->GetValue())
+			{
+				velocity = settings->forceLaunchAbsoluteVec3->GetValue();
+				playerState->setPlayerVelocity(velocity);
+			}
+			else
+			{
+				const auto viewAngle = playerState->getPlayerViewAngle();
+				const auto delta = HCEGetPlayerState::lookRelativeOffset(
+					viewAngle,
+					settings->forceLaunchRelativeVec3->GetValue(),
+					settings->forceLaunchForwardIgnoreZ->GetValue());
+
+				velocity = playerState->addPlayerVelocity(delta);
+			}
 
 			lockOrThrow(messagesGUIWeak, messagesGUI);
-			messagesGUI->addMessage(std::format("Velocity set to {:.2f}, {:.2f}, {:.2f}", velocity.x, velocity.y, velocity.z));
+			// "now", not "set to" - the relative branch ADDS, so the number below is the resulting velocity.
+			messagesGUI->addMessage(std::format("Velocity now {:.2f}, {:.2f}, {:.2f}", velocity.x, velocity.y, velocity.z));
 		}
 		catch (HCMRuntimeException ex)
 		{
