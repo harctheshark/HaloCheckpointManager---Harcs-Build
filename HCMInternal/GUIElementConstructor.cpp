@@ -543,6 +543,7 @@ private:
 							createNestedElement(GUIElementEnum::consoleCommandSettings),
 							createNestedElement(GUIElementEnum::disableBarriersToggle),
 							createNestedElement(GUIElementEnum::hceDisableBarriersGUI),
+							createNestedElement(GUIElementEnum::hceSkyFixGUI),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterToggle),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterSettings),
 							createNestedElement(GUIElementEnum::dropShadowsOnObjectsToggle),
@@ -2241,6 +2242,10 @@ private:
 								createNestedElement(GUIElementEnum::hceTriggerOverlaySectorColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayWireframeAlpha),
 							}));
+
+				case GUIElementEnum::hceSkyFixGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Stops the sky and world lighting vanishing when you go out of bounds. It works by keeping World Partition streaming areas from tearing down when you leave them. NOTE: turn it on while you are still IN bounds - if you enable it after the sky has already gone, walk back in once and it will hold from then on. Leaving it on for a whole level keeps every area you have visited loaded, so expect memory to grow and streaming to hitch on large levels; turn it off when you are done."), std::nullopt, "Sky Fix", settings->hceSkyFixToggle));
 
 				case GUIElementEnum::hceTriggerOverlayRenderStyle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::TriggerRenderStyle, 150.f>>

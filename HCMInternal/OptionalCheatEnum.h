@@ -160,7 +160,8 @@ HCEForceLaunch,\
 HCEFreecam,\
 HCETriggerOverlay,\
 HCETriggerActivity,\
-HCEDisableBarriers
+HCEDisableBarriers,\
+HCESkyFix
 
 
 enum class OptionalCheatEnum {

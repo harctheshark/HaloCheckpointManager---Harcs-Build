@@ -479,6 +479,7 @@
 			((hceDisplayInfoOutline, (HALOCER_ONLY)))\
 	((hceFreecamToggleGUI, (HALOCER_ONLY)))\
 	((hceFreecamTeleportToCamera, (HALOCER_ONLY)))\
+	((hceSkyFixGUI, (HALOCER_ONLY)))\
 	((hceTriggerOverlayToggleGUI, (HALOCER_ONLY)))\
 	((hceTriggerOverlaySettingsSubheading, (HALOCER_ONLY)))\
 			((hceTriggerOverlayRenderStyle, (HALOCER_ONLY)))\

@@ -1192,6 +1192,15 @@ public:
 
 	// The player's trigger test point, drawn as a sphere - HCE's equivalent of the MCC overlay's
 	// triggerOverlayPositionToggle. Reuses triggerOverlayPositionColor and triggerOverlayPositionScale.
+	// Keeps World Partition streaming areas from tearing down when the player leaves them, which is what makes
+	// the sky and lighting vanish out of bounds. Default OFF - see HCESkyFix.h for the accumulation caveat.
+	std::shared_ptr<BinarySetting<bool>> hceSkyFixToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceSkyFixToggle)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowVertex = std::make_shared<BinarySetting<bool>>
 		(
 			false,
@@ -2609,6 +2618,7 @@ public:
 		hceDisplayInfoShowTEB,
 		hceTriggerOverlayRenderDistance,
 		hceTriggerOverlayShowLabels,
+		hceSkyFixToggle,
 		hceTriggerOverlayShowVertex,
 		hceTriggerOverlayHighlightActive,
 		hceTriggerOverlayActiveColor,

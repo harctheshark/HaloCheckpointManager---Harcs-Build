@@ -60,6 +60,9 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{GUIElementEnum::hceNaturalCheckpointDisableGUI,
 			{OptionalCheatEnum::HCECheckpointDetours}
 	},
+	{GUIElementEnum::hceSkyFixGUI,
+			{OptionalCheatEnum::HCESkyFix}
+	},
 	{GUIElementEnum::forceRevertGUI,
 			{OptionalCheatEnum::ForceRevert}
 	},

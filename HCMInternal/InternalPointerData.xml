@@ -3731,6 +3731,155 @@
 	</VersionedEntry>
 
 
+	<!--⚠⚠ DISPROVEN AS A SKY FIX - KEPT ONLY SO NOBODY RE-DERIVES IT. Nothing reads these entries today.
+	    Tested in game: holding this value does NOT stop the sky de-rendering out of bounds. Worse, the field
+	    never even reached the "detached" state - it read a CONSTANT 0x0001 (bsp 1, cluster 0) everywhere in the
+	    level, in bounds and out, while the sky was gone. Same for the player-array reference at +0x3B4 below.
+	    A live cluster reference would change as you cross clusters; these do not, so neither is tracking
+	    position at all, whatever the disassembly suggests.
+	    Together with: the scenario having NO skies block, nothing in either binary indexing the 84-byte cluster
+	    records, and the exe never reading the attachment - the sky is NOT gated by cluster attachment. It is
+	    UE5 art hidden by UE5 (level streaming is the leading suspect). Look there, not here.
+
+	    The player object's BSP/cluster attachment - an s_cluster_reference embedded in the object datum.
+	        object = *(*(*(tls + 0x20) + 0x50) + 0x18*(u16 datum) + 0x10)     (the existing HCM chain)
+	        +0x08  int8   structure BSP index, 0xFF = not attached
+	        +0x09  uint8  cluster index, 0..255
+	    Read the pair as a u16; detached = 0xFFFF.
+
+	    The BSP byte is SIGNED: object_get_bsp (sim rva 0x1B6380) does `movsx eax, byte ptr [rcx+8]` at
+	    0x1B6405. sub_18006D5C0 is a dedicated predicate that is literally `return object[+8] != 0xFF`.
+
+	    Its confirmed consumer is the PVS: sub_18020AED0 (sim rva 0x20AED0), called per tick from the tick
+	    update sub_180206D60 at rva 0x20819F, evaluates
+	        pvs_bits[8*bsp + (cluster>>5)] & (1 << (cluster & 31))
+	    i.e. a 256-bit-per-BSP cluster vector (256 = MAXIMUM_CLUSTERS_PER_STRUCTURE). Sound/effect placement
+	    (0x4E340, 0x59C70, 0x59DDC0, 0x5AAFF0) and AI (0x79AD0, 0xB9030) also read it.
+
+	    ⚠ USED ONLY BY THE EXPERIMENTAL SKY FIX PROBE. Two things are NOT established:
+	      * No path was found by which HaloCampaignEvolved.exe reads this field out of the sim - taint analysis
+	        over the exe's 43.8M instructions found ZERO object-fetch -> byte[+8] sequences, against 5 in the
+	        sim. The sky is UE5 art. So holding this may do nothing for the sky.
+	      * The engine's WRITER was not located, so we cannot prove re-attachment is unconditional. The probe
+	        only writes when the field reads 0xFFFF, so the engine always wins IF its writer is unconditional -
+	        but if re-attach is gated on being currently attached (a real Blam idiom) holding a stale value
+	        could strand the player outside the PVS. That is what the probe exists to find out.
+	    Memory safety is fine either way: a previously-VALID pair keeps bsp indexing a fixed 8-dword row and
+	    (cluster & 31) inside it, so the PVS lookup cannot go out of bounds.-->
+	<VersionedEntry Name="hceObjectClusterReferenceOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x8</Data>
+		</Version>
+	</VersionedEntry>
+
+	<!--⚠ UNUSED. Correct as RE, but it never got to prove anything about the sky: the detach state it was meant
+	    to trigger on never occurred (see the disproven note above), so this override was never applied in game.
+	    Kept because the mechanism is real and genuinely useful if anything ever needs to force the PVS.
+
+	    The PVS override, which is the engine's OWN supported way to say "compute visibility from THIS cluster".
+	        globals = *(uintptr*)(tls + 0x60)
+	        globals + 0x1F7F6  u16 mode   1 = derive the cluster from an object datum
+	                                      2 = USE THE STORED CLUSTER REFERENCE DIRECTLY
+	        globals + 0x1F7F8           mode 1: object datum (DWORD) ; mode 2: cluster reference (WORD)
+	    These are exactly what the shipped HaloScript functions write: pvs_set_object (evaluator sim rva
+	    0x1E0820) sets mode 1, pvs_set_camera (evaluator sim rva 0x1E08C0) sets mode 2, pvs_clear (0x1E09D0)
+	    resets. The consumer is sub_18020AED0 (rva 0x20AED0), called once per tick from sub_180206D60:
+	        mode 1 -> walk the object datum to its ROOT object and use root[+0x08]
+	        mode 2 -> v38 = *(WORD*)(globals + 0x1F7F8)                       <- direct, no object involved
+	        then if ((BYTE)v38 != 0xFF) do the PVS gather.
+
+	    ★ MODE 2 IS STICKY. Nothing rewrites the mode per tick - the only other writer is sub_1802069D0
+	    (0x206A99), reachable only from the game-state restore / level-teardown paths. So a ONE-SHOT write
+	    wins, which is the whole point: the first version of this probe polled object+0x08 every 50 ms against
+	    a per-tick recompute and lost the race, and holding that field changed nothing in game.
+
+	    ⚠ THE TWO MODES SHARE globals+0x1F7F8 WITH DIFFERENT WIDTHS - mode 1 keeps a DWORD datum there, mode 2
+	    a WORD cluster reference. Writing mode 2 destroys the datum, so save the original mode AND the full
+	    dword and restore both together.
+
+	    Corroboration that tls+0x60 is this block: HCEGetPlayerState::getSkullFlagsAddress is
+	    *(tls + 0x60) + 0x1EBE0, i.e. the skull flags live in the same globals block just below these fields.
+
+	    ⚠ Also note the per-player PVS gather reads a DIFFERENT cluster reference - player+0x3B4, in the player
+	    array (*(qword*)(*(qword*)(tls+0x28)+0x50), stride 0xD10), whose detach is a literal
+	    `mov word ptr [rcx+r8+3B4h], 0FFFFh` at sim rva 0x79E1C. That is the next thing to try if the mode-2
+	    override does nothing. (The tls+0x28 base for that chain is UNVERIFIED.)-->
+	<VersionedEntry Name="hcePvsGlobalsTlsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x60</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePvsModeOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x1F7F6</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hcePvsValueOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x1F7F8</Data>
+		</Version>
+	</VersionedEntry>
+
+
+	<!-- #region hceSkyFix-->
+	<!--Sky Fix. Keeps the sky (and the world's lighting) rendering when the player goes out of bounds.
+
+	    ⚠ THE BLAM SIM IS NOT INVOLVED - see the DISPROVEN note above. This is UE5 World Partition data layers.
+	    The game is World Partition, not classic streaming sub-levels: the cook layout is
+	    <Map>/<MapName>/_Generated_/<hash>.umap, with 15,063 generated packages under Levels/Halo1 alone.
+
+	    AHaloWorldStreamingAreaActor::RemoveOccupant, exe rva 0x95B1350, runs when the player pawn's last local
+	    overlap with a streaming area ends:
+
+	        95B1376  sub dword ptr [rdi+2D8h], 1    ; decrement the occupant refcount
+	        95B137D  jne  1495B140B                 ; NON-ZERO -> the whole teardown is SKIPPED
+	        95B139D  mov  byte ptr [rcx+101h], 0    ; StreamingSourceComponent->bStreamingSourceEnabled = false
+	        95B13D6  call 1495B2410                 ; ReleaseDataLayerRef, per AffectedDataLayers element
+	        95B1406  call 1495B29D0                 ; unregister camera grids
+
+	    ReleaseDataLayerRef demotes a data layer from Activated(2) to Loaded(1) and has EXACTLY ONE CALL SITE IN
+	    THE ENTIRE 177 MB .text - the one above. So preventing the 1->0 transition blocks 100% of the module's
+	    demotion path. RemoveOccupant is not virtual (no qword references anywhere in the image) and has only
+	    two call sites (0x95B099C execOnPawnControllerChanged, 0x95B16E2 NotifyActorEndOverlap), so one hook
+	    covers every exit.
+
+	    HCM therefore CLAMPS the refcount to 2 in a midhook at the function entry, where RCX is the actor. The
+	    game's own `sub` then lands on >= 1, ZF=0, and the teardown never runs. No code patch, no pointer chain.
+	    ⚠ CLAMP, NOT INCREMENT: the `sub` consumes the bump so clamping converges on exactly 1, whereas a blind
+	    ++ drifts upward once per enter/exit cycle.
+
+	    Supporting offsets (reflection record AND the machine code that uses them):
+	        AHaloWorldStreamingAreaActor sizeof 0x368 (from AllowAreaStreamingSource's SizeOfOuter)
+	        +0x2D8 int32 occupant refcount   <- what we clamp
+	        +0x2E0 UWorldPartitionStreamingSourceComponent*
+	        +0x2E8/+0x2F0 AffectedDataLayers TArray Data/Num, element stride 0x28
+	        +0x348 bool AllowAreaStreamingSource
+
+	    ⚠ THE ONE CRASH-CLASS RISK is +0x2D8 not being the refcount, which is why the hook refuses to install
+	    unless these 51 bytes match. The signature deliberately SPANS THE DECREMENT ITSELF
+	    (83 AF D8 02 00 00 01), so a match proves the site, the offset and the jne-skips-teardown structure at
+	    once. Read back from the shipped exe at file offset 0x95B0950. HCE reports version 0.0.0.0 for every
+	    build, so Version= cannot detect a game update - THIS GUARD IS THE ONLY PROTECTION, do not remove it.
+
+	    ⚠ Known limits, all surfaced in the GUI tooltip: enabling while ALREADY out of bounds cannot restore
+	    layers that are already demoted (walk back in once); disabling leaves pinned areas believing the player
+	    is inside until their next real exit; and leaving it on for a whole level keeps every visited area's
+	    streaming source enabled, so cells accumulate (B40 has 3482 runtime cells) - hence default OFF.-->
+	<VersionedEntry Name="hceSkyFixRemoveOccupantFunction" Type="MultilevelPointer::ExeOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offsets>
+				<Offset>0x95B1350</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceSkyFixRemoveOccupantOriginalBytes" Type="Vector" Typename="byte">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x48, 0x89, 0x74, 0x24, 0x20, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B, 0xF9, 0xE8, 0x2E, 0x55, 0x5E, 0xFC, 0x48, 0x8B, 0xC8, 0xE8, 0xD6, 0x1C, 0x00, 0x00, 0x48, 0x8B, 0xF0, 0x48, 0x85, 0xC0, 0x0F, 0x84, 0x95, 0x00, 0x00, 0x00, 0x83, 0xAF, 0xD8, 0x02, 0x00, 0x00, 0x01, 0x0F, 0x85, 0x88, 0x00, 0x00, 0x00</Data>
+		</Version>
+	</VersionedEntry>
+	<!-- #endregion hceSkyFix-->
+
+
 	<!-- #region hceCameraManager-->
 	<!--
 		The UE5 render camera, for the trigger overlay's field of view.
