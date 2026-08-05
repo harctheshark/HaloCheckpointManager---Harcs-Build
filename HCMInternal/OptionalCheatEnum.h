@@ -161,7 +161,10 @@ HCEFreecam,\
 HCETriggerOverlay,\
 HCETriggerActivity,\
 HCEDisableBarriers,\
-HCESkyFix
+HCESkyFix,\
+HCEDisableFadeFromBlack,\
+HCEDumpCheckpoint,\
+HCEInjectCheckpoint
 
 
 enum class OptionalCheatEnum {

@@ -101,7 +101,7 @@
         </TabItem>
             <TabItem >
                 <TabItem.Header>
-                    <TextBlock Foreground="{DynamicResource TextColourHighlight}"> Project Cartographer</TextBlock>
+                    <TextBlock Foreground="{DynamicResource TextColourHighlight}" ToolTip="Project Cartographer (Halo 2 Vista)"> Halo 2 Vista</TextBlock>
                 </TabItem.Header>
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -112,7 +112,26 @@
                 </Grid>
             </TabItem>
 
-
+            <!-- Halo Campaign Evolved. MUST stay LAST: SelectedIndex is bound straight to the HaloGame enum, so
+                 this tab's position IS HaloGame.HaloCER (7). Inserting it anywhere else renumbers every MCC tab.
+                 Same CheckpointControl and same FileViewModel as every other tab - there is no HaloCER-specific
+                 view. Injection is queued through shared memory exactly like the MCC tabs (see
+                 MainViewModel_Commands.onInjectCheckpoint); HCMInternal's HCEInjectCheckpoint consumes it. -->
+            <TabItem >
+                <TabItem.Header>
+                    <!-- Short on purpose. There are eight tab headers now and the window's MinWidth is 725; the
+                         full "Halo Campaign Evolved" pushes the strip past that and wraps it onto a second row,
+                         which would visibly move all six MCC tabs. The save folder keeps the full name. -->
+                    <TextBlock Foreground="{DynamicResource TextColourHighlight}" ToolTip="Halo: Campaign Evolved"> Campaign Evolved</TextBlock>
+                </TabItem.Header>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition  />
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <local:CheckpointControl Grid.Column="0" DataContext="{Binding Path=FileViewModel}" />
+                </Grid>
+            </TabItem>
 
         </TabControl>
 

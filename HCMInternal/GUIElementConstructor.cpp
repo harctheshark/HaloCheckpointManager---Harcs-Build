@@ -282,6 +282,10 @@ private:
 							createNestedElement(GUIElementEnum::injectCheckpointSettingsSubheading),
 							createNestedElement(GUIElementEnum::dumpCheckpointGUI),
 							createNestedElement(GUIElementEnum::dumpCheckpointSettingsSubheading),
+							createNestedElement(GUIElementEnum::hceInjectCheckpointGUI),
+							createNestedElement(GUIElementEnum::hceInjectCheckpointSettingsSubheading),
+							createNestedElement(GUIElementEnum::hceDumpCheckpointGUI),
+							createNestedElement(GUIElementEnum::hceDumpCheckpointSettingsSubheading),
 							createNestedElement(GUIElementEnum::injectCoreGUI),
 							createNestedElement(GUIElementEnum::injectCoreSettingsSubheading),
 							createNestedElement(GUIElementEnum::dumpCoreGUI),
@@ -375,6 +379,74 @@ private:
 					case GUIElementEnum::dumpCheckpointForcesSave:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 							(game, ToolTipCollection("Automatically force a new checkpoint before dumping it"), std::nullopt, "Force checkpoint before dumping", settings->dumpCheckpointForcesSave));
+
+				// Halo Campaign Evolved's own checkpoint dump. Deliberately reuses dumpCheckpointEvent (and so the
+				// existing dumpCheckpoint hotkey) and the autonameCheckpoints setting - HaloCER and the MCC games
+				// can never coexist in one process, so exactly one listener exists at a time. "##hce" keeps the
+				// visible label but gives imgui a unique ID. There is no "force checkpoint before dumping" here:
+				// the dump writes the checkpoint the player ALREADY has, which HCM shadow-copies as the game hands
+				// it to its storage provider - press Force Checkpoint first if you want a fresh one.
+				case GUIElementEnum::hceDumpCheckpointGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Dumps the checkpoint you're currently on to <HCM folder>\\HaloCER Checkpoints\\ for later use. Does NOT create a checkpoint - it writes the last one the game actually made. The file is a byte-for-byte copy of that checkpoint."), RebindableHotkeyEnum::dumpCheckpoint, "Dump Checkpoint##hce", settings->dumpCheckpointEvent));
+
+				case GUIElementEnum::hceDumpCheckpointSettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection(""), "Dump Checkpoint Settings##hce", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::hceDumpCheckpointAutonameGUI),
+							createNestedElement(GUIElementEnum::hceDumpCheckpointShadowGUI),
+							}));
+
+					case GUIElementEnum::hceDumpCheckpointAutonameGUI:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Automatically name dumped checkpoints after the level and the current time, instead of prompting you to input a name"), std::nullopt, "Autoname checkpoints##hce", settings->autonameCheckpoints));
+
+					// The only thing that makes dumping possible at all on this game: Halo Campaign Evolved keeps
+					// its checkpoints outside the process, so HCM has to copy each one as it goes past. Turning
+					// this off means no hook is installed and no bytes are copied - and nothing to dump.
+					case GUIElementEnum::hceDumpCheckpointShadowGUI:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Keeps a copy of your latest checkpoint in memory so it can be dumped without creating a new one. Costs about half a millisecond each time the game checkpoints. Turn it off and there will be nothing to dump."), std::nullopt, "Keep last checkpoint ready to dump##hce", settings->hceShadowCheckpoints));
+
+				// Halo Campaign Evolved's own checkpoint injection. Deliberately reuses injectCheckpointEvent (and so
+				// the existing injectCheckpoint hotkey) and MCC's three warning settings - HaloCER and the MCC games
+				// can never coexist in one process, so exactly one listener exists at a time. "##hce" keeps the
+				// visible label but gives imgui a unique ID. The file is picked with a normal Windows file dialog
+				// rather than in HCMExternal, which has no Halo Campaign Evolved tab. See HCEInjectCheckpoint.h.
+				//
+				// There is no "ignore checkpoint checksum" element here, and there cannot be: the revert calls the
+				// verifier with a2 = 0 (19DBB8: xor edx, edx), so the 0xBB x 20 bypass sentinel is unreachable. HCM
+				// recomputes the digest on every injection instead.
+				case GUIElementEnum::hceInjectCheckpointGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Replaces the game's current checkpoint with one you dumped earlier, so your next revert loads it. Opens a file browser starting in <HCM folder>\\HaloCER Checkpoints\\. HCM re-checksums the file and checks it against your current level, difficulty and game build before writing anything."), RebindableHotkeyEnum::injectCheckpoint, "Inject Checkpoint##hce", settings->injectCheckpointEvent));
+
+				case GUIElementEnum::hceInjectCheckpointSettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection(""), "Inject Checkpoint Settings##hce", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::hceInjectCheckpointForcesRevert),
+							createNestedElement(GUIElementEnum::hceInjectCheckpointLevelCheck),
+							createNestedElement(GUIElementEnum::hceInjectCheckpointDifficultyCheck),
+							createNestedElement(GUIElementEnum::hceInjectCheckpointVersionCheck),
+							}));
+
+					case GUIElementEnum::hceInjectCheckpointForcesRevert:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Automatically revert to the checkpoint you injected, immediately after injecting it.\n\nDANGER: on Halo Campaign Evolved a checkpoint the engine rejects does NOT fail quietly - it RESTARTS THE LEVEL and your run is gone. With this on there is no gap between injecting and finding out."), std::nullopt, "Force revert after injecting##hce", settings->injectCheckpointForcesRevert));
+
+					case GUIElementEnum::hceInjectCheckpointLevelCheck:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("If the checkpoint you are injecting was made on a different level (or a different part of one) than you are playing, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the engine compares these fields itself, and a mismatch RESTARTS THE LEVEL on your next revert."), std::nullopt, "Warn on injecting to wrong level##hce", settings->injectCheckpointLevelCheck));
+
+					case GUIElementEnum::hceInjectCheckpointDifficultyCheck:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("If the checkpoint you are injecting was made on a different difficulty, or with different skulls, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the engine compares these fields itself, and a mismatch RESTARTS THE LEVEL on your next revert."), std::nullopt, "Warn on injecting to wrong difficulty##hce", settings->injectCheckpointDifficultyCheck));
+
+					case GUIElementEnum::hceInjectCheckpointVersionCheck:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("If the checkpoint you are injecting was made by a different build of Halo Campaign Evolved, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the game state layout changes between builds, so this is the mismatch most likely to restart your level (or worse)."), std::nullopt, "Warn on injecting from wrong game build##hce", settings->injectCheckpointVersionCheck));
 
 				case GUIElementEnum::injectCoreGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -544,6 +616,7 @@ private:
 							createNestedElement(GUIElementEnum::disableBarriersToggle),
 							createNestedElement(GUIElementEnum::hceDisableBarriersGUI),
 							createNestedElement(GUIElementEnum::hceSkyFixGUI),
+							createNestedElement(GUIElementEnum::hceDisableFadeFromBlackGUI),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterToggle),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterSettings),
 							createNestedElement(GUIElementEnum::dropShadowsOnObjectsToggle),
@@ -2242,6 +2315,10 @@ private:
 								createNestedElement(GUIElementEnum::hceTriggerOverlaySectorColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayWireframeAlpha),
 							}));
+
+				case GUIElementEnum::hceDisableFadeFromBlackGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Removes the fade-in from black after a checkpoint revert, so you get your view back instantly. Only affects the fade the restore path starts - script and cinematic fades are untouched. Level loads and mission restarts come back instantly too, since they share that path."), std::nullopt, "Disable Fade From Black", settings->hceDisableFadeFromBlackToggle));
 
 				case GUIElementEnum::hceSkyFixGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>

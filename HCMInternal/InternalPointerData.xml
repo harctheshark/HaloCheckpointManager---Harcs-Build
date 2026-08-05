@@ -3464,7 +3464,214 @@
 			<Data>0xE8, 0x19, 0xF3, 0xFE, 0xFF</Data>
 		</Version>
 	</VersionedEntry>
+
+	<!--
+		THE PROVIDER HAND-OFF, cave code4 in the python tool. This is where Dump Checkpoint and Inject Checkpoint
+		actually work, because the shipped game stores its checkpoints OUTSIDE this process.
+
+		save_checkpoint (0x19D400) branches on qword_182C40028 (the engine shell) and [shell + 0x10]:
+			both non null  : the PROVIDER path, 0x19D4EB .. 0x19D554  (what the shipped game does)
+			either null    : the LOCAL path,    0x19D559 ..           (in process ring buffers)
+
+		On the provider path the engine builds this call:
+
+			19D4F1  call [provider + 0xD8]          get the storage writer object, returned in rax
+			19D4F7  mov  r8d, [0x142AA1C]           THE LENGTH (0xC10000 on this build)
+			19D4FE  lea  rcx, [0x3274C0]            the completion callback, see below
+			19D505  mov  rdx, [0x142AA10]           THE BLOB
+			19D50C  mov  r9d, ebx                   the ring slot ordinal
+			19D50F  mov  [rsp + 0x20], rcx          5th argument = the callback
+			19D514  mov  rcx, rax                   1st argument = the writer object
+			19D517  mov  r10, [rax]                 its vtable
+			19D51A  call [r10]                      vtable slot 0  <=== THE HOOK SITE
+			19D51D  mov  rax, [rsi]
+
+		⚠⚠ RDX IS THE LIVE GAME STATE, NOT A STAGING COPY. qword_18142AA10 is the engine's one game state block:
+		the local save memcpys OUT of it (19D640) and BOTH reverts memcpy straight back INTO it (19DB4C on the
+		provider path, 19DBD9 on the local one). Writing into it before this call would smash the running
+		simulation. The ONLY safe injection is to change the RDX REGISTER so the writer reads our staged buffer
+		instead, which is exactly what the python cave does and why its code4 carries the comment
+		"Do not overwrite that live image: redirect only the callback argument to the staged blob".
+		Dumping is the mirror image and is always safe, because it only READS through RDX.
+
+		★ INJECTING HERE GETS A FRESH SHA-1 FOR FREE. sub_1803274C0 is mov rdx,rcx / xor ecx,ecx / jmp
+		sub_18019E5E0, i.e. sub_18019E5E0(0, blob), and a2 = 0 is the branch that regenerates the salt and writes
+		the digest. The provider invokes it on the bytes it is about to persist, so a stale checksum in the file
+		cannot survive. HCM still recomputes on its own copy first; that is belt and braces, not a requirement.
+
+		This site is a plain midhook, so unlike the three gates above it needs no ...Continue entry: nothing is
+		skipped, safetyhook relocates "call [r10] ; mov rax,[rsi]" (6 bytes, neither of them RIP relative) and
+		resumes. Register changes made in the hook body are applied because safetyhook restores the whole context
+		before running the relocated instructions.
+	-->
+	<VersionedEntry Name="hceCheckpointHandoffFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x19D51A</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--call qword ptr [r10] ; mov rax, qword ptr [rsi]-->
+	<VersionedEntry Name="hceCheckpointHandoffOriginalBytes" Type="Vector" Typename="byte">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x41, 0xFF, 0x12, 0x48, 0x8B, 0x06</Data>
+		</Version>
+	</VersionedEntry>
 	<!-- #endregion hceCheckpointDetours-->
+
+
+	<!-- #region hceCheckpointBlob-->
+	<!--
+		Halo Campaign Evolved checkpoint STORAGE - what Dump Checkpoint and Inject Checkpoint read and write.
+		Everything here is an RVA into HaloSimulation_tag_release.dll. The consumer is HCECheckpointBlob, which is
+		the only class that knows this layout; see HCECheckpointBlob.h for the full derivation.
+
+		A checkpoint is a bit-exact copy of the WHOLE game state with a 0x1ED38 byte header in front of it.
+		sub_180009E60 allocates one 0xC10000 game state plus TWO checkpoint buffers of the same size, and hands
+		them out through a 2 entry ring:
+
+			control block  rva 0x1294590 (32 bytes)
+				+0x00 BYTE  checkpoint system initialised
+				+0x04 DWORD ring size (2)
+				+0x08 BYTE  a checkpoint exists                 revert aborts if this is 0
+				+0x09 BYTE  the PREVIOUS checkpoint also exists (the double revert guard)
+				+0x0C DWORD THE RING INDEX                      also shipped as hceDoubleRevertFlag (0x129459C)
+				+0x10       game time of the last checkpoint
+
+			slot table     rva 0x1151240, stride 0x10, 2 entries
+				+0x00 QWORD buffer pointer
+				+0x08 BYTE  valid - 0 when the copy STARTS, 1 when the SHA-1 lands
+				+0x0C DWORD slot ordinal
+
+		Those two small structs are C++ constants in HCECheckpointBlob.h rather than entries here: they came out
+		of one function and are meaningless individually. Only the four RVAs a game update can actually move, plus
+		the blob's own layout numbers, live in this file.
+
+		⚠⚠ THE DIGEST IS ASYNCHRONOUS. save_checkpoint memcpys the state on the game thread, sets
+		dword_18142AA30 = 2 and queues sub_180327440 -> sub_18019E5E0 (writer) on a WORKER TASK; only when that
+		completes does it set slot+8 = 1 and dword_18142AA30 back to 0. So (slot.valid == 1 && inFlight == 0) is
+		the engine's own publication barrier and the ONLY way to tell a finished checkpoint from 12 MB that is
+		mid-write with a stale digest. HCECheckpointBlob gates on it, copies, then re-checks it.
+
+		⚠ A REJECTED REVERT DOES NOT FAIL SOFTLY - IT RESTARTS THE LEVEL. Every failure path in the revert
+		(sub_18019D730) falls to LABEL_95, which sets word_181357067 = 1 / byte_181357069 = 1, and the checkpoint
+		host at 0x1ADB83 turns that into sub_18020C910. A torn dump, or a dump with anything stamped into it, is
+		therefore a file that costs the user their run when they inject it. There is no checksum bypass either:
+		the verifier's 0xBB x 20 sentinel is unreachable from revert, which calls it with a2 = 0 (19DBB8:
+		xor edx,edx).
+
+		⚠⚠ TWO STORAGE PATHS, AND THE SHIPPED GAME TAKES THE PROVIDER ONE. Everything branches on
+		qword_182C40028 (the shell, set in CreateBlamEngineShell) and [that + 0x10]. Either null means the LOCAL
+		path and everything above holds; both non null means the PROVIDER path, where 0x1151240/0x1151250 are
+		left NULL, the valid bytes are hardcoded to 1, and THERE IS NO IN PROCESS CHECKPOINT BUFFER AT ALL. That
+		is no longer a guess: the shipped build refuses on this test in game, so the entries above describe a
+		path this build never takes. hceCheckpointShell below is the exact discriminator the engine itself uses,
+		and the provider path is served by the hand off hook in the hceCheckpointDetours region.
+
+		WARNING: HaloSimulation_tag_release.dll carries no version resource, so every HCE build reports version
+		0.0.0.0 and the Version attribute cannot detect a game update. The globals below carry no byte
+		verification because nothing on this path patches code - every read goes through
+		HCEGetPlayerState::tryReadRaw (SEH), every value is range checked, and a moved global degrades to an
+		on-screen message. The hand off SITE is code, and it IS byte verified.
+
+		The header the revert compares (all six fields) is written into the front of the state block by the
+		session setup at 0x19D21B, so it is live at all times and is what hceCheckpointStateBlock exposes:
+		state signature CRC32 at +0x000 (from dword_1812945C0), scenario path at +0x008, engine build string at
+		+0x108 (from the global at 0x182CBE0), state identity at +0x128 (sub_18019F450), the game options struct
+		at +0x130 (0x1EBB0 bytes, compared live vs file by sub_1802096E0 and A MISMATCH THERE HARD FAILS THE
+		REVERT), the BSP index at +0x1ECA4 and the session block at +0x1ECE0. blob+0x1ED0C holds a 20 byte salt
+		that is regenerated per hash, so the same game state does not produce the same file twice.
+	-->
+	<VersionedEntry Name="hceCheckpointControlBlock" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1294590</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceCheckpointSlotTable" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x1151240</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--DWORD. The size of the game state AND of each checkpoint buffer - 0xC10000 on this build. Read, never
+	    assumed: the header and the SHA-1 both cover exactly this many bytes.-->
+	<VersionedEntry Name="hceCheckpointStateLength" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x142AA1C</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--DWORD. 2 while a save is running, 0 once the SHA-1 worker has published. Half of the barrier.
+	    LOCAL PATH ONLY - the provider path never touches it.-->
+	<VersionedEntry Name="hceCheckpointSaveInFlight" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x142AA30</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--QWORD, the ADDRESS of the engine shell pointer (qword_182C40028). THE STORAGE MODE DISCRIMINATOR, and the
+	    engine's own: 0x19D4CF reads it, 0x19D4DD/0x19D4E6 test it and [it + 0x10], and takes the local path at
+	    0x19D559 if either is null. HCM reads the same two words rather than inferring the mode from a null slot
+	    pointer, so "provider" and "the pointer data moved" can never be confused.-->
+	<VersionedEntry Name="hceCheckpointShell" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x2C40028</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--QWORD, the ADDRESS of the game state block pointer (qword_18142AA10). THE BLOB, on both paths - this is
+	    the RDX the hand off hook sees, the source of the local save's memcpy at 0x19D640, and the DESTINATION
+	    both reverts restore into (0x19DB4C, 0x19DBD9). Its first hceCheckpointHeaderLength bytes are the live
+	    header, which is what Inject validates a candidate file against.
+	    ⚠ NEVER WRITTEN BY HCM. Injection replaces the callee's RDX argument, it does not touch this buffer.-->
+	<VersionedEntry Name="hceCheckpointStateBlock" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x142AA10</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!--Blob layout. The 20 byte SHA-1 digest lives at blob+0x1ED20 and covers the WHOLE buffer, which is why a
+	    dump is written verbatim - anything stamped into it invalidates the file. Recipe, identical on both
+	    sides: zero these 20 bytes, hash all hceCheckpointStateLength bytes, write the digest back here.
+	    Writer sub_18019E5E0, verifier sub_18019EC00, BCrypt SHA1 via sub_1801A6D70.-->
+	<VersionedEntry Name="hceCheckpointSHAOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x1ED20</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceCheckpointSHALength" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x14</Data>
+		</Version>
+	</VersionedEntry>
+	<!--End of the header, i.e. where the copied game state itself begins.-->
+	<VersionedEntry Name="hceCheckpointHeaderLength" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x1ED38</Data>
+		</Version>
+	</VersionedEntry>
+	<!-- #endregion hceCheckpointBlob-->
 
 
 	<!-- #region hceInvulnerability-->
@@ -3819,6 +4026,77 @@
 			<Data>0x1F7F8</Data>
 		</Version>
 	</VersionedEntry>
+
+
+	<!-- #region hceDisableFadeFromBlack-->
+	<!--Removes the fade-in from black after a checkpoint revert. RVAs into HaloSimulation_tag_release.dll.
+
+	    The revert sub_18019D730 is called from the host sub_1801AD9F0 at 0x1ADAC1 with a1 = 4. On success, at
+	    0x19DBEF, it calls sub_1803277D0, which at 0x327827 loops 33 post-restore callbacks from the table at
+	    .rdata 0x8617A0 with the flags in ECX. Entry [10] is sub_180211660, gated `test cl, 0B0h` at 0x21166D -
+	    taken because a1 and 4 sets bit 0x80. With no cinematic active it reaches:
+
+	        0x2117C8  41 B9 3C 00 00 00   mov  r9d, 3Ch        (60 script ticks; WE PATCH THE IMM AT 0x2117CA)
+	        0x2117DA  E8 F1 19 00 00      call sub_1802131D0   ; fade_in(black, 60)
+
+	    ★ Entry [10] is the ONLY one of the 33 post-restore callbacks that touches the fade.
+
+	    fade_in (sub_1802131D0) writes the start tick to fadeStruct+0x28, end = start + duration to +0x2C, and
+	    the RESTING value 0.0 to +0x30. The evaluator sub_1802132B0 is:
+	        out.xyzw = S[0x30..0x3F];
+	        if (gtg and *(u8*)gtg and S->end > gtg->tick) { ...interpolate... }
+	    so with duration 0 the interpolation - INCLUDING THE DIVISION - is skipped entirely and out.x, the black
+	    overlay's opacity, is 0.0 on the first frame. No divide-by-zero is possible. Duration 0 is engine-legal:
+	    the sibling branch at 0x2116D9 already passes 0 to fade_out. (Use 0x01 instead for a one-tick fade.)
+
+	    WHY A PATCH AND NOT A WRITE, unlike most HaloCER features: the alternative is poking the fade struct
+	    (*(uintptr*)(TLS+0xA8), end at +0x2C) every frame, which would ALSO collapse cinematic fade-ins.
+	    Patching this one immediate touches only the post-restore path and leaves script fade_in/fade_out and
+	    every cinematic_fade_* alone.
+
+	    SAFETY: 1 byte, so the write is inherently atomic (no torn-write concern, unlike the 2-byte pause
+	    patch). IDA reports NO base relocations anywhere on page 0x211000, and the only code xref into
+	    0x2117C0..0x2117E0 lands on 0x2117C8, the instruction start, so nothing can enter mid-instruction. The
+	    two .pdata entries referencing 0x2117C8 as an unwind-scope boundary stay valid because no instruction
+	    boundary moves.
+
+	    SCOPE: sub_1803277D0's other callers (sub_18019DF80, sub_18019EF80, sub_180389980) are almost certainly
+	    save-load / level-restart restores, so those fades become instant too.
+	    ⚠ UNVERIFIED: if part of the observed black time is a UE5 loading widget rather than this fade, this
+	    shortens the delay without eliminating it.
+
+	    The guard deliberately covers the WHOLE instruction (6 bytes at 0x2117C8), not just the byte we write,
+	    so a match proves this really is `mov r9d, 3Ch`. HCE has NO VERSION RESOURCE (every build reports
+	    0.0.0.0) so this guard is the only protection against a game update. Verified against the shipped DLL,
+	    MD5 E8B0A01BE43A7B805912474A13F0954F, 14,668,560 bytes; rva 0x2117C8 is file offset 0x210BC8.-->
+	<VersionedEntry Name="hceDisableFadeFromBlackFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x2117CA</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceDisableFadeFromBlackGuardSite" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
+			<Offsets>
+				<Offset>0x2117C8</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceDisableFadeFromBlackOriginalBytes" Type="Vector" Typename="byte">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x41, 0xB9, 0x3C, 0x00, 0x00, 0x00</Data>
+		</Version>
+	</VersionedEntry>
+	<!--0x00 = instant. 0x01 gives a single-tick (~16 ms) fade instead.-->
+	<VersionedEntry Name="hceDisableFadeFromBlackCode" Type="Vector" Typename="byte">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x00</Data>
+		</Version>
+	</VersionedEntry>
+	<!-- #endregion hceDisableFadeFromBlack-->
 
 
 	<!-- #region hceSkyFix-->

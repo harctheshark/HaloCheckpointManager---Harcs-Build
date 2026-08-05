@@ -44,6 +44,22 @@ namespace HCMExternal.ViewModels
 
         private void onReVersionCheckpoint()
         {
+            // ⚠⚠ REFUSED ON HALO CAMPAIGN EVOLVED, AND THIS IS NOT COSMETIC.
+            // ReVersionCheckpoint stamps a 10-byte MCC version string over the LAST TEN BYTES OF THE FILE. For the
+            // MCC games those bytes are HCM's own metadata (InjectCheckpoint zeroes them again on the way in). A
+            // HaloCER dump is the engine's blob VERBATIM - there is no metadata tail, so those ten bytes are ten
+            // bytes of GAME STATE. Worse, they would not be caught: HCMInternal always recomputes the SHA-1 before
+            // injecting, so the corrupted file would sail through the checksum and go into a game where a bad
+            // revert does not fail softly, it RESTARTS THE LEVEL. HaloCER also has no version string to set (every
+            // build reports 0.0.0.0), so there is nothing this could legitimately do.
+            if (FileViewModel.SelectedGame.Equals(HaloGame.HaloCER))
+            {
+                System.Windows.MessageBox.Show(
+                    "Halo Campaign Evolved checkpoints don't carry a version string, and writing one would corrupt the checkpoint.",
+                    "HaloCheckpointManager", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+                return;
+            }
+
             _checkpointIOService.ReVersionCheckpoint(FileViewModel.SelectedSaveFolder, FileViewModel.SelectedCheckpoint);
         }
 
@@ -136,6 +152,11 @@ namespace HCMExternal.ViewModels
                 System.Windows.MessageBox.Show("Failed to Inject! \n" + "No checkpoint selected!", "HaloCheckpointManager Error", System.Windows.MessageBoxButton.OK);
             else
             {
+                // Cartographer is the one game HCMExternal injects itself (it maps the game's own file handles).
+                // Everything else - the six MCC games AND Halo Campaign Evolved - goes through shared memory: the
+                // selection was already published by FileViewModel.SelectedCheckpoint's setter, and this just raises
+                // the flag HCMInternal's HeartbeatTimer polls. HaloCER lands here deliberately; HCMInternal routes
+                // the resulting injectCheckpointEvent to HCEInjectCheckpoint instead of InjectCheckpoint.
                 if (FileViewModel.SelectedGame.Equals(HaloGame.ProjectCartographer))
                     _externalService.InjectCheckpoint(FileViewModel.SelectedCheckpoint);
                 else

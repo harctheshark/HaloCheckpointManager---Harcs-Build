@@ -25,6 +25,14 @@ namespace HCMExternal.Converters
             // For now we'll used the saved setting which should always be accurate.
             HaloGame gameEnum = (HaloGame)HCMExternal.Properties.Settings.Default.LastSelectedGameTab;
 
+            // Halo Campaign Evolved ships no level thumbnails (there is no Images\CE folder and no LevelInfo table
+            // to drive one). Return the same neutral placeholder the detail panel already draws underneath, rather
+            // than falling through to the catch below and showing an ERROR icon on every HaloCER checkpoint.
+            if (gameEnum == HaloGame.HaloCER)
+            {
+                return $"Images/nofile.png";
+            }
+
             //check if level is a multiplayer level, if so we use the mp image
             try
             {

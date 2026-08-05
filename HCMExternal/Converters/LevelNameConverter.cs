@@ -23,6 +23,14 @@ namespace HCMExternal.Converters
             // For now we'll used the saved setting which should always be accurate.
             HaloGame gameEnum = (HaloGame)HCMExternal.Properties.Settings.Default.LastSelectedGameTab;
 
+            // Halo Campaign Evolved has no LevelInfo table (and no fixed set of level codes to build one from), so
+            // the scenario leaf DecodeCheckpointFile read out of the blob is already the best name available.
+            // Without this the LevelInfo lookup below would throw and log an error for every row on the tab.
+            if (gameEnum == HaloGame.HaloCER)
+            {
+                return levelCode;
+            }
+
             try
             {
                 LevelInfo levelInfo = new LevelInfo(gameEnum, levelCode);

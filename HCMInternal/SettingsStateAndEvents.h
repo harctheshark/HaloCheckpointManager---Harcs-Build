@@ -385,6 +385,20 @@ public:
 			nameof(dumpCheckpointForcesSave)
 		);
 
+	// Halo Campaign Evolved ONLY. The shipped game keeps its checkpoints outside the process, so the only instant a
+	// checkpoint blob exists here is the hand-off to the storage provider. This makes HCM shadow-copy that blob on
+	// every checkpoint, natural or forced, so Dump Checkpoint can write the checkpoint the player ALREADY HAS
+	// instead of forcing a new one. Default on, because a dump that finds nothing is useless; the toggle exists so
+	// the cost can be declined - turning it off installs no hook and copies no bytes at all.
+	// Cost measured on the dev machine: 0.44 ms median / 0.98 ms worst for the 0xC10000-byte state, once per
+	// checkpoint. See HCECheckpointDetours.cpp.
+	std::shared_ptr<BinarySetting<bool>> hceShadowCheckpoints = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceShadowCheckpoints)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> injectCoreForcesRevert = std::make_shared<BinarySetting<bool>>
 		(
 			true,
@@ -1194,6 +1208,15 @@ public:
 	// triggerOverlayPositionToggle. Reuses triggerOverlayPositionColor and triggerOverlayPositionScale.
 	// Keeps World Partition streaming areas from tearing down when the player leaves them, which is what makes
 	// the sky and lighting vanish out of bounds. Default OFF - see HCESkyFix.h for the accumulation caveat.
+	// Removes the fade-in from black after a revert. See HCEDisableFadeFromBlack.h - it patches the fade
+	// DURATION on the post-restore path only, so cinematic fades are untouched.
+	std::shared_ptr<BinarySetting<bool>> hceDisableFadeFromBlackToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceDisableFadeFromBlackToggle)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> hceSkyFixToggle = std::make_shared<BinarySetting<bool>>
 		(
 			false,
@@ -2544,6 +2567,7 @@ public:
 			injectCheckpointDifficultyCheck,
 		autonameCheckpoints,
 		dumpCheckpointForcesSave,
+		hceShadowCheckpoints,
 			injectCoreForcesRevert,
 		injectCoreLevelCheck,
 		injectCoreVersionCheck,
@@ -2619,6 +2643,7 @@ public:
 		hceTriggerOverlayRenderDistance,
 		hceTriggerOverlayShowLabels,
 		hceSkyFixToggle,
+		hceDisableFadeFromBlackToggle,
 		hceTriggerOverlayShowVertex,
 		hceTriggerOverlayHighlightActive,
 		hceTriggerOverlayActiveColor,

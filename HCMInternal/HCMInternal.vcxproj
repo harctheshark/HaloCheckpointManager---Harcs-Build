@@ -556,6 +556,10 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HCEInvulnerability.h" />
     <ClInclude Include="HCEDisableBarriers.h" />
     <ClInclude Include="HCESkyFix.h" />
+    <ClInclude Include="HCEDisableFadeFromBlack.h" />
+    <ClInclude Include="HCECheckpointBlob.h" />
+    <ClInclude Include="HCEDumpCheckpoint.h" />
+    <ClInclude Include="HCEInjectCheckpoint.h" />
     <ClInclude Include="HCEHavokDebuggerBridge.h" />
     <ClInclude Include="HCESkullEnum.h" />
     <ClInclude Include="GUIHCESkullToggle.h" />
@@ -863,6 +867,10 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="HCEInvulnerability.cpp" />
     <ClCompile Include="HCEDisableBarriers.cpp" />
     <ClCompile Include="HCESkyFix.cpp" />
+    <ClCompile Include="HCEDisableFadeFromBlack.cpp" />
+    <ClCompile Include="HCECheckpointBlob.cpp" />
+    <ClCompile Include="HCEDumpCheckpoint.cpp" />
+    <ClCompile Include="HCEInjectCheckpoint.cpp" />
     <ClCompile Include="NaturalCheckpointDisable.cpp" />
     <ClCompile Include="PauseGame.cpp" />
     <ClCompile Include="ProggyVectorRegularFont.cpp" />

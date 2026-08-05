@@ -480,6 +480,7 @@
 	((hceFreecamToggleGUI, (HALOCER_ONLY)))\
 	((hceFreecamTeleportToCamera, (HALOCER_ONLY)))\
 	((hceSkyFixGUI, (HALOCER_ONLY)))\
+	((hceDisableFadeFromBlackGUI, (HALOCER_ONLY)))\
 	((hceTriggerOverlayToggleGUI, (HALOCER_ONLY)))\
 	((hceTriggerOverlaySettingsSubheading, (HALOCER_ONLY)))\
 			((hceTriggerOverlayRenderStyle, (HALOCER_ONLY)))\
@@ -505,7 +506,17 @@
 			((hceTriggerOverlayBoxColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlaySectorColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlayWireframeAlpha, (HALOCER_ONLY)))\
-	((hceDisableBarriersGUI, (HALOCER_ONLY)))
+	((hceDisableBarriersGUI, (HALOCER_ONLY)))\
+	((hceDumpCheckpointGUI, (HALOCER_ONLY)))\
+	((hceDumpCheckpointSettingsSubheading, (HALOCER_ONLY)))\
+			((hceDumpCheckpointAutonameGUI, (HALOCER_ONLY)))\
+			((hceDumpCheckpointShadowGUI, (HALOCER_ONLY)))\
+	((hceInjectCheckpointGUI, (HALOCER_ONLY)))\
+	((hceInjectCheckpointSettingsSubheading, (HALOCER_ONLY)))\
+			((hceInjectCheckpointForcesRevert, (HALOCER_ONLY)))\
+			((hceInjectCheckpointLevelCheck, (HALOCER_ONLY)))\
+			((hceInjectCheckpointDifficultyCheck, (HALOCER_ONLY)))\
+			((hceInjectCheckpointVersionCheck, (HALOCER_ONLY)))
 
 
 

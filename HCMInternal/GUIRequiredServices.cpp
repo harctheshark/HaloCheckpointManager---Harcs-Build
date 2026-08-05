@@ -60,6 +60,9 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{GUIElementEnum::hceNaturalCheckpointDisableGUI,
 			{OptionalCheatEnum::HCECheckpointDetours}
 	},
+	{GUIElementEnum::hceDisableFadeFromBlackGUI,
+			{OptionalCheatEnum::HCEDisableFadeFromBlack}
+	},
 	{GUIElementEnum::hceSkyFixGUI,
 			{OptionalCheatEnum::HCESkyFix}
 	},
@@ -95,7 +98,47 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 			{OptionalCheatEnum::InjectCheckpoint, OptionalCheatEnum::ForceRevert, OptionalCheatEnum::IgnoreCheckpointChecksum}
 	},
 	{GUIElementEnum::dumpCheckpointGUI,
-			{OptionalCheatEnum::DumpCheckpoint} 
+			{OptionalCheatEnum::DumpCheckpoint}
+	},
+	// Halo Campaign Evolved's dump is its own cheat: MCC's DumpCheckpoint needs an IGetMCCVersion version stamp
+	// HaloCER has none of (and must never carry), plus a checkpointLocation pointer into an in-process buffer the
+	// shipped game does not have. It DOES use ISharedMemory::getDumpInfo now that HCMExternal has a HaloCER tab -
+	// dumps go to the save folder that tab has selected, falling back to <HCM dir>\HaloCER Checkpoints\.
+	// See HCEDumpCheckpoint.h.
+	// Both HaloCER dump and inject additionally need HCECheckpointDetours: the shipped game keeps its checkpoints
+	// OUTSIDE this process, so the only way to reach a blob is to intercept the hand-off to the storage provider
+	// (and force a checkpoint so that hand-off happens). Both resolve it as a dependency anyway; listing it here
+	// keeps the requirement visible and construction order sane.
+	{GUIElementEnum::hceDumpCheckpointGUI,
+			{OptionalCheatEnum::HCEDumpCheckpoint, OptionalCheatEnum::HCECheckpointDetours}
+	},
+	{GUIElementEnum::hceDumpCheckpointAutonameGUI,
+			{OptionalCheatEnum::HCEDumpCheckpoint}
+	},
+	// The shadow toggle is owned by HCECheckpointDetours (it is the thing that installs the hand-off hook and holds
+	// the buffer), but it is meaningless without the dump that consumes it, so both are required.
+	{GUIElementEnum::hceDumpCheckpointShadowGUI,
+			{OptionalCheatEnum::HCEDumpCheckpoint, OptionalCheatEnum::HCECheckpointDetours}
+	},
+	// ... and its injection, for the same reasons. It reads ISharedMemory::getInjectInfo too - the checkpoint
+	// selected on HCMExternal's HaloCER tab - and falls back to a file dialog when there is no usable selection.
+	// See HCEInjectCheckpoint.h.
+	{GUIElementEnum::hceInjectCheckpointGUI,
+			{OptionalCheatEnum::HCEInjectCheckpoint, OptionalCheatEnum::HCECheckpointDetours}
+	},
+	{GUIElementEnum::hceInjectCheckpointLevelCheck,
+			{OptionalCheatEnum::HCEInjectCheckpoint}
+	},
+	{GUIElementEnum::hceInjectCheckpointDifficultyCheck,
+			{OptionalCheatEnum::HCEInjectCheckpoint}
+	},
+	{GUIElementEnum::hceInjectCheckpointVersionCheck,
+			{OptionalCheatEnum::HCEInjectCheckpoint}
+	},
+	// The revert is a separate cheat and this toggle fires its event, so it needs both - exactly like MCC's
+	// injectCheckpointForcesRevert.
+	{GUIElementEnum::hceInjectCheckpointForcesRevert,
+			{OptionalCheatEnum::HCEInjectCheckpoint, OptionalCheatEnum::ForceRevert}
 	},
 	{GUIElementEnum::dumpCheckpointAutonameGUI,
 			{OptionalCheatEnum::DumpCheckpoint}

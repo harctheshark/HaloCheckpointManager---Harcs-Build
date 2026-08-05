@@ -146,6 +146,9 @@ namespace HCMExternal
             @"Saves\Halo Reach",
             @"Saves\Halo 4",
             @"Saves\Project Cartographer",
+            // Halo Campaign Evolved. Must match HaloGameMethods.ToRootFolderPath(HaloGame.HaloCER) - the tab's
+            // folder tree is built from it, and PopulateSaveFolderTree MessageBoxes at the user if it is missing.
+            @"Saves\Halo Campaign Evolved",
         };
 
         //Required files that HCM needs to be able to run.

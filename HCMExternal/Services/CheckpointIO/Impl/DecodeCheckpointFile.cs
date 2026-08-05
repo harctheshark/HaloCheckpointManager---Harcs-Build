@@ -45,6 +45,15 @@ namespace HCMExternal.Services.CheckpointIO.Impl
                 return null;
             }
 
+            // Halo Campaign Evolved leaves here and never touches the MCC decode below. It has to: that path is
+            // driven by PointerData entries keyed on an MCC version string, and a HaloCER dump has neither (the
+            // file is the engine's blob VERBATIM - HCM must not stamp a version into it, because the engine's
+            // SHA-1 covers the whole buffer and a mismatch does not fail softly, it restarts the level).
+            if (gameEnum == HaloGame.HaloCER)
+            {
+                return DecodeHaloCERCheckpointFile(checkpointFile, checkpointName, checkpointCreatedOn, checkpointModifiedOn);
+            }
+
             // Now load the whole damn file into memory and read some data from it
             // If it fails then we'll leave the associated values as null
             try
@@ -138,6 +147,65 @@ namespace HCMExternal.Services.CheckpointIO.Impl
 
             // Return whatever data we were able to get (all might be null except checkpointName, createdOn, and ModifiedOn)
             return new Checkpoint(checkpointName, checkpointFile.FullName, checkpointLevelCode, checkpointDifficulty, checkpointGameTickCount, checkpointVersion, checkpointCreatedOn, checkpointModifiedOn); // Then return a new checkpoint with as many valid properties as we managed to get (checkpointName is definitely not null)
+        }
+
+
+        // ============================================================================================================
+        // Halo Campaign Evolved. Separate function on purpose - it shares NOTHING with the MCC decode above and must
+        // not be able to affect it.
+        //
+        // A HaloCER checkpoint is a 0x1ED38-byte session header followed by the whole game state. The only field
+        // worth showing in the list is the SCENARIO PATH at blob+0x008 (NUL-terminated ASCII, at most 0x100 bytes) -
+        // it is the thing the engine strcmp's when it decides whether a checkpoint belongs to the level you are on,
+        // so it is the closest analogue of MCC's level code. See HCMInternal/HCECheckpointBlob.h (HeaderOffsets).
+        //
+        // Difficulty, in-game time and game version are deliberately left null:
+        //   * the difficulty byte lives inside the game-options struct and its encoding is NOT confirmed to match
+        //     HCM's 0=Easy..3=Legendary map, and showing the wrong difficulty is worse than showing "???";
+        //   * HaloCER has no version resource (every build reports 0.0.0.0) and nothing may be stamped into a dump.
+        // HCMInternal validates all of this against the LIVE session header at inject time anyway, so none of it is
+        // load-bearing here - it is list decoration.
+        // ============================================================================================================
+        private const long HaloCERScenarioPathOffset = 0x008;
+        private const int HaloCERScenarioPathMaxLength = 0x100;
+
+        private Checkpoint DecodeHaloCERCheckpointFile(FileInfo checkpointFile, string checkpointName, DateTime createdOn, DateTime modifiedOn)
+        {
+            string? levelCode = null;
+
+            try
+            {
+                using FileStream readStream = new FileStream(checkpointFile.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using BinaryReader readBinary = new BinaryReader(readStream);
+
+                readBinary.BaseStream.Seek(HaloCERScenarioPathOffset, SeekOrigin.Begin);
+                byte[] raw = readBinary.ReadBytes(HaloCERScenarioPathMaxLength);
+
+                // Bounded, NUL-terminated. An unterminated field just uses the whole 0x100 bytes.
+                int length = Array.IndexOf<byte>(raw, 0);
+                if (length < 0) length = raw.Length;
+
+                string scenarioPath = System.Text.Encoding.ASCII.GetString(raw, 0, length);
+
+                // Take the leaf, the way the MCC decode does - the list's Level column is 35px wide.
+                int lastSeparator = scenarioPath.LastIndexOfAny(new[] { '\\', '/' });
+                string leaf = lastSeparator >= 0 ? scenarioPath.Substring(lastSeparator + 1) : scenarioPath;
+                leaf = string.Concat(leaf.Where(ch => char.IsLetterOrDigit(ch) || ch == '_'));
+
+                if (leaf.Length > 0)
+                    levelCode = leaf;
+
+                Log.Verbose("HaloCER scenario path: '" + scenarioPath + "' -> level code '" + (levelCode ?? "(none)") + "'");
+            }
+            catch (Exception e)
+            {
+                // A file we cannot read the header of is still a file the user can select and inject - HCMInternal
+                // does the real validation. So this never refuses the checkpoint, it just leaves the column blank.
+                Log.Error("Failed reading HaloCER checkpoint header from file: " + e.Message);
+                levelCode = null;
+            }
+
+            return new Checkpoint(checkpointName, checkpointFile.FullName, levelCode, null, null, null, createdOn, modifiedOn);
         }
     }
 }

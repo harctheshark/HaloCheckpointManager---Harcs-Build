@@ -69,9 +69,18 @@ namespace HCMExternal.ViewModels
                 _interprocService.UpdateSharedMemSaveFolder(SelectedGame, SelectedSaveFolder);
 
                 // serialise
-                if (Properties.Settings.Default.LastSelectedFolder == null || Properties.Settings.Default.LastSelectedFolder.Count < 7)
+                // ⚠ GROW it, never replace it. This collection is indexed by (int)HaloGame, so the moment a game is
+                // added every previously-saved collection is one short - and the old "replace with N blanks" would
+                // then have thrown away every MCC tab's remembered folder on the user's first launch of this build.
+                // Padding keeps them. The length tracks the enum, so adding another game needs no edit here.
+                int gameCount = Enum.GetValues(typeof(HaloGame)).Length;
+                if (Properties.Settings.Default.LastSelectedFolder == null)
                 {
-                    Properties.Settings.Default.LastSelectedFolder = new StringCollection() { "", "", "", "", "", "", "" };
+                    Properties.Settings.Default.LastSelectedFolder = new StringCollection();
+                }
+                while (Properties.Settings.Default.LastSelectedFolder.Count < gameCount)
+                {
+                    Properties.Settings.Default.LastSelectedFolder.Add("");
                 }
                 Properties.Settings.Default.LastSelectedFolder[(int)SelectedGame] = _selectedSaveFolder.SaveFolderPath;
                 Properties.Settings.Default.Save();
