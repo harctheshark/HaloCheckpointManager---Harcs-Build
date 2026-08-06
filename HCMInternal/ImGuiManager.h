@@ -60,6 +60,17 @@ private:
 	// WndProc hook, we use SetWindowLongPtr to set it up
 	static LRESULT __stdcall mNewWndProc(const HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);  // Handles ImGui input
 	static WNDPROC mOldWndProc; // original wndProc for input we don't care about
+
+	// Set when the destructor found that something ELSE had subclassed the window after us, so restoring our
+	// saved proc would have silently deleted that subclass from the chain. Our proc is then deliberately left
+	// installed - which means the image must NOT be unloaded from under it. dllmain consults this.
+	static inline std::atomic_bool mWndProcLeftInstalled{ false };
+
+public:
+	// dllmain must know this before it decides whether the image can be unmapped.
+	static bool wndProcWasLeftInstalled() { return mWndProcLeftInstalled.load(std::memory_order_acquire); }
+private:
+
 	HWND m_windowHandle = nullptr; // Needed for creating wndProc hook, will get from SwapChain description
 
 	// When set, mNewWndProc stops forwarding INPUT messages to the game (see the switch in mNewWndProc).

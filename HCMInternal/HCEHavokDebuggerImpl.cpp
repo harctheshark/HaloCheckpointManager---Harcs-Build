@@ -2597,6 +2597,26 @@ static bool resolveModule()
 // ===================== thread =====================
 static volatile long g_threadStarted = 0;
 
+// ⚠ TEARDOWN. The standalone's VDB thread ran forever and was never meant to stop; inside HCM that is a
+// CRASH, not a leak. HCMInternal.dll is FreeLibrary'd when HCM closes, and unmapping the image while this
+// thread is executing code inside it is an unconditional access violation - every HCM close after using the
+// debugger. It also left 127.0.0.1:25001 listening, so toggling the feature off never disconnected the HVD
+// client and a re-enable collided on the port.
+//
+// So the thread now has a real exit: an exit flag it polls, the hkVisualDebugger deleted on the way out
+// (which closes the socket), and a handle the bridge can wait on.
+static volatile long g_vdbShouldExit = 0;
+static HANDLE        g_vdbThreadHandle = nullptr;
+
+// ⚠ SEPARATE FUNCTION ON PURPOSE. vdbThread holds objects that require unwinding (hkArray, and everything
+// Havok constructs on its stack), and MSVC refuses __try in such a function - C2712. Same shape as
+// worldContentSigGuarded above. Deleting the visual debugger is what closes the listening socket, and it runs
+// arbitrary Havok teardown, so it is worth guarding.
+static void deleteVdbGuarded(hkVisualDebugger* vdb)
+{
+    __try { delete vdb; } __except (EXCEPTION_EXECUTE_HANDLER) { }
+}
+
 static DWORD WINAPI vdbThread(LPVOID)
 {
     // Log next to HCMInternal.dll under our OWN name - never HCMInternal.log, which plog owns.
@@ -2665,6 +2685,24 @@ static DWORD WINAPI vdbThread(LPVOID)
     g_ready = true;
     int frame = 0;
     for (;;) {
+        // Checked FIRST, before any gather, so an exit request is honoured even while the debugger is busy.
+        if (InterlockedCompareExchange(&g_vdbShouldExit, 0, 1) == 1)
+        {
+            LOG("VDB thread exit requested - shutting the server down");
+            g_ready = false;
+            // Deleting the visual debugger is what actually closes the listening socket and drops any
+            // connected HVD client. Without it the port stays bound and a re-enable fails on serve().
+            deleteVdbGuarded(vdb);
+            vdb = nullptr;
+            LOG("VDB thread exiting cleanly");
+            if (g_log) { fflush(g_log); }
+            // Deliberately NOT tearing down hkBaseSystem or the geometry/scratch allocations: they are
+            // shared with the gather paths and a re-enable reuses them. This thread's job is to stop
+            // touching the game and release the socket, nothing more.
+            InterlockedExchange(&g_threadStarted, 0);   // allow a later start() to spin a fresh thread
+            return 0;
+        }
+
         if (!g_paused) {
             if (frame % 4 == 0) gatherGuarded();      // dynamic objects move every frame
             // The world mesh must be walked on the ENGINE thread (getChildShape needs Blam's TLS), so
@@ -2808,7 +2846,14 @@ namespace HceHavokDebuggerBridge
         if (!installTickHook()) return false;
 
         if (InterlockedCompareExchange(&g_threadStarted, 1, 0) == 0)
-            CreateThread(nullptr, 0, vdbThread, nullptr, 0, nullptr);   // exactly once per session
+        {
+            InterlockedExchange(&g_vdbShouldExit, 0);
+            // ⚠ THE HANDLE IS KEPT, not discarded. stop() has to be able to WAIT for this thread to leave
+            // our image before HCMInternal.dll can be unloaded; without a handle there is nothing to wait
+            // on and the unload races a thread executing inside the module being unmapped.
+            if (g_vdbThreadHandle) { CloseHandle(g_vdbThreadHandle); g_vdbThreadHandle = nullptr; }
+            g_vdbThreadHandle = CreateThread(nullptr, 0, vdbThread, nullptr, 0, nullptr);
+        }
 
         g_paused = false;
         return true;
@@ -2818,6 +2863,36 @@ namespace HceHavokDebuggerBridge
     {
         g_paused = true;                         // gather first...
         uninstallTickHook();                     // ...then take the vtable slot back
+
+        // ...then genuinely stop the server. Un-ticking the toggle used to leave the VDB thread running and
+        // 127.0.0.1:25001 still listening, so a connected HVD client never noticed and a re-enable collided
+        // on the port. It also meant HCMInternal.dll could be unloaded with this thread still inside it.
+        if (g_threadStarted == 0 || !g_vdbThreadHandle) return;
+
+        InterlockedExchange(&g_vdbShouldExit, 1);
+
+        // The loop polls the flag once per iteration (~16ms), so 3s is generous. A timeout means the thread
+        // is wedged somewhere in Havok - a hang we cannot safely interrupt, since TerminateThread would
+        // leave Havok's thread-local allocator corrupt.
+        const DWORD waited = WaitForSingleObject(g_vdbThreadHandle, 3000);
+        if (waited == WAIT_OBJECT_0)
+        {
+            CloseHandle(g_vdbThreadHandle);
+            g_vdbThreadHandle = nullptr;
+            LOG("VDB thread joined");
+            return;
+        }
+
+        // ⚠ LAST RESORT. The thread did not come back, so unloading HCMInternal.dll would unmap code it is
+        // still executing. PIN the module: a permanent leak of one DLL is strictly better than an access
+        // violation in the user's game. Logged loudly because it also means the close/reopen fix cannot
+        // work for this session - HCM will have to be used with the game restarted.
+        HMODULE self = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+            (LPCWSTR)&vdbThread, &self);
+        // Its own LOG, not plog: this file deliberately keeps its logging self-contained.
+        LOG("VDB thread did NOT exit within 3s. HCMInternal.dll has been PINNED so it can never be unloaded - "
+            "this avoids an access violation, but HCM cannot be cleanly reopened against this game session.");
     }
 
     int unresolvedAnchorCount()

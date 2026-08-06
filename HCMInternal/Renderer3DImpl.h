@@ -127,7 +127,10 @@ public:
 	virtual const DirectX::BoundingFrustum& getCameraFrustum() override { return frustumViewWorld; }
 
 	virtual void drawTriangle(const std::array<SimpleMath::Vector3, 3>& vertexPositions, const SimpleMath::Vector4& color, CullingOption cullingOption, std::optional<TextureEnum> texture) override;
-	virtual void drawTriangleCollection(const IModelTriangles* model, const SimpleMath::Vector4& color, CullingOption cullingOption, std::optional<TextureEnum> texture) override;
+	// depthMode is accepted and IGNORED here - it exists for the HaloCER structure-BSP overlay, which only ever
+	// runs on the D3D12 renderer. Deliberately not implemented rather than half-implemented: every MCC consumer
+	// wants DepthMode::TestOnly, which is the default, so MCC output is unchanged.
+	virtual void drawTriangleCollection(const IModelTriangles* model, const SimpleMath::Vector4& color, CullingOption cullingOption, std::optional<TextureEnum> texture, DepthMode depthMode) override;
 
 	virtual void drawEdge(const SimpleMath::Vector3& edgeStart, const SimpleMath::Vector3& edgeEnd, const SimpleMath::Vector4& color) override;
 	virtual void drawEdgeCollection(const IModelEdges* model, const SimpleMath::Vector4& color) override;

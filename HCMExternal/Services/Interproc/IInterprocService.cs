@@ -26,6 +26,10 @@ namespace HCMExternal.Services.Interproc
         public void initializeSharedMemory(Checkpoint? initialCheckpoint, SaveFolder initialSaveFolder, HaloGame initialGame);
         public void resetStateMachineEx();
 
+        // Stops the interproc state machine so a CLOSING HCMExternal cannot inject an orphan HCMInternal on
+        // its way out. Must be called from Application_Exit.
+        public void shutdownInterprocEx();
+
         public void UpdateSharedMemCheckpoint(HaloGame game, Checkpoint? checkpoint);
         public void UpdateSharedMemSaveFolder(HaloGame game, SaveFolder checkpoint);
         public void UpdateSharedMemQueueInjectCommand();

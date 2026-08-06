@@ -20,6 +20,13 @@ enum class CullingOption
 	CullFront,
 };
 
+// How a draw interacts with the overlay's own depth buffer. See drawTriangleCollection.
+enum class DepthMode
+{
+	TestOnly,           // depth-tested, writes no depth. The default and what every MCC caller wants.
+	DepthOnlyPrepass,   // writes depth, writes NO colour. First half of a two-pass translucent shell.
+};
+
 /// <summary>
 /// Provides functions for rendering in 3D.
 ///
@@ -144,7 +151,34 @@ public:
 	/// <param name="model">Interface providing access to a VertexCollection and IndiceCollection of the triangle vertices (in sets of 3).</param>
 	/// <param name="color">Float4 of the colour to be drawn.</param>
 	/// <param name="texture">Optional enum of the texture to be drawn.</param>
-	virtual void drawTriangleCollection(const IModelTriangles* model, const SimpleMath::Vector4& color, CullingOption cullingOption = CullingOption::CullNone, std::optional<TextureEnum> texture = std::nullopt) = 0;
+	/// <param name="depthMode">How this collection interacts with the depth buffer. TestOnly is the default and
+	/// is what every existing caller relies on - trigger volumes must stay visible through each other.
+	///
+	/// For a CLOSED SHELL (the HaloCER structure-BSP overlay) a single translucent pass is unreadable: every
+	/// wall behind the one you are looking at blends in too, and the result is a uniform wash. The fix is a
+	/// two-pass DEPTH PRE-PASS - draw once as DepthOnlyPrepass (writes depth, no colour), then again as
+	/// TestOnly (blends, writes no depth). Only the nearest surface then survives the depth test, so exactly
+	/// one translucent layer lands per pixel and the result does not depend on submission order.
+	///
+	/// TestAndWrite (blend AND write) is deliberately NOT offered: it is order-dependent and produces exactly
+	/// the wash it appears to fix. Implemented on the D3D12 path; the D3D11 path ignores it.</param>
+	virtual void drawTriangleCollection(const IModelTriangles* model, const SimpleMath::Vector4& color, CullingOption cullingOption = CullingOption::CullNone, std::optional<TextureEnum> texture = std::nullopt, DepthMode depthMode = DepthMode::TestOnly) = 0;
+
+	/// <summary>
+	/// Applies a WORLD-SPACE 3D checker to subsequent filled draws, until switched off again.
+	///
+	/// This exists because a flat translucent fill cannot answer "is there a surface here, or am I seeing
+	/// through a hole to something behind it?" - both look like a wash of colour. A pattern locked to world
+	/// space answers it unambiguously: patterned means a surface is present, unpatterned means it is not.
+	/// World space rather than screen space on purpose - a screen-space hatch slides across geometry as the
+	/// camera moves and conveys nothing about the surface.
+	///
+	/// Defaults to a NO-OP so every existing caller is unaffected; only the D3D12 path implements it.
+	/// ⚠ It is sticky per-renderer state: whoever turns it on must turn it off, or unrelated overlays inherit it.
+	/// </summary>
+	/// <param name="worldCellSize">Checker cell size in world units. Zero or less disables the pattern.</param>
+	/// <param name="contrast">0..1. How far each parity brightens/darkens from the chosen colour.</param>
+	virtual void setSurfacePattern(float worldCellSize, float contrast) {}
 
 	/// <summary>
 	/// Draws an edge (line of the specified colour at the specified position.

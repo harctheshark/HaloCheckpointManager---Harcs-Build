@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "ImGuiManager.h"
 #include "GlobalKill.h"
+#include "ImageResidencyGuard.h"
 #include "ProggyVectorRegularFont.h"
 #include "imgui_internal.h"
 
@@ -14,6 +15,12 @@ WNDPROC ImGuiManager::mOldWndProc = nullptr;
 IMGUI_IMPL_API LRESULT  ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT __stdcall ImGuiManager::mNewWndProc(const HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
+	// FIRST STATEMENT, before anything else can touch HCM state. Windows can dispatch a message into this
+	// procedure at literally any instant, including while HCMInternal.dll is being unloaded - and until now
+	// nothing waited for it. See ImageResidencyGuard.h. Re-entrancy on this thread is expected (the present
+	// path pumps messages) and is handled by the guard's depth counter.
+	ImageResidency::ScopedImageResidency residency;
+
 	// Once shutdown has begun, get completely out of the game's way: forward every message straight to
 	// the game's original WndProc and don't touch ImGui. During teardown the "return true" path below
 	// can SWALLOW window messages (WM_SIZE / WM_DISPLAYCHANGE / activation etc.) that the game needs to
@@ -245,8 +252,29 @@ ImGuiManager::~ImGuiManager()
 	if (presentEventCallbackD3D12) presentEventCallbackD3D12->removeCallback();
 	if (mOldWndProc) 		// restore the original wndProc
 	{
-		SetWindowLongPtrW(m_windowHandle, GWLP_WNDPROC, (LONG_PTR)mOldWndProc);
-		mOldWndProc = nullptr;
+		// ⚠ ONLY RESTORE IF WE ARE STILL THE TOP OF THE CHAIN. WndProc subclassing is a linked list, and this
+		// used to write mOldWndProc back unconditionally. If anything subclassed AFTER us - RTSS, the Steam
+		// overlay, Streamline, another injector - then the window's current proc is THEIRS, and overwriting it
+		// with our saved pointer silently deletes them from the chain and hands the game a proc that skips
+		// their state. That corrupts a process we do not own, and it is exactly the class of "HCM closed and
+		// the game died later" bug this whole investigation is about.
+		//
+		// If we are not on top, the safe move is to leave the chain alone: our proc stays live, and the
+		// residency drain below (plus the GlobalKill early-out at the top of mNewWndProc) keeps it harmless.
+		const LONG_PTR current = GetWindowLongPtrW(m_windowHandle, GWLP_WNDPROC);
+		if (current == (LONG_PTR)&ImGuiManager::mNewWndProc)
+		{
+			SetWindowLongPtrW(m_windowHandle, GWLP_WNDPROC, (LONG_PTR)mOldWndProc);
+			mOldWndProc = nullptr;
+		}
+		else
+		{
+			PLOG_ERROR << "ImGuiManager: NOT restoring the window procedure - something else subclassed after "
+				"us (current proc is 0x" << std::hex << current << std::dec << ", ours is not on top). "
+				"Restoring would delete that subclass from the chain. Our proc stays installed and inert; "
+				"HCMInternal.dll must therefore not be unloaded from under it.";
+			mWndProcLeftInstalled.store(true, std::memory_order_release);
+		}
 	}
 
 	std::unique_lock<std::mutex> lock(mDestructionGuard); // block until callbacks finish executing

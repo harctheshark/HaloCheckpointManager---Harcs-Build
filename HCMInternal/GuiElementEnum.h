@@ -490,6 +490,10 @@
 			((hceTriggerOverlayVertexScale, (HALOCER_ONLY)))\
 			((hceTriggerOverlayHighlightActive, (HALOCER_ONLY)))\
 			((hceTriggerOverlayActiveColour, (HALOCER_ONLY)))\
+			((hceTriggerOverlayFlashOnHit, (HALOCER_ONLY)))\
+			((hceTriggerOverlayHitColour, (HALOCER_ONLY)))\
+			((hceTriggerOverlayHitFalloff, (HALOCER_ONLY)))\
+			((hceTriggerOverlayMessageOnHit, (HALOCER_ONLY)))\
 			((hceTriggerOverlaySpeedrunOnly, (HALOCER_ONLY)))\
 			((hceTriggerOverlayTypesShownSubheading, (HALOCER_ONLY)))\
 			((hceTriggerOverlayShowRegular, (HALOCER_ONLY)))\
@@ -506,6 +510,25 @@
 			((hceTriggerOverlayBoxColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlaySectorColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlayWireframeAlpha, (HALOCER_ONLY)))\
+	((hceBspOverlayToggleGUI, (HALOCER_ONLY)))\
+	((hceBspOverlaySettingsSubheading, (HALOCER_ONLY)))\
+			((hceBspOverlayInvisibleOnly, (HALOCER_ONLY)))\
+			((hceBspOverlayRenderStyle, (HALOCER_ONLY)))\
+			((hceBspOverlayInteriorStyle, (HALOCER_ONLY)))\
+			((hceBspOverlayRenderDistance, (HALOCER_ONLY)))\
+			((hceBspOverlayColour, (HALOCER_ONLY)))\
+			((hceBspOverlayAlpha, (HALOCER_ONLY)))\
+			((hceBspOverlayInsideColour, (HALOCER_ONLY)))\
+			((hceBspOverlayInsideAlpha, (HALOCER_ONLY)))\
+			((hceBspOverlayWireframeAlpha, (HALOCER_ONLY)))\
+			((hceBspOverlayWireframeColour, (HALOCER_ONLY)))\
+			((hceBspOverlayOccludeFarSurfaces, (HALOCER_ONLY)))\
+			((hceBspOverlayPatternContrast, (HALOCER_ONLY)))\
+			((hceBspOverlayPatternScale, (HALOCER_ONLY)))\
+			((hceBspOverlayLayerCompensation, (HALOCER_ONLY)))\
+			((hceBspOverlayFaceShading, (HALOCER_ONLY)))\
+			((hceBspOverlayShadingStrength, (HALOCER_ONLY)))\
+			((hceBspOverlaySurfaceVariation, (HALOCER_ONLY)))\
 	((hceDisableBarriersGUI, (HALOCER_ONLY)))\
 	((hceDumpCheckpointGUI, (HALOCER_ONLY)))\
 	((hceDumpCheckpointSettingsSubheading, (HALOCER_ONLY)))\

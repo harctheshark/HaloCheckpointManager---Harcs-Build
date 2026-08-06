@@ -106,6 +106,65 @@ namespace HCESpeedrunTriggerNames
 
 			// 10 - The Maw
 			"tv_enc7_0", "tv_enc7_0_2", "tv_enc7_1", "tv_get_aboard", "tv_grand_finale",
+
+			// ======================= BONUS MISSIONS (E10, E20, E30) =======================
+			// These have no community completion-requirement document, so unlike the ten campaign lists above
+			// they were derived MECHANICALLY from the missions' own HaloScript: a tracer starts at the script
+			// containing (game_won) and walks BACKWARDS through two edges - scripts that (set ...) a global
+			// appearing in a blocking sleep_until, and scripts that (wake ...) it - collecting every
+			// volume_test_* on the transitive chain.
+			//
+			// ★ THE METHOD IS VALIDATED: run against a15 it emits exactly the 8 volumes in the Pillar of Autumn
+			// block above - zero extra, zero missing. So "gating" as the community docs define it IS the
+			// transitive script-dependency chain of game_won, and this reproduces it.
+			//
+			// ⚠ DEPENDENCY CHAIN ONLY - THE MINIMUM SET. An earlier version of this block also listed volumes
+			// that gate a door/lift/grav-bridge the player cannot physically bypass. That was WRONG for this
+			// filter: those are places you happen to pass through, not things the completion scripts require,
+			// and in game they cluttered E10 badly. This filter answers "what must I actually trigger", so it
+			// carries the same thing the campaign lists carry - the transitive dependency chain of game_won -
+			// and nothing else.
+			//
+			// ⚠ Same-named volumes exist across levels (e.g. tv_final_encounter is on both E10 and E20). The
+			// set is flat and only one level is ever loaded, so that is harmless.
+			// ⚠ UNVERIFIED: co-op-only branches were not enumerated (several chains test
+			//   game_coop_player_count / game_difficulty_get_real; the volumes below are common to all branches).
+
+			// E10 - Boarding Action  (cinematics\e10\e10_boarding.cinematic; unlocks E20)
+			// Genuinely ONE volume: e10_start has no sleep_until spine, so the chain is
+			// tv_change_of_plans_start -> start_change_of_plans -> e10_signals.cinematic -> (game_won).
+			// It is testable from mission start, which is why it shows as active immediately.
+			// ⚠ UNVERIFIED whether the one-volume route is actually WALKABLE: E10 sets its zone set once in the
+			// start fixup (set_1_docking_bay) and never switches it again, whereas the final-encounter fixup
+			// would have loaded set_4_geneforge_main_lab. Streaming may not have the destination resident.
+			"tv_change_of_plans_start",
+
+			// E20 - The Most Dangerous Game  (obj_survivehunt, "hunters hunted"; unlocks E30)
+			// Non-volume conditions on the same chain: gr_final_encounter_wv1/wv2/wv3 must all reach 0, and
+			// the control-room console dc_final_interact must be used.
+			"tv_settlement_end", "tv_prison_room_bottom", "tv_marine_cells",
+			"tv_final_encounter_save", "tv_final_encounter", "tv_end_mission",
+
+			// E30 - Heavy Burden  ("Protect the Burden"; escorts device dm_bop)
+			// Non-volume conditions: dm_bop must reach r_burden_pos_final, gr_space3_dogfight must reach 0.
+			// ⚠ tv_space_3_trigger is an OR with (>= (device_get_position dm_bop) .1), so it is skippable in
+			// principle - listed anyway because showing a volume you may not need costs nothing.
+			//
+			// E30 is the one mission where the minimum really is most of the level, and for a structural reason:
+			// mission_3_start arms nothing, and e30_insertion_point_fixups matches the start point EXACTLY (=,
+			// not the <= that E10/E20 use), so nothing downstream is pre-armed - every beat is woken solely by
+			// the previous beat's script. Three chunks still fall out of the chain:
+			//   - beat 1 before Control        (begin_beat1 wakes `control` immediately)
+			//   - tv_end_beat_2                (rr wakes beat3_trigger BEFORE it waits on that volume)
+			//   - the entire beat-3 tram sequence (both hydro switches, the tram button, the dome station,
+			//     e24..e34) - begin_beat3 wakes beat4_trigger immediately, so tv_space_trans_to_1 is live the
+			//     moment you enter tv_began_beat3.
+			// Hard floors that are NOT volumes and cannot be rushed: dm_bop advances on the device's own clock
+			// and fully STOPS at .55 until the Harmony vignette ends, and marine-rescue waves b and c are
+			// kill-gated with no timeout.
+			"tv_act_control", "tv_control_encounter", "tv_end_beat_1",
+			"tv_act_rr", "tv_began_beat3",
+			"tv_space_trans_to_1", "tv_space_3_trigger",
 		};
 		return names;
 	}

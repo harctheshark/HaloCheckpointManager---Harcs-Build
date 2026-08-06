@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "Speedhack.h"
 #include "safetyhook.hpp" // hooking
+#include <atomic>         // the timeHacker seqlock below
 
 // this implementation of a speedhack is adapted from https://github.com/Letomaniy/Speed-Hack
 // it hooks QueryPerformanceCounter, GetTickCount, GetTickCount64, and TimeGetTime,
@@ -8,6 +9,25 @@
 
 
 
+// ================================================================================================================
+// ⚠ THE THREE FIELDS BELOW ARE READ BY EVERY THREAD IN THE PROCESS AND WRITTEN BY ONE. THAT IS A DATA RACE, AND
+// IT IS NOT BENIGN.
+//
+// getCurrentTime() runs inside the QueryPerformanceCounter / GetTickCount hooks, so it is called from the game's
+// render thread, its audio thread, and on this title NVIDIA's frame-generation pacer - well over a hundred times
+// a second, concurrently. setSpeed() updates offset, last-update and speed as three separate stores. A reader
+// that lands between them mixes a NEW offset with an OLD last-update (or vice versa), and since the result is
+// `speed * (now - lastUpdate) + offset`, a mismatched pair does not produce a slightly wrong time - it produces
+// a timestamp that can jump BACKWARDS BY THE WHOLE SESSION. Monotonic-clock consumers respond to that by
+// dividing by a negative delta, stalling, or asserting.
+//
+// The obvious fix - the std::scoped_lock that is commented out at all four call sites in this file - is the
+// wrong one: it puts a contended mutex in the hot path of the process's clock, taken by every thread on every
+// query. So this is a SEQLOCK instead. Readers take no lock at all; they read a version counter either side of
+// the payload and retry if it moved. Writers are rare (a toggle) and cheap.
+//
+// Same construction as HCEGetCameraData's PovSnapshot in HCMInternal, for the same reason.
+// ================================================================================================================
 template<class DataType>
 class timeHacker {
 	DataType time_offset;
@@ -15,6 +35,8 @@ class timeHacker {
 
 	double speed_;
 
+	// Even = stable, odd = a write is in progress.
+	std::atomic<uint32_t> sequence{ 0 };
 
 public:
 
@@ -26,17 +48,63 @@ public:
 		speed_ = initialSpeed;
 	}
 
-	void setSpeed(DataType currentRealTime, double speed) {
-		time_offset = getCurrentTime(currentRealTime);
-		time_last_update = currentRealTime;
+	// Re-seed to a fresh clock reading, discarding any accumulated offset.
+	//
+	// This exists because the seqlock's std::atomic member deletes copy-assignment, and construction used to
+	// re-initialise these objects by assigning a whole new timeHacker over the top. That was only safe because
+	// it happens before the hooks are installed; doing it through the seqlock means it stays safe even if it
+	// is ever called while readers are live.
+	void reset(DataType currentRealTime, double initialSpeed) {
+		sequence.fetch_add(1, std::memory_order_acq_rel);
+		std::atomic_thread_fence(std::memory_order_release);
 
+		time_offset = currentRealTime;
+		time_last_update = currentRealTime;
+		speed_ = initialSpeed;
+
+		std::atomic_thread_fence(std::memory_order_release);
+		sequence.fetch_add(1, std::memory_order_acq_rel);
+	}
+
+	void setSpeed(DataType currentRealTime, double speed) {
+		// Computed BEFORE the write window opens, so the seqlock covers only the three stores.
+		const DataType newOffset = getCurrentTime(currentRealTime);
+
+		sequence.fetch_add(1, std::memory_order_acq_rel);            // -> odd: readers back off
+		std::atomic_thread_fence(std::memory_order_release);
+
+		time_offset = newOffset;
+		time_last_update = currentRealTime;
 		speed_ = speed;
+
+		std::atomic_thread_fence(std::memory_order_release);
+		sequence.fetch_add(1, std::memory_order_acq_rel);            // -> even: published
 	}
 
 	DataType getCurrentTime(DataType currentRealTime) {
-		DataType difference = currentRealTime - time_last_update;
+		DataType offset{};
+		DataType lastUpdate{};
+		double speed = 1.0;
 
-		return (DataType)(speed_ * difference) + time_offset;
+		// Bounded, NOT an unbounded spin. If a writer were descheduled mid-update, spinning here would hang
+		// whichever thread asked for the time - including the render thread. A handful of retries is far more
+		// than a three-store window ever needs, and taking a torn read on the last attempt is survivable in a
+		// way that a stalled clock is not.
+		for (int attempt = 0; attempt < 8; ++attempt)
+		{
+			const uint32_t before = sequence.load(std::memory_order_acquire);
+			if (before & 1u) continue;                               // mid-write, try again
+
+			offset = time_offset;
+			lastUpdate = time_last_update;
+			speed = speed_;
+
+			std::atomic_thread_fence(std::memory_order_acquire);
+			if (sequence.load(std::memory_order_relaxed) == before) break;   // consistent snapshot
+		}
+
+		const DataType difference = currentRealTime - lastUpdate;
+		return (DataType)(speed * difference) + offset;
 	}
 
 
@@ -108,7 +176,7 @@ public:
 		// init speedHackLL timehacker 
 		LARGE_INTEGER performanceCounter;
 		QueryPerformanceCounter((_LARGE_INTEGER*)&performanceCounter);
-		speedHackLL = timeHacker<LONGLONG>(performanceCounter.QuadPart, 1.0);
+		speedHackLL.reset(performanceCounter.QuadPart, 1.0);
 
 		// create hooks
 		queryPerformanceCounterHook = safetyhook::create_inline(GetProcAddress(GetModuleHandleA("Kernel32.dll"), "QueryPerformanceCounter"), queryPerformanceCounterHookFunction);

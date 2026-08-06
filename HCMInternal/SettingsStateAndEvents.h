@@ -1284,6 +1284,226 @@ public:
 			nameof(hceTriggerOverlaySafeZoneColor)
 		);
 
+	// ---- Halo Campaign Evolved structure-BSP overlay. See HCEBspOverlay.h.
+	std::shared_ptr<BinarySetting<bool>> hceBspOverlayToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceBspOverlayToggle)
+		);
+
+	// TRUE = only surfaces carrying the collision INVISIBLE flag (bit1 of surface_flags).
+	//
+	// ⚠ DEFAULTS OFF, and that is a MEASURED decision, not a preference. On the first real level tested, 575 of
+	// 575 structure surfaces had bit1 clear, so this filter drew nothing at all - while the level's structural
+	// shell was exactly what the user wanted to see and showed correctly with the filter off. The engine on
+	// this title evidently does not mark its non-rendered structure surfaces with the invisible bit. The
+	// toggle is kept because the flag is real and other levels may use it, but defaulting it ON ships a
+	// feature that looks broken. HCEBspOverlay logs a full surface-flag histogram per rebuild so which bits a
+	// level actually uses is a matter of record rather than guesswork.
+	std::shared_ptr<BinarySetting<bool>> hceBspOverlayInvisibleOnly = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceBspOverlayInvisibleOnly)
+		);
+
+	// Solid AND wireframe. This started as wireframe-only because the edge-ring winding convention the faces
+	// are rebuilt from was unverified on this build - it is now VERIFIED: a 575-surface structure BSP
+	// reconstructed with ZERO ring-walk failures, so every face closed and the fill is trustworthy. Wireframe
+	// stays on top of the fill because the edges are what make the shell's shape readable.
+	std::shared_ptr<BinarySetting<SettingsEnums::TriggerRenderStyle>> hceBspOverlayRenderStyle = std::make_shared<BinarySetting<SettingsEnums::TriggerRenderStyle>>
+		(
+			SettingsEnums::TriggerRenderStyle::SolidAndWireframe,
+			[](SettingsEnums::TriggerRenderStyle in) { return true; },
+			nameof(hceBspOverlayRenderStyle)
+		);
+
+	// WORLD units, same scale as hceTriggerOverlayRenderDistance (1 world unit = 10 feet). Defaults far higher
+	// than the trigger overlay's 50 because a structural shell is one connected object - a short distance clips
+	// it into a confusing fragment rather than thinning it out.
+	std::shared_ptr<BinarySetting<float>> hceBspOverlayRenderDistance = std::make_shared<BinarySetting<float>>
+		(
+			200.f,
+			[](float in) { return in >= 1.f && in <= 2000.f; },
+			nameof(hceBspOverlayRenderDistance)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceBspOverlayColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(1.f, 0.f, 0.f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceBspOverlayColor)
+		);
+
+	std::shared_ptr<BinarySetting<float>> hceBspOverlayAlpha = std::make_shared<BinarySetting<float>>
+		(
+			0.3f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(hceBspOverlayAlpha)
+		);
+
+	// What to draw for a batch of surfaces the camera is INSIDE, exactly as the MCC trigger overlay's
+	// "Render Solid Interior as" does. Normal draws it the same as from outside (this is what makes the shell
+	// read as two-sided); DontRender skips it, which is the behaviour trigger volumes want - see the walls
+	// from outside and nothing from within.
+	//
+	// ⚠ THIS IS ALSO THE PATTERN SWITCH. Patterned turns on the world-space checker, which is generated in the
+	// PIXEL SHADER rather than sampled from a texture - the D3D12 path implements no textured draws, which is
+	// why this option previously did nothing whatsoever on this game. Normal means NO pattern; the contrast
+	// and size sliders only shape it once Patterned is selected.
+	//
+	// Defaults to Patterned because distinguishing a real surface from a hole is the main thing this overlay
+	// gets used for, and a flat translucent colour cannot do it. DontRender would draw nothing at all, since
+	// for a structure BSP the camera is essentially always inside the shell.
+	std::shared_ptr<BinarySetting<SettingsEnums::TriggerInteriorStyle>> hceBspOverlayInteriorStyle = std::make_shared<BinarySetting<SettingsEnums::TriggerInteriorStyle>>
+		(
+			SettingsEnums::TriggerInteriorStyle::Patterned,
+			[](SettingsEnums::TriggerInteriorStyle in) { return true; },
+			nameof(hceBspOverlayInteriorStyle)
+		);
+
+	std::shared_ptr<BinarySetting<float>> hceBspOverlayWireframeAlpha = std::make_shared<BinarySetting<float>>
+		(
+			0.5f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(hceBspOverlayWireframeAlpha)
+		);
+
+	// Wireframe colours, per side. ⚠ .w MUST stay 1.0 on both: GUIColourPicker edits RGB only, so a zero alpha
+	// here would be unrecoverable from the GUI. Opacity is hceBspOverlayWireframeAlpha, applied on top.
+	// Cool-white and warm-amber rather than a red/green pair - distinguishable under common colour vision
+	// deficiencies, and both brighter than either fill colour so the outlines actually read.
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceBspOverlayWireframeColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(0.118f, 1.f, 0.f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceBspOverlayWireframeColor)
+		);
+
+	// Shade each face by how much it points at a fixed world light.
+	//
+	// ⚠ NOT a lighting effect - it is the ONLY thing that makes an interior legible. The pixel shader is a
+	// flat colour, so without this every wall of a room is the identical colour with no boundary between
+	// them, and standing inside a closed shell fills the whole screen with one block of colour. From outside
+	// the silhouette against the sky gives you the shape for free; inside there is no silhouette, so the
+	// shape has to come from tone.
+	std::shared_ptr<BinarySetting<bool>> hceBspOverlayFaceShading = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceBspOverlayFaceShading)
+		);
+
+	// How far shading may darken a face below its chosen colour. 0 = flat, 0.8 = strong.
+	//
+	// ⚠ CAPPED WELL BELOW 1.0 ON PURPOSE. Shading multiplies the colour, and the colour is then blended at the
+	// opacity slider - so a heavily darkened face at a low opacity becomes effectively invisible and reads as a
+	// HOLE punched in the overlay rather than as a shaded wall. Shading is a shape cue; it must never be able
+	// to make geometry disappear. The brightest face is always exactly the colour the user picked.
+	std::shared_ptr<BinarySetting<float>> hceBspOverlayShadingStrength = std::make_shared<BinarySetting<float>>
+		(
+			0.5f,
+			[](float in) { return in >= 0.f && in <= 0.8f; },
+			nameof(hceBspOverlayShadingStrength)
+		);
+
+	// Slight per-SURFACE tint variation, so a large area built from several collision surfaces reads as
+	// separate wall pieces rather than one undifferentiated slab. Per surface, NOT per triangle - a triangle
+	// is an arbitrary product of triangulation and varying by it would just look like noise.
+	//
+	// The offset is a stable hash of the surface's ordinal, so a wall keeps its tint as you move; it is
+	// centred on zero so it brightens as often as it darkens and turning it on does not change how bright the
+	// overlay looks overall.
+	std::shared_ptr<BinarySetting<float>> hceBspOverlaySurfaceVariation = std::make_shared<BinarySetting<float>>
+		(
+			0.f,
+			[](float in) { return in >= 0.f && in <= 0.5f; },
+			nameof(hceBspOverlaySurfaceVariation)
+		);
+
+	// Whether a nearer surface hides the ones behind it (a depth pre-pass) or every surface blends through.
+	//
+	// These are the same property seen from two sides, so it cannot be decided for the user: occluding is what
+	// stops an interior reading as a uniform wash, but it also means you cannot see a far wall through a near
+	// one. Defaults OFF - seeing all the geometry at once is the more common reason to have a collision
+	// overlay open at all, and the shading and per-surface variation now carry most of the readability that
+	// the pre-pass was originally added to provide.
+	std::shared_ptr<BinarySetting<bool>> hceBspOverlayOccludeFarSurfaces = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceBspOverlayOccludeFarSurfaces)
+		);
+
+	// World-space checker on filled surfaces.
+	//
+	// ⚠ THIS IS A DIAGNOSTIC AS MUCH AS A STYLE. A flat translucent fill genuinely cannot distinguish "there
+	// is a surface here" from "I am looking through a hole at something behind it" - both are a wash of
+	// colour. A pattern locked to WORLD space settles it: patterned means a surface is present, unpatterned
+	// means it is not. It also gives an interior real depth cues, because the cells foreshorten with distance
+	// and angle, which a flat colour never does.
+	std::shared_ptr<BinarySetting<float>> hceBspOverlayPatternContrast = std::make_shared<BinarySetting<float>>
+		(
+			1.f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(hceBspOverlayPatternContrast)
+		);
+
+	// Checker cell size in WORLD units (1 unit = 10 feet on this title), so ~0.5 is a chest-high square.
+	std::shared_ptr<BinarySetting<float>> hceBspOverlayPatternScale = std::make_shared<BinarySetting<float>>
+		(
+			1.f,
+			[](float in) { return in >= 0.01f && in <= 20.f; },
+			nameof(hceBspOverlayPatternScale)
+		);
+
+	// How many stacked layers a single facing surface should be made to LOOK like.
+	//
+	// ⚠ THIS IS COMPOSITING MATH, NOT A FUDGE. Looking into the shell from outside, a view ray crosses several
+	// surfaces and they composite to 1-(1-a)^N. Standing inside a room it crosses ONE, giving a flat `a`, so
+	// the same geometry reads far weaker from within - and the opacity slider cannot correct it, because it
+	// lifts the stacked case by exactly as much. Raising this applies the same identity to the single layer.
+	// 1.0 = off. 3 is about what a simple room costs you (near wall + far wall + floor).
+	std::shared_ptr<BinarySetting<float>> hceBspOverlayLayerCompensation = std::make_shared<BinarySetting<float>>
+		(
+			1.f,
+			[](float in) { return in >= 1.f && in <= 8.f; },
+			nameof(hceBspOverlayLayerCompensation)
+		);
+
+	// The face that points AWAY from the camera.
+	//
+	// ⚠ THE KEY IS STILL NAMED "Inside" ON PURPOSE - renaming it would silently reset every persisted config.
+	// The LABEL is "faces away", because that is what the code computes: dot(planeNormal, camera) + d asks
+	// "does this surface face me", not "am I inside this room". There is no per-surface notion of a room, which
+	// is why the old inside/outside labelling read as inverted depending on where the user was standing.
+	//
+	// ⚠ THIS IS NOT A COSMETIC DUPLICATE OF hceBspOverlayColor. Looking at a shell from OUTSIDE, a view ray
+	// crosses the near wall, the far wall, the floor and the ceiling, so four translucent layers accumulate and
+	// the geometry reads as solid. From INSIDE a room it crosses ONE surface, and the identical colour and
+	// opacity render as a faint wash that barely reads as a wall. The two sides need genuinely different
+	// settings; a single pair cannot serve both. Defaults deliberately brighter and more opaque than the
+	// outside pair for exactly that reason.
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceBspOverlayInsideColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(1.f, 0.f, 0.f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceBspOverlayInsideColor)
+		);
+
+	// ⚠ SAME DEFAULT AS hceBspOverlayAlpha, deliberately. It used to default to double the facing value, to
+	// compensate for away-faces looking weaker - but that weakness was a DRAW-ORDER bug (away-faces were being
+	// painted over the faces you were looking at), not a property of the geometry. With the order fixed, equal
+	// alpha genuinely reads equal, and defaulting them differently would just reintroduce the imbalance from
+	// the other direction. They remain separate settings so the two sides CAN be told apart when wanted.
+	std::shared_ptr<BinarySetting<float>> hceBspOverlayInsideAlpha = std::make_shared<BinarySetting<float>>
+		(
+			0.2f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(hceBspOverlayInsideAlpha)
+		);
+
 	// Show ONLY the volumes a speedrun has to hit (the community completion-requirement lists).
 	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlaySpeedrunOnly = std::make_shared<BinarySetting<bool>>
 		(
@@ -2656,6 +2876,28 @@ public:
 		hceTriggerOverlayShowSector,
 		hceTriggerOverlayShowKill,
 		hceTriggerOverlayShowZoneSet,
+		// ⚠ hceBspOverlayToggle is DELIBERATELY ABSENT from this list. Everything here is written to
+		// HCMInternalConfig.xml and read back at startup, so listing the toggle would make the overlay
+		// re-arm itself every launch just because it was on when HCM last closed. A visualiser that turns
+		// itself on unasked is a surprise, and this one is expensive (it walks every structure BSP). The
+		// COLOURS and styles below are still persisted - it is only the on/off that resets.
+		hceBspOverlayInvisibleOnly,
+		hceBspOverlayRenderStyle,
+		hceBspOverlayRenderDistance,
+		hceBspOverlayColor,
+		hceBspOverlayAlpha,
+		hceBspOverlayWireframeAlpha,
+		hceBspOverlayInteriorStyle,
+		hceBspOverlayInsideColor,
+		hceBspOverlayInsideAlpha,
+		hceBspOverlayWireframeColor,
+		hceBspOverlayFaceShading,
+		hceBspOverlayOccludeFarSurfaces,
+		hceBspOverlayPatternContrast,
+		hceBspOverlayPatternScale,
+		hceBspOverlayLayerCompensation,
+		hceBspOverlayShadingStrength,
+		hceBspOverlaySurfaceVariation,
 		editPlayerViewAngleVec2,
 		editPlayerViewAngleAdjustFactor,
 		editPlayerViewAngleIDInt,

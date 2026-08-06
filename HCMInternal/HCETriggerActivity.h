@@ -37,6 +37,20 @@ public:
 	// range. Safe from any thread.
 	bool isVolumeActive(uint32_t volumeIndex) const;
 
+	// true if a script tested this volume and the test PASSED within the last flashMilliseconds.
+	//
+	// ACTIVE and HIT are different questions and must not be conflated. Active is "a script is watching this",
+	// and stays true for a multi-second window because scripts poll in bursts. Hit is "you were inside it when
+	// the script looked", and is an instantaneous event - which is why the caller passes its own, much shorter,
+	// flash duration. Before this existed the viewer could only show active, so entering a volume looked like
+	// the volume slowly going dormant several seconds later.
+	bool isVolumeHit(uint32_t volumeIndex, uint32_t flashMilliseconds) const;
+
+	// Raw last-hit timestamp for this volume; 0 means never hit. For building an edge-triggered "volumes hit"
+	// list: keep your own previous value per volume and report the ones that changed. Kept out of this class
+	// deliberately - it cannot know when a level changed and would otherwise carry stale per-scenario state.
+	uint32_t getLastHitTick(uint32_t volumeIndex) const;
+
 	// Enable/disable the call-site patches. Safe to call repeatedly and from a non-game thread.
 	// Never throws - a failure (unrecognised game build, allocation failure) is logged and reported through
 	// RuntimeExceptionHandler, and the patches simply stay off.

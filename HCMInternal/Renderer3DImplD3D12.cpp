@@ -46,6 +46,8 @@ cbuffer DrawConstants : register(b0)
     float4 worldViewProjectionRow2;
     float4 worldViewProjectionRow3;
     float4 drawColor;
+    // x = pattern cell size in WORLD units (<= 0 disables), y = contrast (0..1), zw unused.
+    float4 patternParams;
 };
 
 struct VSInput
@@ -57,6 +59,7 @@ struct PSInput
 {
     float4 position : SV_POSITION;
     float4 color    : COLOR0;
+    float3 worldPos : TEXCOORD0;
 };
 
 PSInput VSMain(VSInput input)
@@ -68,16 +71,36 @@ PSInput VSMain(VSInput input)
                     + input.position.z * worldViewProjectionRow2
                     + worldViewProjectionRow3;
     output.color = drawColor;
+    // The incoming vertex is already in WORLD space (the matrix is view*projection only), so this is the
+    // world position the pixel shader needs for a world-locked pattern.
+    output.worldPos = input.position;
     return output;
 }
 
 float4 PSMain(PSInput input) : SV_TARGET
 {
-    return input.color;
+    float cell = patternParams.x;
+    float contrast = patternParams.y;
+    if (cell <= 0.0 || contrast <= 0.0)
+        return input.color;
+
+    // A 3D CHECKER IN WORLD SPACE, not a screen-space pattern. Screen-space hatching slides across geometry as
+    // you move and tells you nothing; a world-space checker is locked to the world, so any plane cutting
+    // through it picks up a stable chequerboard that shows the surface's orientation and how far away it is.
+    // Its real job here is unambiguity: a patterned area is definitely a surface, and an unpatterned area is
+    // definitely a hole - which a flat translucent fill cannot distinguish.
+    float3 cellIndex = floor(input.worldPos / cell);
+    float parity = frac((cellIndex.x + cellIndex.y + cellIndex.z) * 0.5) * 2.0;   // 0 or 1
+
+    // Brighten one parity and darken the other, centred on the chosen colour, so switching the pattern on
+    // does not change how bright the overlay looks overall.
+    float k = (parity > 0.5) ? (1.0 + contrast) : (1.0 - contrast);
+    return float4(saturate(input.color.rgb * k), input.color.a);
 }
 )";
 
-	constexpr UINT kRootConstantCount = 20;   // 16 floats of matrix + 4 floats of colour
+	// 16 floats of matrix + 4 of colour + 4 of pattern params.
+	constexpr UINT kRootConstantCount = 24;
 	constexpr UINT kVertexStride = (UINT)sizeof(DirectX::VertexPosition);   // 12 bytes, position only
 
 	// Depth format. D24_UNORM_S8_UINT is what Renderer3DImpl_updateCameraData.cpp uses on the D3D11 path;
@@ -298,7 +321,9 @@ bool Renderer3DImplD3D12::createRootSignatureAndShaders()
 	// DWORDs is nothing against the 64-DWORD root signature budget.
 	D3D12_ROOT_PARAMETER rootParameter{};
 	rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-	rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	// ⚠ ALL, not VERTEX. The pixel shader now reads patternParams out of this same cbuffer; leaving this as
+	// VERTEX-only means the PS sees garbage (or the root signature fails validation outright).
+	rootParameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 	rootParameter.Constants.ShaderRegister = 0;
 	rootParameter.Constants.RegisterSpace = 0;
 	rootParameter.Constants.Num32BitValues = kRootConstantCount;
@@ -308,11 +333,15 @@ bool Renderer3DImplD3D12::createRootSignatureAndShaders()
 	desc.pParameters = &rootParameter;
 	desc.NumStaticSamplers = 0;
 	desc.pStaticSamplers = nullptr;
+	// ⚠ NO DENY_PIXEL_SHADER_ROOT_ACCESS. The pixel shader reads patternParams out of the root constants for
+	// the world-space surface pattern, so denying it access makes CreateGraphicsPipelineState fail with
+	// E_INVALIDARG (0x80070057) on the FIRST variant - which disables the whole D3D12 renderer and silently
+	// drops the overlay onto its ImGui fallback. The deny flags are only a minor optimisation; the ones for
+	// stages we genuinely never use are kept.
 	desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT
 		| D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS
 		| D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS
-		| D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS
-		| D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS;
+		| D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
 
 	ID3DBlob* serialized = nullptr;
 	ID3DBlob* errors = nullptr;
@@ -357,21 +386,25 @@ bool Renderer3DImplD3D12::createPipelineStates(DXGI_FORMAT backBufferFormat)
 		D3D12_FILL_MODE fill;
 		D3D12_CULL_MODE cull;
 		D3D12_PRIMITIVE_TOPOLOGY_TYPE topology;
-		bool alphaBlended;   // false => blend off + depth WRITE (DirectXTK's "Opaque + DepthDefault")
+		bool alphaBlended;   // false => blend off (DirectXTK's "Opaque")
+		bool depthWrite;     // stated independently of blending - the two are NOT the same axis
+		bool colourWrite;    // false => depth-only pass (render target write mask 0)
 	};
 
 	static const Variant variants[] =
 	{
-		{ Pso::TriangleCullNoneAlpha,        D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true  },
-		{ Pso::TriangleCullFrontFacesAlpha,  D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_FRONT, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true  },
-		{ Pso::TriangleCullBackFacesAlpha,   D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_BACK,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true  },
-		{ Pso::TriangleCullNoneOpaque,       D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false },
-		{ Pso::TriangleCullFrontFacesOpaque, D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_FRONT, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false },
-		{ Pso::TriangleCullBackFacesOpaque,  D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_BACK,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false },
-		{ Pso::WireframeAlpha,               D3D12_FILL_MODE_WIREFRAME, D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true  },
-		{ Pso::WireframeOpaque,              D3D12_FILL_MODE_WIREFRAME, D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false },
-		{ Pso::LineAlpha,                    D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE,     true  },
-		{ Pso::LineOpaque,                   D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE,     false },
+		{ Pso::TriangleCullNoneAlpha,        D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true,  false, true  },
+		{ Pso::TriangleCullFrontFacesAlpha,  D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_FRONT, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true,  false, true  },
+		{ Pso::TriangleCullBackFacesAlpha,   D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_BACK,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true,  false, true  },
+		{ Pso::TriangleCullNoneOpaque,       D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, true,  true  },
+		{ Pso::TriangleCullFrontFacesOpaque, D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_FRONT, D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, true,  true  },
+		{ Pso::TriangleCullBackFacesOpaque,  D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_BACK,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, true,  true  },
+		// Depth-only: writes depth, no colour. Blending is off because nothing is written to the target.
+		{ Pso::TriangleCullNoneDepthOnly,    D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, true,  false },
+		{ Pso::WireframeAlpha,               D3D12_FILL_MODE_WIREFRAME, D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, true,  false, true  },
+		{ Pso::WireframeOpaque,              D3D12_FILL_MODE_WIREFRAME, D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, true,  true  },
+		{ Pso::LineAlpha,                    D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE,     true,  false, true  },
+		{ Pso::LineOpaque,                   D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE,     false, true,  true  },
 	};
 
 	for (const Variant& variant : variants)
@@ -424,13 +457,15 @@ bool Renderer3DImplD3D12::createPipelineStates(DXGI_FORMAT backBufferFormat)
 		blend.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
 		blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
 		blend.LogicOp = D3D12_LOGIC_OP_NOOP;
-		blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+		// A depth-only variant masks colour off entirely rather than dropping the render target, so the PSO's
+		// RTV format still matches the command list's bound target.
+		blend.RenderTargetWriteMask = variant.colourWrite ? D3D12_COLOR_WRITE_ENABLE_ALL : 0;
 
 		// Depth: ALWAYS tested, written only by the opaque variants. Same rule DirectXTK applies on the MCC
 		// path (AlphaBlend + DepthRead vs Opaque + DepthDefault). The buffer is OURS and is cleared to 1.0 at
 		// the top of every frame, so this sorts the overlay against ITSELF and never against world geometry.
 		desc.DepthStencilState.DepthEnable = TRUE;
-		desc.DepthStencilState.DepthWriteMask = variant.alphaBlended ? D3D12_DEPTH_WRITE_MASK_ZERO : D3D12_DEPTH_WRITE_MASK_ALL;
+		desc.DepthStencilState.DepthWriteMask = variant.depthWrite ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
 		desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
 		desc.DepthStencilState.StencilEnable = FALSE;
 
@@ -977,6 +1012,12 @@ Renderer3DImplD3D12::Pso Renderer3DImplD3D12::trianglePsoFor(CullingOption culli
 {
 	// Mirrors Renderer3DImpl_Geometry.cpp::setCullMode exactly. See the Pso enum comment for why CullBack maps
 	// to CULL_FRONT.
+	//
+	// ⚠ DELIBERATELY ALWAYS THE ALPHA VARIANTS, matching MCC's TriggerOverlay exactly. It is tempting to switch
+	// to the depth-WRITING TriangleCull*Opaque variants when color.w >= 1 (renderSphere does that for spheres),
+	// but doing it here changes the trigger overlay too: a depth-writing volume hides the volumes behind it,
+	// and the whole point of the trigger overlay is seeing volumes through each other. Whether the camera is
+	// inside a volume is answered by TriggerInteriorStyle at the CALLER, not by the raster state.
 	switch (cullingOption)
 	{
 	case CullingOption::CullNone:  return Pso::TriangleCullNoneAlpha;
@@ -984,6 +1025,12 @@ Renderer3DImplD3D12::Pso Renderer3DImplD3D12::trianglePsoFor(CullingOption culli
 	case CullingOption::CullFront: return Pso::TriangleCullBackFacesAlpha;
 	default:                       return Pso::TriangleCullNoneAlpha;
 	}
+}
+
+void Renderer3DImplD3D12::setSurfacePattern(float worldCellSize, float contrast)
+{
+	mPatternCellSize = (worldCellSize > 0.f) ? worldCellSize : 0.f;
+	mPatternContrast = std::clamp(contrast, 0.f, 1.f);
 }
 
 bool Renderer3DImplD3D12::beginDraw(Pso pso, const SimpleMath::Matrix& worldViewProjection, const SimpleMath::Vector4& color)
@@ -1006,6 +1053,12 @@ bool Renderer3DImplD3D12::beginDraw(Pso pso, const SimpleMath::Matrix& worldView
 	constants[17] = color.y;
 	constants[18] = color.z;
 	constants[19] = color.w;
+	// Pattern params. Zero cell size means "no pattern", which is what every caller that never touches
+	// setSurfacePattern gets - so the MCC trigger overlay and everything else is bit-identical.
+	constants[20] = mPatternCellSize;
+	constants[21] = mPatternContrast;
+	constants[22] = 0.f;
+	constants[23] = 0.f;
 	mCommandList->SetGraphicsRoot32BitConstants(0, kRootConstantCount, constants, 0);
 	return true;
 }
@@ -1052,7 +1105,7 @@ void Renderer3DImplD3D12::drawTriangle(const std::array<SimpleMath::Vector3, 3>&
 }
 
 void Renderer3DImplD3D12::drawTriangleCollection(const IModelTriangles* model, const SimpleMath::Vector4& color,
-	CullingOption cullingOption, std::optional<TextureEnum> texture)
+	CullingOption cullingOption, std::optional<TextureEnum> texture, DepthMode depthMode)
 {
 	if (!model) return;
 	if (texture.has_value() && !mLoggedTextureStub)
@@ -1063,7 +1116,12 @@ void Renderer3DImplD3D12::drawTriangleCollection(const IModelTriangles* model, c
 
 	const VertexCollection& vertices = model->getTriangleVertices();
 	const IndexCollection& indices = model->getTriangleIndices();
-	drawIndexed(trianglePsoFor(cullingOption), mViewProjectionMatrix, color,
+	// The depth-only variant is CullNone only - it exists for closed shells, which are drawn CullNone by
+	// definition. Anything else falls through to the normal selection rather than silently changing culling.
+	const Pso pso = (depthMode == DepthMode::DepthOnlyPrepass && cullingOption == CullingOption::CullNone)
+		? Pso::TriangleCullNoneDepthOnly
+		: trianglePsoFor(cullingOption);
+	drawIndexed(pso, mViewProjectionMatrix, color,
 		vertices.data(), vertices.size(), indices.data(), indices.size(), D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 }
 

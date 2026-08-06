@@ -105,8 +105,9 @@ void Renderer3DImpl<mGame>::drawEdge(const SimpleMath::Vector3& edgeStart, const
 }
 
 template<GameState::Value mGame>
-void  Renderer3DImpl<mGame>::drawTriangleCollection(const IModelTriangles* model, const SimpleMath::Vector4& color, CullingOption cullingOption, std::optional<TextureEnum> texture)
+void  Renderer3DImpl<mGame>::drawTriangleCollection(const IModelTriangles* model, const SimpleMath::Vector4& color, CullingOption cullingOption, std::optional<TextureEnum> texture, DepthMode depthMode)
 {
+	(void)depthMode;   // D3D12-only; see the declaration
 	setTexture(texture);
 
 

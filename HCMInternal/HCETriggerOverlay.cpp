@@ -666,6 +666,9 @@ private:
 	// The render path holds it for the whole draw, which is fine - the other two are rare and brief.
 	std::mutex mVolumesMutex;
 	std::vector<HceTriggerVolume> mVolumes;
+	// Parallel to mVolumes: the last-hit timestamp we have already reported for each. Resized (and re-seeded
+	// without reporting) whenever mVolumes changes, which is what makes a level change not spam the feed.
+	std::vector<uint32_t> mLastHitTicks;
 	uint32_t mCachedEncodedAddress = 0;
 	int32_t mCachedCount = -1;
 	std::chrono::steady_clock::time_point mLastRefresh{};
@@ -744,6 +747,52 @@ private:
 		if (!mTriggerActivityOptionalWeak.has_value()) return false;
 		auto activity = mTriggerActivityOptionalWeak.value().lock();
 		return activity && activity->isVolumeActive(volumeIndex);
+	}
+
+	// "A script tested this volume and you were INSIDE it" - the event, not the polling.
+	//
+	// ⚠ THIS IS NOT isVolumeActive. Active stays true for a multi-second window because scripts poll in
+	// bursts; a HIT is instantaneous. Conflating them is why entering a volume used to look like the volume
+	// slowly going dormant several seconds later instead of flashing the moment you crossed it.
+	bool isVolumeHit(uint32_t volumeIndex, uint32_t flashMilliseconds) const
+	{
+		if (!mTriggerActivityOptionalWeak.has_value()) return false;
+		auto activity = mTriggerActivityOptionalWeak.value().lock();
+		return activity && activity->isVolumeHit(volumeIndex, flashMilliseconds);
+	}
+
+	uint32_t volumeLastHitTick(uint32_t volumeIndex) const
+	{
+		if (!mTriggerActivityOptionalWeak.has_value()) return 0;
+		auto activity = mTriggerActivityOptionalWeak.value().lock();
+		return activity ? activity->getLastHitTick(volumeIndex) : 0;
+	}
+
+	// Edge-triggered "you just hit these" report, for the message feed. Keyed on each volume's last-hit
+	// timestamp changing, with the previous values held HERE rather than in HCETriggerActivity - that class
+	// has no idea when a level changed and would otherwise carry stale per-scenario state.
+	void reportNewHits(const std::shared_ptr<IMessagesGUI>& messagesGUI)
+	{
+		if (mVolumes.empty()) return;
+		if (mLastHitTicks.size() != mVolumes.size())
+		{
+			// First pass after a rebuild: seed WITHOUT reporting, or every volume already hit this session
+			// would announce itself the moment the overlay is switched on.
+			mLastHitTicks.assign(mVolumes.size(), 0);
+			for (size_t i = 0; i < mVolumes.size(); ++i)
+				mLastHitTicks[i] = volumeLastHitTick(mVolumes[i].index);
+			return;
+		}
+
+		for (size_t i = 0; i < mVolumes.size(); ++i)
+		{
+			const uint32_t tick = volumeLastHitTick(mVolumes[i].index);
+			if (tick == mLastHitTicks[i]) continue;
+			mLastHitTicks[i] = tick;
+			if (tick == 0) continue;   // cleared, not hit
+
+			messagesGUI->addMessage(std::format("Trigger hit: {}", mVolumes[i].name));
+		}
 	}
 
 	// The call-site patches only exist while the overlay wants them - no reason to carry them otherwise.
@@ -1422,6 +1471,14 @@ private:
 			}
 			if (mVolumes.empty()) return;
 
+			// Announce anything hit since the last frame. Done here, under the same lock that owns mVolumes,
+			// so the name and the index can never disagree.
+			if (settings->triggerOverlayMessageOnCheckHit->GetValue())
+			{
+				if (auto messagesGUI = messagesGUIWeak.lock())
+					reportNewHits(messagesGUI);
+			}
+
 			const SettingsEnums::TriggerRenderStyle renderStyle = settings->triggerOverlayRenderStyle->GetValue();
 			if (renderStyle == SettingsEnums::TriggerRenderStyle::None)
 			{
@@ -1440,6 +1497,15 @@ private:
 
 			const bool highlightActive = settings->hceTriggerOverlayHighlightActive->GetValue();
 			const SimpleMath::Vector4 activeColour = settings->hceTriggerOverlayActiveColor->GetValue();
+
+			// Hit flash. Shares the MCC trigger overlay's settings, which already model exactly this
+			// (triggerOverlayCheckHitToggle / Falloff / Color) - the falloff is in TICKS there, so convert.
+			const bool flashOnHit = settings->triggerOverlayCheckHitToggle->GetValue();
+			const uint32_t hitFlashMs = (uint32_t)std::clamp(
+				settings->triggerOverlayCheckHitFalloff->GetValue(), 1, 600) * 1000u / 60u;
+			const SimpleMath::Vector4 hitBase = settings->triggerOverlayCheckHitColor->GetValue();
+			const bool messageOnHit = settings->triggerOverlayMessageOnCheckHit->GetValue();
+
 			const SimpleMath::Vector4 normalColour = settings->triggerOverlayNormalColor->GetValue();
 			const SimpleMath::Vector4 sectorBase = settings->triggerOverlaySectorColor->GetValue();
 			const float wireAlpha = std::clamp(settings->triggerOverlayWireframeAlpha->GetValue(), 0.f, 1.f);
@@ -1455,6 +1521,8 @@ private:
 					return ImGui::ColorConvertFloat4ToU32(ImVec4(c.x, c.y, c.z, c.w));
 				};
 
+			const SimpleMath::Vector4 hitWire = withAlpha(hitBase, wireAlpha);
+			const SimpleMath::Vector4 hitFill = withAlpha(hitBase, solidAlpha);
 			const SimpleMath::Vector4 boxWire = withAlpha(normalColour, wireAlpha);
 			const SimpleMath::Vector4 sectorWire = withAlpha(sectorBase, wireAlpha);
 			const SimpleMath::Vector4 activeWire = withAlpha(activeColour, wireAlpha);
@@ -1494,7 +1562,28 @@ private:
 
 				if (!shouldDrawVolume(volume, typeFilter)) continue;
 
-				const bool isLive = highlightActive && isVolumeActive(volume.index);
+				// HIT beats ACTIVE beats everything else. A hit is a moment - the thing you are actually
+				// watching for - so it must not be outranked by the multi-second "a script is polling this"
+				// state that surrounds it.
+				const bool isHit = flashOnHit && isVolumeHit(volume.index, hitFlashMs);
+				const bool isLive = !isHit && highlightActive && isVolumeActive(volume.index);
+				if (isHit)
+				{
+					const HceTriggerVolumeModel hitModel(volume);
+					if (wantSolid && !volume.triangleIndices.empty())
+						renderer->drawTriangleCollection(&hitModel, hitFill, CullingOption::CullNone, std::nullopt);
+					if (wantWire && !volume.edgeIndices.empty())
+						renderer->drawEdgeCollection(&hitModel, hitWire);
+					if (wantLabels && !renderer->pointBehindCamera(volume.center))
+					{
+						const SimpleMath::Vector3 screen = renderer->worldPointToScreenPosition(volume.center, false);
+						const float sizeScale = std::clamp(3.f / std::max(distance, 0.5f), 0.35f, 1.f);
+						RenderTextHelper::drawCenteredOutlinedText(volume.name,
+							SimpleMath::Vector2(screen.x, screen.y), labelPacked, labelScale * sizeScale);
+					}
+					continue;
+				}
+
 				const SimpleMath::Vector4& wireColour = isLive ? activeWire
 					: volume.isBspSwitch ? bspWire
 					: volume.isKill ? killWire

@@ -159,6 +159,7 @@ HCEForceTeleport,\
 HCEForceLaunch,\
 HCEFreecam,\
 HCETriggerOverlay,\
+HCEBspOverlay,\
 HCETriggerActivity,\
 HCEDisableBarriers,\
 HCESkyFix,\

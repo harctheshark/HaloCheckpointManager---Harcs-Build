@@ -111,7 +111,8 @@ public:
 	const DirectX::BoundingFrustum& getCameraFrustum() override { return mFrustumViewWorld; }
 
 	void drawTriangle(const std::array<SimpleMath::Vector3, 3>& vertexPositions, const SimpleMath::Vector4& color, CullingOption cullingOption, std::optional<TextureEnum> texture) override;
-	void drawTriangleCollection(const IModelTriangles* model, const SimpleMath::Vector4& color, CullingOption cullingOption, std::optional<TextureEnum> texture) override;
+	void drawTriangleCollection(const IModelTriangles* model, const SimpleMath::Vector4& color, CullingOption cullingOption, std::optional<TextureEnum> texture, DepthMode depthMode) override;
+	void setSurfacePattern(float worldCellSize, float contrast) override;
 	void drawEdge(const SimpleMath::Vector3& edgeStart, const SimpleMath::Vector3& edgeEnd, const SimpleMath::Vector4& color) override;
 	void drawEdgeCollection(const IModelEdges* model, const SimpleMath::Vector4& color) override;
 
@@ -139,6 +140,15 @@ private:
 		TriangleCullNoneOpaque,
 		TriangleCullFrontFacesOpaque,
 		TriangleCullBackFacesOpaque,
+		// DEPTH ONLY: writes depth, writes NO colour, no blending. The first half of a depth pre-pass.
+		//
+		// ⚠ THIS REPLACED A blend-AND-depth-write VARIANT, WHICH WAS A MISTAKE. Blending while writing depth is
+		// order-dependent: whichever translucent surface happens to be submitted first wins the depth test and
+		// the ones behind it still blend in, so the result depends on tag order rather than on geometry, and a
+		// closed shell comes out as a uniform wash. The correct construction for "one translucent layer per
+		// pixel, order-independent" is two passes - lay depth down with colour writes off, then draw colour
+		// with depth writes off - which is what this variant exists for.
+		TriangleCullNoneDepthOnly,
 		WireframeAlpha,
 		WireframeOpaque,
 		LineAlpha,
@@ -241,6 +251,11 @@ private:
 	bool mInitialised = false;
 	bool mInitFailed = false;
 	bool mLoggedTextureStub = false;
+
+	// World-space checker, applied to filled draws until cleared. See IRenderer3D::setSurfacePattern.
+	// Zero cell size = off, which is the state every caller that never touches it observes.
+	float mPatternCellSize = 0.f;
+	float mPatternContrast = 0.f;
 	DXGI_FORMAT mBackBufferFormat = DXGI_FORMAT_UNKNOWN;
 	UINT mDepthWidth = 0;
 	UINT mDepthHeight = 0;

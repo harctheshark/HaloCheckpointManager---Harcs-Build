@@ -22,6 +22,7 @@
 #include "HCEForceLaunch.h"
 #include "HCEFreecam.h"
 #include "HCETriggerOverlay.h"
+#include "HCEBspOverlay.h"
 #include "HCETriggerActivity.h"
 #include "HCEDisableBarriers.h"
 #include "HCESkyFix.h"

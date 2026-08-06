@@ -4576,12 +4576,139 @@
 		</Version>
 	</VersionedEntry>
 
+	<!--=====================================================================================================
+	    HCEBspOverlay: the structure BSP's collision geometry.
+
+	    STRUCTURAL CONSTANTS ONLY. The three ADDRESSES this needs (scenario data pointer, tag block address
+	    table, tag instance table) are deliberately absent for the same reason the trigger overlay's are:
+	    they move between builds and HCE reports 0.0.0.0 on every build. HCEBspOverlay resolves all three by
+	    unique byte signature and refuses to draw rather than guessing.
+
+	    ⚠ THE COLLISION BSP IS NOT ON THE STRUCTURE BSP TAG ROOT. Walking scenario_structure_bsp_block_struct
+	    (definition record rva 0x9C7E90) closes EXACTLY at its declared 0x308 with no collision bsp field. The
+	    retained older scenario_structure_bsp_v0_block_struct (rva 0x9C7930, closes exactly at 0x20C) does
+	    carry "collision bsp" at +0x30 and "instanced geometries definitions" at +0x124, which is what proves
+	    they were MOVED rather than never present. Both now live in the BSP's raw resource:
+
+	        sbsp     = tag data of scenario.structure_bsps[i].structure_bsp
+	        resource = resolve(*(uint32*)(sbsp + 0x2E8))
+	        collbsp  = resolve(resource + 0x00)   small variant, u16 indices
+	                 = resolve(resource + 0x0C)   large variant, u32 indices
+	                   resource + 0x18            INSTANCED geometry, DELIBERATELY NEVER READ
+
+	    That last line is the entire "true BSP only" filter: structure and instanced collision are different
+	    blocks of the same resource, so excluding instanced is an omission, not a test.
+
+	    Independently confirmed by working code: repos\HceHavokDebugger\src\vdb\vdb.cpp walks this identical
+	    chain on a live process (small at V+0x00/+0x04, large at V+0x0C/+0x10, surface count at collbsp+0x48).
+
+	    Record layouts are hard-coded in HCEBspOverlay.cpp rather than listed here, because the two variants
+	    are a matched SET of eleven offsets each and splitting them across two files invites a half-applied
+	    edit. Both were walked and both close exactly on their declared sizes:
+	        surface  small stride 14 (rva 0x9D6580) / large stride 20 (rva 0x9D61B0)
+	        edge     small stride 12 (rva 0x9D5F90) / large stride 24 (rva 0x9D5D20)
+	        vertex   small stride 16 (rva 0x9D5980) / large stride 20 (rva 0x9D5A70)
+	    surface_flags (rva 0x9D6078, 9 named options, shared by both variants):
+	        bit0 two sided, bit1 INVISIBLE, bit2 climbable, bit3 breakable, bit4 invalid,
+	        bit5 conveyor, bit6 slip, bit7 plane negated, bit8 pathfinding only
+	    So "invisible" is a real per-surface flag read out of the tag, not a name heuristic.
+	    =====================================================================================================-->
+	<VersionedEntry Name="hceScenarioStructureBspBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x60</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--scenario_structure_bsp_reference, 96 bytes.-->
+	<VersionedEntry Name="hceStructureBspReferenceStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x60</Data>
+		</Version>
+	</VersionedEntry>
+	<!--"structure bsp" tag_reference; the tag index sits at +0x0C of the reference.-->
+	<VersionedEntry Name="hceStructureBspTagIndexOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x0C</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--"local structure bsp". The engine (sub_1801983C0) uses this ONLY when the main index is 0xFFFFFFFF.-->
+	<VersionedEntry Name="hceStructureBspLocalTagIndexOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x1C</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--tag_get_data (sim rva 0x201470) inlined: instances = *(tagGlobals + 0x50), stride 48, data enc at +0x1C.
+	    The stride is visible in the instruction pair "lea rdi,[rax+rax*2]" then "shl rdi,4", i.e. 3 * 16.-->
+	<VersionedEntry Name="hceTagInstanceTableOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x50</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceTagInstanceStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x30</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceTagInstanceDataOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x1C</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--structure_bsp resource interface: count at +0x2E4, encoded address at +0x2E8.-->
+	<VersionedEntry Name="hceStructureBspResourceBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x2E4</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceResourceSmallCollisionBsp" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x0</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceResourceLargeCollisionBsp" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x0C</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--global_collision_bsp_block (rva 0x9D5720) and global_large_collision_bsp_block (rva 0x9D80A0) have the
+	    SAME field layout and both close exactly at 0x6C, so one set of block offsets serves both variants:
+	    bsp3d nodes +0x00, supernodes +0x0C, planes +0x18, leaves +0x24, bsp2d refs +0x30, bsp2d nodes +0x3C,
+	    surfaces +0x48, edges +0x54, vertices +0x60.-->
+	<VersionedEntry Name="hceCollisionSurfacesBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x48</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceCollisionEdgesBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x54</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceCollisionVerticesBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x60</Offset>
+		</Version>
+	</VersionedEntry>
+
 	<!--Info overlay sources. Note all three are shaped differently, which has caught people out before:
 	        hceCurrentLevel     a NUL-terminated ASCII STRING (<=40 bytes), NOT an index and NOT a pointer
 	        hceCurrentBSP       an int32 read DIRECTLY at the address, no dereference
 	        hceTickCounterSlot  a POINTER to the int32 - dereference once, then read
 	    HCEStateHook.cpp documents reading the tick counter in place as the bug that made HCM report "Loading"
-	    forever.-->
+	    forever.
+
+	    ⚠⚠ hceCurrentLevel IS A CACHE, NOT THE TRUTH. sub_1804C62F0 (the session/presence updater) composes a
+	    name and, at 0x4C6E4E, only copies it in WHEN IT IS NON-EMPTY; it never clears the buffer, and it bails
+	    at its own entry on byte_18172C1C0. HCM's logs caught it reading empty for a whole 18-minute session with
+	    a level loaded and being played, on the same build that filled it in correctly an hour earlier. It is
+	    fine for the two cosmetic things that still read it - the info overlay's "Current Level" row and Dump
+	    Checkpoint's auto-generated file name, which falls back to "HaloCER" when it is empty - but it must NOT
+	    decide MCCState::currentLevelID.
+	    The engine's own answer is the scenario path at hceCheckpointStateBlock's +0x008 (see that entry and
+	    HCECheckpointBlob.h): written at level load by the session setup at 0x19D21B, strcmp'd by the revert, and
+	    left NULL between levels because the teardown nulls the state block pointer. HCEStateHook.cpp reads that,
+	    reaching the pointer by BYTE SIGNATURE rather than through this file - it is constructed with no
+	    arguments (App.h) and so has no PointerDataStore to ask, and a signature is the only update detector a
+	    title with no version resource admits anyway.-->
 	<VersionedEntry Name="hceCurrentLevel" Type="MultilevelPointer::ModuleOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>

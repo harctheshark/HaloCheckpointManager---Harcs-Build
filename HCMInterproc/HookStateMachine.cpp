@@ -8,6 +8,7 @@
 #include "FindProcess.h"
 #include "ImbueInternal.h"
 #include "SharedMemoryExternal.h"
+#include "InitInterproc.h"   // interprocIsShuttingDown - see the InternalInjecting case
 
 class HookStateMachine::HookStateMachineImpl
 {
@@ -15,6 +16,7 @@ private:
 
 	HookStateEnum currentState = HookStateEnum::MCCNotFound;
 	std::optional<HandlePtr> mccHandle;
+	int initialisingTicks = 0;   // guards against InternalInitialising hanging forever, see that case
 
 	void implAdvanceStateMachine(HookStateEnum newState)
 	{
@@ -96,6 +98,16 @@ private:
                 ADVANCE_STATE_MACHINE(HookStateEnum::MCCNotFound);
             }
 
+            // ⚠ LAST GATE BEFORE INJECTION. The shutdown flag can be set at any point, including during the
+            // loop's sleep, so checking it only at the top of the loop is not enough - that race is exactly
+            // how a closing HCMExternal used to inject an orphan HCMInternal as its final act. Injecting
+            // during shutdown pins the DLL in the game and breaks the NEXT launch, so it must never happen.
+            if (interprocIsShuttingDown())
+            {
+                PLOG_INFO << "skipping injection: interproc is shutting down";
+                return;
+            }
+
             auto imbueErrorString = imbueInternal(mccHandle.value());
 
             if (imbueErrorString)
@@ -114,11 +126,32 @@ private:
 
         case HookStateEnum::InternalInitialising:
         {
+            // ⚠ THIS STATE USED TO HAVE NO TIMEOUT AND NO LIVENESS CHECK, so it could wait forever. That is
+            // not hypothetical: if LoadLibrary merely bumped the refcount of an HCMInternal that was already
+            // resident (which reports success identically to a real load - non-zero return, module present),
+            // DllMain never runs, nothing ever writes the status flag, and HCM sits on "initialising" until
+            // the user kills the game. Time out into a real error instead of hanging silently.
+            if (hasMCCTerminated(mccHandle.value()))
+            {
+                initialisingTicks = 0;
+                ADVANCE_STATE_MACHINE(HookStateEnum::MCCNotFound);
+            }
+
             HCMInternalStatus currentInternalState = getHCMInternalStatusFlag();
             switch (currentInternalState)
             {
             case HCMInternalStatus::Initialising:
-                break; // do nothing (keep waiting)
+                // ~1 tick per second; 25 is generous for a cold init on a slow disk.
+                if (++initialisingTicks > 25)
+                {
+                    initialisingTicks = 0;
+                    ADVANCE_STATE_MACHINE_ERROR(HookStateEnum::InternalInjectError,
+                        L"HCM injected its internal module but it never finished initialising.\n\n"
+                        "This usually means a previous HCMInternal is still loaded in the game from an earlier "
+                        "HCM session, so the injection only re-used the old copy instead of starting a new one. "
+                        "Fully close the game and relaunch it.");
+                }
+                break; // otherwise keep waiting
 
             case HCMInternalStatus::Error:
                 ADVANCE_STATE_MACHINE_ERROR(HookStateEnum::InternalException, L"HCMInternal had an exception during intialisation - see MCC window (or HCMInternal.log) for more details");
@@ -126,6 +159,7 @@ private:
 
 
             case HCMInternalStatus::AllGood:
+                initialisingTicks = 0;
                 ADVANCE_STATE_MACHINE(HookStateEnum::InternalSuccess);
                 break;
 

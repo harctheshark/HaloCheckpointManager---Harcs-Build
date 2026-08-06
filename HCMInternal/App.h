@@ -311,14 +311,31 @@ public:
 
             sharedMem->setStatusFlag(HCMInternalStatus::Error);
 
-            int msgboxID = MessageBoxA(
-                NULL,
-                oss.str().c_str(),
-                "Halo Checkpoint Manager error",
-                MB_OK
-            );
-
+            // ⚠ KILL FIRST, ASK LATER. GlobalKill is what lets RealMain fall through to
+            // FreeLibraryAndExitThread, so anything BLOCKING in front of it keeps HCMInternal.dll pinned in
+            // the game for as long as the block lasts. MessageBoxA on the game's thread, behind a fullscreen
+            // game, can block indefinitely - the user never sees the box. That is precisely what left a stale
+            // DLL resident and made the next HCM launch fail with "a previous HCMInternal is still loaded".
+            // Setting the flag first costs nothing and bounds the damage to "the box is still up".
             GlobalKill::killMe();
+
+            // Only worth showing at all if HCMExternal is still around to have asked for this injection; an
+            // orphan instance failing after the external has exited has nobody to tell, and its box would be
+            // an invisible modal on the game's thread.
+            if (findProcess(L"HCMExternal.exe") || findProcess(L"HaloCheckpointManager.exe"))
+            {
+                MessageBoxA(
+                    NULL,
+                    oss.str().c_str(),
+                    "Halo Checkpoint Manager error",
+                    MB_OK
+                );
+            }
+            else
+            {
+                PLOG_WARNING << "suppressing the error dialog: HCMExternal is gone, so this instance is an "
+                    "orphan and a modal box would only block the game's thread and pin the DLL";
+            }
         }
        // curl_global_cleanup(); PLOG_INFO << "Curl cleaned up";
         // Auto managed resources have fallen out of scope

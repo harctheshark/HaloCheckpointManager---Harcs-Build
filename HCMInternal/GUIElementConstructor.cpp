@@ -1274,6 +1274,8 @@ private:
 							createNestedElement(GUIElementEnum::triggerOverlaySettings),
 							createNestedElement(GUIElementEnum::hceTriggerOverlayToggleGUI),
 							createNestedElement(GUIElementEnum::hceTriggerOverlaySettingsSubheading),
+							createNestedElement(GUIElementEnum::hceBspOverlayToggleGUI),
+							createNestedElement(GUIElementEnum::hceBspOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::softCeilingOverlayToggle),
 							createNestedElement(GUIElementEnum::softCeilingOverlaySettings),
 							createNestedElement(GUIElementEnum::placementPointsOverlayToggle),
@@ -2301,6 +2303,10 @@ private:
 								createNestedElement(GUIElementEnum::hceTriggerOverlayRenderDistance),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayHighlightActive),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayActiveColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayFlashOnHit),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayHitColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayHitFalloff),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayMessageOnHit),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayBspColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayKillColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlaySafeZoneColour),
@@ -2315,6 +2321,104 @@ private:
 								createNestedElement(GUIElementEnum::hceTriggerOverlaySectorColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayWireframeAlpha),
 							}));
+
+				// Halo Campaign Evolved structure-BSP overlay. Separate from the trigger overlay in every way -
+				// its own cheat, its own settings, its own colour - because it answers a different question and
+				// you generally want one or the other on, not both at once.
+				case GUIElementEnum::hceBspOverlayToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Draws the level's INVISIBLE collision surfaces - the walls that block you but are never rendered. Read from a real per-surface flag in the tag, not guessed. Only TRUE structure BSP is drawn; instanced geometry is excluded, so on levels whose collision is mostly instanced this may show very little (the log records how many surfaces were found)."), std::nullopt, "BSP Overlay", settings->hceBspOverlayToggle));
+
+				case GUIElementEnum::hceBspOverlaySettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Settings for the BSP overlay"), "BSP Overlay Settings", headerChildElements
+							{
+								createNestedElement(GUIElementEnum::hceBspOverlayInvisibleOnly),
+								createNestedElement(GUIElementEnum::hceBspOverlayRenderStyle),
+								createNestedElement(GUIElementEnum::hceBspOverlayInteriorStyle),
+								createNestedElement(GUIElementEnum::hceBspOverlayRenderDistance),
+								createNestedElement(GUIElementEnum::hceBspOverlayColour),
+								createNestedElement(GUIElementEnum::hceBspOverlayAlpha),
+								createNestedElement(GUIElementEnum::hceBspOverlayInsideColour),
+								createNestedElement(GUIElementEnum::hceBspOverlayInsideAlpha),
+								createNestedElement(GUIElementEnum::hceBspOverlayOccludeFarSurfaces),
+								createNestedElement(GUIElementEnum::hceBspOverlayPatternContrast),
+								createNestedElement(GUIElementEnum::hceBspOverlayPatternScale),
+								createNestedElement(GUIElementEnum::hceBspOverlayLayerCompensation),
+								createNestedElement(GUIElementEnum::hceBspOverlayFaceShading),
+								createNestedElement(GUIElementEnum::hceBspOverlayShadingStrength),
+								createNestedElement(GUIElementEnum::hceBspOverlaySurfaceVariation),
+								createNestedElement(GUIElementEnum::hceBspOverlayWireframeColour),
+								createNestedElement(GUIElementEnum::hceBspOverlayWireframeAlpha),
+							}));
+
+				case GUIElementEnum::hceBspOverlayInvisibleOnly:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("ON: draw only surfaces carrying the collision INVISIBLE flag. OFF (default): draw the whole structural shell. Measured warning: on the first level tested, NONE of its 575 structure surfaces had that flag set, so turning this on drew nothing - this title does not appear to mark its non-rendered structure surfaces with it. Leave it off unless a level's log shows a useful invisible count."), std::nullopt, "Invisible Surfaces Only", settings->hceBspOverlayInvisibleOnly));
+
+				case GUIElementEnum::hceBspOverlayRenderStyle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::TriggerRenderStyle, 150.f>>
+						(game, ToolTipCollection("How to draw BSP surfaces. Filled faces are rebuilt from the collision edge rings; that reconstruction is verified on this build (a 575-surface BSP closed every ring), and any surface that ever failed would fall back to drawing its edges. As with trigger volumes, nothing is hidden by walls, so keep the fill fairly transparent."), "Render BSP surfaces as: ", settings->hceBspOverlayRenderStyle));
+
+				case GUIElementEnum::hceBspOverlayInteriorStyle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::TriggerInteriorStyle, 100.f>>
+						(game, ToolTipCollection("What to draw for structure surfaces the camera is INSIDE - the same option the MCC trigger overlay has. NORMAL draws them exactly as from outside, which is what makes the shell read as two-sided. DON'T RENDER skips them. For a structure BSP you are almost always inside the shell, so leave this on Normal unless you specifically want the interior hidden."), "Render Solid Interior as: ", settings->hceBspOverlayInteriorStyle));
+
+				case GUIElementEnum::hceBspOverlayRenderDistance:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 2000.f)>>
+						(game, ToolTipCollection("How far away BSP surfaces are still drawn, in WORLD UNITS (1 world unit = 10 feet). Higher than the trigger default because the shell is one connected object - cutting it short gives you a fragment rather than a thinner picture."), "BSP Render Distance (world units)", settings->hceBspOverlayRenderDistance));
+
+				case GUIElementEnum::hceBspOverlayColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of surfaces whose front side POINTS AT THE CAMERA. Standing in a corridor, that is the walls around you; standing outside a building, it is its exterior. (This was previously mislabelled 'outside faces', which read as inverted depending on where you stood - the test is which way a surface faces, not which room you are in.)"), "BSP Color (faces you)", settings->hceBspOverlayColor));
+
+				case GUIElementEnum::hceBspOverlayInsideColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of surfaces that point AWAY from the camera - typically the far side of the shell you are standing in. A separate colour is what gives an interior any sense of depth; with one colour a closed room is a flat wash."), "BSP Color (faces away)", settings->hceBspOverlayInsideColor));
+
+				case GUIElementEnum::hceBspOverlayInsideAlpha:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("How opaque faces-away surfaces are. These sit behind the ones facing you, so a lower value here keeps the near geometry readable."), "BSP Opacity Multiplier (faces away)", settings->hceBspOverlayInsideAlpha));
+
+				case GUIElementEnum::hceBspOverlayAlpha:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("How opaque surfaces facing you are. A depth pre-pass means only the NEAREST surface is blended per pixel now, so this value is the one you actually see - it is no longer multiplied up by however many walls happen to be behind it."), "BSP Opacity Multiplier (faces you)", settings->hceBspOverlayAlpha));
+
+				case GUIElementEnum::hceBspOverlayWireframeAlpha:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("How opaque the BSP wireframe lines are. Keep this high - the outlines are what make a surface read as a wall rather than as a wash of colour."), "BSP Wireframe Opacity", settings->hceBspOverlayWireframeAlpha));
+
+				case GUIElementEnum::hceBspOverlayWireframeColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of the BSP wireframe. Keep it clearly different from the fill colours - an outline the same colour as the face it outlines is invisible, and the outlines are a large part of what makes a surface read as a wall."), "Wireframe Color", settings->hceBspOverlayWireframeColor));
+
+				case GUIElementEnum::hceBspOverlayLayerCompensation:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 8.f)>>
+						(game, ToolTipCollection("Makes a surface seen from INSIDE as strong as the same shell seen from outside. Looking in from outside, your view crosses several surfaces and they stack up; standing in a room it crosses only one, so it looks far weaker - and raising the opacity slider cannot fix that, because it lifts both cases equally. This pre-multiplies the single layer to the value that many stacked layers would reach. 1 = off; 3 is about what a simple room costs you."), "Inside Layer Compensation", settings->hceBspOverlayLayerCompensation));
+
+				case GUIElementEnum::hceBspOverlayPatternContrast:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("Draws a checker pattern on filled surfaces, locked to WORLD space. This is the reliable way to tell a SURFACE from a HOLE: a flat colour looks the same whether you are seeing a wall or seeing through a gap at something behind it, but a checker only appears where geometry actually is. It also gives an interior real depth, because the cells foreshorten with distance and angle. 0 turns it off."), "Surface Pattern Contrast", settings->hceBspOverlayPatternContrast));
+
+				case GUIElementEnum::hceBspOverlayPatternScale:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.01f, 20.f)>>
+						(game, ToolTipCollection("Checker cell size in WORLD units (1 unit = 10 feet on this title, so 0.5 is roughly a chest-high square). Smaller reads better up close and shimmers at distance; larger is calmer across a whole level."), "Surface Pattern Size", settings->hceBspOverlayPatternScale));
+
+				case GUIElementEnum::hceBspOverlayOccludeFarSurfaces:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("OFF (default): every surface blends through every other, so you can see far faces behind near ones - the whole shell at once, the way wireframe already shows it. ON: a nearer surface hides the ones behind it, which makes an interior read as solid walls but means you only ever see the closest one. Same property either way, so it is your call - use OFF to survey geometry, ON to read a room."), std::nullopt, "Near Surfaces Hide Far Ones", settings->hceBspOverlayOccludeFarSurfaces));
+
+				case GUIElementEnum::hceBspOverlaySurfaceVariation:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 0.5f)>>
+						(game, ToolTipCollection("Gives each individual collision surface a slightly different tint, so a big flat area made of several wall pieces reads as separate pieces instead of one solid slab. Varies per SURFACE, not per triangle - triangles are an arbitrary product of triangulation and varying by them would just look like noise. 0 turns it off. Each surface keeps its own tint as you move, and the variation brightens as often as it darkens, so this does not change how bright the overlay looks overall."), "Per-Surface Variation", settings->hceBspOverlaySurfaceVariation));
+
+				case GUIElementEnum::hceBspOverlayShadingStrength:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 0.8f)>>
+						(game, ToolTipCollection("How much darker a surface facing away from the light gets. 0 is flat (no shape cue at all); higher separates floors from walls from ceilings more strongly. The brightest face is always exactly the colour you picked - shading only darkens from there, and is capped so it can never make a surface invisible. If some faces look like holes, turn this DOWN or raise the opacity: a heavily darkened face at a low opacity is what reads as a hole."), "Shading Strength", settings->hceBspOverlayShadingStrength));
+
+				case GUIElementEnum::hceBspOverlayFaceShading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Shade each surface by which way it faces, so a floor, a wall and a ceiling are visibly different tones. Leave this ON. Without it every face is the identical flat colour with no boundary between one wall and the next, and standing inside a room fills the whole screen with a single block of colour - from outside you get the shape from the silhouette, but inside there is no silhouette and the tone is the only cue."), std::nullopt, "Shade Faces By Angle", settings->hceBspOverlayFaceShading));
 
 				case GUIElementEnum::hceDisableFadeFromBlackGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -2335,6 +2439,26 @@ private:
 				case GUIElementEnum::hceTriggerOverlayHighlightActive:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Colour trigger volumes that the mission scripts are ACTIVELY testing right now differently from dormant ones. Most volumes lie dormant until a script wakes them, so this shows what could actually fire."), std::nullopt, "Highlight Active Triggers", settings->hceTriggerOverlayHighlightActive));
+
+				// Hit flash / hit list. These drive the SAME settings the MCC trigger overlay uses
+				// (triggerOverlayCheckHit*), because they model exactly the same thing - the script tested
+				// this volume and the answer was YES. HaloCER needs its own ELEMENTS only because
+				// requiredServicesPerGUIElement is keyed by element and the MCC ones map to the MCC cheat.
+				case GUIElementEnum::hceTriggerOverlayFlashOnHit:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Flash a trigger volume the instant a mission script tests it AND you are inside it. This is the moment you actually crossed the trigger, which is different from 'a script is watching this volume' - that state lasts for seconds either side, because scripts poll in bursts."), std::nullopt, "Flash Triggers on Hit", settings->triggerOverlayCheckHitToggle));
+
+				case GUIElementEnum::hceTriggerOverlayHitColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
+						(game, ToolTipCollection("Colour a trigger flashes when you hit it. This outranks every other colour, including the active highlight - a hit is momentary and is the thing you are watching for."), "Colour on Hit", settings->triggerOverlayCheckHitColor));
+
+				case GUIElementEnum::hceTriggerOverlayHitFalloff:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+						(game, ToolTipCollection("How long the hit flash lasts, in ticks (60 = one second). Short is usually better - the point is to see the exact moment you crossed."), "Flash for x ticks", settings->triggerOverlayCheckHitFalloff));
+
+				case GUIElementEnum::hceTriggerOverlayMessageOnHit:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Print the name of each trigger volume to the message feed as you hit it, building a running list of what you have actually triggered this run. Only volumes a script tested successfully are listed - not everything you merely walked through."), std::nullopt, "Print Triggers on Hit", settings->triggerOverlayMessageOnCheckHit));
 
 				case GUIElementEnum::hceTriggerOverlayActiveColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>

@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "ModuleHookManager.h"
 #include "WindowsUtilities.h"
+#include "ImageResidencyGuard.h"
 
 #include "ModuleCache.h"
 
@@ -133,7 +134,14 @@ std::wstring filenameFromFilepath(std::wstring in)
 
 
 // the hook-redirected functions
+//
+// ⚠ EVERY ONE OF THESE TAKES THE IMAGE-RESIDENCY GUARD AS ITS FIRST STATEMENT. safetyhook's own mutex only
+// protects the .call() into the original - filenameFromFilepath, str_to_wstr, ModuleCache and
+// postModuleLoad_UpdateHooks are all HCM code running unprotected, and .call() itself runs the loaded DLL's
+// entire DllMain under the loader lock, which can take a long time. Nothing previously waited for any of it
+// before the image was unmapped. See ImageResidencyGuard.h.
 HMODULE ModuleHookManager::newLoadLibraryA(LPCSTR lpLibFileName) {
+	ImageResidency::ScopedImageResidency residency;
 	auto result =mHook_LoadLibraryA.call< HMODULE, LPCSTR > (lpLibFileName);
 
 	auto newLib = filenameFromFilepath(str_to_wstr(lpLibFileName));
@@ -149,6 +157,7 @@ HMODULE ModuleHookManager::newLoadLibraryA(LPCSTR lpLibFileName) {
 }
 
 HMODULE ModuleHookManager::newLoadLibraryW(LPCWSTR lpLibFileName) {
+	ImageResidency::ScopedImageResidency residency;
 	auto result = mHook_LoadLibraryW.call<HMODULE, LPCWSTR>(lpLibFileName);
 
 	auto newLib = filenameFromFilepath(lpLibFileName);
@@ -164,6 +173,7 @@ HMODULE ModuleHookManager::newLoadLibraryW(LPCWSTR lpLibFileName) {
 }
 
 HMODULE ModuleHookManager::newLoadLibraryExA(LPCSTR lpLibFileName, HANDLE hFile, DWORD dwFlags) {
+	ImageResidency::ScopedImageResidency residency;
 	auto result = mHook_LoadLibraryExA.call<HMODULE, LPCSTR, HANDLE, DWORD>(lpLibFileName, hFile, dwFlags);
 
 	auto newLib = filenameFromFilepath(str_to_wstr(lpLibFileName));
@@ -181,6 +191,7 @@ HMODULE ModuleHookManager::newLoadLibraryExA(LPCSTR lpLibFileName, HANDLE hFile,
 }
 
 HMODULE ModuleHookManager::newLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, DWORD dwFlags) {
+	ImageResidency::ScopedImageResidency residency;
 	auto result = mHook_LoadLibraryExW.call<HMODULE, LPCWSTR, HANDLE, DWORD>(lpLibFileName, hFile, dwFlags);
 
 	auto newLib = filenameFromFilepath(lpLibFileName);
@@ -195,6 +206,9 @@ HMODULE ModuleHookManager::newLoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile
 }
 
 BOOL ModuleHookManager::newFreeLibrary(HMODULE hLibModule) {
+	// Worse than the LoadLibrary hooks: preModuleUnload_UpdateHooks and removeModuleFromCache both run BEFORE
+	// the .call(), so safetyhook's mutex protects none of it.
+	ImageResidency::ScopedImageResidency residency;
 
 	wchar_t moduleFilePath[MAX_PATH];
 	GetModuleFileName(hLibModule, moduleFilePath, sizeof(moduleFilePath) / sizeof(TCHAR));

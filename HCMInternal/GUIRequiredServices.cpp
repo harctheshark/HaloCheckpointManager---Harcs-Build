@@ -651,6 +651,16 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 {OptionalCheatEnum::HCETriggerOverlay}
 	},
 
+	// Structure-BSP overlay. Its own cheat rather than a mode of HCETriggerOverlay: it reads a completely
+	// different tag chain (the BSP's raw resource, not the scenario's trigger volume block) and carries its own
+	// pointer data, so folding it in would make the trigger overlay fail whenever the BSP path did.
+	{ GUIElementEnum::hceBspOverlayToggleGUI,
+{OptionalCheatEnum::HCEBspOverlay}
+	},
+	{ GUIElementEnum::hceBspOverlaySettingsSubheading,
+{OptionalCheatEnum::HCEBspOverlay}
+	},
+
 	// Same reasoning as the trigger overlay above: the MCC disableBarriersToggle element is keyed to the MCC
 	// DisableBarriers cheat (a code patch with no HaloCER pointer data), so HaloCER needs its own element. The
 	// disableBarriersToggle SETTING and hotkey are still shared.

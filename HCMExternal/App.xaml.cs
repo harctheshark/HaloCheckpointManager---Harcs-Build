@@ -27,6 +27,9 @@ namespace HCMExternal
 
         public string CurrentHCMVersion = "unset";
 
+        // Held so Application_Exit can stop the interproc state machine before this process dies; see there.
+        private IInterprocService? mInterproc = null;
+
         public App()
         {
             // Logging
@@ -87,7 +90,10 @@ namespace HCMExternal
 
             ICheckpointIOService checkpointIO = new CheckpointIOService(pointerData);
             IExternalService external = new ExternalService(pointerData);
+            // Kept as a field, not just a local: Application_Exit has to reach it to stop the state machine
+            // before this process dies. See Application_Exit.
             IInterprocService interproc = new InterprocService();
+            mInterproc = interproc;
             IHotkeyManager hotkey = new HotkeyManager();
 
 
@@ -114,8 +120,27 @@ namespace HCMExternal
 
         private void Application_Exit(object sender, ExitEventArgs e)
         {
+            // ⚠ THIS MUST HAPPEN BEFORE WE EXIT, and it used to be a TODO.
+            //
+            // The interproc state machine runs on its own thread with no exit condition. As this process dies,
+            // HCMInternal's heartbeat notices and reports Shutdown; the still-running state machine reads that,
+            // walks InternalSuccess -> MCCNotFound -> InternalInjecting, and INJECTS A FRESH HCMInternal into
+            // the game. That orphan has no external to talk to, fails, and pins HCMInternal.dll in the game -
+            // so the next time HCM is opened, injection either refuses or silently re-uses the dead copy and
+            // hangs on "initialising". The only cure was fully restarting the game.
+            //
+            // On MCC this was masked (its internal only dies when the external does). On Halo Campaign Evolved
+            // it fires constantly, because the game destroys and recreates its window mid-session.
+            try
+            {
+                mInterproc?.shutdownInterprocEx();
+            }
+            catch (Exception ex)
+            {
+                Log.Warning("interproc shutdown threw during exit: " + ex.Message);
+            }
+
             Log.CloseAndFlush();
-            // TODO: send shutdown message to internal, serialise any config stuff
         }
 
 

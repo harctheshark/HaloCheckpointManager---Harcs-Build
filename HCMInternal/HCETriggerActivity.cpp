@@ -170,13 +170,42 @@ private:
 	static constexpr uint32_t kCodeOffset = 0x20;
 
 	// Offsets within the code block of the three rip-relative disp32 fields, and of the one imm32.
-	static constexpr uint32_t kDispCall = 0x1A;   // FF 15 <disp32>, next instruction at code+0x1E
-	static constexpr uint32_t kNextCall = 0x1E;
-	static constexpr uint32_t kImmMax = 0x24;   // 81 F9 <imm32>
-	static constexpr uint32_t kDispTable = 0x2D;   // 48 8B 15 <disp32>, next instruction at code+0x31
-	static constexpr uint32_t kNextTable = 0x31;
-	static constexpr uint32_t kDispJump = 0x51;   // FF 25 <disp32>, next instruction at code+0x55
-	static constexpr uint32_t kNextJump = 0x55;
+	// ------------------------------------------------------------------------------------------------------
+	// WHY THIS IS A WRAPPER (call + ret) AND NO LONGER A TAIL JUMP
+	// ------------------------------------------------------------------------------------------------------
+	// The original stub tail-jumped into the real function, which meant it never saw the RESULT. That gave one
+	// piece of information - "a script tested this volume recently" - and the viewer had to infer everything
+	// else from a decay window. The visible consequence: after you actually entered a volume the script stopped
+	// testing it, and the overlay kept showing it live for the whole 3000 ms window before it went dormant. It
+	// could never say "you just hit this one", only "something tested this a moment ago".
+	//
+	// The result IS the answer: trigger_volume_test_point returns whether the point was inside. So the stub now
+	// CALLS the real function, records the return value, and returns - giving two tables, lastTested and
+	// lastHit, which is exactly the check-hit / check-miss split the MCC trigger overlay already exposes.
+	//
+	// ⚠ THE COST, STATED PLAINLY: the stub is now ON THE STACK while the real function runs, where before it
+	// was not. A stub page has no .pdata, so an SEH unwind crossing it would walk an undescribed frame. That is
+	// why buildStub registers a RUNTIME_FUNCTION for this code via RtlAddFunctionTable - see registerUnwind().
+	// Do not remove that registration on the grounds that "it has never thrown".
+	//
+	// Frame (0x48 bytes, which also keeps rsp 16-byte aligned for the two calls we make - at entry rsp%16==8,
+	// 0x48%16==8, so after the sub rsp%16==0 and the call pushes it back to 8, which is what a callee expects):
+	//     [rsp+00h..1Fh]  shadow space for the functions WE call
+	//     [rsp+20h]       rcx  - volumeIndex, and our own scratch copy of it
+	//     [rsp+28h]       rdx
+	//     [rsp+30h]       r8
+	//     [rsp+38h]       r9
+	//     [rsp+40h]       the real function's return value, saved across the GetTickCount call
+	// rcx/rdx/r8/r9 are NOT restored before returning: they are volatile in the Win64 ABI, and unlike the old
+	// tail jump nothing downstream of us reads them.
+	// ------------------------------------------------------------------------------------------------------
+	static constexpr uint32_t kDispRealCall = 0x1A;   // FF 15 <disp32>, next instruction at code+0x1E
+	static constexpr uint32_t kNextRealCall = 0x1E;
+	static constexpr uint32_t kDispTickCall = 0x24;   // FF 15 <disp32>, next instruction at code+0x28
+	static constexpr uint32_t kNextTickCall = 0x28;
+	static constexpr uint32_t kImmMax = 0x2E;   // 81 F9 <imm32>
+	static constexpr uint32_t kDispTable = 0x37;   // 48 8B 15 <disp32>, next instruction at code+0x3B
+	static constexpr uint32_t kNextTable = 0x3B;
 
 	static constexpr uint8_t kStubCode[] =
 	{
@@ -185,20 +214,76 @@ private:
 		0x48, 0x89, 0x54, 0x24, 0x28,             // 0x09 mov  [rsp+28h], rdx
 		0x4C, 0x89, 0x44, 0x24, 0x30,             // 0x0E mov  [rsp+30h], r8
 		0x4C, 0x89, 0x4C, 0x24, 0x38,             // 0x13 mov  [rsp+38h], r9
-		0xFF, 0x15, 0x00, 0x00, 0x00, 0x00,       // 0x18 call qword ptr [rip+disp]  -> GetTickCount
-		0x8B, 0x4C, 0x24, 0x20,                   // 0x1E mov  ecx, [rsp+20h]
-		0x81, 0xF9, 0x00, 0x00, 0x00, 0x00,       // 0x22 cmp  ecx, kMaxTrackedVolumes
-		0x73, 0x0D,                               // 0x28 jae  short +0x0D -> 0x37
-		0x48, 0x8B, 0x15, 0x00, 0x00, 0x00, 0x00, // 0x2A mov  rdx, qword ptr [rip+disp] -> table
-		0x83, 0xC8, 0x01,                         // 0x31 or   eax, 1
-		0x89, 0x04, 0x8A,                         // 0x34 mov  [rdx+rcx*4], eax
-		0x48, 0x8B, 0x4C, 0x24, 0x20,             // 0x37 mov  rcx, [rsp+20h]
-		0x48, 0x8B, 0x54, 0x24, 0x28,             // 0x3C mov  rdx, [rsp+28h]
-		0x4C, 0x8B, 0x44, 0x24, 0x30,             // 0x41 mov  r8,  [rsp+30h]
-		0x4C, 0x8B, 0x4C, 0x24, 0x38,             // 0x46 mov  r9,  [rsp+38h]
-		0x48, 0x83, 0xC4, 0x48,                   // 0x4B add  rsp, 48h
-		0xFF, 0x25, 0x00, 0x00, 0x00, 0x00,       // 0x4F jmp  qword ptr [rip+disp]  -> real function
+		// args are still live in rcx/rdx/r8/r9 - the stores above did not touch them
+		0xFF, 0x15, 0x00, 0x00, 0x00, 0x00,       // 0x18 call qword ptr [rip+disp]  -> real function
+		0x89, 0x44, 0x24, 0x40,                   // 0x1E mov  [rsp+40h], eax   ; save the result
+		0xFF, 0x15, 0x00, 0x00, 0x00, 0x00,       // 0x22 call qword ptr [rip+disp]  -> GetTickCount
+		0x8B, 0x4C, 0x24, 0x20,                   // 0x28 mov  ecx, [rsp+20h]  ; zero extended, so a negative
+		                                          //                           ; index fails the unsigned cmp
+		0x81, 0xF9, 0x00, 0x00, 0x00, 0x00,       // 0x2C cmp  ecx, kMaxTrackedVolumes
+		0x73, 0x1B,                               // 0x32 jae  short +0x1B -> 0x4F
+		0x48, 0x8B, 0x15, 0x00, 0x00, 0x00, 0x00, // 0x34 mov  rdx, qword ptr [rip+disp] -> table
+		0x83, 0xC8, 0x01,                         // 0x3B or   eax, 1          ; 0 is the never-tested sentinel
+		0x89, 0x04, 0x8A,                         // 0x3E mov  [rdx+rcx*4], eax                ; lastTested
+		// Test only AL. The function returns a bool, so the upper 24 bits of eax are not guaranteed clean, and
+		// comparing the full dword would report a hit on garbage.
+		0x80, 0x7C, 0x24, 0x40, 0x00,             // 0x41 cmp  byte ptr [rsp+40h], 0
+		0x74, 0x07,                               // 0x46 je   short +0x07 -> 0x4F
+		0x89, 0x84, 0x8A, 0x00, 0x40, 0x00, 0x00, // 0x48 mov  [rdx+rcx*4+4000h], eax          ; lastHit
+		                                          // 0x4F skip:
+		0x8B, 0x44, 0x24, 0x40,                   // 0x4F mov  eax, [rsp+40h]  ; the real return value, exactly
+		0x48, 0x83, 0xC4, 0x48,                   // 0x53 add  rsp, 48h
+		0xC3,                                     // 0x57 ret
 	};
+
+	// Byte offset of the lastHit half within the one allocation. Must match the disp32 baked into the stub's
+	// `mov [rdx+rcx*4+4000h], eax` above - a static_assert below enforces it rather than trusting the comment.
+	static constexpr uint32_t kHitTableByteOffset = kMaxTrackedVolumes * sizeof(uint32_t);
+	static_assert(kHitTableByteOffset == 0x4000,
+		"kStubCode hard-codes disp32 0x4000 for the lastHit half; change both together or the stub corrupts memory");
+
+	// ------------------------------------------------------------------------------------------------------
+	// UNWIND INFO FOR THE STUB PAGE.
+	//
+	// The stub is now a real frame on the stack while the game's own code runs beneath it (see the kStubCode
+	// comment). Dynamically generated code has no .pdata, so an SEH unwind that crossed this frame would find
+	// no RUNTIME_FUNCTION and treat it as a leaf - restoring rsp wrongly by our 0x48 bytes and returning to
+	// garbage. RtlAddFunctionTable publishes the description instead.
+	//
+	// The prologue this describes is exactly one instruction: `sub rsp, 48h` at offset 0, which is
+	// UWOP_ALLOC_SMALL with an encoded size of (0x48 / 8) - 1 == 8.
+	// ------------------------------------------------------------------------------------------------------
+	static constexpr uint32_t kSlotUnwind = 0x18;   // UNWIND_INFO, in the data area ahead of the code
+	static constexpr uint32_t kSlotRuntimeFunction = 0x100;
+
+	// Laid out by hand rather than via a struct: UNWIND_INFO's trailing UNWIND_CODE array is a flexible member,
+	// so a struct declaration would not describe the object we actually need.
+	static constexpr uint8_t kUnwindInfo[] =
+	{
+		0x01,       // Version 1, no flags (no exception handler of our own)
+		0x04,       // SizeOfProlog: the sub rsp,48h is 4 bytes
+		0x01,       // CountOfUnwindCodes
+		0x00,       // FrameRegister 0 / FrameOffset 0 - we use rsp directly, no frame pointer
+		0x04, 0x82, // UNWIND_CODE: offset in prolog 0x04, op UWOP_ALLOC_SMALL (2) | info 8 -> (8+1)*8 = 0x48
+	};
+
+	// Registered for the process lifetime alongside the never-freed stub page, for the same reason: a game
+	// thread can be inside the stub at any instant.
+	void registerUnwind(uint8_t* page, uint32_t codeOffset, uint32_t codeSize)
+	{
+		memcpy(page + kSlotUnwind, kUnwindInfo, sizeof(kUnwindInfo));
+
+		RUNTIME_FUNCTION* rf = (RUNTIME_FUNCTION*)(page + kSlotRuntimeFunction);
+		rf->BeginAddress = codeOffset;
+		rf->EndAddress = codeOffset + codeSize;
+		rf->UnwindInfoAddress = kSlotUnwind;
+
+		// Non-fatal on failure: the stub still works, it is only an unwind crossing it that would misbehave,
+		// and that is strictly better than refusing to track triggers at all.
+		if (!RtlAddFunctionTable(rf, 1, (DWORD64)page))
+			PLOG_ERROR << "HCETriggerActivity: RtlAddFunctionTable failed; an SEH unwind through the trigger "
+			"stub would be undefined. Trigger tracking still works.";
+	}
 
 	// VirtualAlloc within +/-1.75 GB of `target` so an E8 rel32 from any call site can reach the stub. Same
 	// approach as FPScaleFix::allocNear. Returns nullptr if no nearby page could be taken.
@@ -222,7 +307,10 @@ private:
 	{
 		if (mStubPage) return;
 
-		uint32_t* table = (uint32_t*)VirtualAlloc(nullptr, kMaxTrackedVolumes * sizeof(uint32_t),
+		// ONE allocation, two halves: lastTested at [0], lastHit at [kHitTableByteOffset]. One base pointer means
+		// the stub loads it once and reaches both halves with a displacement, which is why the hit store is a
+		// plain disp32 rather than a second rip-relative load.
+		uint32_t* table = (uint32_t*)VirtualAlloc(nullptr, 2ull * kMaxTrackedVolumes * sizeof(uint32_t),
 			MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
 		if (!table) throw HCMRuntimeException("HCETriggerActivity: could not allocate the timestamp table");
 		// VirtualAlloc already zeroes; zero == "never tested", which is why the stub ORs 1 into what it stores.
@@ -256,12 +344,15 @@ private:
 				const int32_t d32 = (int32_t)d;
 				memcpy(code + fieldOff, &d32, sizeof(d32));
 			};
-		putDisp(kDispCall, kNextCall, kSlotGetTickCount);
+		putDisp(kDispRealCall, kNextRealCall, kSlotRealFunction);
+		putDisp(kDispTickCall, kNextTickCall, kSlotGetTickCount);
 		putDisp(kDispTable, kNextTable, kSlotTable);
-		putDisp(kDispJump, kNextJump, kSlotRealFunction);
 
 		const uint32_t maxVolumes = kMaxTrackedVolumes;
 		memcpy(code + kImmMax, &maxVolumes, sizeof(maxVolumes));
+
+		// Before the page is made executable, so nothing can be running in it un-described.
+		registerUnwind(page, kCodeOffset, (uint32_t)sizeof(kStubCode));
 
 		DWORD oldProtect = 0;
 		if (!VirtualProtect(page, 0x1000, PAGE_EXECUTE_READ, &oldProtect))
@@ -488,6 +579,20 @@ public:
 		const uint32_t last = *(volatile uint32_t*)&table[volumeIndex];
 		if (last == 0) return false;   // never tested; the stub never stores 0
 
+		// ⚠ CHECKED BEFORE ANY "recently tested" SHORTCUT BELOW. A VOLUME WHOSE MOST RECENT TEST PASSED IS NOT
+		// "ACTIVE" - this is what made a trigger you had just crossed keep showing as live for seconds after.
+		//
+		// "Active" means a script is WAITING on this volume. The instant the test returns true, the
+		// sleep_until it was feeding is satisfied and the script moves on - the volume is done, not waiting.
+		// But the tested-timestamp was just refreshed by that very test, so the decay window restarted and the
+		// overlay kept it green for the full window. The hit flash would appear, expire, and hand back to a
+		// stale "active" colour, which read as the change taking three to five seconds.
+		//
+		// The stub writes both tables from the SAME GetTickCount value on a passing test, so equality here is
+		// exact and means precisely "the last thing that happened to this volume was a pass".
+		const uint32_t lastHit = *(volatile uint32_t*)&table[kMaxTrackedVolumes + volumeIndex];
+		if (lastHit == last) return false;
+
 		// Unsigned subtraction, so a GetTickCount wrap (every 49.7 days) is handled for free.
 		const uint32_t elapsed = GetTickCount() - last;
 
@@ -496,6 +601,39 @@ public:
 		if (elapsed > 0x80000000u) return true;
 
 		return elapsed < mWindowMilliseconds;
+	}
+
+	// "The script tested this volume and the answer was YES" - within a short flash window.
+	//
+	// This is deliberately MUCH shorter than the active window. The active window is long because a script that
+	// is genuinely watching a volume polls it in bursts (sleep_until re-evaluates every N ticks), so a short
+	// window makes live triggers flicker. A HIT is not a poll, it is an event: it wants to appear the instant
+	// it happens and then get out of the way, so a hit that was still being reported three seconds later would
+	// be the very lag this feature exists to remove.
+	bool isVolumeHit(uint32_t volumeIndex, uint32_t flashMilliseconds) const
+	{
+		if (volumeIndex >= kMaxTrackedVolumes) return false;
+
+		uint32_t* table = gLastTestedTable.load(std::memory_order_acquire);
+		if (!table) return false;
+
+		const uint32_t last = *(volatile uint32_t*)&table[kMaxTrackedVolumes + volumeIndex];
+		if (last == 0) return false;
+
+		const uint32_t elapsed = GetTickCount() - last;
+		if (elapsed > 0x80000000u) return true;   // see isVolumeActive: the OR-1 can look 1 ms into the future
+		return elapsed < flashMilliseconds;
+	}
+
+	// Raw timestamp, 0 == never hit. This is what a "volumes I have hit" list is built from: the caller keeps
+	// its own copy per volume and reports the ones that CHANGED, which makes the report edge-triggered without
+	// this class having to own any per-scenario state (it has no idea when a level changed).
+	uint32_t getLastHitTick(uint32_t volumeIndex) const
+	{
+		if (volumeIndex >= kMaxTrackedVolumes) return 0;
+		uint32_t* table = gLastTestedTable.load(std::memory_order_acquire);
+		if (!table) return 0;
+		return *(volatile uint32_t*)&table[kMaxTrackedVolumes + volumeIndex];
 	}
 };
 
@@ -512,6 +650,16 @@ HCETriggerActivity::~HCETriggerActivity()
 bool HCETriggerActivity::isVolumeActive(uint32_t volumeIndex) const
 {
 	return pimpl ? pimpl->isVolumeActive(volumeIndex) : false;
+}
+
+bool HCETriggerActivity::isVolumeHit(uint32_t volumeIndex, uint32_t flashMilliseconds) const
+{
+	return pimpl ? pimpl->isVolumeHit(volumeIndex, flashMilliseconds) : false;
+}
+
+uint32_t HCETriggerActivity::getLastHitTick(uint32_t volumeIndex) const
+{
+	return pimpl ? pimpl->getLastHitTick(volumeIndex) : 0;
 }
 
 void HCETriggerActivity::setEnabled(bool enabled)

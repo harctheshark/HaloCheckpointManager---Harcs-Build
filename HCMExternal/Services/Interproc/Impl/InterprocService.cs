@@ -42,6 +42,9 @@ namespace HCMExternal.Services.Interproc.Impl
         [LibraryImport("HCMInterproc.DLL")]
         private static partial void resetStateMachine();
 
+        [LibraryImport("HCMInterproc.DLL")]
+        private static partial void shutdownInterproc();
+
         private delegate void PFN_SMSTATUSCALLBACK(int state);
         [DllImport("HCMInterproc.DLL", CallingConvention = CallingConvention.Cdecl)]
         private static extern void HookStateChangedEvent_Subscribe(PFN_SMSTATUSCALLBACK callback);
@@ -100,6 +103,23 @@ namespace HCMExternal.Services.Interproc.Impl
         public void resetStateMachineEx()
         {
             resetStateMachine();
+        }
+
+
+        // Must run before HCMExternal exits. See shutdownInterproc in InitInterproc.cpp: without it the state
+        // machine keeps running while this process dies, sees HCMInternal report Shutdown, and injects a fresh
+        // ORPHAN into the game - which pins HCMInternal.dll and makes the next launch of HCM fail.
+        public void shutdownInterprocEx()
+        {
+            try
+            {
+                shutdownInterproc();
+            }
+            catch (Exception ex)
+            {
+                // Never let a shutdown path throw; the process is already on its way out.
+                Log.Warning("shutdownInterproc failed: " + ex.Message);
+            }
         }
 
 

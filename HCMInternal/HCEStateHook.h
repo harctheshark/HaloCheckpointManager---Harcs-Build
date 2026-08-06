@@ -15,6 +15,13 @@
 // Offsets are RVAs into HaloSimulation_tag_release.dll (from the HCM_Evolved RE):
 //   tick_counter  0x12944C8      current_level 0xCA2F00      current_bsp 0x9A14E0
 //
+// ⚠ currentLevelID does NOT come from current_level (0xCA2F00) any more. That string is a session/presence
+// cache the engine only refreshes when it has a name to give, and it read as EMPTY for whole sessions with a
+// level loaded and being played - which reported no_map_loaded on screen and mis-fired every level-change
+// consumer. The level now comes from the engine's live session header (the scenario path at the front of the
+// game state block, reached by byte signature), with 0xCA2F00 kept only as a fallback. The full reasoning,
+// the evidence and the signature are at the top of HCEStateHook.cpp.
+//
 // Everything is polled on our own thread and guarded, so a torn/unloaded module can never fault the game.
 class HCEStateHook : public IMCCStateHook
 {

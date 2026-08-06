@@ -117,7 +117,24 @@ public:
 	}
 	~SpeedhackImpl()
 	{
-		setSpeed(1.00);
+		// ⚠ ONLY RESET THE SPEED IF WE EVER CHANGED IT. This used to call setSpeed(1.00) unconditionally,
+		// which looks harmless and is not.
+		//
+		// setSpeed is an export of HCMSpeedhack.dll whose implementation LAZILY CONSTRUCTS the Speedhack
+		// object on first call, and that constructor INSTALLS FOUR PROCESS-WIDE INLINE HOOKS on
+		// kernel32!QueryPerformanceCounter / GetTickCount / GetTickCount64 and winmm!timeGetTime. So on the
+		// overwhelmingly common path - the user never touched the speedhack - this destructor's "tidy up" was
+		// the FIRST EVER call, and HCM's shutdown sequence became "byte-patch the system clock, right now".
+		// Those hooks are never removed and HCMSpeedhack.dll is never freed, so it is also irreversible.
+		//
+		// Doing that while the game's render thread and (on this title) DLSS Frame Generation's frame pacer
+		// are calling QPC at >100 Hz, at the exact moment HCM is being torn down, is an unnecessary and
+		// actively destabilising mutation. Skipping it is a pure no-op when the speedhack was never used.
+		if (currentSpeedForReading != 1.00)
+		{
+			setSpeed(1.00);
+			currentSpeedForReading = 1.00;
+		}
 		PLOG_DEBUG << "~SpeedhackImpl()";
 	}
 
