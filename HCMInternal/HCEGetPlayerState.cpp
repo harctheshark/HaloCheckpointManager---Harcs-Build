@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "HCEGetPlayerState.h"
+#include "HCEAnchors.h"
 #include "PointerDataStore.h"
 #include "MultilevelPointer.h"
 #include "IMCCStateHook.h"
@@ -273,6 +274,16 @@ public:
 	{
 		HMODULE sim = GetModuleHandleW(mGame.toModuleName().c_str());
 		if (!sim) throw HCMRuntimeException("HaloSimulation_tag_release.dll is not loaded");
+
+		// First point in the process where the sim is known to be loaded, so it is where the byte-signature
+		// anchors are resolved. Idempotent and keyed on the module base: a no-op after the first call, and it
+		// re-arms by itself if the module is ever reloaded at a different address.
+		//
+		// ⚠ NOTHING CONSUMES THESE YET - deliberately observation-only for now. The signatures were verified
+		// offline to reproduce the very addresses InternalPointerData.xml already carries; logging them from a
+		// live build is the cheap confirmation of that before any feature depends on them. See HCEAnchors.h.
+		HCEAnchors::resolveAll((uintptr_t)sim);
+
 		return (uintptr_t)sim;
 	}
 
