@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "D3D12Hook.h"
+#include "HookGraveyard.h"
 
 #include "GlobalKill.h"
 
@@ -751,6 +752,23 @@ void D3D12Hook::beginHook()
 			}
 		}
 
+		// ⚠ SNAPSHOT WHAT WE JUST WROTE. This is what makes the shutdown safe around other overlays.
+		//
+		// HCM inline-hooks the SHARED dxgi/D3D12Core functions, which RivaTuner, the Steam overlay and NVIDIA
+		// Streamline all patch too. RTSS in particular RE-HOOKS PERIODICALLY: it can come along after us, write
+		// its jump over ours, and relocate our jump into its own trampoline. If HCM then shuts down and blindly
+		// restores the bytes it saved at install, it ERASES RTSS's jump - a hook RTSS still believes is live.
+		//
+        // That is a measured, reproducible crash, not a hypothesis: with RTSS running the game dies on HCM close
+        // with `PresentInternal failed ... 0x80004004` and NO exception anywhere, because nothing faults - the
+        // present chain is simply cut. Closing RTSS makes it stop.
+		//
+		// So remember our own bytes here, and at teardown compare before restoring. See snapshotHookSites().
+		snapshotHookSites();
+
+		// Frames may never reach us if another overlay owns the chain - see startRehookWatchdog().
+		startRehookWatchdog();
+
 		PLOG_DEBUG << "D3D12 hooks set";
 	}
 	catch (HCMRuntimeException ex)
@@ -758,6 +776,42 @@ void D3D12Hook::beginHook()
 		// App.h only catches HCMInitException, and lockOrThrow/PointerDataStore throw runtime ones.
 		throw HCMInitException(ex.what());
 	}
+}
+
+
+// Records the first bytes of every hook site immediately after install, so teardown can tell "still ours" from
+// "someone hooked over us". See the call site for why that distinction is load-bearing.
+void D3D12Hook::snapshotHookSites()
+{
+	struct Site { safetyhook::InlineHook* hook; };
+	safetyhook::InlineHook* hooks[kHookSiteCount] = {
+		&presentHook, &present1Hook, &resizeBuffersHook, &resizeBuffers1Hook, &executeCommandListsHook };
+
+	for (int i = 0; i < kHookSiteCount; i++)
+	{
+		mHookSites[i].target = nullptr;
+		mHookSites[i].valid = false;
+		if (!*hooks[i]) continue;
+
+		uint8_t* t = hooks[i]->target();
+		if (!t || IsBadReadPtr(t, kHookSiteSnapshotBytes)) continue;
+
+		memcpy(mHookSites[i].bytes, t, kHookSiteSnapshotBytes);
+		mHookSites[i].target = t;
+		mHookSites[i].valid = true;
+	}
+}
+
+
+// True when the site still contains exactly what we wrote. False means a third party patched over us, and
+// restoring our saved "original" bytes would destroy THEIR hook.
+bool D3D12Hook::hookSiteIsStillOurs(int index) const
+{
+	if (index < 0 || index >= kHookSiteCount) return true;   // unknown -> behave as before
+	const auto& s = mHookSites[index];
+	if (!s.valid || !s.target) return true;
+	if (IsBadReadPtr(s.target, kHookSiteSnapshotBytes)) return true;
+	return memcmp(s.target, s.bytes, kHookSiteSnapshotBytes) == 0;
 }
 
 
@@ -1649,6 +1703,10 @@ HRESULT __stdcall D3D12Hook::newDX12Present(IDXGISwapChain* pSwapChain, UINT Syn
 {
 	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::newDX12Present");
 
+	// Proof of life for the re-hook watchdog. Counted before anything can return early, because the question it
+	// answers is "did a present reach our code AT ALL", not "did we render".
+	mPresentDetourFires.fetch_add(1, std::memory_order_relaxed);
+
 	// Must be the first statement. It is a real reader-writer lock (not the old wait-then-set
 	// atomic), which is what lets ~D3D12Hook prove nobody is inside a detour body before safetyhook
 	// frees the trampolines - and it doubles as the double-render guard for Present/Present1.
@@ -1887,6 +1945,278 @@ void __stdcall D3D12Hook::newDX12ExecuteCommandLists(ID3D12CommandQueue* pComman
 #pragma endregion detours
 
 
+// ====================================================================================================================
+// RE-HOOK WATCHDOG. See the declaration block in D3D12Hook.h for the measurement that motivated it.
+// ====================================================================================================================
+
+// Tears the four swapchain hooks down and installs them again from a fresh harvest. Present/Present1 are what the
+// overlay actually needs; ExecuteCommandLists is left alone because it is only used to discover the command queue
+// and re-hooking it would drop a candidate we may already hold.
+bool D3D12Hook::reinstallSwapChainHooks()
+{
+	// ⚠⚠ HARVEST BEFORE TAKING THE LOCK. THE FIRST VERSION DID IT THE OTHER WAY ROUND AND FROZE THE GAME.
+	//
+	// harvestHookAddresses() registers a window class, creates a dummy window, a D3D12 device AND a swapchain,
+	// just to read vtable entries. That is slow - tens of milliseconds at best - and it calls into DXGI, which is
+	// entitled to call the very functions we have hooked.
+	//
+	// Holding swapChainHookGuard EXCLUSIVELY across all of that is fatal twice over: every Present on the render
+	// thread blocks on the shared lock for the whole duration, so the game visibly hangs; and if DXGI re-enters
+	// one of our detours on THIS thread, DetourEntryGuard asks for the shared lock we already hold exclusively -
+	// std::shared_mutex is not recursive, so that is an instant, permanent deadlock.
+	//
+	// Measured as "opening HCM the first time froze my game". The harvest touches nothing of ours, so it belongs
+	// outside the lock entirely; the lock only needs to cover the actual swap.
+	HookAddresses addresses{};
+	try { addresses = harvestHookAddresses(); }
+	catch (...) { PLOG_ERROR << "re-hook: could not re-harvest the swapchain addresses"; return false; }
+
+	std::unique_lock<std::shared_mutex> guard(swapChainHookGuard);
+
+	// Down first, honouring the same "never erase a third party's hook" rule as teardown. A site that is no
+	// longer ours must be left alone here too - re-hooking on top of somebody else's patch is how hook wars
+	// escalate, and it would not help anyway.
+	auto downIfOurs = [&](int index, const char* name, safetyhook::InlineHook& hook)
+	{
+		if (!hook) return true;
+		if (!hookSiteIsStillOurs(index))
+		{
+			PLOG_WARNING << "re-hook: " << name << " is no longer ours; leaving it and giving up on this site";
+			return false;
+		}
+		HookGraveyard::park(hook);   // disable + leak the trampoline; never free under a live thread
+		return true;
+	};
+
+	downIfOurs(0, "Present",        presentHook);
+	downIfOurs(1, "Present1",       present1Hook);
+	downIfOurs(2, "ResizeBuffers",  resizeBuffersHook);
+	downIfOurs(3, "ResizeBuffers1", resizeBuffers1Hook);
+
+	gOriginalPresent.store(nullptr, std::memory_order_release);
+	gOriginalPresent1.store(nullptr, std::memory_order_release);
+	gOriginalResizeBuffers.store(nullptr, std::memory_order_release);
+	gOriginalResizeBuffers1.store(nullptr, std::memory_order_release);
+
+	// Same create -> publish -> enable ordering as beginHook, for the same reason: a detour firing on another
+	// thread must never observe an installed hook whose trampoline pointer has not been published yet.
+	//
+	// Written out per hook rather than through one generic helper. Each needs its own original<T>() function
+	// pointer type, and threading that through a lambda only buys dependent-type noise for no shared logic.
+	bool present = false, present1 = false;
+
+	if (addresses.present)
+	{
+		presentHook = safetyhook::create_inline(addresses.present, &newDX12Present, safetyhook::InlineHook::StartDisabled);
+		if (presentHook)
+		{
+			gOriginalPresent.store(presentHook.original<DX12Present*>(), std::memory_order_release);
+			if (presentHook.enable()) present = true;
+			else { PLOG_ERROR << "re-hook: failed to enable Present"; presentHook = {}; }
+		}
+		else PLOG_ERROR << "re-hook: failed to create the Present hook";
+	}
+
+	if (addresses.present1)
+	{
+		present1Hook = safetyhook::create_inline(addresses.present1, &newDX12Present1, safetyhook::InlineHook::StartDisabled);
+		if (present1Hook)
+		{
+			gOriginalPresent1.store(present1Hook.original<DX12Present1*>(), std::memory_order_release);
+			if (present1Hook.enable()) present1 = true;
+			else { PLOG_ERROR << "re-hook: failed to enable Present1"; present1Hook = {}; }
+		}
+		else PLOG_ERROR << "re-hook: failed to create the Present1 hook";
+	}
+
+	if (addresses.resizeBuffers)
+	{
+		resizeBuffersHook = safetyhook::create_inline(addresses.resizeBuffers, &newDX12ResizeBuffers, safetyhook::InlineHook::StartDisabled);
+		if (resizeBuffersHook)
+		{
+			gOriginalResizeBuffers.store(resizeBuffersHook.original<DX12ResizeBuffers*>(), std::memory_order_release);
+			if (!resizeBuffersHook.enable()) { PLOG_ERROR << "re-hook: failed to enable ResizeBuffers"; resizeBuffersHook = {}; }
+		}
+	}
+
+	if (addresses.resizeBuffers1)
+	{
+		resizeBuffers1Hook = safetyhook::create_inline(addresses.resizeBuffers1, &newDX12ResizeBuffers1, safetyhook::InlineHook::StartDisabled);
+		if (resizeBuffers1Hook)
+		{
+			gOriginalResizeBuffers1.store(resizeBuffers1Hook.original<DX12ResizeBuffers1*>(), std::memory_order_release);
+			if (!resizeBuffers1Hook.enable()) { PLOG_ERROR << "re-hook: failed to enable ResizeBuffers1"; resizeBuffers1Hook = {}; }
+		}
+	}
+
+	snapshotHookSites();   // the new bytes are what teardown must compare against from now on
+	return present || present1;
+}
+
+
+void D3D12Hook::startRehookWatchdog()
+{
+	if (mWatchdogRunning.exchange(true)) return;
+
+	mWatchdogThread = std::thread([this]()
+		{
+			// Generous first wait. A game that is loading, alt-tabbed or at a menu may legitimately not present
+			// for a while, and re-hooking underneath a busy renderer for no reason is its own risk.
+			// Generous: a level load, an alt-tab or a menu can legitimately produce no presents for a while, and
+			// this only ever prints a diagnostic, so there is no reason to be twitchy about it.
+			constexpr int kFirstCheckMs = 15000;
+
+			// ⚠⚠ THIS WATCHDOG OBSERVES. IT DOES NOT RE-HOOK, AND THE FIRST VERSION DID.
+			//
+			// That version re-installed the swapchain hooks whenever no present had arrived within four seconds.
+			// Two things were wrong with it, and together they FROZE THE GAME ON THE FIRST OPEN:
+			//
+			//   1. Four seconds of silence does not mean the hooks are broken. A level load, an alt-tab or a menu
+			//      is enough. So it fired against a perfectly healthy renderer.
+			//   2. Re-installing means re-harvesting, which builds a dummy window, D3D12 device and swapchain -
+			//      slow, and it calls into DXGI, which may re-enter our own detours. Done while holding the
+			//      exclusive hook guard, that stalls every Present and can self-deadlock outright.
+			//
+			// Repairing (2) alone would still leave (1): a watchdog that rebuilds a working renderer because the
+			// game paused to load. Since re-hooking was never likely to fix the real complaint anyway - a reopened
+			// HCM sees ZERO presents, not a few, which points at the chain routing around our address rather than
+			// at a bad install - the honest version of this feature is to SAY so and change nothing.
+			//
+			// The fix for the underlying problem is per-object swapchain vtable hooking, not retrying the same
+			// process-wide patch harder.
+			int waited = 0;
+			while (mWatchdogRunning.load() && !GlobalKill::isKillSet())
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(250));
+				waited += 250;
+				if (waited < kFirstCheckMs) continue;
+
+				if (shuttingDown.load(std::memory_order_acquire)) return;
+
+				if (mPresentDetourFires.load(std::memory_order_relaxed) > 0)
+				{
+					PLOG_INFO << "D3D12 overlay watchdog: presents are reaching HCM; standing down.";
+					mWatchdogRunning.store(false);
+					return;
+				}
+
+				PLOG_ERROR << "D3D12 OVERLAY IS NOT RECEIVING FRAMES. Our Present hook installed successfully but "
+					"nothing has called it in " << (kFirstCheckMs / 1000) << " seconds. If the game is loading or "
+					"minimised this is harmless and will clear on its own. If HCM's menu never draws, another "
+					"overlay in this process (RivaTuner, the Steam overlay, or NVIDIA Streamline / DLSS frame "
+					"generation) owns the present chain and is not routing through the code we patched - restart "
+					"the GAME, not just HCM, to recover it.";
+
+				// Said once. Keep watching in case frames start later, but never repeat the wall of text.
+				while (mWatchdogRunning.load() && !GlobalKill::isKillSet())
+				{
+					std::this_thread::sleep_for(std::chrono::milliseconds(500));
+					if (shuttingDown.load(std::memory_order_acquire)) return;
+					if (mPresentDetourFires.load(std::memory_order_relaxed) > 0)
+					{
+						PLOG_INFO << "D3D12 overlay watchdog: presents started arriving after all; standing down.";
+						mWatchdogRunning.store(false);
+						return;
+					}
+				}
+				return;
+			}
+		});
+}
+
+
+void D3D12Hook::stopRehookWatchdog()
+{
+	mWatchdogRunning.store(false);
+	if (mWatchdogThread.joinable()) mWatchdogThread.join();
+}
+
+
+// See the declaration in D3D12Hook.h. Pure diagnostic - reads only, changes nothing.
+void D3D12Hook::logSwapChainHookSiteBytes(const char* when)
+{
+	struct Site { const char* name; safetyhook::InlineHook* hook; };
+	const Site sites[] = {
+		{ "Present",          &presentHook },
+		{ "Present1",         &present1Hook },
+		{ "ResizeBuffers",    &resizeBuffersHook },
+		{ "ResizeBuffers1",   &resizeBuffers1Hook },
+		{ "ExecuteCmdLists",  &executeCommandListsHook },
+	};
+
+	// ⚠ THE ADDRESSES ARE CACHED ON THE FIRST CALL, AND THE FIRST VERSION DID NOT DO THIS.
+	// park() MOVES the hook out, so by the "after restore" pass every hook object is empty and target() is gone -
+	// the four swapchain sites silently printed nothing, which is exactly the half that tests whether the restore
+	// put sane bytes back. Remembering the addresses makes the after-pass possible at all.
+	static uint8_t* cachedTargets[5] = {};
+	for (int i = 0; i < 5; i++)
+		if (!cachedTargets[i] && *sites[i].hook) cachedTargets[i] = sites[i].hook->target();
+
+	for (int i = 0; i < 5; i++)
+	{
+		const auto& s = sites[i];
+		uint8_t* target = cachedTargets[i];
+		if (!target || IsBadReadPtr(target, 16)) continue;
+
+		std::string bytes;
+		for (int i = 0; i < 16; i++) bytes += std::format("{:02X} ", target[i]);
+
+		// Whose code is the site's first jump aimed at? If it is not our trampoline, someone hooked over us.
+		std::string owner = "?";
+		HMODULE mod = nullptr;
+		if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			(LPCSTR)target, &mod) && mod)
+		{
+			char path[MAX_PATH]{};
+			if (GetModuleFileNameA(mod, path, MAX_PATH))
+			{
+				const char* leaf = strrchr(path, '\\');
+				owner = leaf ? leaf + 1 : path;
+			}
+		}
+
+		// Follow an E9 rel32 and name what it lands in. "no module" means a trampoline/island page - ours if it
+		// matches safetyhook's allocator pattern, someone else's otherwise. This is what distinguishes "still
+		// hooked, by us" from "still hooked, by a third party" from "genuinely restored".
+		std::string jumpsTo;
+		if (target[0] == 0xE9)
+		{
+			const int32_t rel = *reinterpret_cast<const int32_t*>(target + 1);
+			const uintptr_t dest = (uintptr_t)target + 5 + rel;
+			HMODULE dm = nullptr;
+			std::string destOwner = "<no module - trampoline/island>";
+			if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				(LPCSTR)dest, &dm) && dm)
+			{
+				char dp[MAX_PATH]{};
+				if (GetModuleFileNameA(dm, dp, MAX_PATH))
+				{
+					const char* dl = strrchr(dp, '\\');
+					destOwner = std::format("{}+0x{:X}", dl ? dl + 1 : dp, dest - (uintptr_t)dm);
+				}
+			}
+			jumpsTo = std::format("  -> jmp {:#X} ({})", dest, destOwner);
+		}
+
+		PLOG_INFO << "hook site [" << when << "] " << s.name << " @ " << std::format("0x{:X}", (uintptr_t)target)
+			<< " in " << owner << " : " << bytes << jumpsTo;
+	}
+
+	// Only worth naming once per call, and only the modules that plausibly share these functions with us.
+	static const char* kInteresting[] = {
+		"sl.interposer.dll", "sl.common.dll", "sl.dlss_g.dll", "nvngx_dlssg.dll",
+		"GFSDK_Aftermath_Lib.x64.dll", "graphics-hook64.dll", "RTSSHooks64.dll",
+		"DiscordHook64.dll", "GameOverlayRenderer64.dll", "AMDDVR.dll",
+	};
+	std::string present;
+	for (const char* m : kInteresting)
+		if (GetModuleHandleA(m)) { if (!present.empty()) present += ", "; present += m; }
+
+	PLOG_INFO << "hook site [" << when << "] other overlay/injector DLLs loaded: "
+		<< (present.empty() ? std::string("(none detected)") : present);
+}
+
+
 // Safely destroys hooks, flushes the GPU, and releases every D3D12 object we acquired.
 D3D12Hook::~D3D12Hook()
 {
@@ -1895,6 +2225,10 @@ D3D12Hook::~D3D12Hook()
 	// 1. Tell every detour to stop touching HCM/D3D12 state, BEFORE we start draining. A detour that
 	//    is already past its first instruction will see this and just forward to the original.
 	//    (It stays true afterwards on purpose - a straggler must never come back to life.)
+	// Stop the watchdog BEFORE anything is torn down: it re-installs hooks, and doing that concurrently with
+	// teardown would be a race against the very guard teardown relies on.
+	stopRehookWatchdog();
+
 	shuttingDown.store(true, std::memory_order_release);
 	mQueueSearchActive.store(false, std::memory_order_relaxed);
 
@@ -1907,22 +2241,123 @@ D3D12Hook::~D3D12Hook()
 	{
 		PLOG_INFO << "Waiting for the D3D12 present/resize detours to finish execution";
 		std::unique_lock<std::shared_mutex> guard(swapChainHookGuard);
-		presentHook = {};
-		present1Hook = {};
-		resizeBuffersHook = {};
-		resizeBuffers1Hook = {};
-		gOriginalPresent.store(nullptr, std::memory_order_release);
-		gOriginalPresent1.store(nullptr, std::memory_order_release);
-		gOriginalResizeBuffers.store(nullptr, std::memory_order_release);
-		gOriginalResizeBuffers1.store(nullptr, std::memory_order_release);
+
+		// ⚠ PARKED, NOT DESTROYED - and these are the ones that matter most.
+		//
+		// The exclusive guard above proves no thread is inside a DETOUR BODY. It says nothing about the
+		// trampoline: a thread can be in the relocated prologue, or returning through it, having already left
+		// the body and released its shared lock. Destroying the hook frees that page, and the first-chance log
+		// caught precisely that during teardown - 0xC0000005, "tried to EXECUTE", at an address with no owning
+		// module.
+		//
+		// These four sit on the hottest functions in the process. Present alone runs every frame on the render
+		// thread, so the odds of someone being inside one at teardown are far better than even, which is why
+		// this crash kept coming back after the ModuleHook hooks were already being parked - these bypass
+		// ModuleHook entirely. See HookGraveyard.h.
+		// ================================================================================================
+		// EVIDENCE FOR THE E_ABORT PRESENT CRASH.
+		//
+		// The game dies just after HCM closes with:
+		//     LowLevelFatalError [D3D12Util.cpp:1012] PresentInternal(SyncInterval) failed ... 0x80004004
+		// and - now that the diagnostic filter is clean - with ZERO first-chance exceptions anywhere in the
+		// run. Nothing faults. So this is not memory being freed under someone; a call in the present chain
+		// is returning a failed HRESULT.
+		//
+		// The live suspect is hook ORDERING. HCM inline-hooks the SHARED IDXGISwapChain::Present inside
+		// dxgi.dll - process-wide, and the very same function NVIDIA Streamline wraps for DLSS / frame
+		// generation. If Streamline installed ITS hook after ours, our bytes are what it relocated, and
+		// disable() writing dxgi's true original bytes back over the top silently destroys its dispatch.
+		// No crash, no exception - just a present chain that no longer works, exactly what E_ABORT with a
+		// clean log looks like.
+		//
+		// So: dump what is actually AT the target before and after we restore it, and name who else is
+		// loaded. If the "before" bytes are not a jump to our own trampoline, someone is hooked on top of
+		// us and restoring is the bug. If they are ours, this theory is dead and the answer is elsewhere.
+		logSwapChainHookSiteBytes("before disable");
+
+		// ⚠ RESTORE ONLY WHAT IS STILL OURS. See snapshotHookSites().
+		//
+		// A site whose bytes have changed since we installed belongs to somebody else now - RTSS re-hooks on a
+		// timer and lands on top of us. Writing our saved "original" bytes there would erase a live third-party
+		// hook, cut the present chain, and kill the game with 0x80004004 and no exception to explain it.
+		//
+		// In that case we LEAVE OUR HOOK INSTALLED, inside their chain, still forwarding. That means our detour
+		// code must remain mapped, so the module is pinned below - HCM stays resident and cannot be re-injected
+		// until the game restarts. That is the price of not breaking someone else's renderer, and it is the
+		// cheaper of the two outcomes by a wide margin.
+		bool leftInstalled = false;
+		auto parkIfOurs = [&](int index, const char* name, safetyhook::InlineHook& hook)
+		{
+			if (!hook) return;
+			if (!hookSiteIsStillOurs(index))
+			{
+				PLOG_WARNING << "hook site " << name << " no longer contains HCM's patch - another overlay "
+					"(RivaTuner / Steam overlay / Streamline) hooked over us. LEAVING our hook installed rather "
+					"than erasing theirs.";
+				leftInstalled = true;
+				return;   // deliberately not disabled, not parked: it stays live and forwarding
+			}
+			if (!HookGraveyard::park(hook)) { PLOG_ERROR << "could not disable the " << name << " hook; destroying it"; hook = {}; }
+		};
+
+		parkIfOurs(0, "Present",        presentHook);
+		parkIfOurs(1, "Present1",       present1Hook);
+		parkIfOurs(2, "ResizeBuffers",  resizeBuffersHook);
+		parkIfOurs(3, "ResizeBuffers1", resizeBuffers1Hook);
+
+		logSwapChainHookSiteBytes("after restore");
+
+		// ⚠ ONLY null the trampoline pointers for hooks we actually took down. A hook we left installed is still
+		// going to fire, and its detour forwards through exactly these - nulling them would strand the call.
+		if (!presentHook)        gOriginalPresent.store(nullptr, std::memory_order_release);
+		if (!present1Hook)       gOriginalPresent1.store(nullptr, std::memory_order_release);
+		if (!resizeBuffersHook)  gOriginalResizeBuffers.store(nullptr, std::memory_order_release);
+		if (!resizeBuffers1Hook) gOriginalResizeBuffers1.store(nullptr, std::memory_order_release);
+
+		if (leftInstalled) mMustStayResident = true;
+		PLOG_INFO << "D3D12 swapchain detours handled (trampolines deliberately leaked)"
+			<< (leftInstalled ? "; SOME WERE LEFT INSTALLED - see the warnings above" : "");
 	}
 
 	// 3. Same for ExecuteCommandLists, under its own guard so it never serialised against Present.
 	{
 		std::unique_lock<std::shared_mutex> guard(executeCommandListsGuard);
-		executeCommandListsHook = {};
-		gOriginalExecuteCommandLists.store(nullptr, std::memory_order_release);
+		if (!hookSiteIsStillOurs(4))
+		{
+			PLOG_WARNING << "hook site ExecuteCommandLists no longer contains HCM's patch - another overlay "
+				"hooked over us. LEAVING our hook installed rather than erasing theirs.";
+			mMustStayResident = true;
+		}
+		else
+		{
+			if (!HookGraveyard::park(executeCommandListsHook))
+			{
+				PLOG_ERROR << "could not disable the ExecuteCommandLists hook; destroying it";
+				executeCommandListsHook = {};
+			}
+			gOriginalExecuteCommandLists.store(nullptr, std::memory_order_release);
+		}
 	}
+
+	// ⚠ PIN. A hook we left installed points at detour code inside this image. If HCM unmaps, the next frame the
+	// game renders calls into a hole. Pinning is the only way to keep that address valid, and it is why this path
+	// costs the user a game restart before HCM can be injected again - stated plainly in the message below rather
+	// than left as a mystery "stuck on injecting".
+	if (mMustStayResident)
+	{
+		HMODULE pinned = nullptr;
+		GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+			(LPCWSTR)&newDX12Present, &pinned);
+		PLOG_FATAL << "HCM left one or more renderer hooks installed because another overlay (most likely "
+			"RivaTuner Statistics Server / MSI Afterburner, or the Steam overlay) patched over them while HCM was "
+			"running. Removing ours would have erased theirs and crashed the game. HCMInternal.dll has therefore "
+			"been PINNED and will stay loaded until the game is restarted - HCM cannot be injected again in this "
+			"session. To avoid this entirely, close RivaTuner before using HCM.";
+	}
+
+	// All five are now down. Anything still showing an E9 here was NOT restored - which, with five other hooking
+	// parties in this process, is the difference between "we left the chain as we found it" and "we did not".
+	logSwapChainHookSiteBytes("all hooks down");
 
 	if (ID3D12CommandQueue* staleCandidate = mCandidateDirectQueue.exchange(nullptr, std::memory_order_acq_rel))
 		staleCandidate->Release();

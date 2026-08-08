@@ -121,6 +121,66 @@ private:
 	safetyhook::InlineHook resizeBuffers1Hook;
 	safetyhook::InlineHook executeCommandListsHook;
 
+	// Diagnostic for the E_ABORT Present crash: dumps the bytes actually sitting at each swapchain hook site,
+	// plus which overlay/injector DLLs are loaded. Called either side of the restore in ~D3D12Hook, so a
+	// third-party hook installed on top of ours is visible rather than inferred. See the call sites.
+	void logSwapChainHookSiteBytes(const char* when);
+
+	// Co-existing with other overlays. HCM patches the SHARED dxgi / D3D12Core functions, which RivaTuner, the
+	// Steam overlay and Streamline patch as well - and RTSS re-hooks on a timer, so it can land ON TOP of us
+	// after we install. Restoring our saved bytes in that state erases their hook and cuts the present chain,
+	// which is the measured cause of "game dies on HCM close with 0x80004004 and no exception".
+	//
+	// So we snapshot what we wrote and compare before restoring. Order of these five matches the park order in
+	// ~D3D12Hook; keep them in step.
+	static constexpr int kHookSiteCount = 5;
+	static constexpr int kHookSiteSnapshotBytes = 5;   // an E9 rel32 is the whole story
+
+	struct HookSiteSnapshot
+	{
+		uint8_t* target = nullptr;
+		uint8_t  bytes[kHookSiteSnapshotBytes]{};
+		bool     valid = false;
+	};
+	HookSiteSnapshot mHookSites[kHookSiteCount];
+
+	void snapshotHookSites();
+	bool hookSiteIsStillOurs(int index) const;
+
+	// Set when a hook had to be left installed inside a third party's chain, which means our detour code must
+	// never be unmapped. Drives the PIN at the end of ~D3D12Hook.
+	bool mMustStayResident = false;
+
+	// ================================================================================================================
+	// THE RE-HOOK WATCHDOG - because "hooks installed" is not the same as "frames arriving".
+	//
+	// MEASURED. Close HCM and reopen it against the SAME running game and the overlay never comes back, while
+	// HCMExternal still reports "Internal connected" - truthfully, because the interproc link, checkpoint detours
+	// and state hook all work fine. Comparing the two sessions' logs:
+	//
+	//                          first run    reopened run
+	//     swapchain adopted        1             0
+	//     Present detour fired     9             0
+	//
+	// The hooks install without error and harvest the identical addresses. Nothing ever calls them. This process
+	// has FIVE other parties on the same functions - sl.interposer, nvngx_dlssg, GFSDK_Aftermath, RTSSHooks64 and
+	// GameOverlayRenderer64 - and whoever ends up owning the outermost hook can dispatch through a pointer it
+	// captured earlier rather than through the shared code we patched.
+	//
+	// A dead overlay that reports success is the worst outcome, so this watchdog notices and retries: if no
+	// present has reached us while a game is running, tear the hooks down and install them again from a fresh
+	// harvest. A racy or stale install is fixed by that. A structural one is not - and then it says so plainly
+	// instead of leaving the user to guess, which is what happened here.
+	// ================================================================================================================
+	static inline std::atomic<uint64_t> mPresentDetourFires{ 0 };
+	std::thread mWatchdogThread;
+	std::atomic<bool> mWatchdogRunning{ false };
+	int mRehookAttempts = 0;
+
+	void startRehookWatchdog();
+	void stopRehookWatchdog();
+	bool reinstallSwapChainHooks();
+
 	struct HookAddresses
 	{
 		void* present = nullptr;

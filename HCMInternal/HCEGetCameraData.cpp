@@ -4,6 +4,7 @@
 #include "PointerDataStore.h"
 #include "MultilevelPointer.h"
 #include "ModuleHook.h"
+#include "HCEGameThreadTick.h"   // this hook is the game-thread tick every HCE cheat borrows
 #include <atomic>
 #include <cmath>
 #include <mutex>
@@ -85,6 +86,11 @@ namespace
 	void cameraManagerUpdateHook(SafetyHookContext& ctx)
 	{
 		gCameraManagerHookFires.fetch_add(1, std::memory_order_relaxed);
+
+		// Shared game-thread tick, run FIRST and unconditionally - before any of the validation below, which
+		// returns early on a frame this hook does not like. Subscribers here are not interested in the camera;
+		// they need a game thread, and skipping them on rejected frames would make the tick silently intermittent.
+		HCEGameThreadTick::run();
 
 		const uint32_t now = GetTickCount();
 		const uintptr_t destination = ctx.rcx;

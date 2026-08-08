@@ -70,6 +70,7 @@ DWORD WINAPI MainThread(HMODULE hDLL)
     // impossible to observe from outside. This short sleep covers that bounded window; the drain above is
     // what removed the UNBOUNDED one.
     Sleep(50);
+
     FreeLibraryAndExitThread(hDLL, NULL);
 }
 

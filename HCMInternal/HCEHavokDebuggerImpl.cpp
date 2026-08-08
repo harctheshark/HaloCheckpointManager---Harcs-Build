@@ -27,6 +27,7 @@
 
 #ifdef HCM_HAVOK_AVAILABLE
 
+#include "ImageResidencyShim.h"   // tickDetour is an HCM entry point the unload drain must wait for
 #include <Common/Base/hkBase.h>
 #include <Common/Base/Memory/Memory/Pool/hkPoolMemory.h>
 #include <Common/Base/Memory/hkThreadMemory.h>
@@ -1757,6 +1758,59 @@ static float (*g_tvEdge)[6] = nullptr;  static int g_tvEdgeN = 0;   // trigger v
 static float (*g_scTri)[9]  = nullptr;  static int g_scTriN  = 0;   // soft ceiling faces
 static ScenLabel g_tvLabel[MAX_LABELS]; static int g_tvLabelN = 0;
 
+// ====================================================================================================================
+// COMMIT-ON-DEMAND FOR THE SCENARIO SCRATCH BUFFERS.
+//
+// ⚠ THESE WERE RESERVED BUT NEVER COMMITTED, SO EVERY WRITE TO THEM FAULTED.
+//
+// The port switched all six scratch reservations from committed-up-front to MEM_RESERVE, to avoid charging the
+// game process ~91 MB on the first Havok toggle. Its comment says "g_wmTri already worked this way (wmEnsure);
+// the rest now match" - but only g_wmTri ever got an ensure helper. The other five reserve address space and
+// nothing else, so the first store into any of them hits a reserved-but-uncommitted page.
+//
+// MEASURED, via the teardown diagnostic and the PDB:
+//
+//     FIRST-CHANCE 0xC0000005 at HCMInternal.dll+0x92BE82 - tried to WRITE 0x2353B1F0000
+//     = `anonymous namespace'::tvTri + 0x22        (i.e. `t[0]=a[0]`, the first store)
+//
+// It never surfaced as a crash because the gather paths run under __try: the access violation was swallowed and
+// the affected viewer simply came back empty or truncated. A silently broken feature rather than a visible fault,
+// which is why it survived the port unnoticed.
+//
+// Same shape as wmEnsure, generalised. Chunked so a small level commits one chunk rather than the whole
+// reservation, which is the entire point of reserving in the first place.
+// ====================================================================================================================
+static const size_t SCRATCH_CHUNK = 4u << 20;   // 4 MB
+
+struct ScratchCommit
+{
+    void*       base      = nullptr;
+    size_t      committed = 0;
+    size_t      cap       = 0;
+    bool        oom       = false;
+    const char* name      = "";
+};
+
+static ScratchCommit g_tvTriCommit, g_tvEdgeCommit, g_scTriCommit;
+
+// Returns false when the write must be skipped (not reserved, past the cap, or the commit failed).
+static bool scratchEnsure(ScratchCommit& s, size_t needBytes)
+{
+    if (needBytes <= s.committed) return true;
+    if (!s.base || needBytes > s.cap) return false;
+
+    size_t want = ((needBytes + SCRATCH_CHUNK - 1) / SCRATCH_CHUNK) * SCRATCH_CHUNK;
+    if (want > s.cap) want = s.cap;
+
+    if (!VirtualAlloc((char*)s.base + s.committed, want - s.committed, MEM_COMMIT, PAGE_READWRITE))
+    {
+        if (!s.oom) { s.oom = true; LOG("!! %s commit FAILED at %zu MB - capping", s.name, s.committed >> 20); }
+        return false;
+    }
+    s.committed = want;
+    return true;
+}
+
 // Per-volume slices of the shared triangle/edge buffers, so the live viewer can recolour a volume
 // without re-reading any tag data. Index matches g_tvLabel.
 struct TvRange { int triStart, triCount, edgeStart, edgeCount, index; uintptr_t elem; };
@@ -1843,9 +1897,13 @@ static int  g_ltvTick = 0;
 static int g_tvCount = 0, g_scCount = 0, g_tvSector = 0, g_tvBox = 0;
 static volatile long g_scenGen = 0;
 
+// The scratchEnsure call is what makes these stores legal - see the block above. Committing BEFORE the index is
+// advanced matters: on a commit failure the triangle is dropped rather than counted, so the count never claims
+// data that was never written.
 static void tvTri(const float* a, const float* b, const float* c)
 {
     if (!g_tvTri || g_tvTriN >= MAX_SCEN_TRIS) return;
+    if (!scratchEnsure(g_tvTriCommit, (size_t)(g_tvTriN + 1) * 9 * sizeof(float))) return;
     float* t = g_tvTri[g_tvTriN++];
     t[0]=a[0];t[1]=a[1];t[2]=a[2]; t[3]=b[0];t[4]=b[1];t[5]=b[2]; t[6]=c[0];t[7]=c[1];t[8]=c[2];
 }
@@ -1856,12 +1914,14 @@ static void tvTri2(const float* a, const float* b, const float* c)
 static void tvEdge(const float* a, const float* b)
 {
     if (!g_tvEdge || g_tvEdgeN >= MAX_SCEN_EDGES) return;
+    if (!scratchEnsure(g_tvEdgeCommit, (size_t)(g_tvEdgeN + 1) * 6 * sizeof(float))) return;
     float* e = g_tvEdge[g_tvEdgeN++];
     e[0]=a[0];e[1]=a[1];e[2]=a[2]; e[3]=b[0];e[4]=b[1];e[5]=b[2];
 }
 static void scTri(const float* a, const float* b, const float* c)
 {
     if (!g_scTri || g_scTriN >= MAX_SCEN_TRIS) return;
+    if (!scratchEnsure(g_scTriCommit, (size_t)(g_scTriN + 1) * 9 * sizeof(float))) return;
     float* t = g_scTri[g_scTriN++];
     t[0]=a[0];t[1]=a[1];t[2]=a[2]; t[3]=b[0];t[4]=b[1];t[5]=b[2]; t[6]=c[0];t[7]=c[1];t[8]=c[2];
 }
@@ -2276,6 +2336,31 @@ static uint64_t worldContentSigGuarded()
 
 static void __fastcall tickDetour(void* a1)
 {
+    // ⚠ THIS FUNCTION IS AN ENTRY POINT INTO HCM'S IMAGE, AND IT WAS THE ONE NOTHING WAS WAITING FOR.
+    //
+    // uninstallTickHook() restores the vtable slot, and its comment correctly notes that a thread which already
+    // loaded the detour address will still enter here afterwards. That is harmless while HCM stays loaded. It is
+    // fatal when HCM is about to UNLOAD: the thread calls an address that no longer exists.
+    //
+    // MEASURED. Closing HCM produced an unhandled access violation whose faulting address resolved, through the
+    // PDB, to exactly this function's first instruction:
+    //
+    //     EXCEPTION_ACCESS_VIOLATION 0x00007FFD7D288AA0
+    //     = HCMInternal.dll (base 0x7FFD7C960000) + 0x928AA0
+    //     = `anonymous namespace'::tickDetour + 0x0
+    //
+    // ImageResidency::drain() in dllmain already waits for HCM's other entry points before unmapping - the window
+    // procedure and the ModuleHookManager hooks. This one is a RAW VTABLE SLOT patched by hand, so it was never
+    // in that set and the drain reported "clean" while a game thread was still on its way in. Registering here
+    // puts it under the same guard: unmapping now blocks until this returns.
+    //
+    // Via the shim rather than ScopedImageResidency directly - this TU has no PCH and must not pull one in.
+    struct ResidencyScope
+    {
+        ResidencyScope() noexcept { ImageResidency::enterFromForeignTU(); }
+        ~ResidencyScope() noexcept { ImageResidency::leaveFromForeignTU(); }
+    } residency;
+
     if (g_origTick) g_origTick(a1);              // engine first: world is post-step, TLS live
     // HCM bridge: the engine call above is ALWAYS made (we are standing in the engine's own vtable slot
     // and skipping it would freeze the simulation). Only our own work is paused.
@@ -2299,6 +2384,65 @@ static void __fastcall tickDetour(void* a1)
     }
 }
 
+// ====================================================================================================================
+// THE FORWARDING THUNK - why the vtable never points at HCM's own code.
+//
+// ⚠ AN ADDRESS PUBLISHED INTO THE GAME MUST OUTLIVE HCM. THIS ONE DID NOT, AND IT WAS THE LAST CRASH.
+//
+// Patching the vtable slot to &tickDetour hands the engine a pointer into HCMInternal.dll. uninstallTickHook()
+// restores the slot, but a thread that has ALREADY LOADED the old value still calls it afterwards - the existing
+// comment says so. While HCM stays loaded that is harmless. On unload it is fatal.
+//
+// MEASURED TWICE, resolved through the PDB both times, and the second one is the proof that guarding was not
+// enough. Between the two runs tickDetour moved 0x1A0 bytes (a ScopedImageResidency was added to it) - and the
+// faulting address moved by exactly 0x1A0:
+//
+//     build A:  fault 0x7FFD7D288AA0  = HCMInternal + 0x928AA0 = tickDetour + 0x0
+//     build B:  fault 0x7FFD7D288C40  = HCMInternal + 0x928C40 = tickDetour + 0x0
+//
+// ImageResidency only covers a thread that is INSIDE the function. The thread here has loaded the pointer and not
+// yet executed its first instruction, so the drain sees nothing, reports clean, HCM unmaps, and the call lands in
+// a hole. NOTHING SYNCHRONISED CAN CLOSE THAT WINDOW - the gap is between a load and a call, with no code of ours
+// running in between to be waited on. The address itself has to stay valid forever.
+//
+// So the slot gets a permanently-allocated thunk instead, and never sees HCM's address at all:
+//
+//     jmp qword ptr [rip+2]      ; 6 bytes
+//     <2 bytes padding>          ; aligns the target
+//     <8-byte target pointer>    ; &tickDetour while loaded, g_origTick after uninstall
+//
+// The page is never freed - same deliberate leak as HCETriggerActivity's stub page, and for the same reason: a
+// game thread can be inside it, or on its way into it, at any instant. Uninstall becomes an aligned 8-byte store
+// that redirects the thunk to the engine's own function, so a caller arriving at any time - before, during or
+// long after HCM is gone - lands somewhere real.
+// ====================================================================================================================
+static void*  g_tickThunk       = nullptr;   // executable page, NEVER freed
+static void** g_tickThunkTarget = nullptr;   // 8-byte aligned slot inside it
+
+static bool buildTickThunk()
+{
+    if (g_tickThunk) return true;
+
+    // RWX and leaked, deliberately. The target slot lives in the same page so it can be swapped with a single
+    // aligned store while the page stays executable - splitting code and data would need the two allocations
+    // within rip-relative range of each other, which VirtualAlloc does not promise.
+    void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!page) { LOG("tick hook: could not allocate the forwarding thunk"); return false; }
+
+    unsigned char* p = (unsigned char*)page;
+    p[0] = 0xFF; p[1] = 0x25;                       // jmp qword ptr [rip+disp32]
+    p[2] = 0x02; p[3] = 0x00; p[4] = 0x00; p[5] = 0x00;   // disp32 = 2 -> target at offset 8
+    p[6] = 0x00; p[7] = 0x00;                       // padding, so the target is 8-byte aligned
+
+    g_tickThunkTarget = (void**)(p + 8);
+    *g_tickThunkTarget = (void*)&tickDetour;
+
+    FlushInstructionCache(GetCurrentProcess(), page, 16);
+    g_tickThunk = page;
+    LOG("tick hook: forwarding thunk at %016llX (never freed)", (unsigned long long)(uintptr_t)page);
+    return true;
+}
+
 static bool installTickHook()
 {
     g_tickSlot = A(A_VT2);                       // slot 0 of the second vtable (signature-resolved)
@@ -2307,8 +2451,14 @@ static bool installTickHook()
     if (!inMod((uintptr_t)orig)) { LOG("tick hook: slot 0 of vt2 is not a module ptr"); return false; }
     g_origTick = (FnTick)orig;                   // publish BEFORE patching
     _ReadWriteBarrier();
-    if (!patchSlot(g_tickSlot, (void*)&tickDetour, nullptr)) return false;
-    LOG("tick hook installed on vt2 slot 0 (orig %016llX)", (unsigned long long)orig);
+
+    if (!buildTickThunk()) return false;
+    *g_tickThunkTarget = (void*)&tickDetour;     // re-arm, in case this is a second enable
+    _ReadWriteBarrier();
+
+    // The THUNK goes in the slot, never &tickDetour. See the block above.
+    if (!patchSlot(g_tickSlot, g_tickThunk, nullptr)) return false;
+    LOG("tick hook installed on vt2 slot 0 via thunk (orig %016llX)", (unsigned long long)orig);
     return true;
 }
 
@@ -2321,8 +2471,24 @@ static bool installTickHook()
 static void uninstallTickHook()
 {
     if (!g_tickSlot || !g_origTick) return;
+
+    // ⚠ ORDER MATTERS, AND THE THUNK REDIRECT MUST COME FIRST.
+    //
+    // Point the (permanent) thunk at the engine's own function before touching the vtable. After this store, a
+    // thread arriving at the thunk from ANY direction - one that read the slot a moment ago, one still to read it,
+    // one that will not get there until long after HCM has unmapped - jumps straight to the engine and never
+    // reaches our code. An aligned pointer store is atomic, so there is no torn state to observe.
+    //
+    // Only then is the slot restored, which is now merely tidiness: the thunk is already inert and would forward
+    // correctly forever even if this failed.
+    if (g_tickThunkTarget)
+    {
+        *g_tickThunkTarget = (void*)g_origTick;
+        _ReadWriteBarrier();
+    }
+
     patchSlot(g_tickSlot, (void*)g_origTick, nullptr);
-    LOG("tick hook uninstalled");
+    LOG("tick hook uninstalled (thunk redirected to the engine; page intentionally left mapped)");
     g_tickSlot = 0;
 }
 
@@ -2652,8 +2818,17 @@ static DWORD WINAPI vdbThread(LPVOID)
     g_tvTri     = (float(*)[9])VirtualAlloc(nullptr, (size_t)MAX_SCEN_TRIS * 9 * sizeof(float), MEM_RESERVE, PAGE_READWRITE);
     g_scTri     = (float(*)[9])VirtualAlloc(nullptr, (size_t)MAX_SCEN_TRIS * 9 * sizeof(float), MEM_RESERVE, PAGE_READWRITE);
     g_tvEdge    = (float(*)[6])VirtualAlloc(nullptr, (size_t)MAX_SCEN_EDGES * 6 * sizeof(float), MEM_RESERVE, PAGE_READWRITE);
-    g_wmMeshTri = (float(*)[9])VirtualAlloc(nullptr, (size_t)MAX_MESH_TRIS * WM_TRI_BYTES, MEM_RESERVE, PAGE_READWRITE);
-    g_wmInst    = (WmInst*)   VirtualAlloc(nullptr, sizeof(WmInst) * WM_MAX_INST, MEM_RESERVE, PAGE_READWRITE);
+    // ⚠ These two have no ensure helper and no chunked writer to hang one off, so they are COMMITTED here.
+    // Reserving them without a commit path is exactly the defect that broke the scenario buffers - address space
+    // that faults on first write. They are the two smallest reservations, so committing up front costs little and
+    // is the honest option rather than leaving a third landmine.
+    g_wmMeshTri = (float(*)[9])VirtualAlloc(nullptr, (size_t)MAX_MESH_TRIS * WM_TRI_BYTES, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    g_wmInst    = (WmInst*)   VirtualAlloc(nullptr, sizeof(WmInst) * WM_MAX_INST, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+
+    // The three scenario buffers commit lazily through scratchEnsure. Publish their reservations to it.
+    g_tvTriCommit  = { g_tvTri,  0, (size_t)MAX_SCEN_TRIS  * 9 * sizeof(float), false, "trigger volume tris" };
+    g_tvEdgeCommit = { g_tvEdge, 0, (size_t)MAX_SCEN_EDGES * 6 * sizeof(float), false, "trigger volume edges" };
+    g_scTriCommit  = { g_scTri,  0, (size_t)MAX_SCEN_TRIS  * 9 * sizeof(float), false, "soft ceiling tris" };
     LOG("scratch reserved: world %zu MB, scenario tris 2x%zu MB, edges %zu MB, mesh %zu MB (committed on demand)",
         ((size_t)MAX_WORLD_TRIS * WM_TRI_BYTES) >> 20,
         ((size_t)MAX_SCEN_TRIS * 9 * sizeof(float)) >> 20,

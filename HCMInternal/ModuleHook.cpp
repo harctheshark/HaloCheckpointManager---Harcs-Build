@@ -2,6 +2,8 @@
 #include "ModuleHook.h"
 #include "ModuleCache.h"
 #include "ModuleHookManager.h"
+#include "GlobalKill.h"
+#include "HookGraveyard.h"
 
 std::unique_ptr<ModuleInlineHook> ModuleInlineHook::make(const std::wstring associatedModule, std::shared_ptr<MultilevelPointer> original_func, void* new_func, bool startEnabled)
 {
@@ -118,12 +120,58 @@ void ModuleMidHook::attach()
 	PLOG_DEBUG << "mid_hook successfully attached: " << this->getAssociatedModule();
 }
 
+// ====================================================================================================================
+// THE HOOK GRAVEYARD - why shutdown does not destroy hooks.
+//
+// Destroying a safetyhook hook does TWO things: it restores the target's original bytes, and it frees the
+// trampoline page holding the relocated prologue plus (for a mid hook) the stub that saves context and calls our
+// handler. The first is required. The second is what killed the game.
+//
+// MEASURED, not theorised. With first-chance logging armed, teardown produced:
+//
+//     [thread 41852] ~HCECheckpointDetours
+//     [thread 41852] ModuleMidHook::detach: detaching hook: HaloSimulation_tag_release.dll
+//     [thread 26268] FIRST-CHANCE EXCEPTION 0xC0000005 at <no module - unmapped or freed memory>
+//                    - tried to EXECUTE 0x7FFDCBB00072
+//     [thread 41852] successfully detached
+//
+// A GAME thread was executing inside the trampoline at the instant HCM's thread freed it. safetyhook freezes
+// threads and rewrites an instruction pointer sitting in the relocated PROLOGUE, but a thread parked further in -
+// in the stub, or returning through it - is not covered, and the page goes away underneath it.
+//
+// Downstream that reads as a crash with no HCM in the callstack: the access violation is swallowed by a __except
+// above it (Streamline wraps the swapchain when DLSS/frame generation is on), Present returns E_ABORT, and UE
+// raises LowLevelFatalError from D3D12Util.cpp. It is intermittent because it needs a thread to be inside the
+// trampoline during the microsecond it is freed - which is also why it looked unrelated to whatever was toggled.
+//
+// So at SHUTDOWN we disable instead of destroy: disable() restores the original bytes, so no new thread can enter,
+// and the hook object is then parked here forever so its trampoline stays mapped for anyone already inside. The
+// cost is a few pages leaked in a process that is about to lose HCM anyway. Exactly the same trade
+// HCETriggerActivity documents for its stub page, and the one ~D3D12Hook makes when it abandons GPU resources.
+//
+// ⚠ Normal (non-shutdown) detaches still destroy, because HCM stays alive to re-attach and must not leak a page
+// per toggle. The risk window is identical either way, but a running HCM re-attaching is the common case and the
+// game is not being torn down around it.
+// ====================================================================================================================
 void ModuleInlineHook::detach()
 {
 	PLOG_DEBUG << "detaching hook: " << this->getAssociatedModule();
 	if (!this->isHookInstalled()) {
 		PLOG_DEBUG << "already detached";
 		return;
+	}
+
+	if (GlobalKill::isKillSet())
+	{
+		// Restore the bytes, keep the trampoline. See HookGraveyard.h.
+		if (HookGraveyard::park(this->mInlineHook))
+		{
+			PLOG_DEBUG << "shutdown: disabled and parked inline hook on " << this->getAssociatedModule()
+				<< " (trampoline deliberately leaked)";
+			return;
+		}
+		PLOG_ERROR << "could not disable inline hook on " << this->getAssociatedModule()
+			<< " during shutdown; destroying it instead, which risks freeing a trampoline a thread is inside";
 	}
 
 	this->mInlineHook = {};
@@ -136,6 +184,18 @@ void ModuleMidHook::detach()
 	if (!this->isHookInstalled()) {
 		PLOG_DEBUG << "already detached";
 		return;
+	}
+
+	if (GlobalKill::isKillSet())
+	{
+		if (HookGraveyard::park(this->mMidHook))
+		{
+			PLOG_DEBUG << "shutdown: disabled and parked mid hook on " << this->getAssociatedModule()
+				<< " (trampoline deliberately leaked)";
+			return;
+		}
+		PLOG_ERROR << "could not disable mid hook on " << this->getAssociatedModule()
+			<< " during shutdown; destroying it instead, which risks freeing a trampoline a thread is inside";
 	}
 
 	this->mMidHook = {};

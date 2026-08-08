@@ -294,6 +294,7 @@ public:
                 Sleep(10);
             }
             PLOG_INFO << "HCMInternal services are about to fall out of scope";
+
 
             if (modalFailureWindowThread.joinable())
                 modalFailureWindowThread.join();
