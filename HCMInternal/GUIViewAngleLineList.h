@@ -53,7 +53,7 @@ public:
 		ImGui::Dummy({ mLeftMargin, GUIFrameHeight }); // left margin
 		ImGui::SameLine();
 
-		ImGui::BeginChild(mHeadingText.c_str(), { 500 - mLeftMargin, currentHeight - GUISpacing });
+		ImGui::BeginChild(mHeadingText.c_str(), { GUIWindowWidth - mLeftMargin, currentHeight - GUISpacing });
 
 
 		constexpr ImGuiTreeNodeFlags treeFlags = startsOpen ? ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_FramePadding;

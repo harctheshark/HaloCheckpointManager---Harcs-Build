@@ -50,6 +50,26 @@ private:
 		out.push_back('\n');
 	}
 
+	// The velocity rows, from one already-fetched vector. Shared by the coords+velocity and velocity-only paths so
+	// the two cannot format differently.
+	//
+	// Magnitudes match MCC's "As XY magnitude" / "As XYZ magnitude" exactly, computed from the same vector the
+	// component rows print - so a reader can always verify the total against the parts on screen.
+	static void appendVelocityRows(std::string& out, const SimpleMath::Vector3& v, int precision,
+		bool wantComponents, bool wantXY, bool wantXYZ)
+	{
+		if (wantComponents)
+		{
+			appendRow(out, "X Velocity", std::format("{:.{}f}", v.x, precision));
+			appendRow(out, "Y Velocity", std::format("{:.{}f}", v.y, precision));
+			appendRow(out, "Z Velocity", std::format("{:.{}f}", v.z, precision));
+		}
+		if (wantXY)
+			appendRow(out, "Absolute XY Velocity", std::format("{:.{}f}", std::sqrt(v.x * v.x + v.y * v.y), precision));
+		if (wantXYZ)
+			appendRow(out, "Absolute XYZ Velocity", std::format("{:.{}f}", std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z), precision));
+	}
+
 	void updateData()
 	{
 		lockOrThrow(settingsWeak, settings);
@@ -62,7 +82,14 @@ private:
 		out.reserve(256);
 
 		const bool wantCoords = settings->hceDisplayInfoShowCoordinates->GetValue();
-		const bool wantVelocity = settings->hceDisplayInfoShowVelocity->GetValue();
+		const bool wantVelComponents = settings->hceDisplayInfoShowVelocity->GetValue();
+		const bool wantVelXY = settings->hceDisplayInfoShowVelocityXY->GetValue();
+		const bool wantVelXYZ = settings->hceDisplayInfoShowVelocityXYZ->GetValue();
+
+		// The magnitudes are derived from the same vector as the component rows, so ANY of the three toggles means
+		// we need the velocity fetch. Gating this on the components toggle alone would leave the magnitude rows
+		// blank whenever the user wanted only a speed readout.
+		const bool wantVelocity = wantVelComponents || wantVelXY || wantVelXYZ;
 
 		// Position and velocity live in the SAME physics entry, at the end of a long TLS -> object -> physics
 		// chain. Fetching them separately walked that entire chain twice per refresh, which is why these two rows
@@ -76,9 +103,7 @@ private:
 				appendRow(out, "x", std::format("{:.{}f}", p.x, precision));
 				appendRow(out, "y", std::format("{:.{}f}", p.y, precision));
 				appendRow(out, "z", std::format("{:.{}f}", p.z, precision));
-				appendRow(out, "Vx", std::format("{:.{}f}", v.x, precision));
-				appendRow(out, "Vy", std::format("{:.{}f}", v.y, precision));
-				appendRow(out, "Vz", std::format("{:.{}f}", v.z, precision));
+				appendVelocityRows(out, v, precision, wantVelComponents, wantVelXY, wantVelXYZ);
 			}
 			catch (HCMRuntimeException) { appendRow(out, "Coordinates", "Waiting for game"); }
 		}
@@ -98,9 +123,7 @@ private:
 			try
 			{
 				auto v = playerState->getPlayerVelocity();
-				appendRow(out, "Vx", std::format("{:.{}f}", v.x, precision));
-				appendRow(out, "Vy", std::format("{:.{}f}", v.y, precision));
-				appendRow(out, "Vz", std::format("{:.{}f}", v.z, precision));
+				appendVelocityRows(out, v, precision, wantVelComponents, wantVelXY, wantVelXYZ);
 			}
 			catch (HCMRuntimeException) { appendRow(out, "Velocity", "Waiting for game"); }
 		}

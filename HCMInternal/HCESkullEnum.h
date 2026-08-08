@@ -1,17 +1,26 @@
 #pragma once
 #include "pch.h"
+#include "HotkeysEnum.h"
+#include "boost\preprocessor.hpp"
 
 // ================================================================================================================
 // Halo Campaign Evolved skull table.
 //
 // HCE's skulls are NOT the MCC skulls: 56 of them, addressed by BIT INDEX into one contiguous bitfield at
-// *(tls + 0x60) + 0x1EBE0 (7 bytes), and 25 of them have no SkullEnum equivalent anywhere in HCM. Extending
-// SkullEnum / GUISkullToggle / HotkeysEnum to cover them would cost 25 new RebindableHotkeyEnum entries - and
-// ALL_EVENTONPRESS_HOTKEYS is at 59 of a hard 64 (BOOST_PP_TUPLE_SIZE), with a static assert on the count - plus
-// edits to files every MCC game shares. So HCE gets its own self-contained table and widget instead.
+// *(tls + 0x60) + 0x1EBE0 (7 bytes), and 25 of them have no SkullEnum equivalent anywhere in HCM. Rather than
+// stretch SkullEnum / GUISkullToggle - files every MCC game shares - HCE gets its own self-contained table and
+// widget. The hotkeys live in their own HCE_SKULL_HOTKEYS macro for the same reason MCC's do: BOOST_PP_TUPLE_SIZE
+// counts at most 64 per tuple, and HotkeyDefinitions.h sums the macros instead of counting one combined list.
 //
 // THE ARRAY INDEX IS THE BIT INDEX. This is HCM_Evolved gameplay.py's SKULLS tuple in declaration order - do not
 // sort, insert or remove entries. Display order is alphabetical and is applied at render time.
+//
+// displayName is FREE TO DIFFER from the skull's full name, and for three entries it does: the hotkey column costs
+// 30px out of a ~240px table cell, so "Grunt Birthday Party", "Spore Visibility" and "Johnny Ammo Tree" are
+// shortened, with the full name moved to the front of the tooltip. MCC's GUISkullToggle does the same thing to its
+// own two Birthday Party skulls. What must NOT follow suit is the matching HCE_SKULL_HOTKEYS enumerator:
+// RebindableHotkey serialises through magic_enum::enum_name, so those names are on-disk keys and renaming one
+// silently drops that user's binding. A display name is a label; an enumerator is a key.
 //
 // The reference tool labels its own section "Skulls (Some do not work!)" - several of these bits are inert in the
 // shipped game. That is the game's behaviour, not a porting defect.
@@ -37,7 +46,7 @@ static constexpr HCESkullInfo kHCESkulls[] =
 	/*  9 */ { "Assassin",             "All enemies in the game are permanently cloaked." },
 	/* 10 */ { "Blind",                "HUD and weapon do not display onscreen." },
 	/* 11 */ { "Superman",             "Halo Campaign Evolved skull." },
-	/* 12 */ { "Grunt Birthday Party", "Grunt headshots lead to glorious celebrations." },
+	/* 12 */ { "Grunt Birthday",       "Grunt Birthday Party. Grunt headshots lead to glorious celebrations." },
 	/* 13 */ { "IWHBYD",               "Rare combat dialogue becomes more common." },
 	/* 14 */ { "Red",                  "Halo Campaign Evolved skull." },
 	/* 15 */ { "Yellow",               "Halo Campaign Evolved skull." },
@@ -64,7 +73,7 @@ static constexpr HCESkullInfo kHCESkulls[] =
 	/* 36 */ { "Acrophobia",           "The Corps: now issuing rifles AND wings." },
 	/* 37 */ { "Adaptation",           "Halo Campaign Evolved skull." },
 	/* 38 */ { "Reload",               "Halo Campaign Evolved skull." },
-	/* 39 */ { "Spore Visibility",     "Halo Campaign Evolved skull." },
+	/* 39 */ { "Spore Vision",         "Spore Visibility. Halo Campaign Evolved skull." },
 	/* 40 */ { "Night Vision",         "Halo Campaign Evolved skull." },
 	/* 41 */ { "Lights Out",           "Halo Campaign Evolved skull." },
 	/* 42 */ { "Riskrun",              "Halo Campaign Evolved skull." },
@@ -77,7 +86,7 @@ static constexpr HCESkullInfo kHCESkulls[] =
 	/* 49 */ { "Temperamental",        "Halo Campaign Evolved skull." },
 	/* 50 */ { "Floor Is Lava",        "Halo Campaign Evolved skull." },
 	/* 51 */ { "Magnified",            "Halo Campaign Evolved skull." },
-	/* 52 */ { "Johnny Ammo Tree",     "Halo Campaign Evolved skull." },
+	/* 52 */ { "Johnny Ammo",          "Johnny Ammo Tree. Halo Campaign Evolved skull." },
 	/* 53 */ { "Leadhead",             "Halo Campaign Evolved skull." },
 	/* 54 */ { "Efficient",            "Halo Campaign Evolved skull." },
 	/* 55 */ { "Third Person",         "Halo Campaign Evolved skull." },
@@ -85,6 +94,23 @@ static constexpr HCESkullInfo kHCESkulls[] =
 
 constexpr size_t kHCESkullCount = std::size(kHCESkulls);
 static_assert(kHCESkullCount == 56, "HCE skull table must stay in sync with HCM_Evolved gameplay.py SKULLS");
+
+// Bit index -> the hotkey that toggles that skull. Generated straight from HCE_SKULL_HOTKEYS rather than retyped,
+// so entry N here is always entry N of that macro - the only ordering left to get wrong is the macro against
+// kHCESkulls above, and both are documented as bit order. All are unbound by default; users assign them from the
+// skull widget's "..." button.
+//
+// The FOR_EACH just qualifies each bare enumerator with its enum class name. TUPLE_TO_SEQ shares the same 64-entry
+// ceiling as TUPLE_SIZE, which is the reason HCE_SKULL_HOTKEYS is its own macro in the first place.
+#define HCE_QUALIFY_SKULL_HOTKEY(r, data, elem) RebindableHotkeyEnum::elem,
+static constexpr RebindableHotkeyEnum kHCESkullHotkeys[] =
+{
+	BOOST_PP_SEQ_FOR_EACH(HCE_QUALIFY_SKULL_HOTKEY, ~, BOOST_PP_TUPLE_TO_SEQ((HCE_SKULL_HOTKEYS)))
+};
+#undef HCE_QUALIFY_SKULL_HOTKEY
+
+static_assert(std::size(kHCESkullHotkeys) == kHCESkullCount,
+	"HCE_SKULL_HOTKEYS must have exactly one hotkey per skull, in bit order");
 
 // 56 bits, LSB first => exactly 7 bytes. maintain_enabled_toggles reads/writes literally this many.
 constexpr size_t kHCESkullByteCount = (kHCESkullCount + 7) / 8;

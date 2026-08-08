@@ -79,8 +79,8 @@ private:
 
 
 	// have to split up the counting here since BOOST_PP_TUPLE_SIZE can only count up to 64
-	static constexpr inline int allEventOnPressHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS));
-	static constexpr inline int allRebindableHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((NOEVENT_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS));
+	static constexpr inline int allEventOnPressHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_SKULL_HOTKEYS));
+	static constexpr inline int allRebindableHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((NOEVENT_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_SKULL_HOTKEYS));
 	static constexpr inline int rebindableOnlyCount = allRebindableHotkeyEnumCount - allEventOnPressHotkeyEnumCount;
 
 	const std::map<RebindableHotkeyEnum, std::shared_ptr<EventOnPressHotkey>>::value_type allEventOnPressHotkeysData[allEventOnPressHotkeyEnumCount]
@@ -512,8 +512,16 @@ private:
 		mSettings->replayStopPlaybackEvent,
 		vsk{}),
 
-
-
+		/// Halo Campaign Evolved skulls - all 56, all unbound by default.
+		//
+		// Generated rather than written out because every entry is the same shape and the ONLY thing that varies is
+		// an index that must equal the skull's bit index. Typing 56 of those by hand is a silent-mismatch waiting to
+		// happen: a transposed index binds a hotkey to the wrong skull and nothing catches it, since both the enum
+		// and the event array would still be the right size. FOR_EACH_I supplies the index from the enumerator's own
+		// position in HCE_SKULL_HOTKEYS, so the two cannot disagree.
+#define initHCESkullHotkey(r, data, i, elem) initEventOnPressHotkey(elem, mSettings->hceSkullToggleHotkeyEvents[i], vsk{}),
+		BOOST_PP_SEQ_FOR_EACH_I(initHCESkullHotkey, ~, BOOST_PP_TUPLE_TO_SEQ((HCE_SKULL_HOTKEYS)))
+#undef initHCESkullHotkey
 
 
 	};

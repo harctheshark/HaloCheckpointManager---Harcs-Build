@@ -93,7 +93,7 @@ public:
 		}
 
 		bool debugAlreadyRenderedSelected = false;
-		ImGui::BeginChild(std::format("##{}", mDebugName).c_str(), {500 - 30, std::max(0.f, currentHeight - GUISpacing)});
+		ImGui::BeginChild(std::format("##{}", mDebugName).c_str(), {GUIWindowWidth - 30, std::max(0.f, currentHeight - GUISpacing)});
 		currentHeight = GUISpacing;
 		// render each element
 		// somethings is going wrong with the currentHeight here

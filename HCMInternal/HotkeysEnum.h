@@ -107,6 +107,76 @@ skullSputnikHotkey, \
 skullAcrophobiaHotkey
 
 
+// Halo Campaign Evolved skulls - one hotkey per skull, all unbound by default.
+//
+// HCE's 56 skulls are a different set to MCC's and are addressed by BIT INDEX into a single bitfield, so these
+// cannot reuse SKULL_HOTKEYS. They get their own macro for the same reason SKULL_HOTKEYS and REPLAY_HOTKEYS do:
+// BOOST_PP_TUPLE_SIZE counts at most 64 per tuple, and HotkeyDefinitions.h sums the macros rather than counting
+// one combined list. 56 fits in one tuple with room to spare.
+//
+// ⚠ ORDER IS THE BIT INDEX. Entry N here must be skull bit N, matching kHCESkulls[] in HCESkullEnum.h, which maps
+// them back with kHCESkullHotkeys[]. A static_assert there catches a count drift; ORDER drift it cannot catch, so
+// do not sort, insert or remove entries. The names are also the on-disk serialisation keys (RebindableHotkey
+// serialises via magic_enum::enum_name), so renaming one silently drops that user's existing binding.
+#define HCE_SKULL_HOTKEYS \
+hceSkullIronHotkey, \
+hceSkullBlackEyeHotkey, \
+hceSkullToughLuckHotkey, \
+hceSkullCatchHotkey, \
+hceSkullFogHotkey, \
+hceSkullFamineHotkey, \
+hceSkullThunderstormHotkey, \
+hceSkullTiltHotkey, \
+hceSkullMythicHotkey, \
+hceSkullAssassinHotkey, \
+hceSkullBlindHotkey, \
+hceSkullSupermanHotkey, \
+hceSkullGruntBirthdayPartyHotkey, \
+hceSkullIWHBYDHotkey, \
+hceSkullRedHotkey, \
+hceSkullYellowHotkey, \
+hceSkullBlueHotkey, \
+hceSkullAngryHotkey, \
+hceSkullBandannaHotkey, \
+hceSkullBondedPairHotkey, \
+hceSkullBoomHotkey, \
+hceSkullEnvyHotkey, \
+hceSkullEyePatchHotkey, \
+hceSkullForeignHotkey, \
+hceSkullGhostHotkey, \
+hceSkullGruntFuneralHotkey, \
+hceSkullJackedHotkey, \
+hceSkullMalfunctionHotkey, \
+hceSkullMasterblasterHotkey, \
+hceSkullPinataHotkey, \
+hceSkullRecessionHotkey, \
+hceSkullScarabHotkey, \
+hceSkullSoAngryHotkey, \
+hceSkullSwarmHotkey, \
+hceSkullThatsJustWrongHotkey, \
+hceSkullTheyComeBackHotkey, \
+hceSkullAcrophobiaHotkey, \
+hceSkullAdaptationHotkey, \
+hceSkullReloadHotkey, \
+hceSkullSporeVisibilityHotkey, \
+hceSkullNightVisionHotkey, \
+hceSkullLightsOutHotkey, \
+hceSkullRiskrunHotkey, \
+hceSkullPopHotkey, \
+hceSkullArmisticeHotkey, \
+hceSkullFragileHotkey, \
+hceSkullGiveAndTakeHotkey, \
+hceSkullStowAndGrowHotkey, \
+hceSkullHipFireHotkey, \
+hceSkullTemperamentalHotkey, \
+hceSkullFloorIsLavaHotkey, \
+hceSkullMagnifiedHotkey, \
+hceSkullJohnnyAmmoTreeHotkey, \
+hceSkullLeadheadHotkey, \
+hceSkullEfficientHotkey, \
+hceSkullThirdPersonHotkey
+
+
 // replay hotkeys. Like the skulls, kept in their own macro because ALL_EVENTONPRESS_HOTKEYS is near the
 // BOOST_PP_TUPLE_SIZE limit of 64. These are event-on-press hotkeys (they fire ActionEvents).
 #define REPLAY_HOTKEYS \
@@ -127,7 +197,7 @@ cameraFOVIncreaseBinding,\
 cameraFOVDecreaseBinding
 
 // both event and non-event hotkeys are rebindable
-#define ALL_REBINDABLE_HOTKEYS ALL_EVENTONPRESS_HOTKEYS, NOEVENT_HOTKEYS, SKULL_HOTKEYS, REPLAY_HOTKEYS
+#define ALL_REBINDABLE_HOTKEYS ALL_EVENTONPRESS_HOTKEYS, NOEVENT_HOTKEYS, SKULL_HOTKEYS, REPLAY_HOTKEYS, HCE_SKULL_HOTKEYS
 
 
 //enum class RebindableHotkeyEnum : int {

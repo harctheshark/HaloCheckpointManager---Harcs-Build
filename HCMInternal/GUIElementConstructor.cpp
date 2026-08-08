@@ -1533,6 +1533,8 @@ private:
 							{
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowCoordinates),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowVelocity),
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowVelocityXY),
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowVelocityXYZ),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowLevel),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowBSP),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowTick),
@@ -1546,7 +1548,15 @@ private:
 
 					case GUIElementEnum::hceDisplayInfoShowVelocity:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Show the player's xyz velocity"), std::nullopt, "Show Velocity", settings->hceDisplayInfoShowVelocity));
+							(game, ToolTipCollection("Show the player's velocity split into X, Y and Z components"), std::nullopt, "Show Velocity", settings->hceDisplayInfoShowVelocity));
+
+					case GUIElementEnum::hceDisplayInfoShowVelocityXY:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show horizontal speed as a single number: sqrt(x^2 + y^2). Ignores vertical motion, so falling and jumping do not inflate it."), std::nullopt, "Show Absolute XY Velocity", settings->hceDisplayInfoShowVelocityXY));
+
+					case GUIElementEnum::hceDisplayInfoShowVelocityXYZ:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show total speed as a single number: sqrt(x^2 + y^2 + z^2). Includes vertical motion."), std::nullopt, "Show Absolute XYZ Velocity", settings->hceDisplayInfoShowVelocityXYZ));
 
 					case GUIElementEnum::hceDisplayInfoShowLevel:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>

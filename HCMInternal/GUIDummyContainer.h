@@ -38,7 +38,7 @@ public:
 		ImGui::Dummy({ mLeftMargin, 1 }); // left margin
 		ImGui::SameLine();
 
-		ImGui::BeginChild(mHeadingText.c_str(), { 500 - mLeftMargin, currentHeight - GUISpacing });
+		ImGui::BeginChild(mHeadingText.c_str(), { GUIWindowWidth - mLeftMargin, currentHeight - GUISpacing });
 
 		currentHeight = 0;
 		for (auto& element : mChildElements)

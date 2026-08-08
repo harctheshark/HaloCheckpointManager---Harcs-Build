@@ -48,7 +48,9 @@ public:
 			return;
 		}
 
-		ImGui::BeginChild(std::format("##children{}", mToggleText).c_str(), { 450, currentHeight - GUISpacing});
+		// Was the literal 450, i.e. the old 500-wide window less a 50px inset for the nesting. Kept as an inset off
+		// GUIWindowWidth so nested children widen with the window instead of staying at the old width.
+		ImGui::BeginChild(std::format("##children{}", mToggleText).c_str(), { GUIWindowWidth - 50, currentHeight - GUISpacing});
 
 		if constexpr (shouldRenderHotkey)
 		{

@@ -10,7 +10,10 @@
 
 
 
-ImVec2 minimumWindowSize{ 500, 500 };
+// .x is only ever a sanity floor: "is the screen actually bigger than our window?", guarding against a junk
+// getScreenSize. It tracks GUIWindowWidth so that question keeps meaning the same thing. .y is the real output -
+// it becomes 2/3 of screen height and caps how tall the window may grow.
+ImVec2 minimumWindowSize{ GUIWindowWidth, 500 };
 
 void HCMInternalGUI::adjustWindowPosition()
 {

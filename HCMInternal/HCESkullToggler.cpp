@@ -30,6 +30,9 @@
 static_assert(std::tuple_size_v<std::remove_reference_t<decltype(std::declval<SettingsStateAndEvents&>().hceSkullEngineState)>> == kHCESkullCount,
 	"SettingsStateAndEvents::hceSkullEngineState must have one entry per HCE skull");
 
+static_assert(std::tuple_size_v<std::remove_reference_t<decltype(std::declval<SettingsStateAndEvents&>().hceSkullToggleHotkeyEvents)>> == kHCESkullCount,
+	"SettingsStateAndEvents::hceSkullToggleHotkeyEvents must have one toggle event per HCE skull");
+
 class HCESkullToggler::HCESkullTogglerImpl
 {
 private:
@@ -89,6 +92,31 @@ private:
 		settings->hceSkullStateValid = true;
 	}
 
+	// Read-modify-write of the one byte holding this bit, plus the bookkeeping the re-apply pass needs. Throws on
+	// any failure; both the checkbox and the hotkey funnel through here so they cannot drift apart.
+	void applySkullBit(int bitIndex, bool enabled)
+	{
+		lockOrThrow(playerStateWeak, playerState);
+
+		const uintptr_t flagsAddress = playerState->getSkullFlagsAddress();
+		const uintptr_t byteAddress = flagsAddress + (bitIndex / 8);
+		const uint8_t mask = (uint8_t)(1u << (bitIndex % 8));
+
+		uint8_t current = 0;
+		if (!HCEGetPlayerState::tryReadRaw(byteAddress, &current, sizeof(current)))
+			throw HCMRuntimeException(std::format("{} failed: skull state is unavailable", kHCESkulls[bitIndex].displayName));
+
+		const uint8_t updated = enabled ? (uint8_t)(current | mask) : (uint8_t)(current & ~mask);
+		if (updated != current && !HCEGetPlayerState::tryWriteRaw(byteAddress, &updated, sizeof(updated)))
+			throw HCMRuntimeException(std::format("{} failed: memory write failed", kHCESkulls[bitIndex].displayName));
+
+		mWanted[bitIndex] = enabled;
+		refreshAnyWanted();
+
+		lockOrThrow(messagesGUIWeak, messagesGUI);
+		messagesGUI->addMessage(std::format("{} {}.", kHCESkulls[bitIndex].displayName, enabled ? "enabled" : "disabled"));
+	}
+
 	// GUI -> here: the user clicked a checkbox.
 	void onSetEvent(int bitIndex, bool enabled)
 	{
@@ -97,29 +125,40 @@ private:
 
 		try
 		{
-			lockOrThrow(playerStateWeak, playerState);
-
-			const uintptr_t flagsAddress = playerState->getSkullFlagsAddress();
-			const uintptr_t byteAddress = flagsAddress + (bitIndex / 8);
-			const uint8_t mask = (uint8_t)(1u << (bitIndex % 8));
-
-			uint8_t current = 0;
-			if (!HCEGetPlayerState::tryReadRaw(byteAddress, &current, sizeof(current)))
-				throw HCMRuntimeException(std::format("{} failed: skull state is unavailable", kHCESkulls[bitIndex].displayName));
-
-			const uint8_t updated = enabled ? (uint8_t)(current | mask) : (uint8_t)(current & ~mask);
-			if (updated != current && !HCEGetPlayerState::tryWriteRaw(byteAddress, &updated, sizeof(updated)))
-				throw HCMRuntimeException(std::format("{} failed: memory write failed", kHCESkulls[bitIndex].displayName));
-
-			mWanted[bitIndex] = enabled;
-			refreshAnyWanted();
-
-			lockOrThrow(messagesGUIWeak, messagesGUI);
-			messagesGUI->addMessage(std::format("{} {}.", kHCESkulls[bitIndex].displayName, enabled ? "enabled" : "disabled"));
+			applySkullBit(bitIndex, enabled);
 		}
 		catch (HCMRuntimeException ex)
 		{
 			// The next onUpdateEvent re-reads the truth from memory, so the checkbox corrects itself.
+			runtimeExceptions->handleMessage(ex);
+		}
+	}
+
+	// Hotkey -> here: flip whatever the engine currently has for this skull.
+	//
+	// The current value comes from game memory rather than from mWanted, so the hotkey agrees with the checkbox
+	// even after a checkpoint revert has cleared a bit behind our back. Bailing out quietly when the game is not
+	// playing is what keeps a bound key from spamming the message feed while sat in a menu - the same reason
+	// MCC's SkullToggler::onHotkeyToggle leads with the identical check.
+	void onHotkeyToggle(int bitIndex)
+	{
+		if (!mReady.load(std::memory_order_acquire)) return;
+		if (bitIndex < 0 || bitIndex >= (int)kHCESkullCount) return;
+
+		try
+		{
+			lockOrThrow(mccStateHookWeak, mccStateHook);
+			if (!mccStateHook->isGameCurrentlyPlaying(mGame)) return;
+
+			uint8_t bytes[kHCESkullByteCount]{};
+			uintptr_t flagsAddress = 0;
+			if (!readFlagBytes(bytes, flagsAddress)) return; // chain legitimately down - stay silent
+
+			const bool currentlyEnabled = (bytes[bitIndex / 8] & (1u << (bitIndex % 8))) != 0;
+			applySkullBit(bitIndex, !currentlyEnabled);
+		}
+		catch (HCMRuntimeException ex)
+		{
 			runtimeExceptions->handleMessage(ex);
 		}
 	}
@@ -162,6 +201,11 @@ private:
 	ScopedCallback<eventpp::CallbackList<void(int, bool)>> mSetCallback;
 	ScopedCallback<RenderEvent> mRenderEventCallback;
 
+	// One per skull. Held by pointer because ScopedCallback bans both copy and move and has no default constructor,
+	// so it cannot live in a container directly. Declared last with the rest of the callbacks, so it is destroyed
+	// first - the destructor still calls removeCallback() on each explicitly, matching the guard pattern above.
+	std::vector<std::unique_ptr<ScopedCallback<ActionEvent>>> mHotkeyCallbacks;
+
 public:
 	HCESkullTogglerImpl(GameState game, IDIContainer& dicon)
 		: mGame(game),
@@ -177,6 +221,19 @@ public:
 		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER)
 			throw HCMInitException("HCESkullToggler only supports Halo Campaign Evolved");
 
+		// Subscribe every per-skull hotkey. The event array is indexed by bit index, so the loop counter IS the
+		// skull - no lookup table, and nothing to transpose.
+		auto settings = dicon.Resolve<SettingsStateAndEvents>().lock();
+		if (!settings) throw HCMInitException("HCESkullToggler could not resolve settings");
+
+		mHotkeyCallbacks.reserve(kHCESkullCount);
+		for (int bitIndex = 0; bitIndex < (int)kHCESkullCount; bitIndex++)
+		{
+			mHotkeyCallbacks.emplace_back(std::make_unique<ScopedCallback<ActionEvent>>(
+				settings->hceSkullToggleHotkeyEvents[bitIndex],
+				[this, bitIndex]() { onHotkeyToggle(bitIndex); }));
+		}
+
 		mReady.store(true, std::memory_order_release);
 	}
 
@@ -186,6 +243,7 @@ public:
 		mUpdateCallback.removeCallback();
 		mSetCallback.removeCallback();
 		mRenderEventCallback.removeCallback();
+		for (auto& callback : mHotkeyCallbacks) if (callback) callback->removeCallback();
 
 		if (auto settings = settingsWeak.lock()) settings->hceSkullStateValid = false;
 	}

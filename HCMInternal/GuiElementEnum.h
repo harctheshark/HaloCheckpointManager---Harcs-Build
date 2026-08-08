@@ -465,6 +465,8 @@
 	((hceDisplayInfoSettingsInfoSubheading, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowCoordinates, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowVelocity, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowVelocityXY, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowVelocityXYZ, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowLevel, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowBSP, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowTick, (HALOCER_ONLY)))\

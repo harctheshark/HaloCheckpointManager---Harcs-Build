@@ -62,7 +62,7 @@ private:
 	ImGuiWindowFlags windowFlags;
 	bool& m_WindowOpen;
 	bool m_windowOpenLastFrame;
-	SimpleMath::Vector2 mWindowSize{ 500, 500 };
+	SimpleMath::Vector2 mWindowSize{ GUIWindowWidth, 500 }; // .y is recalculated every frame from content; .x never is
 	SimpleMath::Vector2 mWindowPos{ 10, 25 };
 
 	SimpleMath::Vector2 mFullScreenSize;

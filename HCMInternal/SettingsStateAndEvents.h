@@ -206,6 +206,17 @@ public:
 	std::array<bool, 56> hceSkullEngineState{}; // last read of the engine's bitfield. Not a shadow copy - refreshed every render.
 	bool hceSkullStateValid = false;            // false => chain is down, gui shows "waiting for game"
 
+	// One toggle event per skull, indexed by BIT INDEX (same order as kHCESkulls). An array rather than 56 named
+	// members because the skulls are already addressed positionally everywhere else in the HCE path - naming them
+	// here would just add a second ordering to keep in sync. HCESkullToggler subscribes to all of them; the hotkeys
+	// that fire them are unbound by default.
+	std::array<std::shared_ptr<ActionEvent>, 56> hceSkullToggleHotkeyEvents = []()
+		{
+			std::array<std::shared_ptr<ActionEvent>, 56> events;
+			for (auto& e : events) e = std::make_shared<ActionEvent>();
+			return events;
+		}();
+
 
 	// hotkeys for each skull
 	std::shared_ptr<ActionEvent> skullAngerToggleHotkeyEvent = std::make_shared<ActionEvent>();
@@ -1129,7 +1140,7 @@ public:
 
 	// Halo Campaign Evolved 2D info overlay content toggles. HCEDisplayInfo reuses display2DInfoToggle and every
 	// display2DInfo* VISUAL setting (anchor/offset/size/colour/precision/outline) - only the row list differs,
-	// because HCE can supply nothing but these seven things. See HCEDisplayInfo.cpp.
+	// because HCE can supply nothing but what is listed here. See HCEDisplayInfo.cpp.
 	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowCoordinates = std::make_shared<BinarySetting<bool>>
 		(
 			true,
@@ -1142,6 +1153,27 @@ public:
 			true,
 			[](bool in) { return true; },
 			nameof(hceDisplayInfoShowVelocity)
+		);
+
+	// Speed as a single number instead of three components. Same maths as MCC's "As XY magnitude" / "As XYZ
+	// magnitude": XY is sqrt(x^2 + y^2), XYZ is sqrt(x^2 + y^2 + z^2). XY is the one speedrunners usually want,
+	// since it is ground speed with gravity and jumps excluded.
+	//
+	// Independent of hceDisplayInfoShowVelocity rather than nested under it - either magnitude is useful on its own
+	// without three component rows taking up the overlay. Both default off so nobody's overlay changes shape on
+	// upgrade.
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowVelocityXY = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowVelocityXY)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowVelocityXYZ = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowVelocityXYZ)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowLevel = std::make_shared<BinarySetting<bool>>
@@ -2855,6 +2887,8 @@ public:
 		display2DInfoOutline,
 		hceDisplayInfoShowCoordinates,
 		hceDisplayInfoShowVelocity,
+		hceDisplayInfoShowVelocityXY,
+		hceDisplayInfoShowVelocityXYZ,
 		hceDisplayInfoShowLevel,
 		hceDisplayInfoShowBSP,
 		hceDisplayInfoShowTick,
@@ -2862,8 +2896,25 @@ public:
 		hceDisplayInfoShowTEB,
 		hceTriggerOverlayRenderDistance,
 		hceTriggerOverlayShowLabels,
-		hceSkyFixToggle,
-		hceDisableFadeFromBlackToggle,
+		// ⚠ TWO HaloCER TOGGLES ARE DELIBERATELY ABSENT FROM THIS LIST:
+		//       hceSkyFixToggle, hceDisableFadeFromBlackToggle
+		//
+		// Everything here is written to HCMInternalConfig.xml and read back on launch, so a toggle left on when
+		// HCM closed comes back on by itself next time. For most options that is exactly right - it is why the
+		// list exists. For these two it is not, and neither is something a user should silently inherit from a
+		// previous session:
+		//
+		//   * Sky Fix holds a reference on every streaming area you leave, so an unnoticed auto-enable keeps the
+		//     whole level resident and quietly grows memory for a run the user never opted into.
+		//   * Disable Fade From Black changes what the game LOOKS like. Coming back on by itself reads as the game
+		//     being broken rather than as a setting still being active - the user has no reason to suspect HCM.
+		//
+		// ⚠ Their `false` constructor default is only reachable BECAUSE they are absent here. Re-adding either
+		// silently restores the auto-enable, and the symptom (a toggle mysteriously on at launch) looks nothing
+		// like its cause.
+		//
+		// Note: entries already written to an existing config are simply never read again. They go stale and are
+		// dropped on the next full save; no migration is needed.
 		hceTriggerOverlayShowVertex,
 		hceTriggerOverlayHighlightActive,
 		hceTriggerOverlayActiveColor,

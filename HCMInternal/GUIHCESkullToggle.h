@@ -4,13 +4,15 @@
 #include "HCESkullEnum.h"
 
 // ================================================================================================================
-// Halo Campaign Evolved skull widget. Structurally GUISkullToggle, with three differences:
-//   - no hotkey column. HCE has 56 skulls; ALL_EVENTONPRESS_HOTKEYS is at 59 of a hard 64, so per-skull hotkeys
-//     are simply not available (see HCESkullEnum.h).
+// Halo Campaign Evolved skull widget. Structurally GUISkullToggle, with two differences:
 //   - checkbox state comes from settings->hceSkullEngineState, which HCESkullToggler refreshes straight out of
 //     game memory when hceSkullUpdateEvent fires. Like GUISkullToggle, HCM keeps no shadow copy of skull state -
 //     what you see is what the engine currently has, which is what a checkpoint revert leaves behind.
 //   - clicking fires hceSkullSetEvent(bit, value). All memory access lives in the cheat, none in the widget.
+//
+// The hotkey column works exactly as GUISkullToggle's does; the enum comes from kHCESkullHotkeys[bitIndex] rather
+// than a per-row member. Every one of them is unbound out of the box - 56 default bindings would collide with half
+// the keyboard - so the column renders as a bare "..." until the user assigns something.
 //
 // Displayed alphabetically but indexed by bit ordinal, exactly like create_skull_actions' sorted(enumerate(...)).
 // ================================================================================================================
@@ -57,7 +59,7 @@ public:
 		auto mSettings = mSettingsWeak.lock();
 		if (!mSettings) { PLOG_ERROR << "bad mSettings weak ptr"; return; }
 
-		ImGui::BeginChild(mHeadingText.c_str(), { 500 - mLeftMargin, currentHeight - GUISpacing });
+		ImGui::BeginChild(mHeadingText.c_str(), { GUIWindowWidth - mLeftMargin, currentHeight - GUISpacing });
 
 		constexpr ImGuiTreeNodeFlags treeFlags = startsOpen ? ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_FramePadding;
 		headingOpen = ImGui::TreeNodeEx(mHeadingText.c_str(), treeFlags);
@@ -89,6 +91,10 @@ public:
 					ImGui::TableNextColumn();
 
 					const auto& info = kHCESkulls[bitIndex];
+
+					hotkeyRenderer.renderHotkey(kHCESkullHotkeys[bitIndex], 30);
+					ImGui::SameLine();
+
 					bool tempValue = mSettings->hceSkullEngineState[bitIndex];
 					if (ImGui::Checkbox(info.displayName, &tempValue))
 					{

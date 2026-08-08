@@ -81,7 +81,7 @@ public:
 		auto mSettings = mSettingsWeak.lock();
 		if (!mSettings) { PLOG_ERROR << "bad mSettings weak ptr"; return; }
 		
-		ImGui::BeginChild(mHeadingText.c_str(), { 500 - mLeftMargin, currentHeight - GUISpacing });
+		ImGui::BeginChild(mHeadingText.c_str(), { GUIWindowWidth - mLeftMargin, currentHeight - GUISpacing });
 
 
 		constexpr ImGuiTreeNodeFlags treeFlags = startsOpen ? ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_FramePadding;

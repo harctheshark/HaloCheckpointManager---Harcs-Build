@@ -130,6 +130,17 @@ constexpr int GUIFrameHeight = 19;
 constexpr int GUISpacing = 4;
 constexpr int GUIFrameHeightWithSpacing = GUIFrameHeight + GUISpacing;
 
+// Width of the main HCM window, and therefore of every container widget inside it.
+//
+// The main window is NoResize and its .x is never recalculated (only .y is, to 2/3 of screen height), so this one
+// number is the whole story - it used to be the literal 500 repeated across HCMInternalGUI and six container
+// widgets, which is why they all had to agree by hand. Change it here and everything follows.
+//
+// Widget CONTENT does not scale with it: SetNextItemWidth values (sliders, int boxes, combos) are deliberately
+// fixed, so widening the window gives them more trailing room rather than stretching them. Two-column tables like
+// the skull lists do get the extra space, split evenly.
+constexpr float GUIWindowWidth = 600.f;
+
 // for logging
 template <typename T, typename F>
 void once(T t, F f) {
