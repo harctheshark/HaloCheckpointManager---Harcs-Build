@@ -616,6 +616,8 @@ private:
 							createNestedElement(GUIElementEnum::disableBarriersToggle),
 							createNestedElement(GUIElementEnum::hceDisableBarriersGUI),
 							createNestedElement(GUIElementEnum::hceSkyFixGUI),
+							createNestedElement(GUIElementEnum::hceFreecamNoclipGUI),
+							createNestedElement(GUIElementEnum::hceFreecamGimbalBypassGUI),
 							createNestedElement(GUIElementEnum::hceDisableFadeFromBlackGUI),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterToggle),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterSettings),
@@ -2433,6 +2435,14 @@ private:
 				case GUIElementEnum::hceDisableFadeFromBlackGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Removes the fade-in from black after a checkpoint revert, so you get your view back instantly. Only affects the fade the restore path starts - script and cinematic fades are untouched. Level loads and mission restarts come back instantly too, since they share that path."), std::nullopt, "Disable Fade From Black", settings->hceDisableFadeFromBlackToggle));
+
+				case GUIElementEnum::hceFreecamGimbalBypassGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Removes the camera's pitch clamp so you can look past vertical without the view flipping. Patches four clamp sites plus a wrap-around routine on the camera update; every site is byte-checked first, so a game update disables this rather than corrupting code."), std::nullopt, "Gimbal Lock Bypass", settings->hceFreecamGimbalBypassToggle));
+
+				case GUIElementEnum::hceFreecamNoclipGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Lets the theater / free camera pass through geometry instead of colliding with it. Writes the camera's collision distance directly - no game code is patched."), std::nullopt, "Camera Noclip", settings->hceFreecamNoclipToggle));
 
 				case GUIElementEnum::hceSkyFixGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>

@@ -26,6 +26,7 @@
 #include "HCETriggerActivity.h"
 #include "HCEDisableBarriers.h"
 #include "HCESkyFix.h"
+#include "HCEFreecamExtras.h"
 #include "HCEDisableFadeFromBlack.h"
 #include "HCEDumpCheckpoint.h"
 #include "HCEInjectCheckpoint.h"

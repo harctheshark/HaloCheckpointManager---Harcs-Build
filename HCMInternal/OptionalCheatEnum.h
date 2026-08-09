@@ -163,6 +163,7 @@ HCEBspOverlay,\
 HCETriggerActivity,\
 HCEDisableBarriers,\
 HCESkyFix,\
+HCEFreecamExtras,\
 HCEDisableFadeFromBlack,\
 HCEDumpCheckpoint,\
 HCEInjectCheckpoint

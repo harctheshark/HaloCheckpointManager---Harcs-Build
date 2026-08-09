@@ -1256,6 +1256,22 @@ public:
 			nameof(hceSkyFixToggle)
 		);
 
+	// Freecam extras. Both patch the sim - noclip a float, the gimbal bypass four code sites plus a cave hook -
+	// so like the other HaloCER toggles they are NOT in allSerialisableOptions and always start off.
+	std::shared_ptr<BinarySetting<bool>> hceFreecamNoclipToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceFreecamNoclipToggle)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceFreecamGimbalBypassToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceFreecamGimbalBypassToggle)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowVertex = std::make_shared<BinarySetting<bool>>
 		(
 			false,

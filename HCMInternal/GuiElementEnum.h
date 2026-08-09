@@ -482,6 +482,8 @@
 	((hceFreecamToggleGUI, (HALOCER_ONLY)))\
 	((hceFreecamTeleportToCamera, (HALOCER_ONLY)))\
 	((hceSkyFixGUI, (HALOCER_ONLY)))\
+	((hceFreecamNoclipGUI, (HALOCER_ONLY)))\
+	((hceFreecamGimbalBypassGUI, (HALOCER_ONLY)))\
 	((hceDisableFadeFromBlackGUI, (HALOCER_ONLY)))\
 	((hceTriggerOverlayToggleGUI, (HALOCER_ONLY)))\
 	((hceTriggerOverlaySettingsSubheading, (HALOCER_ONLY)))\

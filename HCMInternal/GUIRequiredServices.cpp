@@ -66,6 +66,12 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{GUIElementEnum::hceSkyFixGUI,
 			{OptionalCheatEnum::HCESkyFix}
 	},
+	{GUIElementEnum::hceFreecamNoclipGUI,
+			{OptionalCheatEnum::HCEFreecamExtras}
+	},
+	{GUIElementEnum::hceFreecamGimbalBypassGUI,
+			{OptionalCheatEnum::HCEFreecamExtras}
+	},
 	{GUIElementEnum::forceRevertGUI,
 			{OptionalCheatEnum::ForceRevert}
 	},
