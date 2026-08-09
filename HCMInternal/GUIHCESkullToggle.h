@@ -36,8 +36,10 @@ public:
 
 		// Alphabetical display, ordinal indexing - exactly what create_skull_actions' sorted(enumerate(...),
 		// key=casefold) does. The bit index travels with the entry, it is never the row number.
+		// Only the skulls the shipped game actually offers. The other 14 bits stay in kHCESkulls so the array index
+		// remains the bit index, but showing a checkbox for something the game never exposes is just a lie.
 		mDisplayOrder.reserve(kHCESkullCount);
-		for (int i = 0; i < (int)kHCESkullCount; i++) mDisplayOrder.push_back(i);
+		for (int i = 0; i < (int)kHCESkullCount; i++) if (kHCESkulls[i].inMenu) mDisplayOrder.push_back(i);
 		std::sort(mDisplayOrder.begin(), mDisplayOrder.end(), [](int a, int b)
 			{
 				const char* l = kHCESkulls[a].displayName;
@@ -82,7 +84,7 @@ public:
 			else
 			{
 				currentHeight += GUIFrameHeightWithSpacing; // table padding
-				currentHeight += GUIFrameHeightWithSpacing * std::ceil(kHCESkullCount / 2.f);
+				currentHeight += GUIFrameHeightWithSpacing * std::ceil(mDisplayOrder.size() / 2.f);
 
 				ImGui::BeginTable("hceSkullTable", 2, ImGuiTableFlags_RowBg);
 
