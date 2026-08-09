@@ -246,8 +246,23 @@ namespace
 	//
 	// Does nothing at all unless a release has been requested, which is the overwhelmingly common case - this runs
 	// on the game's critical path and must cost a single relaxed load per frame.
+	// Defined further down, next to the re-arm machinery it belongs with; declared here because the tick runs
+	// before it in the file.
+	void serviceReArmRequest();
+
 	void skyFixGameThreadTick() noexcept
 	{
+		// ⚠ RE-ARM IS SERVICED HERE TOO, NOT JUST AT AREA BOUNDARIES.
+		//
+		// serviceReArmRequest has always been called from removeOccupantMidHook, which only fires when the player
+		// crosses a boundary - so a re-arm requested at any other moment sat pending until they happened to walk
+		// through one. Running it on the per-frame tick makes it immediate, which is what the teleport path needs:
+		// HCESkyFix::requestAreaReArm() is called right after a seated vehicle is moved, and the area has to come
+		// back on the next frame, not the next boundary crossing.
+		//
+		// Cheap when idle - serviceReArmRequest leads with an atomic exchange on gWantReArm and returns.
+		serviceReArmRequest();
+
 		if (!gReleaseRequested.load(std::memory_order_acquire)) return;
 		if (!gReleaseRequested.exchange(false, std::memory_order_acq_rel)) return;  // fallback beat us to it
 
@@ -727,6 +742,12 @@ public:
 HCESkyFix::HCESkyFix(GameState game, IDIContainer& dicon)
 	: pimpl(std::make_unique<HCESkyFixImpl>(game, dicon))
 {
+}
+
+// See the declaration in HCESkyFix.h. Just raises the flag; skyFixGameThreadTick does the work on the game thread.
+void HCESkyFix::requestAreaReArm()
+{
+	gWantReArm.store(true, std::memory_order_release);
 }
 
 HCESkyFix::~HCESkyFix()

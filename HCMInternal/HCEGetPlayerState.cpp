@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "HCEGetPlayerState.h"
 #include "HCEAnchors.h"
+#include "HCESkyFix.h"   // requestAreaReArm: a seated teleport must put the streaming area back
 #include "PointerDataStore.h"
 #include "MultilevelPointer.h"
 #include "IMCCStateHook.h"
@@ -123,6 +124,9 @@ private:
 	int64_t mObjectTableStride = 0x18;
 	int64_t mObjectTableEntryOffset = 0x10;
 	int64_t mHavokIndexOffset = 0xCC;
+	// currentVehicleDatum on the biped - the seat object the player is riding. -1 disables the promotion in
+	// getControlledObject entirely. Measured at 0x14 by scanForSeatField; see InternalPointerData.xml.
+	int64_t mBipedVehicleDatumOffset = 0x14;
 	int64_t mPhysicsRootOffset = 0x50;
 	int64_t mPhysicsEntryStride = 0xC0;
 	int64_t mPhysicsEntryOffset = 0x30;
@@ -258,6 +262,7 @@ public:
 		hceOffset(mPlayerControlTlsOffset, hcePlayerControlTlsOffset);
 		hceOffset(mPlayerControlArrayOffset, hcePlayerControlArrayOffset);
 		hceOffset(mPlayerControlStride, hcePlayerControlStride);
+		hceOffset(mBipedVehicleDatumOffset, hceBipedVehicleDatumOffset);
 		hceOffset(mPlayerControlUnitDatumOffset, hcePlayerControlUnitDatumOffset);
 		hceOffset(mPlayerControlYawOffset, hcePlayerControlYawOffset);
 		hceOffset(mPlayerControlPitchOffset, hcePlayerControlPitchOffset);
@@ -460,28 +465,189 @@ public:
 
 	uint32_t getPlayerDatum() { return playerDatumOf(getTlsBase()); }
 
+	// Datum -> object address. Split out of getPlayerObject so the seat lookup below can reuse it. Returns false
+	// rather than throwing, because a failed lookup there means "no vehicle", not "something is wrong".
+	bool tryObjectFromDatum(uint32_t datum, uintptr_t& out)
+	{
+		out = 0;
+		const uint16_t index = (uint16_t)(datum & 0xFFFF);
+		if (datum == 0xFFFFFFFFu || index == 0xFFFF) return false;
+
+		uintptr_t p1 = 0;
+		try { p1 = readTlsSlot(mObjectTableTlsOffset, "object table root"); }
+		catch (HCMRuntimeException&) { return false; }
+
+		uintptr_t table = 0;
+		if (!HCEGetPlayerState::tryReadRaw(p1 + mObjectTableOffset, &table, sizeof(table)) || !table) return false;
+
+		const uintptr_t entry = table + (uintptr_t)index * mObjectTableStride + mObjectTableEntryOffset;
+		return HCEGetPlayerState::tryReadRaw(entry, &out, sizeof(out)) && out != 0;
+	}
+
 	uintptr_t getPlayerObject() // throws
 	{
 		const uint32_t datum = getPlayerDatum();
 		const uint16_t playerIndex = (uint16_t)(datum & 0xFFFF);
 		if (playerIndex == 0xFFFF) throw HCMRuntimeException("The player is dead or not spawned");
 
-		const uintptr_t p1 = readTlsSlot(mObjectTableTlsOffset, "object table root");
-
-		uintptr_t table = 0;
-		if (!HCEGetPlayerState::tryReadRaw(p1 + mObjectTableOffset, &table, sizeof(table)) || !table)
-			throw HCMRuntimeException("Could not read the HaloCER object table");
-
 		uintptr_t playerObject = 0;
-		const uintptr_t entry = table + (uintptr_t)playerIndex * mObjectTableStride + mObjectTableEntryOffset;
-		if (!HCEGetPlayerState::tryReadRaw(entry, &playerObject, sizeof(playerObject)) || !playerObject)
+		if (!tryObjectFromDatum(datum, playerObject))
 			throw HCMRuntimeException("Could not resolve the HaloCER player object");
 		return playerObject;
 	}
 
+	// ============================================================================================================
+	// THE OBJECT THE PLAYER IS ACTUALLY DRIVING - which is not always their biped.
+	//
+	// Sat in a vehicle (or another biped's seat) the player's biped has NO havok body; the SEAT OBJECT owns the
+	// physics. Teleport and launch both write through getPlayerPhysicsEntry, so without this they either did
+	// nothing or failed with "The player has no physics body right now" - the biped being moved is not the thing
+	// that is moving.
+	//
+	// MCC already does exactly this promotion in GetObjectPhysics, using GetBipedsVehicleDatum to read the biped's
+	// currentVehicleDatum field. HaloCER simply never had that lookup: bipedDataFields has entries for every MCC
+	// title and none for HaloCER. Like MCC's, this accepts a biped seat-object as well as a vehicle - a biped can
+	// carry seats, and both expose physics identically.
+	//
+	// ⚠ FAILS SOFT, DELIBERATELY. Offset unknown, read failed, null datum, unresolvable object, seat with no
+	// physics body - every one of those returns the biped rather than throwing. The offset is the single part of
+	// this that is inferred rather than measured (MCC's Halo 1 has currentVehicleDatum at 0xD8 and HaloCER is a
+	// Halo 1 sim), so a wrong value MUST degrade to the previous behaviour instead of moving an arbitrary object.
+	// The havok-index check is what makes that true: a garbage datum will not resolve to something with a live
+	// physics body.
+	// ============================================================================================================
+	// ⚠ TEMPORARY. Finds the seat field instead of guessing it, then comes out again.
+	//
+	// hceBipedVehicleDatumOffset was seeded with 0xD8 because that is where MCC's Halo 1 keeps
+	// currentVehicleDatum and HaloCER is a Halo 1 sim. It is not: with 0xD8 the promotion never fired once, so
+	// the value there does not resolve to a seated object.
+	//
+	// Rather than try another number, this walks the biped's object header and reports EVERY dword that resolves
+	// through the object table to some other object with a live physics body. Run it once on foot and once in a
+	// vehicle: the offset that only appears in the second list is the field. That is a measurement, which is what
+	// this needed in the first place.
+	//
+	// Latched to a handful of runs - it is a linear scan of the object header on a path teleport/launch use.
+	void scanForSeatField(uintptr_t biped)
+	{
+		static std::atomic<int> runsLeft{ 6 };
+		if (runsLeft.fetch_sub(1, std::memory_order_relaxed) <= 0) return;
+
+		PLOG_INFO << "HaloCER seat-field scan: biped object @ " << std::format("0x{:X}", biped)
+			<< " -- candidates below are (offset -> object with a physics body). Capture this ON FOOT and again "
+			"IN A VEHICLE; the offset that appears only in the vehicle capture is currentVehicleDatum.";
+
+		// The player's own position, to measure candidates against. Read straight off the biped's physics entry
+		// rather than through getPlayerPosition, which would re-enter getControlledObject.
+		SimpleMath::Vector3 me{};
+		bool haveMe = false;
+		{
+			uintptr_t e = 0;
+			if (tryPhysicsEntryForObject(biped, e))
+				haveMe = HCEGetPlayerState::tryReadRaw(e + kPosition, &me, sizeof(me));
+		}
+
+		int found = 0;
+		for (int64_t off = 0; off < 0x400; off += 4)
+		{
+			uint32_t datum = 0;
+			if (!HCEGetPlayerState::tryReadRaw(biped + off, &datum, sizeof(datum))) continue;
+
+			// ⚠ A DATUM IS NOT JUST ANY DWORD. Only the low 16 bits index the table, so without checking the salt
+			// in the high half every float and small counter in the header "resolves" - the first pass reported
+			// 0x3F800000 (which is 1.0f) as a candidate. A real datum has a non-zero, non-0xFFFF salt AND a
+			// non-zero index.
+			const uint16_t index = (uint16_t)(datum & 0xFFFF);
+			const uint16_t salt  = (uint16_t)(datum >> 16);
+			if (index == 0 || index == 0xFFFF) continue;
+			if (salt == 0 || salt == 0xFFFF) continue;
+
+			uintptr_t obj = 0;
+			if (!tryObjectFromDatum(datum, obj) || obj == biped) continue;
+
+			int16_t havok = -1;
+			if (!HCEGetPlayerState::tryReadRaw(obj + mHavokIndexOffset, &havok, sizeof(havok))) continue;
+			if (havok < 0) continue;   // no physics body - not something teleport/launch could move anyway
+
+			// THE DECIDING TEST. Whatever you are riding is where you are. Anything metres away is something the
+			// biped merely references (a target, a nearby actor); the seat object sits on top of us.
+			std::string where = "  distance unknown";
+			bool close = false;
+			if (haveMe)
+			{
+				uintptr_t e = 0;
+				SimpleMath::Vector3 p{};
+				if (tryPhysicsEntryForObject(obj, e) && HCEGetPlayerState::tryReadRaw(e + kPosition, &p, sizeof(p)))
+				{
+					const float d = (p - me).Length();
+					close = (d < 12.f);
+					where = std::format("  distance {:.2f}{}", d, close ? "   <== CO-LOCATED, likely the seat" : "");
+				}
+			}
+
+			PLOG_INFO << "  candidate +" << std::format("0x{:X}", off)
+				<< "  datum " << std::format("0x{:08X}", datum)
+				<< "  object " << std::format("0x{:X}", obj)
+				<< "  havokIndex " << havok << where;
+			found++;
+		}
+		if (!found) PLOG_INFO << "  (no candidates - the player may not be seated, or the seat datum is not a "
+			"plain dword in the first 0x400 bytes of the object)";
+	}
+
+	uintptr_t getControlledObject() // throws
+	{
+		const uintptr_t biped = getPlayerObject();
+		if (mBipedVehicleDatumOffset < 0) return biped;
+
+		uint32_t vehicleDatum = 0xFFFFFFFFu;
+		if (!HCEGetPlayerState::tryReadRaw(biped + mBipedVehicleDatumOffset, &vehicleDatum, sizeof(vehicleDatum)))
+			return biped;
+
+		uintptr_t seat = 0;
+		if (!tryObjectFromDatum(vehicleDatum, seat)) { scanForSeatField(biped); return biped; }
+
+		// The seat must own a physics body, or promoting buys nothing. This doubles as the sanity check on the
+		// offset itself.
+		int16_t seatHavok = -1;
+		if (!HCEGetPlayerState::tryReadRaw(seat + mHavokIndexOffset, &seatHavok, sizeof(seatHavok)) || seatHavok < 0)
+		{
+			scanForSeatField(biped);
+			return biped;
+		}
+
+		LOG_ONCE(PLOG_INFO << "HaloCER: the player is in a seat, so teleport/launch will act on the seat object "
+			"rather than the biped - the same promotion MCC does via GetBipedsVehicleDatum.");
+		return seat;
+	}
+
+	// Same walk as getPlayerPhysicsEntry but for an arbitrary object, and non-throwing: the seat scan asks this
+	// about objects that may well have no physics at all, where a failure is an answer rather than an error.
+	bool tryPhysicsEntryForObject(uintptr_t object, uintptr_t& out)
+	{
+		out = 0;
+		if (!object) return false;
+
+		int16_t havokIndex = -1;
+		if (!HCEGetPlayerState::tryReadRaw(object + mHavokIndexOffset, &havokIndex, sizeof(havokIndex))) return false;
+		if (havokIndex < 0) return false;
+
+		uintptr_t physicsSlot = 0;
+		try { physicsSlot = resolveOrThrow(mPhysicsTableSlot, nameof(hcePhysicsTable)); }
+		catch (HCMRuntimeException&) { return false; }
+
+		uintptr_t physicsRoot = 0, physicsTable = 0, intermediate = 0;
+		if (!HCEGetPlayerState::tryReadRaw(physicsSlot, &physicsRoot, sizeof(physicsRoot)) || !physicsRoot) return false;
+		if (!HCEGetPlayerState::tryReadRaw(physicsRoot + mPhysicsRootOffset, &physicsTable, sizeof(physicsTable)) || !physicsTable) return false;
+
+		const uintptr_t entryAddress = physicsTable + (uintptr_t)havokIndex * mPhysicsEntryStride;
+		if (!HCEGetPlayerState::tryReadRaw(entryAddress + mPhysicsEntryOffset, &intermediate, sizeof(intermediate)) || !intermediate) return false;
+		return HCEGetPlayerState::tryReadRaw(intermediate + mPhysicsEntryOffset2, &out, sizeof(out)) && out != 0;
+	}
+
 	uintptr_t getPlayerPhysicsEntry() // throws
 	{
-		const uintptr_t playerObject = getPlayerObject();
+		const uintptr_t playerObject = getControlledObject();
 
 		// SIGNED int16. Negative means the biped currently has no havok body (mid-load, in a vehicle transition).
 		int16_t havokIndex = 0;
@@ -629,33 +795,74 @@ public:
 	// relative == true means "value is an offset from the CURRENT position" - resolved here rather than by the
 	// caller so the whole thing still costs one chain walk and cannot straddle a physics tick. Returns the
 	// absolute position that was actually written.
-	SimpleMath::Vector3 teleportPlayerInternal(SimpleMath::Vector3 value, bool relative) // throws
+	// Moves ONE object and its own physics entry to target. Split out so a seated player can be moved as a pair:
+	// each object's writes must be derived from ITS OWN physics, which is the part that was wrong when the
+	// promotion first landed.
+	void teleportObjectTo(uintptr_t object, uintptr_t physicsEntry, SimpleMath::Vector3 target) // throws
 	{
-		const uintptr_t physicsEntry = getPlayerPhysicsEntry();
-		const uintptr_t playerObject = getPlayerObject();
-
-		const SimpleMath::Vector3 current = read3(physicsEntry + kPosition, "player position");
-		const SimpleMath::Vector3 target = relative ? (current + value) : value;
+		const SimpleMath::Vector3 current = read3(physicsEntry + kPosition, "object position");
 		const SimpleMath::Vector3 translation = read3(physicsEntry + kMotionTranslation, "physics transform");
 
 		const SimpleMath::Vector3 centerOffset = current - translation;
 		const SimpleMath::Vector3 worldTranslation = target - centerOffset;
 
-		const SimpleMath::Vector3 origin = read3(playerObject + kOrigin, "biped origin");
-		const SimpleMath::Vector3 interp0 = read3(playerObject + kInterp0, "biped interpolation");
-		const SimpleMath::Vector3 interp1 = read3(playerObject + kInterp1, "biped interpolation");
+		const SimpleMath::Vector3 origin = read3(object + kOrigin, "object origin");
+		const SimpleMath::Vector3 interp0 = read3(object + kInterp0, "object interpolation");
+		const SimpleMath::Vector3 interp1 = read3(object + kInterp1, "object interpolation");
 
 		const SimpleMath::Vector3 objectDelta = worldTranslation - origin;
 
 		// Order matters; abort on the first failure like the reference does.
-		write3(playerObject + kInterp0, interp0 + objectDelta, "biped interpolation");
-		write3(playerObject + kInterp1, interp1 + objectDelta, "biped interpolation");
-		write3(playerObject + kOrigin, worldTranslation, "biped origin");
+		write3(object + kInterp0, interp0 + objectDelta, "object interpolation");
+		write3(object + kInterp1, interp1 + objectDelta, "object interpolation");
+		write3(object + kOrigin, worldTranslation, "object origin");
 		write3(physicsEntry + kMotionTranslation, worldTranslation, "physics transform");
 		write3(physicsEntry + kMotionSecondary, target, "physics position");
 		write3(physicsEntry + kPosition, target, "physics position");
 		write3(physicsEntry + kMotionExtra1, target, "physics position");
 		write3(physicsEntry + kMotionExtra2, target, "physics position");
+	}
+
+	SimpleMath::Vector3 teleportPlayerInternal(SimpleMath::Vector3 value, bool relative) // throws
+	{
+		const uintptr_t controlled = getControlledObject();   // the vehicle, when seated
+		const uintptr_t biped = getPlayerObject();
+		const uintptr_t controlledEntry = getPlayerPhysicsEntry();
+
+		const SimpleMath::Vector3 current = read3(controlledEntry + kPosition, "player position");
+		const SimpleMath::Vector3 target = relative ? (current + value) : value;
+
+		teleportObjectTo(controlled, controlledEntry, target);
+
+		// ⚠ THE BIPED HAS TO COME TOO, AND THIS IS WHY.
+		//
+		// Seated, the promotion above moves the VEHICLE - which is what the user asked for - but the player's
+		// biped is a separate object with its own physics body, and the engine's world-streaming source follows
+		// the BIPED. Move only the vehicle and the streaming system still believes you are stood where you were:
+		// it tears down the area you have arrived in, and the sky unloads with it. Reported as "teleport my
+		// banshee and the sky deloads".
+		//
+		// The game re-seats the biped on its own a tick later, but the streaming source samples before that
+		// happens, so the window is enough to lose the area. Writing both now closes it. Deriving the biped's
+		// writes from the BIPED's physics entry (not the vehicle's) is the other half - the first version of this
+		// stamped biped object fields with vehicle-derived values, which is how the two ended up inconsistent.
+		if (controlled != biped)
+		{
+			uintptr_t bipedEntry = 0;
+			if (tryPhysicsEntryForObject(biped, bipedEntry))
+				teleportObjectTo(biped, bipedEntry, target);
+			// No else: a seated biped with no physics body of its own is legitimate, and the vehicle move above
+			// has already done the useful work. Failing the whole teleport over it would be worse.
+
+			// ⚠ AND PUT THE STREAMING AREA BACK. Writing the vehicle's position moves it without World Partition
+			// seeing an enter or exit, so the area the player occupied tears down and the sky unloads - even for a
+			// ONE-FOOT teleport, which is what rules out distance as the cause. On foot this does not happen, so
+			// the vehicle is what carries the streaming occupancy while seated.
+			//
+			// Only reached when a seat was actually promoted to (controlled != biped), so an on-foot teleport is
+			// untouched. A no-op unless Sky Fix is enabled - see the note on requestAreaReArm.
+			HCESkyFix::requestAreaReArm();
+		}
 
 		return target;
 	}

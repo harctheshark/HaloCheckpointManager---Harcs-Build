@@ -63,4 +63,26 @@ public:
 	HCESkyFix(GameState game, IDIContainer& dicon);
 	~HCESkyFix();
 	virtual std::string_view getName() override { return nameof(HCESkyFix); }
+
+	// ============================================================================================================
+	// "I just moved the player somewhere the streaming system did not expect - put the area back."
+	//
+	// Teleporting a SEATED player writes the vehicle's position straight into memory. World Partition never sees
+	// an enter/exit for that move, and the area the player was occupying tears down: the sky unloads even for a
+	// ONE-FOOT teleport, because distance is not what triggers it. Teleporting on foot does NOT do this, which is
+	// what identifies the vehicle as the thing carrying the streaming occupancy while seated.
+	//
+	// This asks the sky fix to re-run AddOccupant on the last streaming area - the same call it already uses to
+	// recover an area when the fix is switched on while out of bounds. Serviced on the GAME THREAD by
+	// skyFixGameThreadTick, because AddOccupant touches UWorld and the World Partition subsystem.
+	//
+	// ⚠ ONLY DOES ANYTHING WHILE SKY FIX IS ENABLED. The area to re-arm is remembered by the RemoveOccupant
+	// midhook, and that hook is only installed while the fix is on - with it off there is nothing recorded, and
+	// this is a no-op. Deliberate rather than an oversight: always installing the hook would charge everyone the
+	// sky fix's cost whether they asked for it or not.
+	//
+	// ⚠ HaloCER ONLY. Static, and called from HCEGetPlayerState's teleport path. MCC's ForceTeleport is a
+	// different class on a different path and never reaches this.
+	// ============================================================================================================
+	static void requestAreaReArm();
 };

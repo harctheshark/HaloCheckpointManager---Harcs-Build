@@ -4366,6 +4366,34 @@
 			<Offset>0xCC</Offset>
 		</Version>
 	</VersionedEntry>
+	<!--
+	    currentVehicleDatum on the biped: the seat object (vehicle, or another biped) the player is riding.
+	    HCEGetPlayerState::getControlledObject promotes to it so teleport and launch move the thing that is
+	    actually in motion, which is what MCC does via GetBipedsVehicleDatum -> bipedDataFields.
+
+	    MEASURED, after an inferred value failed. The first attempt used 0xD8 because that is where MCC's Halo 1
+	    keeps currentVehicleDatum and HaloCER is a Halo 1 sim - the promotion never fired once, so that assumption
+	    was simply wrong. A UE5 reimplementation shares Blam's concepts, not its struct layout.
+
+	    0x14 came from scanForSeatField: with the player sat in a vehicle, it walks the biped's header and reports
+	    every well-formed datum that resolves to an object with a live physics body, along with that object's
+	    distance from the player. +0x14 was the ONLY offset consistently co-located (2.93 and 5.49 units across two
+	    samples); everything else sat 12-154 units away. A held weapon cannot be the answer here - it is attached
+	    to the biped and has no physics body of its own, so it never survives the filter.
+
+	    Corroborated independently: MCC's Halo 2 (build 1.3385) keeps currentVehicleDatum at 0x14 too, so HaloCER's
+	    object layout is closer to Halo 2's than Halo 1's.
+
+	    Getting it wrong is SAFE: getControlledObject requires the datum to resolve through the object table AND
+	    the resulting object to have a live havok index before it promotes, and falls back to the biped otherwise.
+	    A wrong offset therefore reproduces the old behaviour rather than moving some unrelated object. Set it to
+	    -1 to disable the promotion outright.
+	-->
+	<VersionedEntry Name="hceBipedVehicleDatumOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x14</Offset>
+		</Version>
+	</VersionedEntry>
 	<VersionedEntry Name="hcePhysicsTable" Type="MultilevelPointer::ModuleOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
