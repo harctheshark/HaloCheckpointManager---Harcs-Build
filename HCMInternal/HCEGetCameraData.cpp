@@ -78,10 +78,45 @@ namespace
 	constexpr size_t kDestinationSlots = 6;      // more than enough; the loser slots churn harmlessly
 	constexpr uint32_t kElectionWindowMs = 500;  // fast enough to follow a real camera change without flapping
 
-	struct DestinationTally { uintptr_t destination; uint32_t writes; };
+	// ⚠ A WINDOW IS ALSO A LATENCY. The election only re-decides on a boundary, so for up to kElectionWindowMs
+	// after the game genuinely switches render camera, writes to the NEW destination are dropped and the
+	// snapshot keeps serving the OLD camera's last values. Those values are finite, in range and not at the
+	// origin, so NOTHING rejects them: getUeCamera returns success, Renderer3DImplD3D12 still logs "UE POV",
+	// no UeCameraFailure latches. The overlay simply draws from where the camera used to be, for half a second,
+	// every time you enter a vehicle or a cutscene starts - visible as a lag or a snap, and completely absent
+	// from the log. That is the failure this fast path and the counters below exist to fix and to expose.
+	//
+	// The incumbent is declared DEAD on a per-destination last-write timestamp rather than on its window tally.
+	// Using the tally would be wrong: counts reset to zero at every boundary, so an incumbent that is perfectly
+	// alive reads as "zero writes" for the first instants of each window, and a foreign view info writing first
+	// would steal the election - reintroducing the exact flicker the frequency vote was built to stop. A live
+	// render camera writes every frame, so its last write is never this old.
+	constexpr uint32_t kIncumbentDeadMs = 250;
+
+	struct DestinationTally { uintptr_t destination; uint32_t writes; uint32_t lastWriteTick; };
 	DestinationTally gTally[kDestinationSlots]{};
+
+	// ---- Election observability -------------------------------------------------------------------------
+	// All written from the hook (game thread) and read by the consumer, which is what does the actual logging -
+	// a midhook callback must not allocate or take a lock.
+	std::atomic<uint32_t> gPreferredChanges{ 0 };       // how many times the election has changed its mind
+	std::atomic<uintptr_t> gPreviousPreferred{ 0 };
+	std::atomic<uint32_t> gLastPublishTick{ 0 };        // GetTickCount of the last snapshot PUBLISH
+	std::atomic<uint32_t> gDroppedForeignWrites{ 0 };   // validated writes refused as "not our destination"
+	std::atomic<uint32_t> gImmediateAdoptions{ 0 };     // dead-incumbent fast path fired
+
 	std::atomic<uintptr_t> gPreferredDestination{ 0 };
 	uint32_t gWindowStartTick = 0;
+
+	// Every write to gPreferredDestination goes through here, so a change can never be made without being
+	// counted - which is what makes the consumer-side reporting below trustworthy rather than best-effort.
+	void adoptPreferredDestination(uintptr_t destination)
+	{
+		const uintptr_t previous = gPreferredDestination.exchange(destination, std::memory_order_acq_rel);
+		if (previous == destination) return;
+		gPreviousPreferred.store(previous, std::memory_order_release);
+		gPreferredChanges.fetch_add(1, std::memory_order_relaxed);
+	}
 
 	void cameraManagerUpdateHook(SafetyHookContext& ctx)
 	{
@@ -129,10 +164,11 @@ namespace
 			for (size_t i = 1; i < kDestinationSlots; ++i)
 				if (gTally[i].writes < gTally[weakest].writes) weakest = i;
 			slot = weakest;
-			gTally[slot] = { destination, 0 };
+			gTally[slot] = { destination, 0, now };
 		}
-		if (gTally[slot].destination == 0) gTally[slot] = { destination, 0 };
+		if (gTally[slot].destination == 0) gTally[slot] = { destination, 0, now };
 		++gTally[slot].writes;
+		gTally[slot].lastWriteTick = now;
 
 		// Wrap-safe unsigned arithmetic across GetTickCount's 49-day rollover.
 		if (gWindowStartTick == 0) gWindowStartTick = now;
@@ -143,17 +179,48 @@ namespace
 				if (gTally[i].writes > gTally[winner].writes) winner = i;
 
 			if (gTally[winner].writes > 0)
-				gPreferredDestination.store(gTally[winner].destination, std::memory_order_release);
+				adoptPreferredDestination(gTally[winner].destination);
 
-			for (auto& t : gTally) t.writes = 0;   // keep the destinations, reset the counts
+			for (auto& t : gTally) t.writes = 0;   // keep the destinations and their timestamps, reset the counts
 			gWindowStartTick = now;
 		}
 
-		const uintptr_t preferred = gPreferredDestination.load(std::memory_order_acquire);
+		uintptr_t preferred = gPreferredDestination.load(std::memory_order_acquire);
 		if (preferred == 0)
-			gPreferredDestination.store(destination, std::memory_order_release);   // first frames, before any election
+		{
+			adoptPreferredDestination(destination);   // first frames, before any election
+			preferred = destination;
+		}
 		else if (destination != preferred)
-			return;                                                                // not our camera this window
+		{
+			// DEAD-INCUMBENT FAST PATH - see kIncumbentDeadMs. Only fires when the elected destination has not
+			// been written for far longer than any frame could take, i.e. that camera is genuinely gone, so it
+			// cannot be used by an occasional foreign view info to displace a live camera.
+			bool incumbentAlive = false;
+			for (const auto& t : gTally)
+				if (t.destination == preferred)
+				{
+					incumbentAlive = (now - t.lastWriteTick) < kIncumbentDeadMs;
+					break;
+				}
+
+			// ⚠ AND THE CANDIDATE MUST HAVE EARNED IT. kIncumbentDeadMs is 4 FPS, so a bad enough hitch - a
+			// load, a stall - can make a perfectly healthy incumbent look dead. If a stray foreign view info
+			// happened to write first when the frame finally came, a bare "incumbent is dead" test would hand
+			// it the election. Requiring a SECOND write this window costs at most one extra frame for a real
+			// camera (which writes every frame) and makes a single stray write unable to steal anything. The
+			// 500 ms vote is still the backstop if this never qualifies.
+			const bool candidateEarnedIt = gTally[slot].writes >= 2;
+
+			if (incumbentAlive || !candidateEarnedIt)
+			{
+				gDroppedForeignWrites.fetch_add(1, std::memory_order_relaxed);
+				return;                                                            // not our camera this window
+			}
+
+			gImmediateAdoptions.fetch_add(1, std::memory_order_relaxed);
+			adoptPreferredDestination(destination);
+		}
 
 		// Seqlock: readers retry if they catch a torn write. Cheaper than a mutex on a per-frame game-thread
 		// path, and a hook callback must never block.
@@ -161,7 +228,75 @@ namespace
 		gPovSnapshot = candidate;
 		gPovSequence.fetch_add(1, std::memory_order_release);
 
+		// When the snapshot was last actually REFRESHED, as opposed to merely readable. Everything downstream
+		// reads gPovSnapshot unconditionally, so without this there is no way to tell a live camera from one
+		// frozen minutes ago - the values look identical.
+		gLastPublishTick.store(now, std::memory_order_release);
+
 		gCameraManager.store(ctx.rdx, std::memory_order_release);   // kept for diagnostics only
+	}
+
+	// ---------------------------------------------------------------------------------------------------------
+	// STALE-SNAPSHOT REPORTING, from the consumer side.
+	//
+	// This is the diagnostic that was missing. Every existing signal answers "can we read a camera at all", and
+	// they were all healthy in the session that prompted this - one "camera source: UE POV" line and nothing
+	// else for 49 minutes. None of them answers "is the camera we are reading still being UPDATED", which is the
+	// question a desync actually turns on, because a frozen snapshot passes every value check there is.
+	//
+	// Rate limited rather than latched: a camera switch that resolves itself is worth one line, not silence, and
+	// a genuinely stuck snapshot is worth a periodic reminder rather than a single line at the top of the log.
+	// ---------------------------------------------------------------------------------------------------------
+	constexpr uint32_t kStaleSnapshotMs = 1000;        // ~60 missed frames; far past any legitimate hitch
+	constexpr uint32_t kElectionLogMinIntervalMs = 3000;
+	std::atomic<uint32_t> gLastElectionLogTick{ 0 };
+	std::atomic<uint32_t> gLastReportedChangeCount{ 0 };
+	std::atomic<bool> gReportedStale{ false };
+
+	void reportElectionActivity()
+	{
+		const uint32_t now = GetTickCount();
+		const uint32_t changes = gPreferredChanges.load(std::memory_order_acquire);
+		const uint32_t publish = gLastPublishTick.load(std::memory_order_acquire);
+		const uint32_t age = publish == 0 ? 0 : now - publish;
+		const bool stale = publish != 0 && age >= kStaleSnapshotMs;
+
+		// Recovery is worth exactly one line, and must not be rate limited away.
+		if (!stale && gReportedStale.exchange(false, std::memory_order_relaxed))
+		{
+			PLOG_INFO << "HCEGetCameraData: the camera snapshot is being updated again (destination 0x"
+				<< std::hex << gPreferredDestination.load(std::memory_order_acquire) << std::dec << ")";
+			gLastElectionLogTick.store(now, std::memory_order_relaxed);
+			gLastReportedChangeCount.store(changes, std::memory_order_relaxed);
+			return;
+		}
+
+		const bool changed = changes != gLastReportedChangeCount.load(std::memory_order_acquire);
+		if (!changed && !stale) return;
+
+		const uint32_t lastLog = gLastElectionLogTick.load(std::memory_order_acquire);
+		if (lastLog != 0 && (now - lastLog) < kElectionLogMinIntervalMs) return;
+		gLastElectionLogTick.store(now, std::memory_order_relaxed);
+		gLastReportedChangeCount.store(changes, std::memory_order_relaxed);
+
+		if (stale)
+		{
+			gReportedStale.store(true, std::memory_order_relaxed);
+			PLOG_WARNING << "HCEGetCameraData: THE CAMERA SNAPSHOT IS STALE - last updated " << age
+				<< " ms ago while the DoUpdateCamera hook has fired "
+				<< gCameraManagerHookFires.load(std::memory_order_relaxed) << " time(s) in total and has refused "
+				<< gDroppedForeignWrites.load(std::memory_order_relaxed) << " write(s) as belonging to a different "
+				"destination. Consumers are being handed the LAST GOOD camera, which still passes every value "
+				"check, so overlays will draw from where the camera used to be. Elected destination 0x"
+				<< std::hex << gPreferredDestination.load(std::memory_order_acquire) << std::dec;
+			return;
+		}
+
+		PLOG_INFO << "HCEGetCameraData: render camera destination changed to 0x" << std::hex
+			<< gPreferredDestination.load(std::memory_order_acquire) << " (was 0x"
+			<< gPreviousPreferred.load(std::memory_order_acquire) << std::dec << "); " << changes
+			<< " change(s) this session, " << gImmediateAdoptions.load(std::memory_order_relaxed)
+			<< " of them adopted immediately because the previous camera had stopped being written";
 	}
 
 	// Latched failure reporting for getUeCamera. Re-latches whenever the REASON changes, so a transition from
@@ -431,6 +566,10 @@ bool HCEGetCameraData::getUeCamera(UeCamera& out) const
 		reportUeCameraFailure(UeCameraFailure::NotCaptured, cameraManager, 0.f);
 		return false;
 	}
+
+	// A snapshot READ succeeding says nothing about whether it is still being WRITTEN, and a frozen one is what
+	// a camera desync looks like from here. Report that separately - see reportElectionActivity.
+	reportElectionActivity();
 
 	// Success: clear the latch so a LATER failure re-reports instead of being swallowed as "same as before",
 	// and announce recovery once.

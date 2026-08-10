@@ -701,6 +701,45 @@ private:
 		return (now >= last) && (now - last) < kFallbackAfterMs;
 	}
 
+	// WHICH PATH IS DRAWING, reported on change.
+	//
+	// This handover was completely silent, which made it indistinguishable from a camera problem when the
+	// overlay "felt desynced": the two paths are different renderers reading the camera through different code,
+	// so a flip between them looks like the overlay jumping even when both are healthy. A log that says nothing
+	// during a steady state and one line per flip settles which of the two is happening, instead of leaving it
+	// to be inferred from a description.
+	//
+	// -1 = nothing decided yet, 0 = ImGui fallback, 1 = the D3D12 3D path.
+	mutable std::atomic<int> mLoggedDrawPath{ -1 };
+	mutable std::atomic<uint64_t> mLastDrawPathLogTick{ 0 };
+	static constexpr uint64_t kDrawPathLogMinIntervalMs = 2000;
+
+	void logDrawPathIfChanged(bool threeD) const
+	{
+		const int path = threeD ? 1 : 0;
+		if (mLoggedDrawPath.load(std::memory_order_relaxed) == path) return;
+
+		// Rate limit as well as latch: a path that flaps once per frame would otherwise bury the log, and that
+		// is exactly the state most worth being able to read afterwards.
+		const uint64_t now = GetTickCount64();
+		const uint64_t lastLog = mLastDrawPathLogTick.load(std::memory_order_relaxed);
+		if (lastLog != 0 && (now - lastLog) < kDrawPathLogMinIntervalMs)
+		{
+			mLoggedDrawPath.store(path, std::memory_order_relaxed);   // track it, just do not narrate every flip
+			return;
+		}
+		mLastDrawPathLogTick.store(now, std::memory_order_relaxed);
+		mLoggedDrawPath.store(path, std::memory_order_relaxed);
+
+		if (threeD)
+			PLOG_INFO << "HCETriggerOverlay is drawing through the D3D12 3D renderer (depth-tested)";
+		else
+			PLOG_WARNING << "HCETriggerOverlay fell back to the ImGui draw list - the 3D path has not drawn for "
+				<< kFallbackAfterMs << " ms. The two paths resolve the camera through different code, so the "
+				"overlay can visibly shift as it hands over. Whether this is a camera problem or a renderer one "
+				"is answered by the HCEGetCameraData and Renderer3DImplD3D12 lines around this point.";
+	}
+
 	// Whether a mission script has tested this volume recently. Supplied by HCETriggerActivity, which patches
 	// the 8 HaloScript call sites of trigger_volume_test_point (NOT its prologue - 15 of its 23 call sites are
 	// AI/damage/safe-zone code that polls every volume every tick, which would report everything as live).
@@ -1199,7 +1238,9 @@ private:
 		if (screenSize.x < 1.f || screenSize.y < 1.f) return;
 
 		// The 3D renderer is drawing, so drawing here too would double every volume.
-		if (threeDPathIsLive()) return;
+		const bool threeDLive = threeDPathIsLive();
+		logDrawPathIfChanged(threeDLive);
+		if (threeDLive) return;
 
 		try
 		{
@@ -1664,6 +1705,10 @@ private:
 				mRender3DEventCallback.reset();
 			}
 			mLast3DDrawTick.store(0, std::memory_order_release);
+			// Forget which path was last reported, so switching the overlay back on says so again rather than
+			// staying silent because it happens to match the state from before it was switched off.
+			mLoggedDrawPath.store(-1, std::memory_order_relaxed);
+			mLastDrawPathLogTick.store(0, std::memory_order_relaxed);
 			return;
 		}
 
