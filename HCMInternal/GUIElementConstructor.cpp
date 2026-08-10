@@ -430,6 +430,7 @@ private:
 							createNestedElement(GUIElementEnum::hceInjectCheckpointLevelCheck),
 							createNestedElement(GUIElementEnum::hceInjectCheckpointDifficultyCheck),
 							createNestedElement(GUIElementEnum::hceInjectCheckpointVersionCheck),
+							createNestedElement(GUIElementEnum::hceInjectCheckpointRewriteIdentity),
 							}));
 
 					case GUIElementEnum::hceInjectCheckpointForcesRevert:
@@ -443,6 +444,10 @@ private:
 					case GUIElementEnum::hceInjectCheckpointDifficultyCheck:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 							(game, ToolTipCollection("If the checkpoint you are injecting was made on a different difficulty, or with different skulls, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the engine compares these fields itself, and a mismatch RESTARTS THE LEVEL on your next revert."), std::nullopt, "Warn on injecting to wrong difficulty##hce", settings->injectCheckpointDifficultyCheck));
+
+					case GUIElementEnum::hceInjectCheckpointRewriteIdentity:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Makes checkpoints shared between players actually work.\n\nA checkpoint carries the identity of whoever saved it - not just in its header, but baked through the player structures inside the saved game state. It therefore loads normally and then KILLS YOU a second or two later. This rewrites that identity to yours as the file is injected.\n\nInjecting your own checkpoints is unaffected: everything already matches and nothing is changed.\n\nLeave this ON unless you are deliberately investigating a checkpoint's original contents."), std::nullopt, "Re-identify shared checkpoints as mine##hce", settings->hceInjectCheckpointRewriteIdentity));
 
 					case GUIElementEnum::hceInjectCheckpointVersionCheck:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>

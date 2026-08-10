@@ -555,7 +555,8 @@
 			((hceInjectCheckpointForcesRevert, (HALOCER_ONLY)))\
 			((hceInjectCheckpointLevelCheck, (HALOCER_ONLY)))\
 			((hceInjectCheckpointDifficultyCheck, (HALOCER_ONLY)))\
-			((hceInjectCheckpointVersionCheck, (HALOCER_ONLY)))
+			((hceInjectCheckpointVersionCheck, (HALOCER_ONLY)))\
+			((hceInjectCheckpointRewriteIdentity, (HALOCER_ONLY)))
 
 
 

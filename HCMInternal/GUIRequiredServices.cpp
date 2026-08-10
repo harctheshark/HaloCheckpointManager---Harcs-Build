@@ -141,6 +141,9 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{GUIElementEnum::hceInjectCheckpointVersionCheck,
 			{OptionalCheatEnum::HCEInjectCheckpoint}
 	},
+	{GUIElementEnum::hceInjectCheckpointRewriteIdentity,
+			{OptionalCheatEnum::HCEInjectCheckpoint}
+	},
 	// The revert is a separate cheat and this toggle fires its event, so it needs both - exactly like MCC's
 	// injectCheckpointForcesRevert.
 	{GUIElementEnum::hceInjectCheckpointForcesRevert,

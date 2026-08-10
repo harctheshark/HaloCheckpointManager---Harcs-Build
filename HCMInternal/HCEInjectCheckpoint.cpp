@@ -2,6 +2,7 @@
 #include "HCEInjectCheckpoint.h"
 #include "HCECheckpointBlob.h"
 #include "HCECheckpointDetours.h"
+#include "HCECheckpointIdentity.h"
 #include "IMakeOrGetCheat.h"
 #include "IMCCStateHook.h"
 #include "IMessagesGUI.h"
@@ -367,6 +368,47 @@ private:
 					"That file is not a checkpoint for this build of Halo Campaign Evolved.\n"
 					"It is 0x{:X} bytes; a checkpoint is 0x{:X}.",
 					(uint64_t)checkpointData.size(), (uint32_t)stateLength));
+
+			// ---- MAKE A FOREIGN CHECKPOINT OURS -------------------------------------------------------------
+			// A checkpoint saved by someone else passes every header test the engine applies - which is why it
+			// loads at all - and then kills the player a second or two later, because THE SAVING PLAYER'S
+			// IDENTITY is baked through the live player structures inside the state, not just the header.
+			// Rewriting it to the local player's identity is what makes shared checkpoints work; see
+			// HCECheckpointIdentity.h for how the fields were established and why the per-save tag is included.
+			//
+			// Done BEFORE the header comparison below, so the verdict describes the bytes that will actually be
+			// injected rather than the bytes as they arrived. No re-signing is needed here: applySHA1 further
+			// down runs unconditionally on every injection.
+			//
+			// Injecting one's OWN checkpoint is a no-op - every field already matches and rewrite() skips fields
+			// that are equal, so this costs a comparison and nothing else.
+			if (settings->hceInjectCheckpointRewriteIdentity->GetValue())
+			{
+				const std::vector<byte> liveHeaderForIdentity = mBlob.readLiveHeader();
+				const auto localIdentity = HCECheckpointIdentity::read(liveHeaderForIdentity);
+				const auto fileIdentity = HCECheckpointIdentity::read(checkpointData);
+
+				if (!localIdentity.complete() || !fileIdentity.complete())
+				{
+					// Not fatal: the injection can still go ahead, it just will not be re-identified.
+					PLOG_WARNING << "HaloCER: could not read the player identity from "
+						<< (localIdentity.complete() ? "the checkpoint file" : "the live session")
+						<< "; injecting without rewriting it. A checkpoint from another player may kill you "
+						"shortly after it loads.";
+				}
+				else if (fileIdentity != localIdentity)
+				{
+					const auto rewritten = HCECheckpointIdentity::rewrite(checkpointData, fileIdentity, localIdentity);
+					PLOG_INFO << std::format(
+						"HaloCER: rewrote the checkpoint's player identity from \"{}\" to \"{}\" - {} occurrence(s) "
+						"(id4 {}, id8 {}, id8b {}, name {}, tag {})",
+						fileIdentity.displayName(), localIdentity.displayName(), rewritten.total(),
+						rewritten.id4, rewritten.id8, rewritten.id8b, rewritten.name, rewritten.tag);
+
+					messagesGUI->addMessage(std::format("Checkpoint from \"{}\" re-identified as yours.",
+						fileIdentity.displayName()));
+				}
+			}
 
 			const HCECheckpointBlob::HeaderComparison verdict = compareAgainstLiveSession(checkpointData);
 

@@ -368,6 +368,21 @@ public:
 			nameof(injectCheckpointLevelCheck)
 		);
 
+	// Halo Campaign Evolved only. Rewrites a checkpoint's saved-player identity to the local player on inject,
+	// which is what makes checkpoints shareable between players at all - see HCECheckpointIdentity.h.
+	//
+	// ⚠ DEFAULTS ON, unlike the HaloCER feature toggles which all default off. Those alter the running game the
+	// moment HCM launches; this one only ever acts on a file the user explicitly chose to inject, and it is a
+	// COMPATIBILITY FIX rather than a cheat. Defaulting it off would mean the answer to "why did the checkpoint
+	// my friend sent me kill me" is a setting nobody knows to look for, which is exactly the extra step this
+	// exists to remove. Injecting one's own checkpoint is a no-op.
+	std::shared_ptr<BinarySetting<bool>> hceInjectCheckpointRewriteIdentity = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceInjectCheckpointRewriteIdentity)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> injectCheckpointVersionCheck = std::make_shared<BinarySetting<bool>>
 		(
 			true,
@@ -2871,6 +2886,7 @@ public:
 		injectionIgnoresChecksum,
 		injectCheckpointForcesRevert,
 		injectCheckpointLevelCheck,
+		hceInjectCheckpointRewriteIdentity,
 		injectCheckpointVersionCheck,
 			injectCheckpointDifficultyCheck,
 		autonameCheckpoints,
