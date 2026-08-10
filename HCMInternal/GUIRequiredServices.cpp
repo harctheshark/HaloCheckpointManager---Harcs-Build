@@ -667,6 +667,18 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 {OptionalCheatEnum::HCEBspOverlay}
 	},
 
+	// Soft ceiling overlay. Same reasoning as the two above: the MCC softCeilingOverlayToggle element is keyed
+	// to the MCC SoftCeilingOverlay cheat, whose whole data path (GetSoftCeilingData -> TagBlockReader ->
+	// GetActiveStructureDesignTags) has no HaloCER implementation, so HaloCER needs its own element pointing at
+	// its own cheat. The softCeilingOverlay* SETTINGS and the hotkey are shared, because the tag data is
+	// identical in shape - see HCESoftCeilingOverlay.h.
+	{ GUIElementEnum::hceSoftCeilingOverlayToggleGUI,
+{OptionalCheatEnum::HCESoftCeilingOverlay}
+	},
+	{ GUIElementEnum::hceSoftCeilingOverlaySettingsSubheading,
+{OptionalCheatEnum::HCESoftCeilingOverlay}
+	},
+
 	// Same reasoning as the trigger overlay above: the MCC disableBarriersToggle element is keyed to the MCC
 	// DisableBarriers cheat (a code patch with no HaloCER pointer data), so HaloCER needs its own element. The
 	// disableBarriersToggle SETTING and hotkey are still shared.

@@ -4717,6 +4717,136 @@
 		</Version>
 	</VersionedEntry>
 
+	<!--=====================================================================================================
+	    SOFT CEILINGS (HCESoftCeilingOverlay). NOTHING HERE IS GUESSED - every offset, every enum option and
+	    every flag bit below was WALKED OUT OF THE BINARY'S OWN TAG STRUCT DEFINITIONS, using the method in the
+	    hce-tag-struct-definition-walk notes (find "sizeof(struct X)", take its single data xref = rec+0x30,
+	    walk the 32-byte field records, and REQUIRE the accumulated size to equal the declared element size).
+
+	    The scenario walk closes EXACTLY on its declared 0x6F4 and lands on three offsets that were already
+	    verified from real instructions - structure bsps 0x60, soft ceilings 0x248 (soft_ceiling_enable,
+	    sub_1801B4670), trigger volumes 0x278 (cmp ecx,[rax+278h]) - so nothing between them can be wrong.
+
+	    A soft ceiling is described in TWO places, joined by name string_id, exactly as MCC's
+	    GetSoftCeilingData does it:
+
+	      scenario_soft_ceilings_block   (scenario + 0x248, stride 12, MAX 0x80 per scenario)
+	        +0x00 flags        word_flags  scenario_soft_ceiling_flags_definition, 4 options:
+	                                       bit0 ignore bipeds, bit1 ignore vehicles,
+	                                       bit2 ignore camera, bit3 ignore huge vehicles
+	                                       - identical to MCC's SoftCeilingIgnoresObjectType, so
+	                                       SoftCeilingData.h's existing mask type is reused verbatim
+	        +0x02 runtime flags word_flags
+	        +0x04 name         string_id   <- HCEDisableBarriers already reads this one
+	        +0x08 type         enum16      soft_ceiling_type_enum
+	        +0x0A padding 2
+
+	      structure_soft_ceiling_block   (structure_design tag + 0x40, stride 20)
+	        +0x00 name         string_id
+	        +0x04 type         enum16      THE SAME enum definition pointer as the scenario field above
+	        +0x06 padding 2
+	        +0x08 soft ceiling triangles  tag_block (count +0x08, encoded address +0x0C)
+
+	    soft_ceiling_type_enum has exactly 3 options, in this order:
+	        0 acceleration    1 soft kill    2 slip surface
+	    which is byte-for-byte MCC's SoftCeilingType, so the shared enum and MCC's three colour settings apply
+	    unchanged.
+
+	    ⚠ THE TYPE IS ON BOTH RECORDS. The geometry side carries its own copy, so the overlay does not depend
+	    on the name join succeeding in order to colour correctly - the join only adds the ignore-flags and the
+	    enable BIT INDEX (the scenario block index IS the bit index in the mask at *(tls+0x430); see
+	    HCEDisableBarriers.cpp for that mask and its polarity).
+	    =====================================================================================================-->
+	<VersionedEntry Name="hceScenarioSoftCeilingBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x248</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceScenarioSoftCeilingStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0xC</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceScenarioSoftCeilingFlagsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x0</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceScenarioSoftCeilingNameOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x4</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceScenarioSoftCeilingTypeOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x8</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--scenario -> structure designs. The same block the standalone Havok debugger walks; the design tag
+	    index is the tag_reference's index field at +0x0C of a 32-byte
+	    s_scenario_structure_design_reference.-->
+	<VersionedEntry Name="hceScenarioStructureDesignBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x6C</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceStructureDesignReferenceStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x20</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceStructureDesignTagIndexOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0xC</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--structure_design ('sddt') tag data -> soft ceilings.-->
+	<VersionedEntry Name="hceStructureDesignSoftCeilingBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x40</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceStructureSoftCeilingStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x14</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceStructureSoftCeilingNameOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x0</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceStructureSoftCeilingTypeOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x4</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceStructureSoftCeilingTrianglesBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x8</Offset>
+		</Version>
+	</VersionedEntry>
+	<!--s_structure_soft_ceiling_triangle, declared 68: plane +0x00, bounding sphere centre +0x10, radius
+	    +0x1C, then the three vertices at +0x20 / +0x2C / +0x38. The engine reads ONLY the plane and the
+	    sphere, so no instruction proves the vertex offsets - but the field walk closing exactly on 68 does.
+	    A live run agreed: 758 triangles, 0 rejected by the bounding-sphere cross-check the overlay still
+	    applies to every triangle it reads.-->
+	<VersionedEntry Name="hceSoftCeilingTriangleStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x44</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceSoftCeilingTriangleSphereOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x10</Offset>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceSoftCeilingTriangleVertex0Offset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x20</Offset>
+		</Version>
+	</VersionedEntry>
+
 	<!--Info overlay sources. Note all three are shaped differently, which has caught people out before:
 	        hceCurrentLevel     a NUL-terminated ASCII STRING (<=40 bytes), NOT an index and NOT a pointer
 	        hceCurrentBSP       an int32 read DIRECTLY at the address, no dereference

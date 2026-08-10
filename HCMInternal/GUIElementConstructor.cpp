@@ -1276,6 +1276,8 @@ private:
 							createNestedElement(GUIElementEnum::hceTriggerOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::hceBspOverlayToggleGUI),
 							createNestedElement(GUIElementEnum::hceBspOverlaySettingsSubheading),
+							createNestedElement(GUIElementEnum::hceSoftCeilingOverlayToggleGUI),
+							createNestedElement(GUIElementEnum::hceSoftCeilingOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::softCeilingOverlayToggle),
 							createNestedElement(GUIElementEnum::softCeilingOverlaySettings),
 							createNestedElement(GUIElementEnum::placementPointsOverlayToggle),
@@ -2363,6 +2365,71 @@ private:
 								createNestedElement(GUIElementEnum::hceBspOverlayWireframeColour),
 								createNestedElement(GUIElementEnum::hceBspOverlayWireframeAlpha),
 							}));
+
+				// Halo Campaign Evolved soft ceiling overlay. Every row except the last three drives the SAME
+				// settings object as the MCC barrier overlay - the tag data is byte-identical in shape (same
+				// three types, same ignore-flag bits), HaloCER and MCC can never share a process, and sharing
+				// means presets and the Barrier Overlay hotkey carry over. The three hce* rows are the ones
+				// only this title can offer.
+				case GUIElementEnum::hceSoftCeilingOverlayToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Draws the level's soft ceilings - the invisible barriers that push you back, slow you down or kill you for leaving the intended space - coloured by which of the three they are. The type, the bipeds/vehicles flags and the geometry are all read out of the tag, nothing is guessed from names. As with the other 3D overlays these are not hidden by walls."), RebindableHotkeyEnum::softCeilingOverlayToggleHotkey, "Barrier Overlay##hce", settings->softCeilingOverlayToggle));
+
+				case GUIElementEnum::hceSoftCeilingOverlaySettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Settings for the barrier overlay"), "Barrier Overlay Settings##hce", headerChildElements
+							{
+								createNestedElement(GUIElementEnum::hceSoftCeilingOverlayRenderTypes),
+								createNestedElement(GUIElementEnum::hceSoftCeilingOverlayRenderDirection),
+								createNestedElement(GUIElementEnum::hceSoftCeilingOverlayRenderDistance),
+								createNestedElement(GUIElementEnum::hceSoftCeilingOverlayColorAccel),
+								createNestedElement(GUIElementEnum::hceSoftCeilingOverlayColorKill),
+								createNestedElement(GUIElementEnum::hceSoftCeilingOverlayColorSlippy),
+								createNestedElement(GUIElementEnum::hceSoftCeilingOverlayShowDisabled),
+								createNestedElement(GUIElementEnum::hceSoftCeilingOverlayDisabledColour),
+								createNestedElement(GUIElementEnum::hceSoftCeilingOverlaySolidTransparency),
+								createNestedElement(GUIElementEnum::hceSoftCeilingOverlayWireframeTransparency),
+							}));
+
+				case GUIElementEnum::hceSoftCeilingOverlayRenderTypes:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::SoftCeilingRenderTypes, 150.f>>
+						(game, ToolTipCollection("Whether to render barriers that apply to bipeds, vehicles, or either. Read from the scenario's own per-barrier ignore flags (ignore bipeds / ignore vehicles), so a barrier that genuinely does not affect you on foot can be hidden."), "Render Barriers Affecting:", settings->softCeilingOverlayRenderTypes));
+
+				case GUIElementEnum::hceSoftCeilingOverlayRenderDirection:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::SoftCeilingRenderDirection, 100.f>>
+						(game, ToolTipCollection("Whether to render the front of barriers, the back, or both. Barriers are single-sided triangles, so BOTH is usually what you want - FRONT or BACK is for working out which way one faces."), "Render Barriers Direction:", settings->softCeilingOverlayRenderDirection));
+
+				case GUIElementEnum::hceSoftCeilingOverlayRenderDistance:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 2000.f)>>
+						(game, ToolTipCollection("How far away barriers stop being drawn, in world units (1 unit = 10 feet). Barriers are level-scale, so a short distance tends to clip one into a confusing fragment rather than thinning the view out."), "Barrier Render Distance", settings->hceSoftCeilingOverlayRenderDistance));
+
+				case GUIElementEnum::hceSoftCeilingOverlayColorAccel:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of ACCELERATION barriers - the ones that push you back towards the play space."), "Acceleration Color##hce", settings->softCeilingOverlayColorAccel));
+
+				case GUIElementEnum::hceSoftCeilingOverlayColorKill:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of SOFT KILL barriers - crossing one starts the countdown that kills you."), "Soft Kill Color##hce", settings->softCeilingOverlayColorKill));
+
+				case GUIElementEnum::hceSoftCeilingOverlayColorSlippy:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of SLIP SURFACE barriers - the ones you slide off instead of standing on."), "Slip Surface Color##hce", settings->softCeilingOverlayColorSlippy));
+
+				case GUIElementEnum::hceSoftCeilingOverlayShowDisabled:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Also draw barriers a mission script has switched OFF, in the disabled colour, instead of hiding them. Halo Campaign Evolved keeps a live enable bit per barrier and HCM reads it, so this is the real state rather than a guess. NOTE: Disable Barriers clears every one of those bits, so with it on everything correctly shows as disabled."), std::nullopt, "Show Disabled Barriers", settings->hceSoftCeilingOverlayShowDisabled));
+
+				case GUIElementEnum::hceSoftCeilingOverlayDisabledColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of barriers that are currently switched OFF. Deliberately drab by default so an inactive barrier does not read as a real one."), "Disabled Barrier Color", settings->hceSoftCeilingOverlayDisabledColor));
+
+				case GUIElementEnum::hceSoftCeilingOverlaySolidTransparency:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("How opaque the filled faces are, from 0 (off entirely) to 1 (solid). Nothing here is hidden by walls, so keep this fairly low."), "Barrier Solid Opacity", settings->softCeilingOverlaySolidTransparency));
+
+				case GUIElementEnum::hceSoftCeilingOverlayWireframeTransparency:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("How opaque the wireframe is, from 0 (off entirely) to 1 (solid). Barriers are drawn triangle by triangle, so a dense barrier's wireframe is dense - turn this down if it reads as a solid block."), "Barrier Wireframe Opacity", settings->softCeilingOverlayWireframeTransparency));
 
 				case GUIElementEnum::hceBspOverlayInvisibleOnly:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>

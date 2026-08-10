@@ -554,6 +554,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HCETriggerOverlay.h" />
     <ClInclude Include="HCEAnchors.h" />
     <ClInclude Include="HCEBspOverlay.h" />
+    <ClInclude Include="HCESoftCeilingOverlay.h" />
     <ClInclude Include="HCESignatureScan.h" />
     <ClInclude Include="HCETriggerActivity.h" />
     <ClInclude Include="HCEInvulnerability.h" />
@@ -872,6 +873,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="HCETriggerOverlay.cpp" />
     <ClCompile Include="HCEAnchors.cpp" />
     <ClCompile Include="HCEBspOverlay.cpp" />
+    <ClCompile Include="HCESoftCeilingOverlay.cpp" />
     <ClCompile Include="HCETriggerActivity.cpp" />
     <ClCompile Include="HCEInvulnerability.cpp" />
     <ClCompile Include="HCEDisableBarriers.cpp" />

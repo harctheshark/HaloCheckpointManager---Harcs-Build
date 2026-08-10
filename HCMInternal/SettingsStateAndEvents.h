@@ -2452,6 +2452,40 @@ public:
 			nameof(softCeilingOverlayWireframeTransparency)
 		);
 
+	// ---- Halo Campaign Evolved soft ceiling overlay -------------------------------------------------------
+	// Everything ABOVE is shared with HaloCER, deliberately: the tag data turned out to be byte-identical in
+	// shape (same three types, same ignore-flag bits), HaloCER and MCC can never share a process, and sharing
+	// means presets and the Soft Ceiling Overlay hotkey carry over. Only genuinely HaloCER-only knobs live
+	// here - the same split the HaloCER trigger overlay uses.
+
+	// WORLD units (1 world unit = 10 feet), matching hceBspOverlayRenderDistance. Barriers are level-scale
+	// structures, so this defaults high for the same reason the BSP overlay's does: clipping one mid-way turns
+	// a readable shape into a confusing fragment.
+	std::shared_ptr<BinarySetting<float>> hceSoftCeilingOverlayRenderDistance = std::make_shared<BinarySetting<float>>
+		(
+			200.f,
+			[](float in) { return in >= 1.f && in <= 2000.f; },
+			nameof(hceSoftCeilingOverlayRenderDistance)
+		);
+
+	// HaloCER-only, because only HaloCER's overlay can tell. soft_ceiling_enable toggles a runtime bit per soft
+	// ceiling (the mask HCEDisableBarriers owns), so a barrier a mission script has switched off can be drawn
+	// as switched off instead of drawn as though it still stops you.
+	// ⚠ Disable Barriers ZEROES that mask, so with it on every barrier correctly reads as disabled.
+	std::shared_ptr<BinarySetting<bool>> hceSoftCeilingOverlayShowDisabled = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceSoftCeilingOverlayShowDisabled)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceSoftCeilingOverlayDisabledColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{0.4f, 0.4f, 0.4f, 1.f}, // grey - reads as "not in effect" next to the three type colours
+			[](SimpleMath::Vector4 in) { return in.w == 1.f; },
+			nameof(hceSoftCeilingOverlayDisabledColor)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> disableBarriersToggle = std::make_shared<BinarySetting<bool>>
 		(
 			false,
@@ -2826,6 +2860,12 @@ public:
 			softCeilingOverlayColorKill,
 			softCeilingOverlaySolidTransparency,
 			softCeilingOverlayWireframeTransparency,
+			// HaloCER-only soft ceiling knobs. The toggle itself is DELIBERATELY ABSENT, exactly as
+			// hceBspOverlayToggle is: everything in this list is written back to disk, and a 3D overlay that
+			// resurrects itself on launch is what the default-off pass existed to stop.
+			hceSoftCeilingOverlayRenderDistance,
+			hceSoftCeilingOverlayShowDisabled,
+			hceSoftCeilingOverlayDisabledColor,
 		hideWatermarkHideMessages,
 		advanceTicksCount,
 		injectionIgnoresChecksum,

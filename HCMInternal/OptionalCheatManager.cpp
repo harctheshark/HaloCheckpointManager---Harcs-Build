@@ -30,6 +30,7 @@
 #include "HCEDisableFadeFromBlack.h"
 #include "HCEDumpCheckpoint.h"
 #include "HCEInjectCheckpoint.h"
+#include "HCESoftCeilingOverlay.h"
 
 #include "InjectCheckpoint.h"
 #include "InjectCore.h"

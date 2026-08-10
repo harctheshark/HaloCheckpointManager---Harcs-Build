@@ -166,7 +166,8 @@ HCESkyFix,\
 HCEFreecamExtras,\
 HCEDisableFadeFromBlack,\
 HCEDumpCheckpoint,\
-HCEInjectCheckpoint
+HCEInjectCheckpoint,\
+HCESoftCeilingOverlay
 
 
 enum class OptionalCheatEnum {

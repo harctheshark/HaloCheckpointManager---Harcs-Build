@@ -533,6 +533,18 @@
 			((hceBspOverlayFaceShading, (HALOCER_ONLY)))\
 			((hceBspOverlayShadingStrength, (HALOCER_ONLY)))\
 			((hceBspOverlaySurfaceVariation, (HALOCER_ONLY)))\
+	((hceSoftCeilingOverlayToggleGUI, (HALOCER_ONLY)))\
+	((hceSoftCeilingOverlaySettingsSubheading, (HALOCER_ONLY)))\
+			((hceSoftCeilingOverlayRenderTypes, (HALOCER_ONLY)))\
+			((hceSoftCeilingOverlayRenderDirection, (HALOCER_ONLY)))\
+			((hceSoftCeilingOverlayRenderDistance, (HALOCER_ONLY)))\
+			((hceSoftCeilingOverlayColorAccel, (HALOCER_ONLY)))\
+			((hceSoftCeilingOverlayColorKill, (HALOCER_ONLY)))\
+			((hceSoftCeilingOverlayColorSlippy, (HALOCER_ONLY)))\
+			((hceSoftCeilingOverlayShowDisabled, (HALOCER_ONLY)))\
+			((hceSoftCeilingOverlayDisabledColour, (HALOCER_ONLY)))\
+			((hceSoftCeilingOverlaySolidTransparency, (HALOCER_ONLY)))\
+			((hceSoftCeilingOverlayWireframeTransparency, (HALOCER_ONLY)))\
 	((hceDisableBarriersGUI, (HALOCER_ONLY)))\
 	((hceDumpCheckpointGUI, (HALOCER_ONLY)))\
 	((hceDumpCheckpointSettingsSubheading, (HALOCER_ONLY)))\
