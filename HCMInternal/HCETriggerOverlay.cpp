@@ -17,6 +17,8 @@
 #include "Render3DEventProvider.h"
 #include "IRenderer3D.h"
 #include "IModel.h"
+#include "ModalDialogRenderer.h"
+#include "ModalDialogFactory.h"
 #include "imgui.h"
 #include <algorithm>
 #include <atomic>
@@ -611,6 +613,7 @@ private:
 	std::weak_ptr<SettingsStateAndEvents> settingsWeak;
 	std::shared_ptr<RuntimeExceptionHandler> runtimeExceptions;
 	std::weak_ptr<HCEGetPlayerState> playerStateWeak;
+	std::weak_ptr<ModalDialogRenderer> modalDialogsWeak;   // the name picker, see onEditNameFilter
 
 	// Structural offsets, from InternalPointerData.xml. The two ADDRESSES are resolved by signature instead -
 	// see the header comment.
@@ -753,6 +756,17 @@ private:
 	{
 		bool speedrunOnly = false;
 		bool showRegular = true, showSector = true, showKill = true, showZoneSet = true;
+
+		// NAME FILTER. Shares MCC's triggerOverlayFilterString / FilterToggle / FilterExactMatch settings, so a
+		// preset made on either side means the same thing - the two can never run in one process.
+		//
+		// ⚠ EMPTY MEANS EVERYTHING. Switching the filter on with nothing chosen must not blank the overlay and
+		// leave the user hunting for what broke, so "draw nothing" needs its own value; the picker writes
+		// HCETriggerNameFilterDialog::kNoneSentinel for that. Built once per frame, never per volume.
+		bool nameFilterActive = false;
+		bool exactMatch = true;
+		std::unordered_set<std::string> names;   // exact-match mode
+		std::vector<std::string> substrings;     // substring mode, lowercased
 	};
 
 	static TypeFilter readTypeFilter(const std::shared_ptr<SettingsStateAndEvents>& settings)
@@ -763,6 +777,36 @@ private:
 		f.showSector = settings->hceTriggerOverlayShowSector->GetValue();
 		f.showKill = settings->hceTriggerOverlayShowKill->GetValue();
 		f.showZoneSet = settings->hceTriggerOverlayShowZoneSet->GetValue();
+
+		if (settings->triggerOverlayFilterToggle->GetValue())
+		{
+			f.exactMatch = settings->triggerOverlayFilterExactMatch->GetValue();
+			const std::string raw = settings->triggerOverlayFilterString->GetValue();
+
+			std::string current;
+			auto push = [&]()
+				{
+					while (!current.empty() && (current.back() == ' ' || current.back() == '\t')) current.pop_back();
+					if (current.empty()) return;
+					if (f.exactMatch) f.names.insert(current);
+					else
+					{
+						std::string lowered;
+						for (char c : current) lowered += (char)std::tolower((unsigned char)c);
+						f.substrings.push_back(lowered);
+					}
+					current.clear();
+				};
+			for (char c : raw)
+			{
+				if (c == ';' || c == '\n' || c == '\r') push();
+				else if (c != ' ' || !current.empty()) current += c;
+			}
+			push();
+
+			// An empty list is "no filter", NOT "hide everything" - see the note on TypeFilter.
+			f.nameFilterActive = !f.names.empty() || !f.substrings.empty();
+		}
 		return f;
 	}
 
@@ -774,6 +818,27 @@ private:
 	static bool shouldDrawVolume(const HceTriggerVolume& volume, const TypeFilter& filter)
 	{
 		if (filter.speedrunOnly && !volume.isSpeedrun) return false;
+
+		// Name filter first: it is the most specific thing the user can have asked for, and an explicit list of
+		// names should not be quietly overruled by a category toggle they forgot was off. The sentinel the
+		// picker writes for "None" matches no real volume, so it hides everything without a special case.
+		if (filter.nameFilterActive)
+		{
+			if (filter.exactMatch)
+			{
+				if (!filter.names.contains(volume.name)) return false;
+			}
+			else
+			{
+				std::string lowered;
+				lowered.reserve(volume.name.size());
+				for (char c : volume.name) lowered += (char)std::tolower((unsigned char)c);
+				bool any = false;
+				for (const auto& needle : filter.substrings)
+					if (lowered.find(needle) != std::string::npos) { any = true; break; }
+				if (!any) return false;
+			}
+		}
 
 		if (volume.isBspSwitch)              return filter.showZoneSet;
 		if (volume.isKill || volume.isSafeZone) return filter.showKill;   // one toggle, two colours
@@ -1861,10 +1926,82 @@ private:
 		}
 	}
 
+	// ---------------------------------------------------------------------------------------------------------
+	// THE NAME PICKER.
+	//
+	// This lives HERE, in the overlay, rather than in a cheat of its own, for one reason: the list of volume
+	// names only exists here, behind mVolumesMutex, and it is rebuilt on every scenario change. A separate cheat
+	// would have to re-walk the scenario tag to populate the dialog and would be reading a second, potentially
+	// disagreeing copy of the level's volumes.
+	//
+	// The dialog is a BLOCKING call rendered on the ImGui thread, so mVolumesMutex is copied out of and released
+	// BEFORE it opens. Holding it across the dialog would stall the render path for as long as the user left the
+	// window open.
+	// ---------------------------------------------------------------------------------------------------------
+	void onEditNameFilter()
+	{
+		if (!mReady.load(std::memory_order_acquire)) return;
+		try
+		{
+			lockOrThrow(settingsWeak, settings);
+			auto modalDialogs = modalDialogsWeak.lock();
+			if (!modalDialogs) throw HCMRuntimeException("The dialog service is unavailable.");
+
+			std::vector<HCETriggerNameFilterDialog::Entry> entries;
+			{
+				std::scoped_lock volumesLock(mVolumesMutex);
+				entries.reserve(mVolumes.size());
+				for (const auto& v : mVolumes)
+				{
+					HCETriggerNameFilterDialog::Entry e;
+					e.name = v.name;
+					e.speedrun = v.isSpeedrun;
+					// SAME priority order the colours and shouldDrawVolume use, so a volume is listed under the
+					// category it actually behaves as.
+					e.category = v.isBspSwitch ? HCETriggerNameFilterDialog::Category::ZoneSet
+						: v.isKill ? HCETriggerNameFilterDialog::Category::Kill
+						: v.isSafeZone ? HCETriggerNameFilterDialog::Category::SafeZone
+						: v.isSector ? HCETriggerNameFilterDialog::Category::Sector
+						: HCETriggerNameFilterDialog::Category::Regular;
+					entries.push_back(std::move(e));
+				}
+			}
+
+			if (entries.empty())
+			{
+				if (auto messagesGUI = messagesGUIWeak.lock())
+					messagesGUI->addMessage("No trigger volumes loaded yet - turn the Trigger Overlay on, in a level.");
+			}
+
+			const std::string current = settings->triggerOverlayFilterString->GetValue();
+			const std::string result = modalDialogs->showReturningDialog(   // blocking
+				ModalDialogFactory::makeHCETriggerNameFilterDialog("Filter Trigger Volumes by Name", current, std::move(entries)));
+
+			if (result == current) return;
+
+			settings->triggerOverlayFilterString->GetValueDisplay() = result;
+			settings->triggerOverlayFilterString->UpdateValueWithInput();
+
+			// Choosing names and then not seeing any change would read as a broken picker, so switch the filter
+			// on for them. Never switch it OFF - clearing the list back to "everything" is a perfectly reasonable
+			// thing to do while leaving the filter armed.
+			if (!result.empty() && !settings->triggerOverlayFilterToggle->GetValue())
+			{
+				settings->triggerOverlayFilterToggle->GetValueDisplay() = true;
+				settings->triggerOverlayFilterToggle->UpdateValueWithInput();
+			}
+		}
+		catch (HCMRuntimeException ex)
+		{
+			runtimeExceptions->handleMessage(ex);
+		}
+	}
+
 	// Declared LAST, see HCECheckpointDetours.cpp - the callbacks must be destroyed before anything they touch.
 	ScopedCallback<RenderEvent> mRenderEventCallback;
 	ScopedCallback<ToggleEvent> mToggleCallback;
 	ScopedCallback<eventpp::CallbackList<void(const MCCState&)>> mGameStateChangedCallback;
+	ScopedCallback<ActionEvent> mEditNameFilterCallback;
 
 public:
 	HCETriggerOverlayImpl(GameState game, IDIContainer& dicon)
@@ -1876,10 +2013,13 @@ public:
 		playerStateWeak(resolveDependentCheat(HCEGetPlayerState)),
 		mRenderEventCallback(dicon.Resolve<RenderEvent>().lock(), [this](SimpleMath::Vector2 ss) { onRenderEvent(ss); }),
 		mToggleCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->triggerOverlayToggle->valueChangedEvent, [this](bool& n) { onToggleEvent(n); }),
-		mGameStateChangedCallback(dicon.Resolve<IMCCStateHook>().lock()->getMCCStateChangedEvent(), [this](const MCCState& s) { onGameStateChanged(s); })
+		mGameStateChangedCallback(dicon.Resolve<IMCCStateHook>().lock()->getMCCStateChangedEvent(), [this](const MCCState& s) { onGameStateChanged(s); }),
+		mEditNameFilterCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceTriggerOverlayEditNameFilterEvent, [this]() { onEditNameFilter(); })
 	{
 		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER)
 			throw HCMInitException("HCETriggerOverlay only supports Halo Campaign Evolved");
+
+		modalDialogsWeak = dicon.Resolve<ModalDialogRenderer>();
 
 		// Pure PointerDataStore lookups. NOTHING here touches game memory - the sim dll is not guaranteed to be
 		// loaded when cheats are constructed (see the SAFETY note in HCECheckpointDetours.cpp).

@@ -51,3 +51,11 @@
 		PLOG_VERBOSE << "factory creating TriggerFilterStringDialog";
 		return std::make_unique<TriggerFilterStringDialog>(dialogTitle, defaultValue, allTriggers, currentLevel, levelMapStringVector);
 	}
+
+
+	std::shared_ptr<IModalDialogReturner<std::string>> ModalDialogFactory::makeHCETriggerNameFilterDialog
+	(std::string dialogTitle, std::string defaultValue, std::vector<HCETriggerNameFilterDialog::Entry> entries)
+	{
+		PLOG_VERBOSE << "factory creating HCETriggerNameFilterDialog";
+		return std::make_unique<HCETriggerNameFilterDialog>(dialogTitle, defaultValue, std::move(entries));
+	}

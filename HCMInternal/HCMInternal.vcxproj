@@ -556,6 +556,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HCEBspOverlay.h" />
     <ClInclude Include="HCESoftCeilingOverlay.h" />
     <ClInclude Include="HCECheckpointIdentity.h" />
+    <ClInclude Include="HCETriggerNameFilterDialog.h" />
     <ClInclude Include="HCESignatureScan.h" />
     <ClInclude Include="HCETriggerActivity.h" />
     <ClInclude Include="HCEInvulnerability.h" />

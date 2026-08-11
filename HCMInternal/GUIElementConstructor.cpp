@@ -2317,6 +2317,9 @@ private:
 						(game, ToolTipCollection("Settings for the trigger overlay"), "Trigger Overlay Settings##hce", headerChildElements
 							{
 								createNestedElement(GUIElementEnum::hceTriggerOverlaySpeedrunOnly),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayNameFilterButton),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayNameFilterToggle),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayNameFilterExactMatch),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayTypesShownSubheading),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayRenderStyle),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayRenderDistance),
@@ -2581,6 +2584,20 @@ private:
 				case GUIElementEnum::hceTriggerOverlayShowZoneSet:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("BSP / zone-set switch volumes - crossing one loads and unloads whole areas."), std::nullopt, "Zoneset Triggers", settings->hceTriggerOverlayShowZoneSet));
+
+				// Halo Campaign Evolved name filter. Drives the SAME triggerOverlayFilterString / FilterToggle /
+				// FilterExactMatch settings as MCC's version, so presets carry across; only the picker differs.
+				case GUIElementEnum::hceTriggerOverlayNameFilterButton:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+						(game, ToolTipCollection("Choose exactly which trigger volumes to draw, by name, from a checkbox list of the ones in this level. Has a search box, and All / None per category. Selecting names switches the filter on for you.\n\nYou must be in a level with the Trigger Overlay on, otherwise there are no volume names to show yet."), std::nullopt, "Filter by Name...##hce", settings->hceTriggerOverlayEditNameFilterEvent));
+
+				case GUIElementEnum::hceTriggerOverlayNameFilterToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Apply the name filter chosen above. With this off, every volume the Types Shown toggles allow is drawn.\n\nAn EMPTY name list means 'draw everything', not 'draw nothing' - so turning this on before picking anything changes nothing."), std::nullopt, "Filter by Name##hce", settings->triggerOverlayFilterToggle));
+
+				case GUIElementEnum::hceTriggerOverlayNameFilterExactMatch:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("ON: a volume is drawn only if its name matches a chosen name exactly - which is what the checkbox picker produces.\n\nOFF: the entries are treated as case-insensitive SUBSTRINGS, so typing one word like 'kill' into the filter string draws every volume whose name contains it."), std::nullopt, "Exact Name Match##hce", settings->triggerOverlayFilterExactMatch));
 
 				case GUIElementEnum::hceTriggerOverlaySpeedrunOnly:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>

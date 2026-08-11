@@ -659,6 +659,18 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{ GUIElementEnum::hceTriggerOverlaySettingsSubheading,
 {OptionalCheatEnum::HCETriggerOverlay}
 	},
+	// The name picker and its two toggles are served by HCETriggerOverlay itself: it owns the volume list the
+	// dialog is populated from, so nothing else could supply it without re-walking the scenario tag and reading
+	// a second, potentially disagreeing copy of the level's volumes.
+	{ GUIElementEnum::hceTriggerOverlayNameFilterButton,
+{OptionalCheatEnum::HCETriggerOverlay}
+	},
+	{ GUIElementEnum::hceTriggerOverlayNameFilterToggle,
+{OptionalCheatEnum::HCETriggerOverlay}
+	},
+	{ GUIElementEnum::hceTriggerOverlayNameFilterExactMatch,
+{OptionalCheatEnum::HCETriggerOverlay}
+	},
 
 	// Structure-BSP overlay. Its own cheat rather than a mode of HCETriggerOverlay: it reads a completely
 	// different tag chain (the BSP's raw resource, not the scenario's trigger volume block) and carries its own

@@ -172,7 +172,12 @@ public:
 	std::shared_ptr<ActionEvent> switchBSPUnloadIndexEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> switchBSPSetFillCurrent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceFutureCheckpointFillEvent = std::make_shared<ActionEvent>(); 
-	std::shared_ptr<ActionEvent> triggerOverlayFilterStringDialogEvent = std::make_shared<ActionEvent>(); 
+	// Halo Campaign Evolved's own picker. Separate EVENT from triggerOverlayFilterStringDialogEvent because a
+	// different dialog opens (a checkbox list rather than a text editor) and it is HCETriggerOverlay that owns
+	// the volume names to populate it with - but it edits the SAME triggerOverlayFilterString setting, so
+	// presets stay interchangeable between the two.
+	std::shared_ptr<ActionEvent> hceTriggerOverlayEditNameFilterEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> triggerOverlayFilterStringDialogEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> triggerOverlayFilterStringCopyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> triggerOverlayFilterStringPasteEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> getPlayerDatumEvent = std::make_shared<ActionEvent>();

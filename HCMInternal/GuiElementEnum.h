@@ -499,6 +499,9 @@
 			((hceTriggerOverlayHitFalloff, (HALOCER_ONLY)))\
 			((hceTriggerOverlayMessageOnHit, (HALOCER_ONLY)))\
 			((hceTriggerOverlaySpeedrunOnly, (HALOCER_ONLY)))\
+			((hceTriggerOverlayNameFilterButton, (HALOCER_ONLY)))\
+			((hceTriggerOverlayNameFilterToggle, (HALOCER_ONLY)))\
+			((hceTriggerOverlayNameFilterExactMatch, (HALOCER_ONLY)))\
 			((hceTriggerOverlayTypesShownSubheading, (HALOCER_ONLY)))\
 			((hceTriggerOverlayShowRegular, (HALOCER_ONLY)))\
 			((hceTriggerOverlayShowSector, (HALOCER_ONLY)))\
