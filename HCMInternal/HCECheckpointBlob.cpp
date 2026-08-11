@@ -474,8 +474,18 @@ bool HCECheckpointBlob::compareGameOptions(const byte* a, const byte* b, size_t 
 	//     sub_180216460(+0x15E0) when the type byte is 1, 2 or 3; any other type returns "compatible" right here
 	//
 	// and sub_180216460(A, B) is: the dword at A+0 must equal B+0, then memcmp(A+0xC, B+0xC, n) with n selected
-	// off that dword - 1 -> 0xF888, 2 -> 0xF858, 3 -> 0x830, 4 -> 0x9C8, 0 or >4 -> 0x730. That trailing block is
-	// where the per-mode settings (campaign difficulty, skulls) live.
+	// off that dword - 1 -> 0xF888, 2 -> 0xF858, 3 -> 0x830, 4 -> 0x9C8, 0 or >4 -> 0x730.
+	//
+	// ⚠ THAT TRAILING BLOCK IS *NOT* "campaign difficulty, skulls", which is what this comment used to claim
+	// and what the dialog told users for months. DIFFICULTY IS THE BYTE AT +0x1D4 ABOVE, and it measured 0x00
+	// in all eleven checkpoints ever examined. The trailing block is a GAME ENGINE VARIANT object whose base
+	// is A+4 (so payload offset P == object offset P+8), and the one byte ever observed to differ inside it
+	// was object +0x2F8 - the low byte of a five-bit flags field written by initialize_defaults
+	// (sub_180395950 stores 0x00070000 at +0x2F6), read only by the encoder/decoder/copy and five boolean
+	// property getters. Nothing anywhere in the sim compares it against 6 or 7 as an integer.
+	//
+	// ⚠ A+4..A+0xB is a VTABLE POINTER and differs on every launch through ASLR. That is precisely why the
+	// engine's compare starts at +0xC. Never widen this range to include it.
 	constexpr size_t kType = 0x000;
 	constexpr size_t kWordField = 0x006;
 	constexpr size_t kMapName = 0x044;
@@ -548,9 +558,38 @@ bool HCECheckpointBlob::compareGameOptions(const byte* a, const byte* b, size_t 
 	const size_t payloadStart = kSubBlock + kSubBlockPayload;
 	if (!readable(payloadStart, payload)) return true;
 
-	if (std::memcmp(a + payloadStart, b + payloadStart, payload) != 0)
+	// ⚠ NAME THE BYTE THAT DIFFERED. This used to be one blanket memcmp over the whole payload that set
+	// detail = "difficulty/skulls" for any difference anywhere in up to 0xF888 bytes - and that label was
+	// simply WRONG. The engine's actual difficulty test is the separate byte at kTypeOneField
+	// (options + 0x1D4 = blob 0x304) handled above; it measured 0x00 in all eleven checkpoints examined,
+	// i.e. difficulty has never once been the reason an injection was questioned.
+	//
+	// The cost of the blanket label was not cosmetic. It sent an entire investigation chasing a difficulty
+	// setting that had never changed, and every explanation offered for a refusal was unfalsifiable, because
+	// the one fact that would have settled it was discarded right here. A first-difference scan costs nothing
+	// and makes the next report self-diagnosing.
+	//
+	// The offset reported is ABSOLUTE INTO THE BLOB: a and b point at the options struct, which begins at
+	// blob + 0x130, so blob offset = 0x130 + payloadStart + i. That is the number to compare against a hex
+	// dump of the file, which is what anyone debugging this actually has in front of them.
+	//
+	// ⚠ The first 8 bytes of the sub-block object (blob 0x1714..0x171B) are a VTABLE POINTER and differ on
+	// every game launch through ASLR. They are deliberately outside this range - the engine's own compare
+	// starts at +0xC for exactly that reason - so do not "widen" payloadStart to include them.
+	for (size_t i = 0; i < payload; ++i)
 	{
-		detail = "difficulty/skulls";
+		if (a[payloadStart + i] == b[payloadStart + i]) continue;
+
+		size_t differing = 0;
+		for (size_t k = i; k < payload; ++k)
+			if (a[payloadStart + k] != b[payloadStart + k]) ++differing;
+
+		const uint64_t blobOffset = (uint64_t)(0x130 + payloadStart + i);
+		detail = std::format("game options at blob offset 0x{:X} (file 0x{:02X}, current game 0x{:02X}){}",
+			blobOffset,
+			(uint32_t)(uint8_t)a[payloadStart + i],
+			(uint32_t)(uint8_t)b[payloadStart + i],
+			differing > 1 ? std::format(", and {} bytes differ in total", differing) : "");
 		return false;
 	}
 

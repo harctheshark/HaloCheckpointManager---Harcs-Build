@@ -447,17 +447,27 @@ private:
 				if (!userConfirms("Injection: wrong level!", body)) { PLOG_DEBUG << "User cancelled at the level warning"; return; }
 			}
 
-			// DIFFICULTY / SKULLS. sub_1802096E0 - see HCECheckpointBlob::compareGameOptions.
+			// GAME OPTIONS. sub_1802096E0 - see HCECheckpointBlob::compareGameOptions.
+			//
+			// ⚠ THIS IS NOT "DIFFICULTY/SKULLS", despite what this dialog said for a long time. The engine's
+			// difficulty test is a DIFFERENT, single byte (options + 0x1D4 = blob 0x304), compared a few lines
+			// earlier in compareGameOptions and reported as "difficulty". Across eleven real checkpoints that
+			// byte was 0x00 in every single one - difficulty has never been why an injection was questioned.
+			// The old title sent a whole debugging session after a setting that had never changed. Say what
+			// actually differed instead; compareGameOptions now names the exact blob offset and both values.
 			if (!verdict.optionsOK() && settings->injectCheckpointDifficultyCheck->GetValue())
 			{
 				const std::string body = std::format(
 					"This checkpoint's game options do not match the ones you are playing.\n\n"
-					"The engine compares these field by field, and the first one that differs is: {}.\n"
+					"The engine compares these field by field, and the first one that differs is:\n  {}.\n"
+					"\nNOTE: what HCM compares against is the game's CURRENT session, and that changes every"
+					"\ntime a checkpoint is reverted into or a level (re)loads - so a file that was accepted a"
+					"\nmoment ago can be questioned now without the file having changed at all.\n"
 					"\nHalo Campaign Evolved does NOT fail an unacceptable checkpoint quietly - the next revert\n"
 					"RESTARTS THE LEVEL and your run is gone. Inject anyway?",
 					verdict.optionsDetail.empty() ? "the game options block" : verdict.optionsDetail);
 
-				if (!userConfirms("Injection: mismatched difficulty/skulls!", body)) { PLOG_DEBUG << "User cancelled at the options warning"; return; }
+				if (!userConfirms("Injection: game options differ!", body)) { PLOG_DEBUG << "User cancelled at the options warning"; return; }
 			}
 
 			// BUILD / STATE SIGNATURE. The state-layout CRC at +0x000, the engine build string at +0x108 and the
