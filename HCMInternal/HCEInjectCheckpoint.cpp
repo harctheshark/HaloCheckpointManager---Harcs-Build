@@ -396,7 +396,7 @@ private:
 						<< "; injecting without rewriting it. A checkpoint from another player may kill you "
 						"shortly after it loads.";
 				}
-				else if (fileIdentity != localIdentity)
+				else if (!fileIdentity.samePlayerAs(localIdentity))
 				{
 					const auto rewritten = HCECheckpointIdentity::rewrite(checkpointData, fileIdentity, localIdentity);
 					PLOG_INFO << std::format(

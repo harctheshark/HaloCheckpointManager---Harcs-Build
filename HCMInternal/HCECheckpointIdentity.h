@@ -30,13 +30,13 @@
 //     id8    8 bytes   @ 0x412    identical across levels  -> PLAYER IDENTITY   ( 6 occurrences)
 //     id8b   8 bytes   @ 0x440    identical across levels  -> PLAYER IDENTITY   ( 6 occurrences)
 //     name  32 bytes   @ 0x420    identical across levels  -> PLAYER IDENTITY   ( 8 occurrences)
-//     tag   12 bytes   @ 0x478    DIFFERS between levels   -> PER-SAVE TOKEN    ( 5 occurrences)
+//     tag   12 bytes   @ 0x478    DIFFERS between sessions -> PER-SESSION TOKEN ( 5 occurrences)
 //
-// ⚠ `tag` is NOT a player identifier. The same player produced "C648" on one level and "I879" on another, so it
-// is generated per save. It is rewritten anyway, deliberately: the configuration that was PROVEN to work in game
-// rewrote all five, and reproducing a verified-working transform exactly is worth more than shaving one field on
-// a theory. If it ever needs to stop being rewritten, that is a one-line change here - but do not make it on
-// reasoning alone, make it on a test.
+// ⚠ `tag` is NOT a player identifier, and it is PER GAME LAUNCH rather than per save - corrected by
+// measurement: one player produced "C648", "I879" and "X721" across three sessions, while four checkpoints
+// dumped minutes apart inside a single session all carried "X721". It is still rewritten, deliberately,
+// because the configuration PROVEN to work in game rewrote all five - but it must never take part in the
+// DECISION of whether to rewrite. See Identity::samePlayerAs.
 //
 // ⚠ THE OFFSETS ABOVE ARE ONLY USED TO *LEARN* THE TWO IDENTITIES. The rewrite itself is a whole-blob
 // search-and-replace of the resulting byte patterns, so occurrences buried in the live player structures (around
@@ -87,6 +87,25 @@ namespace HCECheckpointIdentity
 				&& name == other.name && tag == other.tag;
 		}
 		bool operator!=(const Identity& other) const { return !(*this == other); }
+
+		// ⚠ THE TAG IS PER-SESSION, SO IT MUST NOT DECIDE WHETHER TO REWRITE.
+		//
+		// Corrected 2026-08-10 by measurement. The tag was first thought to be per-save; it is in fact per game
+		// LAUNCH - the same player produced C648, I879 and X721 across three sessions, and four checkpoints
+		// dumped minutes apart within one session all share X721.
+		//
+		// That matters, because comparing the whole Identity meant the tag alone made every one of the user's
+		// OWN checkpoints look foreign the moment they relaunched the game, firing a rewrite on files that
+		// needed nothing done to them. Harmless in effect - no tag occurrence lies inside any field the engine
+		// compares - but it is pointless churn on a 12 MB buffer and it made "injecting your own checkpoint is
+		// a no-op" untrue, which is exactly the kind of quiet inaccuracy that costs an hour to unpick later.
+		//
+		// So the DECISION uses the four fields that genuinely identify a player. The REWRITE still includes the
+		// tag once that decision is yes, because the transform proven to work in game rewrote all five.
+		bool samePlayerAs(const Identity& other) const
+		{
+			return id4 == other.id4 && id8 == other.id8 && id8b == other.id8b && name == other.name;
+		}
 
 		// The player-visible name, for messages. Best effort: the field is UTF-16 and may hold anything.
 		std::string displayName() const
