@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <shared_mutex>   // pch.h carries <mutex> only; the render-path gate is a shared_timed_mutex
 #include "HCETriggerOverlay.h"
 #include "IMCCStateHook.h"
 #include "IMessagesGUI.h"
@@ -688,7 +689,31 @@ private:
 	// ImGui path below keeps working.
 	std::optional<std::weak_ptr<Render3DEventProvider>> mRender3DProviderOptionalWeak;
 	std::unique_ptr<ScopedCallback<Render3DEvent>> mRender3DEventCallback;
-	std::atomic_bool mCurrentlyRendering3D{ false };   // waited on before the subscription is dropped
+
+	// Render-path lifetime gate. Replaces a ScopedAtomicBool + `mCurrentlyRendering3D.wait(true)` pair that had
+	// two defects. ScopedAtomicBool is `wait(true); atom = true;` - a TOCTOU, not a lock; D3D12Hook.h documents
+	// and rejects the same flaw. And the waiter had NO timeout, so if the render thread ever stalled inside
+	// onRender3DEvent, whoever called set3DRenderingEnabled(false) blocked forever at 0% CPU - including the
+	// state-hook thread, which reaches it on every game state change, and therefore on every revert.
+	//
+	// The render path now never blocks (try_to_lock, skip the frame), so our teardown cannot stall the game's
+	// render thread, and the drain side is bounded. See dropRender3DSubscription.
+	std::shared_timed_mutex mRender3DGuard;
+	std::atomic_bool mRender3DDraining{ false };
+
+	// Serialises set3DRenderingEnabled as a whole, so mRender3DEventCallback has ONE owner rather than being
+	// guarded on the drop side only. Three unsynchronised threads reach that function: the state-hook poll
+	// thread (onGameStateChanged), and a thread GUISimpleToggle spawns and DETACHES per checkbox click
+	// (onToggleEvent). BinarySetting's own mutex serialises toggle-against-toggle but not toggle-against-state-
+	// change, so without this an enable and a disable can race on the same unique_ptr: one resets (deletes) it
+	// while the other stores into it, and a lost update leaves a live subscription that the destructor's drain
+	// never sees - a callback into freed memory every frame. A revert reaches the disable side on the poll
+	// thread, which is exactly when a click is likely to be in flight.
+	//
+	// NOT mRender3DGuard: dropRender3DSubscription takes that one exclusively, and shared_timed_mutex is not
+	// recursive. Lock order is mRender3DSubscriptionMutex -> mRender3DGuard, one way only. The render path takes
+	// neither by blocking - it try_locks the guard and bails - so it cannot close a cycle.
+	std::mutex mRender3DSubscriptionMutex;
 
 	// GetTickCount64 of the last frame the 3D path actually drew. The ImGui RenderEvent fires EARLIER in the
 	// frame than the D3D12 render event, so the fallback cannot ask "did 3D draw this frame" - it asks "has 3D
@@ -1558,7 +1583,11 @@ private:
 		if (!renderer) return;
 		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER) return;
 
-		ScopedAtomicBool renderingLock(mCurrentlyRendering3D);
+		// Never blocks: if a teardown is draining the render path, skip this frame rather than stall the game's
+		// render thread. try_to_lock also means a waiting drain can never park us behind it.
+		if (mRender3DDraining.load(std::memory_order_acquire)) return;
+		std::shared_lock<std::shared_timed_mutex> renderLock(mRender3DGuard, std::try_to_lock);
+		if (!renderLock.owns_lock()) return;
 
 		try
 		{
@@ -1760,15 +1789,63 @@ private:
 
 	// Subscribes/unsubscribes the 3D render event. Subscribing is what makes Render3DEventProvider do its
 	// per-frame camera work at all, so it is kept off unless the overlay is actually on.
-	void set3DRenderingEnabled(bool enabled)
+	// How long a drain waits for an in-flight render callback. A frame is milliseconds, so this is generous for a
+	// slow one and still finite - which is the entire point, since the wait it replaces had no bound at all.
+	static constexpr std::chrono::milliseconds kRender3DDrainTimeout{ 1000 };
+
+	// Stops new entries to onRender3DEvent, waits for any in-flight one, and drops the subscription - all before
+	// releasing the guard, so a callback cannot slip in between the wait and the reset.
+	//
+	// mustSucceed distinguishes the two callers, and they need genuinely different answers:
+	//
+	//  - false (a toggle or a game state change, i.e. every revert): give up after the timeout and leave the
+	//    subscription IN PLACE. Dropping it while a callback is still inside would free state that callback is
+	//    using. Staying subscribed is harmless here because THIS OBJECT STILL EXISTS - mReady and mIsActive make
+	//    the callback a no-op, and the destructor will drain it properly later. This is the path that used to
+	//    block the state-hook thread forever.
+	//
+	//  - true (the destructor): there is no safe way to give up. Every member is about to be freed while the
+	//    provider still holds a lambda capturing `this`, so returning early would turn a hang into a
+	//    use-after-free. Keep waiting, but log each attempt so a stall is visible rather than silent.
+	bool dropRender3DSubscription(bool mustSucceed)
 	{
+		mRender3DDraining.store(true, std::memory_order_release);
+		for (;;)
+		{
+			{
+				std::unique_lock<std::shared_timed_mutex> drain(mRender3DGuard, kRender3DDrainTimeout);
+				if (drain.owns_lock())
+				{
+					mRender3DEventCallback.reset();
+					break;
+				}
+			}
+
+			if (!mustSucceed)
+			{
+				mRender3DDraining.store(false, std::memory_order_release);
+				PLOG_ERROR << "HCETriggerOverlay: timed out draining the 3D render path; keeping the subscription "
+					"rather than freeing state it may still be using";
+				return false;
+			}
+
+			PLOG_ERROR << "HCETriggerOverlay: still waiting for the 3D render path to finish before teardown; "
+				"cannot give up here without freeing state a live callback is using";
+		}
+		mRender3DDraining.store(false, std::memory_order_release);
+		return true;
+	}
+
+	// forTeardown is set only by the destructor - see dropRender3DSubscription for why it cannot give up there.
+	void set3DRenderingEnabled(bool enabled, bool forTeardown = false)
+	{
+		// Covers BOTH branches: every read and write of mRender3DEventCallback happens under it.
+		std::scoped_lock subscriptionLock(mRender3DSubscriptionMutex);
+
 		if (!enabled)
 		{
 			if (mRender3DEventCallback)
-			{
-				if (mCurrentlyRendering3D) mCurrentlyRendering3D.wait(true);
-				mRender3DEventCallback.reset();
-			}
+				dropRender3DSubscription(forTeardown);
 			mLast3DDrawTick.store(0, std::memory_order_release);
 			// Forget which path was last reported, so switching the overlay back on says so again rather than
 			// staying silent because it happens to match the state from before it was switched off.
@@ -2090,8 +2167,9 @@ public:
 		mReady.store(false, std::memory_order_release);
 		mIsActive = false;
 		// Drop the 3D subscription FIRST, and wait for any in-flight render callback: it touches every member
-		// below this point.
-		set3DRenderingEnabled(false);
+		// below this point. forTeardown = true, because giving up here would free that state underneath a live
+		// callback rather than merely leaving it subscribed.
+		set3DRenderingEnabled(false, true);
 		detachCameraHook();
 		setActivityTracking(false);
 		mRenderEventCallback.removeCallback();
