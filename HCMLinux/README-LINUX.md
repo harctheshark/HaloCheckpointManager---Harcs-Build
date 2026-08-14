@@ -1,7 +1,28 @@
 # HCM on Linux — Halo Campaign Evolved
 
-**Status: EXPERIMENTAL, and untested on Linux.** It was built and sanity-checked on Windows only. Please
-report what happens — the failure modes below are predictions, not observations.
+**Status: EXPERIMENTAL. The overlay works; there is an open crash.**
+
+Confirmed on Arch/Manjaro, Proton 11.0-100, RX 7800 XT (RADV):
+
+- ✅ the launcher runs under Proton and injects
+- ✅ **the D3D12 hook takes against VKD3D-Proton and the in-game overlay renders** — this was the big
+  unknown, and it works
+- ❌ the game crashed on entering the main menu (~44 s in)
+
+**About that crash: the evidence says it is not HCM.** Two minidumps from the same machine — one with HCM
+loaded, one without — fault at *the identical address* (`HaloCampaignEvolved.exe+0x46A33D5`) with the
+*identical* 44-frame call stack (`PCallStackHash 1E127A09…D3E2`) on the GameThread. The instruction is:
+
+```asm
+mov  rax, [rcx]          ; rcx is NULL
+call qword ptr [rax+1A0h]
+```
+
+a virtual call on a null `this`, in the game's own code. No HCM frame appears in either stack.
+
+⚠ That is strong evidence, not proof. **If you hit this, please run the control test:** launch the game
+through Steam with HCM *not* running, and reach the main menu. If it crashes the same way, the crash belongs
+to the game under Proton and not to HCM. Report either result.
 
 ## Quick start
 
