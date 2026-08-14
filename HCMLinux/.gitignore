@@ -1,0 +1,4 @@
+package/
+*.zip
+*.obj
+*.exe
