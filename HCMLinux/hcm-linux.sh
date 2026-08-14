@@ -103,19 +103,87 @@ echo "[hcm] prefix: $PREFIX/pfx"
 [ -f "$HERE/HCMExternal.exe" ] || die "HCMExternal.exe not found next to this script"
 cd "$HERE" || die "cannot cd to $HERE"
 
-# ---- locate Proton ------------------------------------------------------------------------------------------
+# ================================================================================================================
+# ---- locate Proton -- AND REFUSE TO RUN THE WRONG ONE ----------------------------------------------------------
+#
+# ⚠⚠ THIS DAMAGED A USER'S PREFIX AND THE FIX IS TO REFUSE, NOT TO GUESS.
+#
+# The previous version tried to prefer the Proton the prefix was built with, but the loop assigned
+# PROTON="$p" for EVERY candidate and only stopped on a match - and the match compared a directory name
+# against the contents of config_info, which is not that. So when nothing matched it silently kept whatever
+# came last, which on the reporting machine was GE-Proton9-5 from compatibilitytools.d. `proton run` then did
+# what it is supposed to do with a mismatched prefix:
+#
+#     Proton: Upgrading prefix from 11.0-100 to GE-Proton9-5
+#     Proton: Prefix has an invalid version?! You may want to back up user files and delete this prefix.
+#     wine: configuration in ".../compatdata/2806050/pfx" has been updated.
+#
+# The game then crashed in its OWN code (null deref, no HCM module in the dump at all) because it was running
+# in a prefix that had been rewritten for a different Proton.
+#
+# A prefix downgrade is not something a third-party tool may do by accident. So: read the version the prefix
+# actually is, require an EXACT match, and if there is no match, STOP and say so. Running the wrong Proton is
+# strictly worse than not running at all.
+# ================================================================================================================
+proton_version_of() {   # $1 = a proton install dir
+  [ -f "$1/version" ] && head -1 "$1/version" 2>/dev/null | tr -d '\r\n' && return 0
+  basename "$1"
+}
+
 PROTON="${HCM_PROTON:-}"
+PREFIX_VER=""
+[ -f "$PREFIX/version" ] && PREFIX_VER="$(head -1 "$PREFIX/version" 2>/dev/null | tr -d '\r\n')"
+
 if [ -z "$PROTON" ]; then
-  # Prefer the version the prefix was last built with, if Steam recorded it.
-  want=""
-  [ -f "$PREFIX/config_info" ] && want="$(head -1 "$PREFIX/config_info" 2>/dev/null)"
+  if [ -z "$PREFIX_VER" ]; then
+    die "cannot tell which Proton built this prefix ($PREFIX/version is missing).
+       Refusing to guess - running the wrong Proton REWRITES the prefix and breaks the game.
+       Launch the game once through Steam, then retry, or name it explicitly:
+           HCM_PROTON=/path/to/Proton/proton $0"
+  fi
+  echo "[hcm] prefix was built by Proton: $PREFIX_VER"
+
   for lib in $(libraries); do
-    for p in "$lib/common"/Proton*/proton "$HOME/.steam/steam/compatibilitytools.d"/*/proton; do
+    for p in "$lib/common"/Proton*/proton; do
       [ -f "$p" ] || continue
-      PROTON="$p"
-      case "$want" in *"$(basename "$(dirname "$p")")"*) break 2;; esac
+      v="$(proton_version_of "$(dirname "$p")")"
+      if [ "$v" = "$PREFIX_VER" ]; then PROTON="$p"; break 2; fi
     done
   done
+  if [ -z "$PROTON" ]; then
+    for p in "$HOME/.steam/steam/compatibilitytools.d"/*/proton \
+             "$HOME/.local/share/Steam/compatibilitytools.d"/*/proton; do
+      [ -f "$p" ] || continue
+      v="$(proton_version_of "$(dirname "$p")")"
+      if [ "$v" = "$PREFIX_VER" ]; then PROTON="$p"; break; fi
+    done
+  fi
+
+  if [ -z "$PROTON" ]; then
+    echo "[hcm] could not find the Proton that built this prefix ($PREFIX_VER)." >&2
+    echo "[hcm] Proton installs found:" >&2
+    for lib in $(libraries); do
+      for p in "$lib/common"/Proton*/proton; do
+        [ -f "$p" ] && echo "        $(proton_version_of "$(dirname "$p")")   $(dirname "$p")" >&2
+      done
+    done
+    for p in "$HOME/.steam/steam/compatibilitytools.d"/*/proton; do
+      [ -f "$p" ] && echo "        $(proton_version_of "$(dirname "$p")")   $(dirname "$p")" >&2
+    done
+    die "REFUSING TO CONTINUE. Running a different Proton would rewrite the prefix and break the game.
+       Install/select the matching Proton in Steam, or override deliberately:
+           HCM_PROTON=/path/to/proton $0"
+  fi
+else
+  # Explicit override still gets checked, because the failure mode is a broken game, not a broken tool.
+  if [ -n "$PREFIX_VER" ]; then
+    v="$(proton_version_of "$(dirname "$PROTON")")"
+    if [ "$v" != "$PREFIX_VER" ]; then
+      echo "[hcm] WARNING: HCM_PROTON is '$v' but the prefix was built by '$PREFIX_VER'." >&2
+      echo "[hcm]          Proton WILL rewrite the prefix. Ctrl+C now unless you meant this." >&2
+      sleep 5
+    fi
+  fi
 fi
 
 # ================================================================================================================
