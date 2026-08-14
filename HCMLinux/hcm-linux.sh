@@ -29,18 +29,19 @@ steam_roots() {
     [ -d "$r/steamapps" ] && echo "$r"
   done
 }
+# ⚠ DEDUPE BY REAL PATH. ~/.steam/steam, ~/.local/share/Steam and ~/.steam/root are usually symlinks to the
+# same directory, so without this every Proton install gets listed five or six times and a genuine diagnostic
+# turns into an unreadable wall.
 libraries() {
-  local seen=""
-  for root in $(steam_roots); do
-    local base="$root/steamapps"
-    case " $seen " in *" $base "*) continue;; esac
-    seen="$seen $base"; echo "$base"
-    local vdf="$base/libraryfolders.vdf"
-    [ -f "$vdf" ] || continue
-    grep -oP '"path"\s*"\K[^"]+' "$vdf" 2>/dev/null | while read -r p; do
-      [ -d "$p/steamapps" ] && echo "$p/steamapps"
-    done
-  done
+  { for root in $(steam_roots); do
+      base="$root/steamapps"
+      readlink -f "$base" 2>/dev/null || echo "$base"
+      vdf="$base/libraryfolders.vdf"
+      [ -f "$vdf" ] || continue
+      grep -oP '"path"\s*"\K[^"]+' "$vdf" 2>/dev/null | while read -r p; do
+        [ -d "$p/steamapps" ] && { readlink -f "$p/steamapps" 2>/dev/null || echo "$p/steamapps"; }
+      done
+    done; } | awk '!seen[$0]++'
 }
 client_install_path() { steam_roots | head -1; }
 
@@ -125,64 +126,66 @@ cd "$HERE" || die "cannot cd to $HERE"
 # actually is, require an EXACT match, and if there is no match, STOP and say so. Running the wrong Proton is
 # strictly worse than not running at all.
 # ================================================================================================================
-proton_version_of() {   # $1 = a proton install dir
-  [ -f "$1/version" ] && head -1 "$1/version" 2>/dev/null | tr -d '\r\n' && return 0
-  basename "$1"
+# ⚠ MATCHING ON VERSION STRINGS DOES NOT WORK, AND THE SECOND ATTEMPT PROVED IT. The two files record
+# different things:
+#     compatdata/<appid>/version   ->  11.0-100                      (the build that made the prefix)
+#     <ProtonDir>/version          ->  1785138253 proton-11.0-1b     (timestamp + build name)
+# They never compare equal, and they are not even meant to: Steam updates Proton in place, so a healthy prefix
+# routinely records an older build than the install currently holds. Requiring equality means refusing forever.
+#
+# ★ config_info IS THE AUTHORITATIVE ANSWER. Proton writes it into compatdata/<appid> when it sets the prefix
+# up, and its lines are paths INTO the Proton dist that did it. Walking up from that path to the directory
+# containing the `proton` script names the exact install, with no string matching at all.
+proton_dir_from_config_info() {
+  local ci="$PREFIX/config_info" line dir
+  [ -f "$ci" ] || return 1
+  while read -r line; do
+    case "$line" in /*) ;; *) continue;; esac
+    dir="$line"
+    while [ "$dir" != "/" ] && [ -n "$dir" ]; do
+      if [ -f "$dir/proton" ]; then echo "$dir/proton"; return 0; fi
+      dir="$(dirname "$dir")"
+    done
+  done < "$ci"
+  return 1
 }
 
 PROTON="${HCM_PROTON:-}"
 PREFIX_VER=""
 [ -f "$PREFIX/version" ] && PREFIX_VER="$(head -1 "$PREFIX/version" 2>/dev/null | tr -d '\r\n')"
+[ -n "$PREFIX_VER" ] && echo "[hcm] prefix was built by Proton: $PREFIX_VER"
 
 if [ -z "$PROTON" ]; then
-  if [ -z "$PREFIX_VER" ]; then
-    die "cannot tell which Proton built this prefix ($PREFIX/version is missing).
-       Refusing to guess - running the wrong Proton REWRITES the prefix and breaks the game.
-       Launch the game once through Steam, then retry, or name it explicitly:
-           HCM_PROTON=/path/to/Proton/proton $0"
-  fi
-  echo "[hcm] prefix was built by Proton: $PREFIX_VER"
+  PROTON="$(proton_dir_from_config_info || true)"
+  [ -n "$PROTON" ] && echo "[hcm] proton (from the prefix's own config_info): $PROTON"
+fi
 
-  for lib in $(libraries); do
-    for p in "$lib/common"/Proton*/proton; do
-      [ -f "$p" ] || continue
-      v="$(proton_version_of "$(dirname "$p")")"
-      if [ "$v" = "$PREFIX_VER" ]; then PROTON="$p"; break 2; fi
-    done
-  done
-  if [ -z "$PROTON" ]; then
-    for p in "$HOME/.steam/steam/compatibilitytools.d"/*/proton \
-             "$HOME/.local/share/Steam/compatibilitytools.d"/*/proton; do
-      [ -f "$p" ] || continue
-      v="$(proton_version_of "$(dirname "$p")")"
-      if [ "$v" = "$PREFIX_VER" ]; then PROTON="$p"; break; fi
-    done
-  fi
-
-  if [ -z "$PROTON" ]; then
-    echo "[hcm] could not find the Proton that built this prefix ($PREFIX_VER)." >&2
-    echo "[hcm] Proton installs found:" >&2
-    for lib in $(libraries); do
-      for p in "$lib/common"/Proton*/proton; do
-        [ -f "$p" ] && echo "        $(proton_version_of "$(dirname "$p")")   $(dirname "$p")" >&2
-      done
+if [ -z "$PROTON" ]; then
+  echo "[hcm] could not determine which Proton owns this prefix." >&2
+  echo "[hcm] $PREFIX/config_info is missing or names no Proton install." >&2
+  echo "[hcm] Proton installs found:" >&2
+  { for lib in $(libraries); do
+      for p in "$lib/common"/Proton*/proton; do [ -f "$p" ] && echo "        $(dirname "$p")"; done
     done
     for p in "$HOME/.steam/steam/compatibilitytools.d"/*/proton; do
-      [ -f "$p" ] && echo "        $(proton_version_of "$(dirname "$p")")   $(dirname "$p")" >&2
-    done
-    die "REFUSING TO CONTINUE. Running a different Proton would rewrite the prefix and break the game.
-       Install/select the matching Proton in Steam, or override deliberately:
+      [ -f "$p" ] && echo "        $(dirname "$p")"
+    done; } | awk '!seen[$0]++' >&2
+  die "REFUSING TO GUESS. Running the wrong Proton REWRITES the prefix and breaks the game - that is
+       exactly what happened on the first attempt (11.0-100 downgraded to GE-Proton9-5).
+       Launch the game once through Steam so config_info is written, or name it yourself:
            HCM_PROTON=/path/to/proton $0"
-  fi
-else
-  # Explicit override still gets checked, because the failure mode is a broken game, not a broken tool.
-  if [ -n "$PREFIX_VER" ]; then
-    v="$(proton_version_of "$(dirname "$PROTON")")"
-    if [ "$v" != "$PREFIX_VER" ]; then
-      echo "[hcm] WARNING: HCM_PROTON is '$v' but the prefix was built by '$PREFIX_VER'." >&2
-      echo "[hcm]          Proton WILL rewrite the prefix. Ctrl+C now unless you meant this." >&2
-      sleep 5
-    fi
+fi
+
+# An explicit override is honoured, but say what it will do first: if it is not the install config_info names,
+# Proton will rewrite the prefix, and the failure mode of that is the user's game rather than this tool.
+if [ -n "${HCM_PROTON:-}" ]; then
+  owner="$(proton_dir_from_config_info || true)"
+  if [ -n "$owner" ] && [ "$owner" != "$HCM_PROTON" ]; then
+    echo "[hcm] WARNING: HCM_PROTON overrides the install this prefix belongs to." >&2
+    echo "[hcm]            prefix owner: $owner" >&2
+    echo "[hcm]            you chose   : $HCM_PROTON" >&2
+    echo "[hcm]          Proton WILL rewrite the prefix. Ctrl+C now unless you meant this." >&2
+    sleep 5
   fi
 fi
 
