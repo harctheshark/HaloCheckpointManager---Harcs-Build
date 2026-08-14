@@ -38,7 +38,10 @@ public:
 
 	uintptr_t getAiEnabledAddress();    // *(tls + 0x40). The BYTE lives AT that address (no second offset). 0 = frozen.
 	uintptr_t getSkullFlagsAddress();   // *(tls + 0x60) + 0x1EBE0. 56 bits = 7 bytes, LSB first.
-	uintptr_t getFreecamToggleAddress();// *(tls + 0xB8) + 0x9C8. One byte, 1 = freecam on.
+	// *(tls + 0xB8) + 0x9C8. Start of THREE contiguous bytes the engine's toggle writes as a unit:
+	// +0x9C8 master (1 = on), +0x9C9 always 0, +0x9CA follows the master. Writing only the master leaves the
+	// camera detached when freecam goes off - see the derivation in HCEFreecam::applyFreecam.
+	uintptr_t getFreecamToggleAddress();
 	uintptr_t getActiveCameraEntry();   // first non-null of (*(tls + 0x148) + slot*0x1AC), slot 0..3
 	uintptr_t getPlayerControlEntry();  // *(tls + 0xB8) + 0x80 + 0x198*localPlayer. s_player_control.
 

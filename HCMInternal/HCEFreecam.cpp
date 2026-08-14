@@ -30,12 +30,30 @@ private:
 	std::atomic<bool> mWantFreecam{ false };
 	std::chrono::steady_clock::time_point mLastMaintain{};
 
+	// The engine's own freecam toggle (sim rva 0x1F49E0) writes THREE adjacent bytes, not one:
+	//
+	//     cmp  byte ptr [rcx+0x9C8], r8b   ; r8b = 0
+	//     sete r8b                         ; r8b = !current
+	//     mov  byte ptr [rcx+0x9C8], r8b   ; master
+	//     mov  byte ptr [rcx+0x9C9], 0     ; always cleared
+	//     mov  byte ptr [rcx+0x9CA], r8b   ; follows the master
+	//
+	// +0x9C9 and +0x9CA are independently key-bindable sub-modes (their own toggle handlers live at sim
+	// 0x275E4D and 0x275EE8), and a second "is freecam active" predicate at sim 0x2764C0 answers on
+	// (+0x9C8 && +0x9C9) rather than +0x9C8 alone. Writing only the master - which is what this did - turns
+	// freecam on fine but leaves +0x9CA latched on when it goes off, so the view never returns to the player.
+	//
+	// Nothing else happens on a real toggle: the handler tail-jumps to 0x1FE0E0, which is just the HaloScript
+	// expression-result publisher. So reproducing these three bytes reproduces the transition exactly. We write
+	// the bytes rather than calling the handler because it reads gs:[0x58] and would have to run on the
+	// simulation thread, and because it is a toggle rather than a setter.
 	void applyFreecam(bool enabled) // throws HCMRuntimeException
 	{
 		lockOrThrow(playerStateWeak, playerState);
-		const uintptr_t address = playerState->getFreecamToggleAddress();
-		const uint8_t value = enabled ? 1 : 0;
-		if (!HCEGetPlayerState::tryWriteRaw(address, &value, sizeof(value)))
+		const uintptr_t address = playerState->getFreecamToggleAddress(); // +0x9C8; the trio is contiguous
+		const uint8_t state = enabled ? 1 : 0;
+		const uint8_t values[3]{ state, 0, state };
+		if (!HCEGetPlayerState::tryWriteRaw(address, values, sizeof(values)))
 		{
 			playerState->invalidateCache();
 			throw HCMRuntimeException("Could not write the Halo Campaign Evolved camera state");
@@ -117,8 +135,13 @@ private:
 			if (!HCEGetPlayerState::tryReadRaw(address, &current, sizeof(current))) return;
 			if (current == 1) return;
 
-			const uint8_t enabled = 1;
-			HCEGetPlayerState::tryWriteRaw(address, &enabled, sizeof(enabled));
+			// Only reached once the master has been knocked off under us (a revert, a map load - see the
+			// camera reset at sim 0x26D385, which restores these bytes only when its game-state check passes).
+			// Re-establish the engine's full ON state, not just the master, for the reason in applyFreecam.
+			// Gating on master == 0 is what keeps this from fighting the player's own sub-mode hotkeys: while
+			// freecam is genuinely on we return above and never touch +0x9C9 / +0x9CA.
+			const uint8_t values[3]{ 1, 0, 1 };
+			HCEGetPlayerState::tryWriteRaw(address, values, sizeof(values));
 		}
 		catch (HCMRuntimeException)
 		{

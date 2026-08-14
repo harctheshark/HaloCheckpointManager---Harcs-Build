@@ -1,13 +1,15 @@
 # HCM on Linux — Halo Campaign Evolved
 
-**Status: EXPERIMENTAL. The overlay works; there is an open crash.**
+**Status: EXPERIMENTAL, but broadly working. One open crash.**
 
 Confirmed on Arch/Manjaro, Proton 11.0-100, RX 7800 XT (RADV):
 
 - ✅ the launcher runs under Proton and injects
 - ✅ **the D3D12 hook takes against VKD3D-Proton and the in-game overlay renders** — this was the big
   unknown, and it works
-- ❌ the game crashed on entering the main menu (~44 s in)
+- ✅ **features confirmed working in-game**: BSP overlay, trigger overlay, free camera, force checkpoint,
+  teleport, and others. A few small bugs remain.
+- ❌ the game crashes on entering the main menu (~44 s in)
 
 **About that crash: the evidence says it is not HCM.** Two minidumps from the same machine — one with HCM
 loaded, one without — fault at *the identical address* (`HaloCampaignEvolved.exe+0x46A33D5`) with the
@@ -23,6 +25,17 @@ a virtual call on a null `this`, in the game's own code. No HCM frame appears in
 ⚠ That is strong evidence, not proof. **If you hit this, please run the control test:** launch the game
 through Steam with HCM *not* running, and reach the main menu. If it crashes the same way, the crash belongs
 to the game under Proton and not to HCM. Report either result.
+
+## Fixed since the first build
+
+**Free camera would not return to the player camera when switched off.** The engine's own freecam toggle
+writes three contiguous bytes — a master flag plus two sub-mode flags that follow it. HCM wrote only the
+master, so turning freecam off left a sub-mode latched on and the view stayed detached. HCM now reproduces
+all three writes, matching the engine exactly.
+
+A separate crash was reported shortly after a failed freecam-off (a null virtual call in the game, ~280 s in,
+a *different* stack from the main-menu one). It is plausible that the half-detached camera state led to it,
+but that is not established — the fix above addresses the camera bug on its own merits.
 
 ## Quick start
 
