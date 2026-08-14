@@ -9,7 +9,10 @@ Confirmed on Arch/Manjaro, Proton 11.0-100, RX 7800 XT (RADV):
   unknown, and it works
 - ✅ **features confirmed working in-game**: BSP overlay, trigger overlay, free camera, force checkpoint,
   teleport, and others. A few small bugs remain.
-- ❌ the game crashes on entering the main menu (~44 s in)
+- ❌ the game crashes if HCM is hooked at the main menu (~44 s in)
+
+> ⚠ **Workaround: hook HCM while you are already in a level, not at the main menu.**
+> Load into a mission first, then let HCM inject. Everything works normally from there.
 
 **About that crash: the evidence says it is not HCM.** Two minidumps from the same machine — one with HCM
 loaded, one without — fault at *the identical address* (`HaloCampaignEvolved.exe+0x46A33D5`) with the
