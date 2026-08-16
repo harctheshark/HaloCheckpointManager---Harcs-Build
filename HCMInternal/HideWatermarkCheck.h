@@ -13,11 +13,12 @@ private:
 
 
 public:
+	// Was gated on nameof(dxgiInternalPresentFunction) - a hard-coded OBS RVA that has been deleted
+	// (see OBSHookDiscovery.h / OBSBypassCheck.h). The watermark has nothing to do with OBS anyway;
+	// keeping the requirement would just hide the toggle. Class kept because GUIRequiredServices names
+	// it as the required service for GUIElementEnum::HideWatermarkGUI.
 	HideWatermarkCheck(GameState gameImpl, IDIContainer& dicon)
 	{
-		auto ptr = dicon.Resolve<PointerDataStore>().lock();
-		auto dxgiInternalPresentFunction = ptr->getData < std::shared_ptr<MultilevelPointer>>(nameof(dxgiInternalPresentFunction));
-		assert(dxgiInternalPresentFunction);
 	}
 
 

@@ -2,6 +2,7 @@
 #include "ModuleHook.h"
 #include "ModuleHookManager.h"
 #include "PointerDataStore.h"
+#include "OBSHookDiscovery.h"
 
 // imgui
 #include "imgui.h"
@@ -63,6 +64,9 @@ private:
 	ID3D11RenderTargetView* m_pMainRenderTargetView = nullptr;
 
 	void CreateDummySwapchain(IDXGISwapChain*& pDummySwapchain, ID3D11Device*& pDummyDevice);
+	// dxgi's IDXGISwapChain::Present entry point - the function OBS Detours-hooks. Used to identify
+	// OBS's trampoline pointer at runtime; we never hook this address ourselves. 0 on failure.
+	uintptr_t getDxgiPresentEntry();
 	void initializeD3Ddevice(IDXGISwapChain*);
 	bool isD3DdeviceInitialized = false;
 
@@ -94,5 +98,8 @@ public:
 
 	void beginHook();
 
-	void setOBSBypass(bool enabled);
+	// Throws HCMRuntimeException if the bypass was asked for and could not be set up. Returns
+	// DeferredModuleNotLoaded when OBS's Game Capture simply isn't in the process yet - that is a
+	// normal state, not a failure: the hook stays registered and attaches by itself on LoadLibrary.
+	OBSBypassResult setOBSBypass(bool enabled);
 };

@@ -219,12 +219,14 @@ public:
             auto hb = std::make_shared<HeartbeatTimer>(sharedMem, settings); PLOGV << "hb init";
 
             auto lap = std::make_shared<Lapua>(); PLOGV << "lapua init";
-            // OBS bypass has no D3D12 capture path we have offsets for; the D3D12 overload exists so
-            // the service graph is identical on both games and toggling it gives a clean
-            // "not supported" message instead of doing nothing.
+            // The OBS bypass works on BOTH games. OBS selects d3d11/d3d10/d3d12_capture behind one
+            // shared Present hook, so the D3D12 overload does the same real work as the D3D11 one - it
+            // just has to cover Present1 as well, because UE5 presents through it. `imes` is passed so
+            // the "OBS isn't running yet, the bypass will engage by itself" case can be reported as a
+            // plain message rather than as an error that resets the toggle.
             auto obsBypass = isCampaignEvolved
-                ? std::make_shared<OBSBypassManager>(std::weak_ptr<D3D12Hook>(d3d12), settings->OBSBypassToggle, exp)
-                : std::make_shared<OBSBypassManager>(std::weak_ptr<D3D11Hook>(d3d), settings->OBSBypassToggle, exp); PLOGV << "obsBypass init";
+                ? std::make_shared<OBSBypassManager>(std::weak_ptr<D3D12Hook>(d3d12), settings->OBSBypassToggle, exp, imes)
+                : std::make_shared<OBSBypassManager>(std::weak_ptr<D3D11Hook>(d3d), settings->OBSBypassToggle, exp, imes); PLOGV << "obsBypass init";
             auto hideWatermark = std::make_shared<HideWatermarkManager>(settings->hideWatermark, exp); PLOGV << "hideWatermark init";
             // Installed LAST, once every service that its callbacks touch exists.
             if (isCampaignEvolved)
@@ -294,7 +296,7 @@ public:
                 Sleep(10);
             }
             PLOG_INFO << "HCMInternal services are about to fall out of scope";
-
+
 
             if (modalFailureWindowThread.joinable())
                 modalFailureWindowThread.join();

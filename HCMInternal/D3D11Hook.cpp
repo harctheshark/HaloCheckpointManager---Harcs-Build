@@ -8,6 +8,8 @@
 #include "Renderer2D.h"
 #include "Lapua.h"
 #include "safetyhook.hpp"
+#include "OBSHookDiscovery.h"
+#include "ModuleCache.h" // not reachable via pch
 
 
 D3D11Hook* D3D11Hook::instance = nullptr;
@@ -579,7 +581,38 @@ void D3D11Hook::beginHook()
 
 
 
-void D3D11Hook::setOBSBypass(bool enabled)
+// The entry point of dxgi.dll's IDXGISwapChain::Present - the function OBS Detours-hooks. We need it
+// to RECOGNISE OBS's trampoline (see OBSHookDiscovery.h), not to hook it ourselves.
+//
+// Our own present hook is a VMT hook on the game's swapchain, so its "original" IS dxgi's shared
+// implementation, untouched by us. Falling back to reading vtable slot 8 of pIDXGISwapChain covers
+// the (impossible in practice - setOBSBypass can only be reached from the GUI, long after
+// beginHook()) case where the vmt hook is not installed.
+uintptr_t D3D11Hook::getDxgiPresentEntry()
+{
+	if (auto* fromVmtHook = presentHook.original<void*>())
+		return (uintptr_t)fromVmtHook;
+
+	PLOG_WARNING << "The present vmt hook had no original; falling back to reading the swapchain vtable directly";
+
+	auto ptr = pointerDataStoreWeak.lock();
+	if (!ptr) return 0;
+
+	uintptr_t pIDXGISwapChain = 0;
+	auto mlp_IDXGISwapChain = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(pIDXGISwapChain));
+	if (!mlp_IDXGISwapChain || !mlp_IDXGISwapChain->resolve(&pIDXGISwapChain) || !pIDXGISwapChain)
+		return 0;
+
+	// pIDXGISwapChain is the OBJECT; its first qword is the vtable.
+	if (IsBadReadPtr((void*)pIDXGISwapChain, sizeof(void*))) return 0;
+	void** vtable = *(void***)pIDXGISwapChain;
+	if (!vtable || IsBadReadPtr(vtable, sizeof(void*) * ((size_t)IDXGISwapChainVMT::Present + 1))) return 0;
+
+	return (uintptr_t)vtable[(size_t)IDXGISwapChainVMT::Present];
+}
+
+
+OBSBypassResult D3D11Hook::setOBSBypass(bool enabled)
 {
 	PLOGV << "D3D11Hook::setOBSBypass called with value: " << enabled;
 	try
@@ -592,16 +625,66 @@ void D3D11Hook::setOBSBypass(bool enabled)
 				presentHookRunning.wait(true);
 			}
 
+			const uintptr_t dxgiEntry = getDxgiPresentEntry();
+			if (!dxgiEntry)
+				throw HCMRuntimeException("HCM could not determine the address of DirectX's Present function, so the OBS bypass cannot be set up.");
 
-			lockOrThrow(pointerDataStoreWeak, ptr);
-			auto dxgiInternalPresentFunction = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(dxgiInternalPresentFunction));
+			PLOG_DEBUG << std::format("OBS bypass: dxgi IDXGISwapChain::Present entry is 0x{:X} (first byte suggests it is {}inline-hooked)",
+				dxgiEntry, looksInlineHooked(dxgiEntry) ? "" : "NOT ");
 
-			// starts attached
-			OBSPresentHook = ModuleInlineHook::make(L"graphics-hook64.dll", dxgiInternalPresentFunction, newDX11PresentOBSBypass, true);
+			auto realPresentPointer = std::make_shared<OBSRealFnPointer>(dxgiEntry, "Present");
+
+			// Run discovery ONCE here purely so we can tell the three outcomes apart and report them.
+			// The hook re-runs it on every attach through OBSRealFnPointer::resolve().
+			uintptr_t rva = 0;
+			OBSDiscoveryDiagnostics diagnostics{};
+			const OBSDiscoveryStatus status = discoverRealFnRva(dxgiEntry, rva, &diagnostics);
+
+			if (status == OBSDiscoveryStatus::NoDetourFound)
+			{
+				PLOG_ERROR << std::format(
+					"OBS bypass: graphics-hook64.dll is loaded (base 0x{:X}, size 0x{:X}) but no Present trampoline pointer was found. "
+					"Sections scanned: {}. {} aligned qwords examined, {} probed. dxgi Present entry used: 0x{:X}.",
+					diagnostics.moduleBase, (uint64_t)diagnostics.moduleSize, diagnostics.sectionsScanned,
+					diagnostics.qwordsScanned, diagnostics.candidatesProbed, diagnostics.dxgiEntry);
+				throw HCMRuntimeException("OBS is running but HCM could not locate its Present hook (unsupported OBS version). Report this with your OBS version.");
+			}
+
+			// startEnabled = true. When graphics-hook64.dll isn't loaded yet this attach is a no-op,
+			// but the hook stays registered with ModuleHookManager and attaches by itself the moment
+			// OBS's Game Capture injects. That deferred behaviour is the whole reason this is a
+			// ModuleInlineHook and not a bare safetyhook.
+			OBSPresentHook = ModuleInlineHook::make(L"graphics-hook64.dll", realPresentPointer, newDX11PresentOBSBypass, true);
+
+			// If a LATER (deferred) discovery fails there is nowhere to throw to - we would be inside
+			// LoadLibrary - so stop wanting to be attached instead of retrying on every DLL load.
+			realPresentPointer->setOnPermanentFailure([this]()
+				{
+					if (OBSPresentHook) OBSPresentHook->setWantsToBeAttached(false);
+				});
+
+			if (status == OBSDiscoveryStatus::ModuleNotLoaded)
+			{
+				PLOG_INFO << "OBS bypass armed, but graphics-hook64.dll is not loaded - it will attach automatically when OBS Game Capture injects";
+				return OBSBypassResult::DeferredModuleNotLoaded;
+			}
+
+			// Discovery said yes, so the hook must actually be installed. Anything else is a real
+			// failure and must NOT leave the toggle looking successful.
+			if (!OBSPresentHook || !OBSPresentHook->isHookInstalled())
+			{
+				PLOG_ERROR << std::format(
+					"OBS bypass: discovery succeeded (graphics-hook64.dll+0x{:X}) but the inline hook did not install. See the attach log above.", rva);
+				OBSPresentHook.reset();
+				throw HCMRuntimeException("HCM found OBS's Present hook but could not install the bypass over it. Another program may have hooked it first.");
+			}
+
+			PLOG_INFO << std::format("OBS bypass installed over graphics-hook64.dll+0x{:X}", rva);
+			return OBSBypassResult::Installed;
 		}
 		else
 		{
-			if (!OBSPresentHook) return; // don't need to reset if it's already reset
+			if (!OBSPresentHook) return OBSBypassResult::Removed; // don't need to reset if it's already reset
 
 			if (presentHookRunning)
 			{
@@ -611,6 +694,7 @@ void D3D11Hook::setOBSBypass(bool enabled)
 
 
 			OBSPresentHook.reset();
+			return OBSBypassResult::Removed;
 		}
 
 	}

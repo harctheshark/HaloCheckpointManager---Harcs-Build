@@ -441,6 +441,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="OBSBypassCheck.h" />
     <ClInclude Include="Renderer2D.h" />
     <ClInclude Include="OBSBypassManager.h" />
+    <ClInclude Include="OBSHookDiscovery.h" />
     <ClInclude Include="SetPlayerHealth.h" />
     <ClInclude Include="SwitchBSP.h" />
     <ClInclude Include="ThirdPersonRendering.h" />
@@ -864,6 +865,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="ModuleHook.cpp" />
     <ClCompile Include="ModuleHookManager.cpp" />
     <ClCompile Include="MultilevelPointer.cpp" />
+    <ClCompile Include="OBSHookDiscovery.cpp" />
     <ClCompile Include="GetPlayerDatum.cpp" />
     <ClCompile Include="HCECheckpointDetours.cpp" />
     <ClCompile Include="HCEGetPlayerState.cpp" />

@@ -661,6 +661,9 @@
     <ClInclude Include="OBSBypassManager.h">
       <Filter>Services\Rendering</Filter>
     </ClInclude>
+    <ClInclude Include="OBSHookDiscovery.h">
+      <Filter>Services\Rendering</Filter>
+    </ClInclude>
     <ClInclude Include="Renderer2D.h">
       <Filter>Services</Filter>
     </ClInclude>
@@ -1178,6 +1181,9 @@
     </ClCompile>
     <ClCompile Include="MultilevelPointer.cpp">
       <Filter>Classes</Filter>
+    </ClCompile>
+    <ClCompile Include="OBSHookDiscovery.cpp">
+      <Filter>Services\Rendering</Filter>
     </ClCompile>
     <ClCompile Include="ModuleCache.cpp">
       <Filter>Services</Filter>

@@ -4,6 +4,8 @@
 #include "Lapua.h"
 #include "RuntimeExceptionHandler.h"
 #include "BinarySetting.h"
+#include "IMessagesGUI.h"
+#include "OBSHookDiscovery.h"
 
 
 class OBSBypassManager
@@ -12,6 +14,9 @@ private:
 
 	// injected services
 	std::shared_ptr<RuntimeExceptionHandler> runtimeExceptions;
+	// Needed for the one outcome that is NOT an error and must NOT reset the toggle: "OBS isn't
+	// running yet". runtimeExceptions can only say "An error occured", which that is not.
+	std::shared_ptr<IMessagesGUI> messagesGUI;
 	// EXACTLY ONE of these is ever non-empty - whichever graphics hook App.h built for this process.
 	// mIsD3D12 (not weak_ptr::expired()) is what selects the branch: expired() would also be true for
 	// a D3D12 hook that has already been destroyed, which would silently fall through to the D3D11
@@ -28,30 +33,42 @@ private:
 		PLOGV << "onOBSBypassToggleEvent firing, newValue: " << newValue;
 		try
 		{
-			// Halo Campaign Evolved / D3D12. D3D12Hook::setOBSBypass throws HCMRuntimeException
-			// (there is no D3D12 capture path in graphics-hook64.dll we have offsets for), which the
-			// catch below turns into a user-facing message and resets the toggle. The Lapua checks
-			// are deliberately NOT run on this path: a hard "unsupported on this game" is not a
-			// Lapua service failure and must not be reported as one.
+			OBSBypassResult result = OBSBypassResult::Removed;
+
+			// Halo Campaign Evolved / D3D12 takes the SAME path as MCC now. OBS has no separate D3D12
+			// hook to defeat - it picks d3d11/d3d10/d3d12_capture behind one shared Present hook - so
+			// D3D12Hook::setOBSBypass does the same job against Present AND Present1.
+			//
+			// ⚠ The Lapua checks stay D3D11-ONLY. They gate Renderer2D (the watermark), which is
+			// DirectXTK SpriteBatch, i.e. hard D3D11, and is never rendered on the D3D12 path. Running
+			// them here would report a "Lapua service failure" for a service that is not involved.
 			if (mIsD3D12)
 			{
 				lockOrThrow(d3d12HookWeak, d3d12Hook);
-				d3d12Hook->setOBSBypass(newValue);
-				return;
-			}
-
-			lockOrThrow(d3d11HookWeak, d3d11Hook);
-
-			if (newValue)
-			{
-				// todo fix this up
-				if (Lapua::lapuaGood == false) throw HCMRuntimeException("Lapua service one failure");
-				if (Lapua::lapuaGood2 == false) throw HCMRuntimeException("Lapua service two failure");
-				d3d11Hook->setOBSBypass(true);
+				result = d3d12Hook->setOBSBypass(newValue);
 			}
 			else
 			{
-				d3d11Hook->setOBSBypass(false);
+				lockOrThrow(d3d11HookWeak, d3d11Hook);
+
+				if (newValue)
+				{
+					// todo fix this up
+					if (Lapua::lapuaGood == false) throw HCMRuntimeException("Lapua service one failure");
+					if (Lapua::lapuaGood2 == false) throw HCMRuntimeException("Lapua service two failure");
+					result = d3d11Hook->setOBSBypass(true);
+				}
+				else
+				{
+					result = d3d11Hook->setOBSBypass(false);
+				}
+			}
+
+			// NOT an error, and the toggle deliberately stays ON: the hook is registered with
+			// ModuleHookManager and attaches by itself the moment OBS's Game Capture injects.
+			if (result == OBSBypassResult::DeferredModuleNotLoaded && messagesGUI)
+			{
+				messagesGUI->addMessage("OBS Game Capture not detected - the bypass will engage automatically when you start a Game Capture source.");
 			}
 		}
 		catch (HCMRuntimeException ex)
@@ -75,24 +92,33 @@ private:
 
 
 public:
-	OBSBypassManager(std::weak_ptr<D3D11Hook> d3d11Hook, std::shared_ptr<BinarySetting<bool>> toggle, std::shared_ptr<RuntimeExceptionHandler> exp)
+	OBSBypassManager(std::weak_ptr<D3D11Hook> d3d11Hook, std::shared_ptr<BinarySetting<bool>> toggle, std::shared_ptr<RuntimeExceptionHandler> exp, std::shared_ptr<IMessagesGUI> mes)
 		:
 		mIsD3D12(false),
 		d3d11HookWeak(d3d11Hook),
 		OBSBypassToggle(toggle),
 		runtimeExceptions(exp),
+		messagesGUI(mes),
 		OBSBypassToggleEventCallback(toggle->valueChangedEvent, [this](bool& n) { onOBSBypassToggleEvent(n); })
-	{}
+	{
+		// The deferred re-attach runs on the LoadLibrary detour's thread, inside
+		// ModuleInlineHook::attach(), with no service graph in reach and no way to throw. This is how
+		// it reaches the user. See OBSHookDiscovery.h.
+		setOBSDiscoveryMessageSink(mes);
+	}
 
-	// Halo Campaign Evolved / D3D12 overload. Exists so App.h can build the service graph
-	// identically on both games; toggling it produces a clean "not supported" message.
-	OBSBypassManager(std::weak_ptr<D3D12Hook> d3d12Hook, std::shared_ptr<BinarySetting<bool>> toggle, std::shared_ptr<RuntimeExceptionHandler> exp)
+	// Halo Campaign Evolved / D3D12 overload. Exists so App.h can build the service graph identically
+	// on both games. It now does the same real work as the D3D11 one - see D3D12Hook::setOBSBypass.
+	OBSBypassManager(std::weak_ptr<D3D12Hook> d3d12Hook, std::shared_ptr<BinarySetting<bool>> toggle, std::shared_ptr<RuntimeExceptionHandler> exp, std::shared_ptr<IMessagesGUI> mes)
 		:
 		mIsD3D12(true),
 		d3d12HookWeak(d3d12Hook),
 		OBSBypassToggle(toggle),
 		runtimeExceptions(exp),
+		messagesGUI(mes),
 		OBSBypassToggleEventCallback(toggle->valueChangedEvent, [this](bool& n) { onOBSBypassToggleEvent(n); })
-	{}
+	{
+		setOBSDiscoveryMessageSink(mes);
+	}
 
 };

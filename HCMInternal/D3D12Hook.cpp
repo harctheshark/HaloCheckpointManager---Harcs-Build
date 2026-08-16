@@ -672,6 +672,9 @@ void D3D12Hook::beginHook()
 	try
 	{
 		const HookAddresses addresses = harvestHookAddresses();
+		// Remembered for the OBS bypass, which needs to know which dxgi entry points to look for
+		// Detours trampolines back into. See setOBSBypass.
+		mHarvestedAddresses = addresses;
 
 		// Every hook below follows the same three-step dance:
 		//     create (StartDisabled) -> publish the trampoline -> enable
@@ -1712,15 +1715,22 @@ HRESULT __stdcall D3D12Hook::newDX12Present(IDXGISwapChain* pSwapChain, UINT Syn
 	// frees the trampolines - and it doubles as the double-render guard for Present/Present1.
 	DetourEntryGuard entry(swapChainHookGuard);
 
-	if (entry.isOutermost())
-	{
-		renderOverlayFrame(pSwapChain, Flags);
-	}
-	else
+	if (!entry.isOutermost())
 	{
 		// dxgi forwarded Present -> Present1 (or the game did). The outer entry already rendered
 		// and submitted this frame's overlay; rendering again would submit it twice.
 		LOG_ONCE(PLOG_DEBUG << "Nested Present detour entry; the outer frame owns the overlay");
+	}
+	else if (obsBypassOwnsFrame(false))
+	{
+		// The OBS bypass thunk on RealPresent is live, so IT renders this frame - later in the chain,
+		// after OBS has taken its clean capture. Rendering here as well would submit the overlay twice
+		// and (in the install order where OBS's hook is outermost) put it back into the recording.
+		LOG_ONCE(PLOG_DEBUG << "OBS bypass owns the Present frame; skipping the overlay in newDX12Present");
+	}
+	else
+	{
+		renderOverlayFrame(pSwapChain, Flags);
 	}
 
 	return callOriginalPresent(pSwapChain, SyncInterval, Flags);
@@ -1737,19 +1747,117 @@ HRESULT __stdcall D3D12Hook::newDX12Present1(IDXGISwapChain1* pSwapChain, UINT S
 
 	DetourEntryGuard entry(swapChainHookGuard);
 
-	if (entry.isOutermost())
+	if (!entry.isOutermost())
+	{
+		LOG_ONCE(PLOG_DEBUG << "Nested Present1 detour entry; the outer frame owns the overlay");
+	}
+	else if (obsBypassOwnsFrame(true))
+	{
+		LOG_ONCE(PLOG_DEBUG << "OBS bypass owns the Present1 frame; skipping the overlay in newDX12Present1");
+	}
+	else
 	{
 		// Upcast is a no-op in this single-inheritance COM chain, and mAdoptedSwapChain is only
 		// ever compared, never dereferenced through this type.
 		renderOverlayFrame(static_cast<IDXGISwapChain*>(pSwapChain), PresentFlags);
 	}
-	else
-	{
-		LOG_ONCE(PLOG_DEBUG << "Nested Present1 detour entry; the outer frame owns the overlay");
-	}
 
 	return callOriginalPresent1(pSwapChain, SyncInterval, PresentFlags, pPresentParameters);
 }
+
+
+#pragma region OBS bypass thunks
+
+// Depth of our own OBS-bypass thunks on this thread. Same double-render problem as tlDetourDepth, one
+// level further down the chain: OBS hooks BOTH Present and Present1, and dxgi is free to forward one
+// to the other, so both trampolines can be entered for a single frame.
+static thread_local unsigned int tlOBSBypassDepth = 0;
+
+namespace
+{
+	class OBSBypassDepthGuard
+	{
+		bool mOutermost;
+	public:
+		OBSBypassDepthGuard() : mOutermost(tlOBSBypassDepth == 0) { ++tlOBSBypassDepth; }
+		~OBSBypassDepthGuard() { --tlOBSBypassDepth; }
+		OBSBypassDepthGuard(const OBSBypassDepthGuard&) = delete;
+		OBSBypassDepthGuard& operator=(const OBSBypassDepthGuard&) = delete;
+		bool isOutermost() const { return mOutermost; }
+	};
+}
+
+
+// static
+// ⚠ CALLERS MUST HOLD swapChainHookGuard (every detour does, via DetourEntryGuard). That is what makes
+// reading these shared_ptrs safe against teardownOBSBypass, which takes the same lock exclusively.
+bool D3D12Hook::obsBypassOwnsFrame(bool forPresent1)
+{
+	D3D12Hook* d3d = instance;
+	if (!d3d) return false;
+
+	const std::shared_ptr<ModuleInlineHook>& hook = forPresent1 ? d3d->mOBSPresent1Hook : d3d->mOBSPresentHook;
+	return hook && hook->isHookInstalled();
+}
+
+
+// static
+// Installed over the VALUE of OBS's RealPresent - i.e. Detours' trampoline back into dxgi, which
+// OBS's hook_present calls immediately AFTER data.capture(). Rendering here is therefore rendering
+// into a frame OBS has already recorded without us.
+HRESULT __stdcall D3D12Hook::newDX12PresentOBSBypass(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
+{
+	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::newDX12PresentOBSBypass");
+
+	OBSBypassDepthGuard bypassDepth;
+	// If our own dxgi Present detour is already on this thread's stack, this does not re-lock - it is
+	// covered by that frame's shared lock, which is held across its call to the original. Either way
+	// the lock is held for the whole of this function, which is what teardownOBSBypass drains against.
+	DetourEntryGuard entry(swapChainHookGuard);
+
+	if (bypassDepth.isOutermost())
+		renderOverlayFrame(pSwapChain, Flags);
+
+	D3D12Hook* d3d = instance;
+	if (d3d && d3d->mOBSPresentHook)
+	{
+		if (auto* original = d3d->mOBSPresentHook->getInlineHook().original<DX12Present*>())
+			return original(pSwapChain, SyncInterval, Flags);
+	}
+
+	// Unreachable by construction: teardownOBSBypass restores OBS's pointer under the exclusive lock,
+	// after which nothing can enter this function. Calling pSwapChain->Present() here would re-enter
+	// OBS's hook and recurse forever, so we drop the frame instead and say so.
+	LOG_ONCE(PLOG_FATAL << "OBS bypass thunk (Present) could not reach OBS's original function; dropping the frame");
+	return S_OK;
+}
+
+
+// static
+// UE5's D3D12 RHI presents through Present1, so on HaloCampaignEvolved this is the one that matters.
+// Separate function rather than a shared body because the signature differs.
+HRESULT __stdcall D3D12Hook::newDX12Present1OBSBypass(IDXGISwapChain1* pSwapChain, UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters)
+{
+	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::newDX12Present1OBSBypass");
+
+	OBSBypassDepthGuard bypassDepth;
+	DetourEntryGuard entry(swapChainHookGuard);
+
+	if (bypassDepth.isOutermost())
+		renderOverlayFrame(static_cast<IDXGISwapChain*>(pSwapChain), PresentFlags);
+
+	D3D12Hook* d3d = instance;
+	if (d3d && d3d->mOBSPresent1Hook)
+	{
+		if (auto* original = d3d->mOBSPresent1Hook->getInlineHook().original<DX12Present1*>())
+			return original(pSwapChain, SyncInterval, PresentFlags, pPresentParameters);
+	}
+
+	LOG_ONCE(PLOG_FATAL << "OBS bypass thunk (Present1) could not reach OBS's original function; dropping the frame");
+	return S_OK;
+}
+
+#pragma endregion OBS bypass thunks
 
 
 // static
@@ -1971,6 +2079,12 @@ bool D3D12Hook::reinstallSwapChainHooks()
 	try { addresses = harvestHookAddresses(); }
 	catch (...) { PLOG_ERROR << "re-hook: could not re-harvest the swapchain addresses"; return false; }
 
+	// The OBS bypass thunks render the frame on behalf of the detours we are about to replace, and
+	// teardownOBSBypass takes the guard below exclusively - so they come off first, outside the lock.
+	// The user can re-enable the toggle afterwards; silently keeping a bypass alive across a re-hook
+	// would leave two renderers disagreeing about who owns the frame.
+	teardownOBSBypass("the swapchain hooks are being reinstalled");
+
 	std::unique_lock<std::shared_mutex> guard(swapChainHookGuard);
 
 	// Down first, honouring the same "never erase a third party's hook" rule as teardown. A site that is no
@@ -2050,6 +2164,7 @@ bool D3D12Hook::reinstallSwapChainHooks()
 	}
 
 	snapshotHookSites();   // the new bytes are what teardown must compare against from now on
+	mHarvestedAddresses = addresses;
 	return present || present1;
 }
 
@@ -2232,6 +2347,11 @@ D3D12Hook::~D3D12Hook()
 	shuttingDown.store(true, std::memory_order_release);
 	mQueueSearchActive.store(false, std::memory_order_relaxed);
 
+	// 1b. The OBS bypass thunks sit on OBS's trampoline pointers, one link further down the same
+	//     present chain, and they call renderOverlayFrame just like the detours do. They must come off
+	//     BEFORE the guard block below, because teardownOBSBypass takes that same guard exclusively.
+	teardownOBSBypass("D3D12Hook is shutting down");
+
 	// 2. Drain, then remove the swapchain hooks. Taking the guard EXCLUSIVELY is what proves no
 	//    thread is inside a detour body: the old ScopedAtomicBool was wait-then-set, so two threads
 	//    could both observe false and both proceed, and a new entrant could slip in between the
@@ -2381,19 +2501,147 @@ D3D12Hook::~D3D12Hook()
 }
 
 
-void D3D12Hook::setOBSBypass(bool enabled)
+#pragma region OBS bypass
+
+// Removes both bypass thunks, restoring OBS's own trampoline pointers.
+//
+// ⚠ TAKES swapChainHookGuard EXCLUSIVELY. Never call it while holding that lock. The exclusive hold is
+// the whole point: it proves no thread is inside a thunk (they all run under a shared hold of it)
+// before ~ModuleInlineHook restores the bytes.
+void D3D12Hook::teardownOBSBypass(const char* reason)
+{
+	std::unique_lock<std::shared_mutex> guard(swapChainHookGuard);
+
+	if (!mOBSPresentHook && !mOBSPresent1Hook)
+		return;
+
+	PLOG_INFO << "Removing the OBS bypass hooks: " << reason;
+
+	// Destroyed INSIDE the lock deliberately - releasing it first would open a window for a present to
+	// enter a thunk whose hook object is being destroyed underneath it.
+	mOBSPresentHook.reset();
+	mOBSPresent1Hook.reset();
+}
+
+
+OBSBypassResult D3D12Hook::setOBSBypass(bool enabled)
 {
 	PLOGV << "D3D12Hook::setOBSBypass called with value: " << enabled;
 
 	if (!enabled)
-		return; // nothing was ever installed, so nothing to remove
+	{
+		teardownOBSBypass("the user turned the bypass off");
+		return OBSBypassResult::Removed;
+	}
 
-	// The D3D11 bypass works by inline-hooking a known function inside OBS's graphics-hook64.dll,
-	// resolved from InternalPointerData.xml. OBS's D3D12 capture path is a different function
-	// entirely and we have no offset for it, and the watermark renderer (Renderer2D) is DirectXTK
-	// SpriteBatch, i.e. hard D3D11. So this is unsupported rather than broken.
-	// NOTE: deliberately does NOT set Lapua::lapuaGood = false - that would make OBSBypassManager
-	// report a misleading "Lapua service one failure" instead of this message.
-	PLOG_ERROR << "OBS bypass is not supported under DirectX 12";
-	throw HCMRuntimeException("The OBS bypass is not supported for this game (it renders with DirectX 12).");
+	// OBS does not have a separate D3D12 hook to defeat - d3d12_capture is selected behind the same
+	// Present hook that d3d11_capture is - so this is the D3D11 mechanism applied to two entry points.
+	const uintptr_t presentEntry = (uintptr_t)mHarvestedAddresses.present;
+	const uintptr_t present1Entry = (uintptr_t)mHarvestedAddresses.present1;
+
+	if (!presentEntry && !present1Entry)
+	{
+		PLOG_ERROR << "OBS bypass: no harvested dxgi Present/Present1 addresses, so there is nothing to match OBS's trampolines against. beginHook() must run first.";
+		throw HCMRuntimeException("HCM has not finished setting up its renderer hooks, so the OBS bypass cannot be enabled yet.");
+	}
+
+	PLOG_DEBUG << std::format("OBS bypass: dxgi entries Present 0x{:X} (inline-hooked: {}), Present1 0x{:X} (inline-hooked: {})",
+		presentEntry, looksInlineHooked(presentEntry) ? "yes" : "no",
+		present1Entry, looksInlineHooked(present1Entry) ? "yes" : "no");
+	// NOTE: unlike the D3D11 path, "inline-hooked" proves nothing about OBS here - WE hook these same
+	// bytes ourselves. It is logged only because it tells a reader whether the chain is patched at all.
+
+	// Start from a clean slate; re-enabling over a live bypass would leak a hook and double-render.
+	teardownOBSBypass("re-arming");
+
+	uintptr_t presentRva = 0, present1Rva = 0;
+	OBSDiscoveryDiagnostics presentDiagnostics{}, present1Diagnostics{};
+	OBSDiscoveryStatus presentStatus = OBSDiscoveryStatus::NoDetourFound;
+	OBSDiscoveryStatus present1Status = OBSDiscoveryStatus::NoDetourFound;
+
+	if (presentEntry)
+		presentStatus = discoverRealFnRva(presentEntry, presentRva, &presentDiagnostics);
+	if (present1Entry && present1Entry != presentEntry)
+		present1Status = discoverRealFnRva(present1Entry, present1Rva, &present1Diagnostics);
+
+	const bool moduleNotLoaded =
+		(presentEntry && presentStatus == OBSDiscoveryStatus::ModuleNotLoaded) ||
+		(present1Entry && present1Status == OBSDiscoveryStatus::ModuleNotLoaded);
+
+	const bool foundSomething =
+		presentStatus == OBSDiscoveryStatus::Ok || present1Status == OBSDiscoveryStatus::Ok;
+
+	if (!moduleNotLoaded && !foundSomething)
+	{
+		const OBSDiscoveryDiagnostics& d = presentEntry ? presentDiagnostics : present1Diagnostics;
+		PLOG_ERROR << std::format(
+			"OBS bypass: graphics-hook64.dll is loaded (base 0x{:X}, size 0x{:X}) but neither a Present nor a Present1 "
+			"trampoline pointer could be found in it. Sections scanned: {}. {} aligned qwords examined, {} probed. "
+			"dxgi entries used: Present 0x{:X}, Present1 0x{:X}.",
+			d.moduleBase, (uint64_t)d.moduleSize, d.sectionsScanned, d.qwordsScanned, d.candidatesProbed,
+			presentEntry, present1Entry);
+		throw HCMRuntimeException("OBS is running but HCM could not locate its Present hook (unsupported OBS version). Report this with your OBS version.");
+	}
+
+	// Install. Both hooks start enabled so that, when graphics-hook64.dll is not loaded yet, they stay
+	// registered with ModuleHookManager and attach by themselves the moment OBS Game Capture injects.
+	const auto install = [](uintptr_t dxgiEntry, const char* name, void* thunk, std::shared_ptr<ModuleInlineHook>& out)
+	{
+		if (!dxgiEntry) return;
+
+		auto realFnPointer = std::make_shared<OBSRealFnPointer>(dxgiEntry, name);
+		out = ModuleInlineHook::make(L"graphics-hook64.dll", realFnPointer, thunk, true);
+		if (!out) return;
+
+		// A LATER (deferred) discovery failure happens inside LoadLibrary, where throwing is not an
+		// option. Stop wanting to be attached instead of retrying on every DLL load forever.
+		//
+		// A RAW pointer, captured by value: `out` is a reference parameter that dies with this call,
+		// and the callback outlives it. The hook owns the OBSRealFnPointer that owns this callback, so
+		// the callback can only ever run while the hook is alive.
+		ModuleInlineHook* hook = out.get();
+		realFnPointer->setOnPermanentFailure([hook]() { hook->setWantsToBeAttached(false); });
+	};
+
+	{
+		// Same exclusive hold as teardown: the detours read these shared_ptrs under a shared hold.
+		std::unique_lock<std::shared_mutex> guard(swapChainHookGuard);
+
+		if (presentStatus != OBSDiscoveryStatus::NoDetourFound)
+			install(presentEntry, "Present", newDX12PresentOBSBypass, mOBSPresentHook);
+		if (present1Status != OBSDiscoveryStatus::NoDetourFound)
+			install(present1Entry, "Present1", newDX12Present1OBSBypass, mOBSPresent1Hook);
+	}
+
+	if (moduleNotLoaded)
+	{
+		PLOG_INFO << "OBS bypass armed, but graphics-hook64.dll is not loaded - it will attach automatically when OBS Game Capture injects";
+		return OBSBypassResult::DeferredModuleNotLoaded;
+	}
+
+	// Discovery said yes for at least one entry point, so at least one hook must actually be installed.
+	const bool presentInstalled = mOBSPresentHook && mOBSPresentHook->isHookInstalled();
+	const bool present1Installed = mOBSPresent1Hook && mOBSPresent1Hook->isHookInstalled();
+
+	if (!presentInstalled && !present1Installed)
+	{
+		PLOG_ERROR << std::format(
+			"OBS bypass: discovery succeeded (Present rva 0x{:X}, Present1 rva 0x{:X}) but neither inline hook installed. "
+			"See the attach log above.", presentRva, present1Rva);
+		teardownOBSBypass("installation failed");
+		throw HCMRuntimeException("HCM found OBS's Present hook but could not install the bypass over it. Another program may have hooked it first.");
+	}
+
+	// UE5 presents through Present1, so a Present-only bypass will not do anything on this game. Worth
+	// saying out loud rather than leaving the user to wonder why the overlay is still in the recording.
+	if (!present1Installed && present1Entry && present1Entry != presentEntry)
+		PLOG_WARNING << "OBS bypass: only the Present trampoline was bypassed. This game presents through Present1, so the overlay may still appear in the capture.";
+
+	PLOG_INFO << std::format("OBS bypass installed (Present: {}, Present1: {})",
+		presentInstalled ? std::format("graphics-hook64.dll+0x{:X}", presentRva) : std::string("not installed"),
+		present1Installed ? std::format("graphics-hook64.dll+0x{:X}", present1Rva) : std::string("not installed"));
+
+	return OBSBypassResult::Installed;
 }
+
+#pragma endregion OBS bypass

@@ -2,6 +2,8 @@
 #include "pch.h"
 #include "MultilevelPointer.h"
 #include "PointerDataStore.h"
+#include "ModuleHook.h"          // ModuleInlineHook, for the OBS bypass
+#include "OBSHookDiscovery.h"    // OBSBypassResult / OBSRealFnPointer
 
 // imgui
 // NOTE: we deliberately do NOT include imgui_impl_win32.h here, and we deliberately do NOT
@@ -87,6 +89,32 @@ private:
 	static DX12ResizeBuffers newDX12ResizeBuffers;
 	static DX12ResizeBuffers1 newDX12ResizeBuffers1;
 	static DX12ExecuteCommandLists newDX12ExecuteCommandLists;
+
+	// ---- OBS bypass -----------------------------------------------------------------------------
+	// These do NOT hook dxgi. They hook the ADDRESS HELD BY OBS's RealPresent / RealPresent1 function
+	// pointers inside graphics-hook64.dll, i.e. the Detours trampolines that OBS's hook_present calls
+	// AFTER it has taken its clean capture. Rendering there is what puts HCM's overlay on the
+	// streamer's screen but not in the recording. Located at runtime - see OBSHookDiscovery.h.
+	//
+	// ⚠ ORDERING WITH OUR OWN HOOKS. We already inline-hook dxgi's Present/Present1 entry points -
+	// the very bytes OBS Detours-patches. Depending on who installed first, the OBS trampoline sits
+	// either inside or outside our own detour, but EITHER WAY both our detour and this thunk would
+	// render the same frame. So while a bypass thunk is installed, the matching newDX12Present /
+	// newDX12Present1 stops rendering and only forwards. Same suppression D3D11Hook.cpp does for its
+	// vmt path, just per-entry-point because Present and Present1 can be bypassed independently.
+	static DX12Present newDX12PresentOBSBypass;
+	static DX12Present1 newDX12Present1OBSBypass;
+	std::shared_ptr<ModuleInlineHook> mOBSPresentHook;
+	std::shared_ptr<ModuleInlineHook> mOBSPresent1Hook;
+	// "Is the bypass thunk for this entry point live right now?" Deliberately asks the hook object
+	// rather than caching a flag: the hook can attach LATER, by itself, when graphics-hook64.dll is
+	// loaded (ModuleHookManager does that), and a cached flag would miss it and double-render.
+	// ⚠ Only valid to call with swapChainHookGuard held (which every detour does), because that is
+	// what teardownOBSBypass takes exclusively before destroying these.
+	static bool obsBypassOwnsFrame(bool forPresent1);
+	// Removes both thunks. Takes swapChainHookGuard EXCLUSIVELY, so it must never be called with that
+	// lock already held. Safe to call when nothing is installed.
+	void teardownOBSBypass(const char* reason);
 
 	// The one shared body behind both newDX12Present and newDX12Present1. Does everything except
 	// call the original - the caller owns that, because the two originals have different signatures.
@@ -191,6 +219,11 @@ private:
 	};
 	HookAddresses harvestHookAddresses(); // throws HCMInitException if it cannot get the required three
 	void** resolveLiveSwapChainVtable();  // optional PointerDataStore fast path; nullptr if unavailable
+
+	// The addresses harvested by the last successful (re)hook. Kept so the OBS bypass can name the
+	// dxgi entry points whose Detours trampolines it is hunting for, without paying for another
+	// harvest (which creates a device, a window and a swapchain just to read two vtable slots).
+	HookAddresses mHarvestedAddresses{};
 
 	// ---- per-back-buffer D3D12 state ---------------------------------------------------------
 	// What we draw INTO. Indexed by IDXGISwapChain3::GetCurrentBackBufferIndex().
@@ -341,11 +374,17 @@ public:
 
 	void beginHook();
 
-	// Exists purely so OBSBypassManager can be constructed against this hook type. There is no
-	// D3D12 capture path in graphics-hook64.dll that we have offsets for, so enabling throws a
-	// clean runtime exception (which OBSBypassManager catches and turns into a user message +
-	// resets the toggle). Notably it does NOT touch Lapua::lapuaGood.
-	void setOBSBypass(bool enabled);
+	// The OBS bypass, D3D12 edition. OBS does NOT have a separate "D3D12 hook" to defeat: it selects
+	// d3d11 / d3d10 / d3d12_capture behind the SAME Present hook, so this is the same trick the D3D11
+	// path uses - inline-hook whatever OBS's RealPresent / RealPresent1 pointers hold, so our overlay
+	// renders after OBS's capture. The two riders are that UE5 presents through Present1 (so we need
+	// RealPresent1 as well, which has its own signature), and that our own dxgi hooks sit on the same
+	// bytes - see the mOBSPresentHook block above for how double-rendering is prevented.
+	//
+	// Throws HCMRuntimeException if the bypass was asked for and could not be set up. Returns
+	// DeferredModuleNotLoaded when OBS Game Capture simply isn't in the process yet, which is a normal
+	// state and not a failure. Notably it does NOT touch Lapua::lapuaGood.
+	OBSBypassResult setOBSBypass(bool enabled);
 
 	// Signal + wait until the GPU has retired everything we submitted. Returns false if the flush
 	// could not be proven (Signal failed, or the wait timed out) - in which case the caller must

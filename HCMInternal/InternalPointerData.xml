@@ -225,15 +225,13 @@
 	</VersionedEntry>
 
 
-	<VersionedEntry Name="dxgiInternalPresentFunction" Type="MultilevelPointer::ModuleOffset">
-		<Version Version="All">
-			<Module>graphics-hook64.dll</Module>
-			<Offsets>
-				<Offset>0x40EC0</Offset>
-				<Offset>0x0</Offset>
-			</Offsets>
-		</Version>
-	</VersionedEntry>
+	<!-- dxgiInternalPresentFunction USED TO LIVE HERE, and it is deliberately gone.
+	     It was graphics-hook64.dll + 0x40EC0 -> deref, i.e. a hard-coded RVA for OBS's "RealPresent"
+	     function pointer. That RVA is from an OBS build several years old; in OBS 32.2.1 it lands in
+	     .rdata and holds something that is not a pointer at all, so the inline hook could not be made
+	     and the "Bypass OBS Capture" toggle lit up while doing nothing (ModuleInlineHook::attach only
+	     logged). Any replacement number would rot again on the next OBS release.
+	     It is now found at runtime by shape instead - see OBSHookDiscovery.h. -->
 	<!--#endregion DirectX-->
 
 

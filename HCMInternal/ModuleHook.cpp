@@ -84,6 +84,17 @@ void ModuleInlineHook::attach()
 
 	this->mInlineHook = safetyhook::create_inline((void*)pOriginalFunction, this->mHookFunction);
 
+	// ⚠ create_inline's result was previously never checked, so a hook that failed to install looked
+	// EXACTLY like one that succeeded - including printing "successfully attached" below. That is how
+	// the OBS bypass managed to be dead for years while its toggle lit up. Callers that care can now
+	// ask isHookInstalled(); everyone else at least gets a log line naming the address that failed.
+	if (!this->mInlineHook)
+	{
+		PLOG_ERROR << std::format("attach failed: safetyhook::create_inline could not hook 0x{:X} in ", pOriginalFunction)
+			<< this->getAssociatedModule();
+		return;
+	}
+
 	PLOG_DEBUG << "inline_hook successfully attached: " << this->getAssociatedModule();
 
 }

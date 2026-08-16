@@ -13,11 +13,14 @@ private:
 
 
 public:
+	// This used to resolve nameof(dxgiInternalPresentFunction) out of PointerDataStore purely as an
+	// "is this build supported" gate. That datum no longer exists: OBS's Present hook is now located
+	// at runtime by shape (see OBSHookDiscovery.h) rather than by a hard-coded RVA that rots on every
+	// OBS release, so there is nothing version-specific left to check here. Requiring the old entry
+	// would now HIDE the toggle on every game. The class is kept because GUIRequiredServices names it
+	// as the required service for GUIElementEnum::OBSBypassToggleGUI.
 	OBSBypassCheck(GameState gameImpl, IDIContainer& dicon)
 	{
-		auto ptr = dicon.Resolve<PointerDataStore>().lock();
-		auto dxgiInternalPresentFunction = ptr->getData < std::shared_ptr<MultilevelPointer>>(nameof(dxgiInternalPresentFunction));
-		assert(dxgiInternalPresentFunction);
 	}
 	
 
