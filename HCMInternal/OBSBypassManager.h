@@ -57,8 +57,18 @@ private:
 		catch (HCMRuntimeException ex)
 		{
 			runtimeExceptions->handleMessage(ex);
+
+			// ⚠ DO NOT call UpdateValueWithInput() here. This handler is ALREADY running inside it: it takes
+			// std::lock_guard(updateValueWithInputMutex) at BinarySetting.h:35 and fires valueChangedEvent at :41
+			// while still holding it. Re-entering on the same thread re-locks a non-recursive std::mutex, which
+			// MSVC turns into a thrown std::system_error. Nothing on this path catches that, and we are on a
+			// detached thread (GUISimpleToggle.h spawns one per click), so it escapes to std::terminate - HCM
+			// installs no set_terminate. Writing both fields directly is equivalent here and cannot re-enter.
+			//
+			// Making updateValueWithInputMutex recursive is NOT the fix: every setting in the program shares
+			// that class, so it would change locking semantics for all of MCC.
 			OBSBypassToggle->GetValueDisplay() = false;
-			OBSBypassToggle->UpdateValueWithInput();
+			OBSBypassToggle->GetValue() = false;
 		}
 
 	}

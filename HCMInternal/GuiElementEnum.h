@@ -22,7 +22,7 @@
 // a HaloCER-only cheat that fails to construct makes its gui rows silently vanish with the reason visible
 // nowhere but the log file. The heading's other children stay MCC-only and each independently return nullopt;
 // GUIHeading::render early-outs when every child is nullopt, so this cannot produce an empty heading.
-#define ALL_GAMES_AND_MAINMENU_AND_HALOCER Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, NoGame, HaloCER
+// (ALL_GAMES_AND_MAINMENU_AND_HALOCER is defined once, above - it used to be defined twice, identically.)
 #define FREE_CAMERA_SUPPORT Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4
 #define THIRD_GEN Halo3, Halo3ODST, HaloReach, Halo4
 #define ABILITY_GAMES HaloReach, Halo4
@@ -68,7 +68,10 @@
 	((presetSaveButton, (ALL_GAMES_AND_MAINMENU)))\
 	((presetLoadButton, (ALL_GAMES_AND_MAINMENU)))\
 ((controlHeadingGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
-	((toggleGUIHotkeyGUI, (ALL_GAMES_AND_MAINMENU)))\
+	/* HaloCER: NOT cosmetic. hideWatermarkHideMessages defaults true, so hiding the watermark also hides the
+	   message log - without this rebind row a user can erase every visible trace of HCM and have nothing on
+	   screen telling them which key brings it back. (The key itself works on CER already.) */\
+	((toggleGUIHotkeyGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((messagesFontSize, (ALL_GAMES_AND_MAINMENU)))\
 	((messagesFontColor, (ALL_GAMES_AND_MAINMENU)))\
 	((GUISettingsSubheading, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
@@ -82,8 +85,10 @@
 		((pauseAlsoBlocksInputGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((OBSBypassToggleGUI, (ALL_GAMES_AND_MAINMENU)))\
-	((HideWatermarkGUI, (ALL_GAMES_AND_MAINMENU)))\
-	((HideWatermarkIncludeMessagesGUI, (ALL_GAMES_AND_MAINMENU)))\
+	/* The suppression itself (HCMInternalGUI.cpp) is backend-agnostic and already works on the D3D12 path;
+	   only these rows were gated off. */\
+	((HideWatermarkGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+	((HideWatermarkIncludeMessagesGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 ((saveManagementHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((forceCheckpointGUI, (ALL_SUPPORTED_GAMES)))\
 	((hceForceCheckpointGUI, (HALOCER_ONLY)))\
