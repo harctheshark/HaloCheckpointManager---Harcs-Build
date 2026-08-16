@@ -164,6 +164,8 @@ HCETriggerActivity,\
 HCEDisableBarriers,\
 HCESkyFix,\
 HCEFreecamExtras,\
+HCECameraRoll,\
+HCEFieldOfView,\
 HCEDisableFadeFromBlack,\
 HCEDumpCheckpoint,\
 HCEInjectCheckpoint,\

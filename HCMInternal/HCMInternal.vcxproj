@@ -563,6 +563,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HCEDisableBarriers.h" />
     <ClInclude Include="HCESkyFix.h" />
     <ClInclude Include="HCEFreecamExtras.h" />
+    <ClInclude Include="HCECameraRoll.h" />
+    <ClInclude Include="HCEFieldOfView.h" />
     <ClInclude Include="HCEGameThreadTick.h" />
     <ClInclude Include="HookGraveyard.h" />
     <ClInclude Include="ImageResidencyShim.h" />
@@ -881,6 +883,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="HCEDisableBarriers.cpp" />
     <ClCompile Include="HCESkyFix.cpp" />
     <ClCompile Include="HCEFreecamExtras.cpp" />
+    <ClCompile Include="HCECameraRoll.cpp" />
+    <ClCompile Include="HCEFieldOfView.cpp" />
     <ClCompile Include="ImageResidencyShim.cpp" />
     <ClCompile Include="HCEDisableFadeFromBlack.cpp" />
     <ClCompile Include="HCECheckpointBlob.cpp" />

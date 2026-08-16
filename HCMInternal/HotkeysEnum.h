@@ -190,9 +190,9 @@ hceSkullThirdPersonHotkey
 // ⚠ ORDER IS AN INDEX. SettingsStateAndEvents::hceHotkeyEvents is indexed by position in THIS macro
 // (HotkeyDefinitions.h pairs them with BOOST_PP_SEQ_FOR_EACH_I) and HotkeyEventsLambdas.h wires each index
 // to what it does. The three blocks below are what those indices mean, so keep entries in their block:
-//     [0 .. 39] flip one bool setting
-//     [40..43] radio options - each SETS its option and clears its sibling
-//     [44..47] fire an event that already exists (the same object the equivalent button fires)
+//     [0 .. 40] flip one bool setting
+//     [41..44] radio options - each SETS its option and clears its sibling
+//     [45..48] fire an event that already exists (the same object the equivalent button fires)
 // The names are also the on-disk serialisation keys (RebindableHotkey serialises via magic_enum::enum_name),
 // so renaming one silently drops that user's existing binding.
 #define HCE_HOTKEYS \
@@ -236,6 +236,7 @@ hceTriggerOverlayShowVertexHotkey, \
 hceTriggerOverlayShowLabelsHotkey, \
 hceTriggerOverlayNameFilterToggleHotkey, \
 hceTriggerOverlayNameFilterExactMatchHotkey, \
+hceFieldOfViewHotkey, \
 hceForceTeleportForwardHotkey, \
 hceForceTeleportManualHotkey, \
 hceForceLaunchForwardHotkey, \

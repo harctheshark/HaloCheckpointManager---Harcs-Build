@@ -2167,6 +2167,9 @@ private:
 							createNestedElement(GUIElementEnum::hceFreecamTeleportToCamera),
 							createNestedElement(GUIElementEnum::hceFreecamNoclipGUI),
 							createNestedElement(GUIElementEnum::hceFreecamGimbalBypassGUI),
+							createNestedElement(GUIElementEnum::hceCameraRollGUI),
+							createNestedElement(GUIElementEnum::hceFieldOfViewToggleGUI),
+							createNestedElement(GUIElementEnum::hceFieldOfViewValueGUI),
 							createNestedElement(GUIElementEnum::freeCameraToggleGUI),
 							createNestedElement(GUIElementEnum::freeCameraSettingsSimpleSubheading),
 							createNestedElement(GUIElementEnum::freeCameraSettingsAdvancedSubheading),
@@ -2514,6 +2517,18 @@ private:
 				case GUIElementEnum::hceFreecamGimbalBypassGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Removes the camera's pitch clamp so you can look past vertical without the view flipping. Patches four clamp sites plus a wrap-around routine on the camera update; every site is byte-checked first, so a game update disables this rather than corrupting code."), RebindableHotkeyEnum::hceFreecamGimbalBypassHotkey, "Gimbal Lock Bypass", settings->hceFreecamGimbalBypassToggle));
+
+				case GUIElementEnum::hceCameraRollGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(-180.f, 180.f)>>
+						(game, ToolTipCollection("Banks the free camera about the direction it is facing, in degrees. This is NOT Gimbal Lock Bypass above - that one removes the up/down limit, this one tilts the horizon. It applies only while the free camera is on, because during normal play the game would have nothing to level your view back out with. The camera's own roll keys (default G and T) wind this slider while held. Changing camera mode - a cutscene, or toggling the free camera off and on - resets the game's roll to zero, so HCM re-applies the value four times a second."), "Camera Roll (degrees)", settings->hceCameraRollDegrees));
+
+				case GUIElementEnum::hceFieldOfViewToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Locks the game's field of view to the value below. Turning this off hands the field of view straight back to the game, and so does closing HCM - it is never left locked behind you."), RebindableHotkeyEnum::hceFieldOfViewHotkey, "Field of View", settings->hceFieldOfViewToggle));
+
+				case GUIElementEnum::hceFieldOfViewValueGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(50.f, 140.f)>>
+						(game, ToolTipCollection("HORIZONTAL field of view in degrees, which is what this engine stores - roughly 78 is the game's own default. Only does anything while the Field of View toggle above is on."), "Field of View (degrees)", settings->hceFieldOfViewDegrees));
 
 				case GUIElementEnum::hceFreecamNoclipGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>

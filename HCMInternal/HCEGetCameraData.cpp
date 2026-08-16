@@ -493,6 +493,21 @@ float HCEGetCameraData::getLastGoodHorizontalFov() const
 	return pimpl->mLastGoodFov.load(std::memory_order_acquire);
 }
 
+// The elected FMinimalViewInfo, and the APlayerCameraManager that contains it. Pure arithmetic on an atomic -
+// nothing is dereferenced here, so these are safe to call from anywhere and cannot throw. See the header for why
+// a WRITER gets a pointer when every reader deliberately gets values instead.
+uintptr_t HCEGetCameraData::getElectedPovAddress() const
+{
+	return gPreferredDestination.load(std::memory_order_acquire);
+}
+
+uintptr_t HCEGetCameraData::getPlayerCameraManager() const
+{
+	const uintptr_t pov = gPreferredDestination.load(std::memory_order_acquire);
+	if (pov <= (uintptr_t)kPovInCameraManagerOffset) return 0;   // 0, or an address that cannot possibly be one
+	return pov - (uintptr_t)kPovInCameraManagerOffset;
+}
+
 uint64_t HCEGetCameraData::getHookFireCount() const
 {
 	return gCameraManagerHookFires.load(std::memory_order_relaxed);

@@ -37,10 +37,10 @@ public:
 		// subscriber runs, with nothing else to keep in sync. Done here rather than in the array's initialiser
 		// because a default member initialiser cannot rely on members declared after it, and these four are.
 		// ⚠ INDICES ARE POSITIONS IN HCE_HOTKEYS (HotkeysEnum.h). They are the last block of that macro.
-		hceHotkeyEvents[44] = forceTeleportAbsoluteFillCurrent;
-		hceHotkeyEvents[45] = forceTeleportAbsoluteCopy;
-		hceHotkeyEvents[46] = forceTeleportAbsolutePaste;
-		hceHotkeyEvents[47] = hceTriggerOverlayEditNameFilterEvent;
+		hceHotkeyEvents[45] = forceTeleportAbsoluteFillCurrent;
+		hceHotkeyEvents[46] = forceTeleportAbsoluteCopy;
+		hceHotkeyEvents[47] = forceTeleportAbsolutePaste;
+		hceHotkeyEvents[48] = hceTriggerOverlayEditNameFilterEvent;
 	}
 	~SettingsStateAndEvents() {
 		PLOG_DEBUG << "~SettingsStateAndEvents()";
@@ -234,12 +234,12 @@ public:
 	// One event per Halo Campaign Evolved feature hotkey, INDEXED BY POSITION IN HCE_HOTKEYS (HotkeysEnum.h).
 	// HotkeyDefinitions.h pairs enumerator N with element N via BOOST_PP_SEQ_FOR_EACH_I and static_asserts the
 	// count against kHCEHotkeyCount; HotkeyEventsLambdas.h subscribes to each and does the work. An array rather
-	// than 48 named members for the same reason the skulls above are one: the index IS the identity here, and a
+	// than 49 named members for the same reason the skulls above are one: the index IS the identity here, and a
 	// second, hand-maintained ordering is just something else to get out of step.
 	//
 	// The last four elements are REPLACED IN THE CONSTRUCTOR with events that already exist (see below), so
 	// those hotkeys fire the very same event object the equivalent button does. Everything before them is new.
-	static constexpr inline int kHCEHotkeyCount = 48;
+	static constexpr inline int kHCEHotkeyCount = 49;
 	std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> hceHotkeyEvents = []()
 		{
 			std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> events;
@@ -1315,6 +1315,36 @@ public:
 			false,
 			[](bool in) { return true; },
 			nameof(hceFreecamGimbalBypassToggle)
+		);
+
+	// Camera roll, in DEGREES for the user - HCECameraRoll converts to the radians the engine stores at
+	// cameraEntry + 0x34. NOT the same thing as hceFreecamGimbalBypassToggle above, which removes the PITCH clamp.
+	// Deliberately absent from allSerialisableOptions: a tilted camera inherited from a previous session reads as
+	// the game being broken, exactly like Sky Fix and Disable Fade From Black.
+	std::shared_ptr<BinarySetting<float>> hceCameraRollDegrees = std::make_shared<BinarySetting<float>>
+		(
+			0.f,
+			[](float in) { return in >= -180.f && in <= 180.f; },
+			nameof(hceCameraRollDegrees)
+		);
+
+	// Field of view. The TOGGLE is deliberately absent from allSerialisableOptions (an FOV that relocks itself at
+	// launch is indistinguishable from a broken game); the VALUE is serialised, because it is inert on its own.
+	std::shared_ptr<BinarySetting<bool>> hceFieldOfViewToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceFieldOfViewToggle)
+		);
+
+	// HORIZONTAL degrees, which is what APlayerCameraManager::LockedFOV stores. 78 is roughly the game's own
+	// default, so enabling the toggle without touching the slider changes almost nothing - which is the right
+	// starting point for a feature nobody has tested in game yet.
+	std::shared_ptr<BinarySetting<float>> hceFieldOfViewDegrees = std::make_shared<BinarySetting<float>>
+		(
+			78.f,
+			[](float in) { return in >= 50.f && in <= 140.f; },
+			nameof(hceFieldOfViewDegrees)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowVertex = std::make_shared<BinarySetting<bool>>
@@ -2998,8 +3028,14 @@ public:
 		hceDisplayInfoShowTEB,
 		hceTriggerOverlayRenderDistance,
 		hceTriggerOverlayShowLabels,
-		// ⚠ TWO HaloCER TOGGLES ARE DELIBERATELY ABSENT FROM THIS LIST:
-		//       hceSkyFixToggle, hceDisableFadeFromBlackToggle
+		hceFieldOfViewDegrees,
+		// ⚠ FOUR HaloCER SETTINGS ARE DELIBERATELY ABSENT FROM THIS LIST:
+		//       hceSkyFixToggle, hceDisableFadeFromBlackToggle, hceFieldOfViewToggle, hceCameraRollDegrees
+		//
+		// The last two for the same reason as the first two, restated for their own case: an FOV that re-locks
+		// itself at launch, or a camera that comes back tilted, both read as the GAME being broken rather than as
+		// an HCM setting still being active. hceFieldOfViewDegrees IS listed just above, because the value on its
+		// own does nothing until the toggle is turned on by hand.
 		//
 		// Everything here is written to HCMInternalConfig.xml and read back on launch, so a toggle left on when
 		// HCM closed comes back on by itself next time. For most options that is exactly right - it is why the

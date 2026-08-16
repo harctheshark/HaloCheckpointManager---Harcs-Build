@@ -72,6 +72,18 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{GUIElementEnum::hceFreecamGimbalBypassGUI,
 			{OptionalCheatEnum::HCEFreecamExtras}
 	},
+	// Camera Roll and Field of View are deliberately SEPARATE cheats rather than more "freecam extras": roll needs
+	// the sim's TLS walk (HCEGetPlayerState) and the FOV needs the exe's render camera (HCEGetCameraData), so one
+	// class would make either dependency's failure take both features' gui rows down with it.
+	{GUIElementEnum::hceCameraRollGUI,
+			{OptionalCheatEnum::HCECameraRoll}
+	},
+	{GUIElementEnum::hceFieldOfViewToggleGUI,
+			{OptionalCheatEnum::HCEFieldOfView}
+	},
+	{GUIElementEnum::hceFieldOfViewValueGUI,
+			{OptionalCheatEnum::HCEFieldOfView}
+	},
 	{GUIElementEnum::forceRevertGUI,
 			{OptionalCheatEnum::ForceRevert}
 	},

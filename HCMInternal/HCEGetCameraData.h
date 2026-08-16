@@ -99,6 +99,31 @@ public:
 	// usable on the very first frames (and while falling back to the sim's player camera, which has no FOV).
 	float getLastGoodHorizontalFov() const;
 
+	// ---- the elected camera OBJECT, for consumers that need to WRITE it -------------------------------------
+	//
+	// Everything above deliberately hands out VALUES captured at assignment time, because reading a latched
+	// pointer on a frame of our choosing is what made the overlay flicker (see the .cpp). A writer has no such
+	// option: it must address the live object. These two exist for exactly that, and for nothing else.
+	//
+	// The elected destination IS the FMinimalViewInfo that the engine assigns every frame - which is the POV
+	// living INSIDE its owning APlayerCameraManager at PCM + kPovInCameraManagerOffset. So the owner is that
+	// pointer minus the offset. (This is also why hceCameraManagerPovFovOffset is 0x30 - it is FMinimalViewInfo's
+	// own FOV offset, and PCM + 0x14B0 + 0x30 == PCM + 0x14E0, the POV FOV named in the header above.)
+	//
+	// ⚠ DO NOT WRITE PCM + 0x14E0 (POV.FOV). The engine rebuilds the POV on the stack and copies over it every
+	// frame, so a write there survives less than one frame. That was tested and rejected. The field that STICKS
+	// is APlayerCameraManager::LockedFOV - see HCEFieldOfView.
+	static constexpr int64_t kPovInCameraManagerOffset = 0x14B0;
+
+	// The FMinimalViewInfo the election currently believes is the render camera's POV. 0 = nothing elected yet
+	// (the midhook has not fired, or it was dropped on a level transition). NEVER THROWS.
+	uintptr_t getElectedPovAddress() const;
+
+	// The APlayerCameraManager that owns the elected POV, i.e. getElectedPovAddress() - kPovInCameraManagerOffset.
+	// 0 when nothing has been elected. NEVER THROWS - and never dereferences anything, so a caller still has to
+	// treat the result as untrusted memory. Requires the midhook to be WANTED by somebody.
+	uintptr_t getPlayerCameraManager() const;
+
 	// ---- pure maths, no game memory. Static so the two consumers cannot drift apart. ----
 
 	// UE Pitch/Yaw/Roll (DEGREES) -> a Blam-frame orthonormal basis. Roll is applied about the forward axis
