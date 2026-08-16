@@ -177,6 +177,75 @@ hceSkullEfficientHotkey, \
 hceSkullThirdPersonHotkey
 
 
+// Halo Campaign Evolved feature hotkeys - the settings on the HaloCER tabs that had no way to be bound.
+// All 48 are event-on-press and ALL ARE UNBOUND BY DEFAULT: 48 invented defaults would collide with each
+// other and with the existing ones, so the user picks every one of them.
+//
+// They get their own macro, like SKULL_HOTKEYS / REPLAY_HOTKEYS / HCE_SKULL_HOTKEYS, because
+// ALL_EVENTONPRESS_HOTKEYS is at 59 of the 64 arguments BOOST_PP_TUPLE_SIZE can count and these would blow
+// straight past it. ⚠ THAT FAILURE IS NOT DIAGNOSABLE FROM THE ERROR: at 65 arguments boost does not say
+// "too many" or mention tuples at all - you get an undeclared-identifier error pointing at preprocessor
+// guts. If you ever see one after adding a hotkey, count the macro you added it to before anything else.
+//
+// ⚠ ORDER IS AN INDEX. SettingsStateAndEvents::hceHotkeyEvents is indexed by position in THIS macro
+// (HotkeyDefinitions.h pairs them with BOOST_PP_SEQ_FOR_EACH_I) and HotkeyEventsLambdas.h wires each index
+// to what it does. The three blocks below are what those indices mean, so keep entries in their block:
+//     [0 .. 39] flip one bool setting
+//     [40..43] radio options - each SETS its option and clears its sibling
+//     [44..47] fire an event that already exists (the same object the equivalent button fires)
+// The names are also the on-disk serialisation keys (RebindableHotkey serialises via magic_enum::enum_name),
+// so renaming one silently drops that user's existing binding.
+#define HCE_HOTKEYS \
+hceShadowCheckpointsHotkey, \
+hceInjectCheckpointRewriteIdentityHotkey, \
+hceAutonameCheckpointsHotkey, \
+hceInjectCheckpointForcesRevertHotkey, \
+hceInjectCheckpointLevelCheckHotkey, \
+hceInjectCheckpointDifficultyCheckHotkey, \
+hceInjectCheckpointVersionCheckHotkey, \
+hceForceTeleportForwardIgnoreZHotkey, \
+hceForceLaunchForwardIgnoreZHotkey, \
+hceDisplayInfoShowCoordinatesHotkey, \
+hceDisplayInfoShowVelocityHotkey, \
+hceDisplayInfoShowVelocityXYHotkey, \
+hceDisplayInfoShowVelocityXYZHotkey, \
+hceDisplayInfoShowLevelHotkey, \
+hceDisplayInfoShowBSPHotkey, \
+hceDisplayInfoShowTickHotkey, \
+hceDisplayInfoShowPlayerDatumHotkey, \
+hceDisplayInfoShowTEBHotkey, \
+hceDisplayInfoOutlineHotkey, \
+hceSoftCeilingOverlayShowDisabledHotkey, \
+hceBspOverlayToggleHotkey, \
+hceBspOverlayInvisibleOnlyHotkey, \
+hceBspOverlayOccludeFarSurfacesHotkey, \
+hceBspOverlayFaceShadingHotkey, \
+hceDisableFadeFromBlackHotkey, \
+hceFreecamGimbalBypassHotkey, \
+hceFreecamNoclipHotkey, \
+hceSkyFixHotkey, \
+hceTriggerOverlayHighlightActiveHotkey, \
+hceTriggerOverlayFlashOnHitHotkey, \
+hceTriggerOverlayMessageOnHitHotkey, \
+hceTriggerOverlayShowRegularHotkey, \
+hceTriggerOverlayShowSectorHotkey, \
+hceTriggerOverlayShowKillHotkey, \
+hceTriggerOverlayShowZoneSetHotkey, \
+hceTriggerOverlaySpeedrunOnlyHotkey, \
+hceTriggerOverlayShowVertexHotkey, \
+hceTriggerOverlayShowLabelsHotkey, \
+hceTriggerOverlayNameFilterToggleHotkey, \
+hceTriggerOverlayNameFilterExactMatchHotkey, \
+hceForceTeleportForwardHotkey, \
+hceForceTeleportManualHotkey, \
+hceForceLaunchForwardHotkey, \
+hceForceLaunchManualHotkey, \
+hceForceTeleportAbsoluteFillCurrentHotkey, \
+hceForceTeleportAbsoluteCopyHotkey, \
+hceForceTeleportAbsolutePasteHotkey, \
+hceTriggerOverlayEditNameFilterHotkey
+
+
 // replay hotkeys. Like the skulls, kept in their own macro because ALL_EVENTONPRESS_HOTKEYS is near the
 // BOOST_PP_TUPLE_SIZE limit of 64. These are event-on-press hotkeys (they fire ActionEvents).
 #define REPLAY_HOTKEYS \
@@ -197,7 +266,7 @@ cameraFOVIncreaseBinding,\
 cameraFOVDecreaseBinding
 
 // both event and non-event hotkeys are rebindable
-#define ALL_REBINDABLE_HOTKEYS ALL_EVENTONPRESS_HOTKEYS, NOEVENT_HOTKEYS, SKULL_HOTKEYS, REPLAY_HOTKEYS, HCE_SKULL_HOTKEYS
+#define ALL_REBINDABLE_HOTKEYS ALL_EVENTONPRESS_HOTKEYS, NOEVENT_HOTKEYS, SKULL_HOTKEYS, REPLAY_HOTKEYS, HCE_SKULL_HOTKEYS, HCE_HOTKEYS
 
 
 //enum class RebindableHotkeyEnum : int {

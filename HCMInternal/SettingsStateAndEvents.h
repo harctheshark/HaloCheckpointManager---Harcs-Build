@@ -28,10 +28,19 @@ private:
 public:
 	SettingsStateAndEvents(std::shared_ptr<ISettingsSerialiser> serialiser)
 		: mSerialiser(serialiser)
-	{ 
+	{
 		// deserialise (load) serialisable options
-		mSerialiser->deserialise(allSerialisableOptions); 
+		mSerialiser->deserialise(allSerialisableOptions);
 
+		// The last four Halo Campaign Evolved hotkeys drive BUTTONS that already have an event, so they point at
+		// that same event object instead of owning a new one - press the hotkey and the button's existing
+		// subscriber runs, with nothing else to keep in sync. Done here rather than in the array's initialiser
+		// because a default member initialiser cannot rely on members declared after it, and these four are.
+		// ⚠ INDICES ARE POSITIONS IN HCE_HOTKEYS (HotkeysEnum.h). They are the last block of that macro.
+		hceHotkeyEvents[44] = forceTeleportAbsoluteFillCurrent;
+		hceHotkeyEvents[45] = forceTeleportAbsoluteCopy;
+		hceHotkeyEvents[46] = forceTeleportAbsolutePaste;
+		hceHotkeyEvents[47] = hceTriggerOverlayEditNameFilterEvent;
 	}
 	~SettingsStateAndEvents() {
 		PLOG_DEBUG << "~SettingsStateAndEvents()";
@@ -218,6 +227,22 @@ public:
 	std::array<std::shared_ptr<ActionEvent>, 56> hceSkullToggleHotkeyEvents = []()
 		{
 			std::array<std::shared_ptr<ActionEvent>, 56> events;
+			for (auto& e : events) e = std::make_shared<ActionEvent>();
+			return events;
+		}();
+
+	// One event per Halo Campaign Evolved feature hotkey, INDEXED BY POSITION IN HCE_HOTKEYS (HotkeysEnum.h).
+	// HotkeyDefinitions.h pairs enumerator N with element N via BOOST_PP_SEQ_FOR_EACH_I and static_asserts the
+	// count against kHCEHotkeyCount; HotkeyEventsLambdas.h subscribes to each and does the work. An array rather
+	// than 48 named members for the same reason the skulls above are one: the index IS the identity here, and a
+	// second, hand-maintained ordering is just something else to get out of step.
+	//
+	// The last four elements are REPLACED IN THE CONSTRUCTOR with events that already exist (see below), so
+	// those hotkeys fire the very same event object the equivalent button does. Everything before them is new.
+	static constexpr inline int kHCEHotkeyCount = 48;
+	std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> hceHotkeyEvents = []()
+		{
+			std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> events;
 			for (auto& e : events) e = std::make_shared<ActionEvent>();
 			return events;
 		}();

@@ -399,15 +399,15 @@ private:
 							}));
 
 					case GUIElementEnum::hceDumpCheckpointAutonameGUI:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Automatically name dumped checkpoints after the level and the current time, instead of prompting you to input a name"), std::nullopt, "Autoname checkpoints##hce", settings->autonameCheckpoints));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Automatically name dumped checkpoints after the level and the current time, instead of prompting you to input a name"), RebindableHotkeyEnum::hceAutonameCheckpointsHotkey, "Autoname checkpoints##hce", settings->autonameCheckpoints));
 
 					// The only thing that makes dumping possible at all on this game: Halo Campaign Evolved keeps
 					// its checkpoints outside the process, so HCM has to copy each one as it goes past. Turning
 					// this off means no hook is installed and no bytes are copied - and nothing to dump.
 					case GUIElementEnum::hceDumpCheckpointShadowGUI:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Keeps a copy of your latest checkpoint in memory so it can be dumped without creating a new one. Costs about half a millisecond each time the game checkpoints. Turn it off and there will be nothing to dump."), std::nullopt, "Keep last checkpoint ready to dump##hce", settings->hceShadowCheckpoints));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Keeps a copy of your latest checkpoint in memory so it can be dumped without creating a new one. Costs about half a millisecond each time the game checkpoints. Turn it off and there will be nothing to dump."), RebindableHotkeyEnum::hceShadowCheckpointsHotkey, "Keep last checkpoint ready to dump##hce", settings->hceShadowCheckpoints));
 
 				// Halo Campaign Evolved's own checkpoint injection. Deliberately reuses injectCheckpointEvent (and so
 				// the existing injectCheckpoint hotkey) and MCC's three warning settings - HaloCER and the MCC games
@@ -434,24 +434,24 @@ private:
 							}));
 
 					case GUIElementEnum::hceInjectCheckpointForcesRevert:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Automatically revert to the checkpoint you injected, immediately after injecting it.\n\nDANGER: on Halo Campaign Evolved a checkpoint the engine rejects does NOT fail quietly - it RESTARTS THE LEVEL and your run is gone. With this on there is no gap between injecting and finding out."), std::nullopt, "Force revert after injecting##hce", settings->injectCheckpointForcesRevert));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Automatically revert to the checkpoint you injected, immediately after injecting it.\n\nDANGER: on Halo Campaign Evolved a checkpoint the engine rejects does NOT fail quietly - it RESTARTS THE LEVEL and your run is gone. With this on there is no gap between injecting and finding out."), RebindableHotkeyEnum::hceInjectCheckpointForcesRevertHotkey, "Force revert after injecting##hce", settings->injectCheckpointForcesRevert));
 
 					case GUIElementEnum::hceInjectCheckpointLevelCheck:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("If the checkpoint you are injecting was made on a different level (or a different part of one) than you are playing, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the engine compares these fields itself, and a mismatch RESTARTS THE LEVEL on your next revert."), std::nullopt, "Warn on injecting to wrong level##hce", settings->injectCheckpointLevelCheck));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("If the checkpoint you are injecting was made on a different level (or a different part of one) than you are playing, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the engine compares these fields itself, and a mismatch RESTARTS THE LEVEL on your next revert."), RebindableHotkeyEnum::hceInjectCheckpointLevelCheckHotkey, "Warn on injecting to wrong level##hce", settings->injectCheckpointLevelCheck));
 
 					case GUIElementEnum::hceInjectCheckpointDifficultyCheck:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("If the checkpoint you are injecting was made on a different difficulty, or with different skulls, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the engine compares these fields itself, and a mismatch RESTARTS THE LEVEL on your next revert."), std::nullopt, "Warn on injecting to wrong difficulty##hce", settings->injectCheckpointDifficultyCheck));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("If the checkpoint you are injecting was made on a different difficulty, or with different skulls, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the engine compares these fields itself, and a mismatch RESTARTS THE LEVEL on your next revert."), RebindableHotkeyEnum::hceInjectCheckpointDifficultyCheckHotkey, "Warn on injecting to wrong difficulty##hce", settings->injectCheckpointDifficultyCheck));
 
 					case GUIElementEnum::hceInjectCheckpointRewriteIdentity:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Makes checkpoints shared between players actually work.\n\nA checkpoint carries the identity of whoever saved it - not just in its header, but baked through the player structures inside the saved game state. It therefore loads normally and then KILLS YOU a second or two later. This rewrites that identity to yours as the file is injected.\n\nInjecting your own checkpoints is unaffected: everything already matches and nothing is changed.\n\nLeave this ON unless you are deliberately investigating a checkpoint's original contents."), std::nullopt, "Re-identify shared checkpoints as mine##hce", settings->hceInjectCheckpointRewriteIdentity));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Makes checkpoints shared between players actually work.\n\nA checkpoint carries the identity of whoever saved it - not just in its header, but baked through the player structures inside the saved game state. It therefore loads normally and then KILLS YOU a second or two later. This rewrites that identity to yours as the file is injected.\n\nInjecting your own checkpoints is unaffected: everything already matches and nothing is changed.\n\nLeave this ON unless you are deliberately investigating a checkpoint's original contents."), RebindableHotkeyEnum::hceInjectCheckpointRewriteIdentityHotkey, "Re-identify shared checkpoints as mine##hce", settings->hceInjectCheckpointRewriteIdentity));
 
 					case GUIElementEnum::hceInjectCheckpointVersionCheck:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("If the checkpoint you are injecting was made by a different build of Halo Campaign Evolved, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the game state layout changes between builds, so this is the mismatch most likely to restart your level (or worse)."), std::nullopt, "Warn on injecting from wrong game build##hce", settings->injectCheckpointVersionCheck));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("If the checkpoint you are injecting was made by a different build of Halo Campaign Evolved, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the game state layout changes between builds, so this is the mismatch most likely to restart your level (or worse)."), RebindableHotkeyEnum::hceInjectCheckpointVersionCheckHotkey, "Warn on injecting from wrong game build##hce", settings->injectCheckpointVersionCheck));
 
 				case GUIElementEnum::injectCoreGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -987,7 +987,7 @@ private:
 
 						case GUIElementEnum::hceForceTeleportForward:
 							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
-								(game, ToolTipCollection("Teleport relative to the players position and look-direction"), std::nullopt, "Teleport Relative to Player##hce", settings->forceTeleportForward, headerChildElements
+								(game, ToolTipCollection("Teleport relative to the players position and look-direction"), RebindableHotkeyEnum::hceForceTeleportForwardHotkey, "Teleport Relative to Player##hce", settings->forceTeleportForward, headerChildElements
 									{
 									createNestedElement(GUIElementEnum::hceForceTeleportRelativeVec3),
 									createNestedElement(GUIElementEnum::hceForceTeleportForwardIgnoreZ)
@@ -998,12 +998,12 @@ private:
 									(game, ToolTipCollection("How far forward/right/up to teleport the player, relative to their look-direction"), "Teleport: ##hceForceTeleportRelativeVec3", settings->forceTeleportRelativeVec3, "Forward", "Right", "Up"));
 
 							case GUIElementEnum::hceForceTeleportForwardIgnoreZ:
-								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-									(game, ToolTipCollection("Will ignore the vertical component of your look direction (ie pretends you're looking at the horizon)"), std::nullopt, "Ignore vertical look angle##hceTeleport", settings->forceTeleportForwardIgnoreZ));
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+									(game, ToolTipCollection("Will ignore the vertical component of your look direction (ie pretends you're looking at the horizon)"), RebindableHotkeyEnum::hceForceTeleportForwardIgnoreZHotkey, "Ignore vertical look angle##hceTeleport", settings->forceTeleportForwardIgnoreZ));
 
 						case GUIElementEnum::hceForceTeleportManual:
 							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
-								(game, ToolTipCollection("Teleport to absolute world coordinates"), std::nullopt, "Teleport to Manual Coordinates##hce", settings->forceTeleportManual, headerChildElements
+								(game, ToolTipCollection("Teleport to absolute world coordinates"), RebindableHotkeyEnum::hceForceTeleportManualHotkey, "Teleport to Manual Coordinates##hce", settings->forceTeleportManual, headerChildElements
 									{
 									createNestedElement(GUIElementEnum::hceForceTeleportAbsoluteVec3),
 									createNestedElement(GUIElementEnum::hceForceTeleportAbsoluteFillCurrent),
@@ -1016,16 +1016,16 @@ private:
 									(game, ToolTipCollection("The xyz world coordinates to teleport to"), "Teleport: ##hceForceTeleportAbsoluteVec3", settings->forceTeleportAbsoluteVec3));
 
 							case GUIElementEnum::hceForceTeleportAbsoluteFillCurrent:
-								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-									(game, ToolTipCollection("Fill with the current xyz position of the player"), std::nullopt, "Fill with current position##hce", settings->forceTeleportAbsoluteFillCurrent));
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+									(game, ToolTipCollection("Fill with the current xyz position of the player"), RebindableHotkeyEnum::hceForceTeleportAbsoluteFillCurrentHotkey, "Fill with current position##hce", settings->forceTeleportAbsoluteFillCurrent));
 
 							case GUIElementEnum::hceForceTeleportAbsoluteCopy:
-								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-									(game, ToolTipCollection("Copy the position above to your clipboard"), std::nullopt, "Copy to Clipboard##hce", settings->forceTeleportAbsoluteCopy));
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+									(game, ToolTipCollection("Copy the position above to your clipboard"), RebindableHotkeyEnum::hceForceTeleportAbsoluteCopyHotkey, "Copy to Clipboard##hce", settings->forceTeleportAbsoluteCopy));
 
 							case GUIElementEnum::hceForceTeleportAbsolutePaste:
-								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-									(game, ToolTipCollection("Paste a position from your clipboard into above"), std::nullopt, "Paste from Clipboard##hce", settings->forceTeleportAbsolutePaste));
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+									(game, ToolTipCollection("Paste a position from your clipboard into above"), RebindableHotkeyEnum::hceForceTeleportAbsolutePasteHotkey, "Paste from Clipboard##hce", settings->forceTeleportAbsolutePaste));
 
 				case GUIElementEnum::hceForceLaunchGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -1048,7 +1048,7 @@ private:
 
 						case GUIElementEnum::hceForceLaunchForward:
 							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
-								(game, ToolTipCollection("Add velocity relative to the players look-direction"), std::nullopt, "Launch relative to player facing##hce", settings->forceLaunchForward, headerChildElements
+								(game, ToolTipCollection("Add velocity relative to the players look-direction"), RebindableHotkeyEnum::hceForceLaunchForwardHotkey, "Launch relative to player facing##hce", settings->forceLaunchForward, headerChildElements
 									{
 									createNestedElement(GUIElementEnum::hceForceLaunchRelativeVec3),
 									createNestedElement(GUIElementEnum::hceForceLaunchForwardIgnoreZ)
@@ -1059,12 +1059,12 @@ private:
 									(game, ToolTipCollection("How much velocity to ADD in the forward/right/up directions, relative to the players look-direction"), "Launch: ##hceForceLaunchRelativeVec3", settings->forceLaunchRelativeVec3, "Forward", "Right", "Up"));
 
 							case GUIElementEnum::hceForceLaunchForwardIgnoreZ:
-								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-									(game, ToolTipCollection("Will ignore the vertical component of your look direction (ie pretends you're looking at the horizon)"), std::nullopt, "Ignore vertical look angle##hceLaunch", settings->forceLaunchForwardIgnoreZ));
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+									(game, ToolTipCollection("Will ignore the vertical component of your look direction (ie pretends you're looking at the horizon)"), RebindableHotkeyEnum::hceForceLaunchForwardIgnoreZHotkey, "Ignore vertical look angle##hceLaunch", settings->forceLaunchForwardIgnoreZ));
 
 						case GUIElementEnum::hceForceLaunchManual:
 							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
-								(game, ToolTipCollection("Set velocity along the absolute world-axes"), std::nullopt, "Launch with absolute velocity##hce", settings->forceLaunchManual, headerChildElements
+								(game, ToolTipCollection("Set velocity along the absolute world-axes"), RebindableHotkeyEnum::hceForceLaunchManualHotkey, "Launch with absolute velocity##hce", settings->forceLaunchManual, headerChildElements
 									{
 									createNestedElement(GUIElementEnum::hceForceLaunchAbsoluteVec3),
 									}));
@@ -1550,40 +1550,40 @@ private:
 							}));
 
 					case GUIElementEnum::hceDisplayInfoShowCoordinates:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Show the player's xyz world position"), std::nullopt, "Show Coordinates", settings->hceDisplayInfoShowCoordinates));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Show the player's xyz world position"), RebindableHotkeyEnum::hceDisplayInfoShowCoordinatesHotkey, "Show Coordinates", settings->hceDisplayInfoShowCoordinates));
 
 					case GUIElementEnum::hceDisplayInfoShowVelocity:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Show the player's velocity split into X, Y and Z components"), std::nullopt, "Show Velocity", settings->hceDisplayInfoShowVelocity));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Show the player's velocity split into X, Y and Z components"), RebindableHotkeyEnum::hceDisplayInfoShowVelocityHotkey, "Show Velocity", settings->hceDisplayInfoShowVelocity));
 
 					case GUIElementEnum::hceDisplayInfoShowVelocityXY:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Show horizontal speed as a single number: sqrt(x^2 + y^2). Ignores vertical motion, so falling and jumping do not inflate it."), std::nullopt, "Show Absolute XY Velocity", settings->hceDisplayInfoShowVelocityXY));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Show horizontal speed as a single number: sqrt(x^2 + y^2). Ignores vertical motion, so falling and jumping do not inflate it."), RebindableHotkeyEnum::hceDisplayInfoShowVelocityXYHotkey, "Show Absolute XY Velocity", settings->hceDisplayInfoShowVelocityXY));
 
 					case GUIElementEnum::hceDisplayInfoShowVelocityXYZ:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Show total speed as a single number: sqrt(x^2 + y^2 + z^2). Includes vertical motion."), std::nullopt, "Show Absolute XYZ Velocity", settings->hceDisplayInfoShowVelocityXYZ));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Show total speed as a single number: sqrt(x^2 + y^2 + z^2). Includes vertical motion."), RebindableHotkeyEnum::hceDisplayInfoShowVelocityXYZHotkey, "Show Absolute XYZ Velocity", settings->hceDisplayInfoShowVelocityXYZ));
 
 					case GUIElementEnum::hceDisplayInfoShowLevel:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Show the currently loaded level (scenario) name"), std::nullopt, "Show Current Level", settings->hceDisplayInfoShowLevel));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Show the currently loaded level (scenario) name"), RebindableHotkeyEnum::hceDisplayInfoShowLevelHotkey, "Show Current Level", settings->hceDisplayInfoShowLevel));
 
 					case GUIElementEnum::hceDisplayInfoShowBSP:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Show the current BSP index"), std::nullopt, "Show Current BSP", settings->hceDisplayInfoShowBSP));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Show the current BSP index"), RebindableHotkeyEnum::hceDisplayInfoShowBSPHotkey, "Show Current BSP", settings->hceDisplayInfoShowBSP));
 
 					case GUIElementEnum::hceDisplayInfoShowTick:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Show the engine's tick counter"), std::nullopt, "Show Tick Counter", settings->hceDisplayInfoShowTick));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Show the engine's tick counter"), RebindableHotkeyEnum::hceDisplayInfoShowTickHotkey, "Show Tick Counter", settings->hceDisplayInfoShowTick));
 
 					case GUIElementEnum::hceDisplayInfoShowPlayerDatum:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Show the player's datum (unique ID). Reads (dead) when the player has no object."), std::nullopt, "Show Player Datum", settings->hceDisplayInfoShowPlayerDatum));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Show the player's datum (unique ID). Reads (dead) when the player has no object."), RebindableHotkeyEnum::hceDisplayInfoShowPlayerDatumHotkey, "Show Player Datum", settings->hceDisplayInfoShowPlayerDatum));
 
 					case GUIElementEnum::hceDisplayInfoShowTEB:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Diagnostic: the game thread's TEB address. If this shows an address, HCM has found the game thread and every other Halo Campaign Evolved feature can work."), std::nullopt, "Show TEB Base (debug)", settings->hceDisplayInfoShowTEB));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Diagnostic: the game thread's TEB address. If this shows an address, HCM has found the game thread and every other Halo Campaign Evolved feature can work."), RebindableHotkeyEnum::hceDisplayInfoShowTEBHotkey, "Show TEB Base (debug)", settings->hceDisplayInfoShowTEB));
 
 				case GUIElementEnum::hceDisplayInfoSettingsVisualSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -1618,8 +1618,8 @@ private:
 							(game, ToolTipCollection(""), "Info Decimal Precision##hce", settings->display2DInfoFloatPrecision));
 
 					case GUIElementEnum::hceDisplayInfoOutline:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Adds a black outline to text (has a small negative performance impact)"), std::nullopt, "Info Font Outline##hce", settings->display2DInfoOutline));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+							(game, ToolTipCollection("Adds a black outline to text (has a small negative performance impact)"), RebindableHotkeyEnum::hceDisplayInfoOutlineHotkey, "Info Font Outline##hce", settings->display2DInfoOutline));
 
 				case GUIElementEnum::waypoint3DGUIToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -2348,8 +2348,8 @@ private:
 				// its own cheat, its own settings, its own colour - because it answers a different question and
 				// you generally want one or the other on, not both at once.
 				case GUIElementEnum::hceBspOverlayToggleGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Draws the level's INVISIBLE collision surfaces - the walls that block you but are never rendered. Read from a real per-surface flag in the tag, not guessed. Only TRUE structure BSP is drawn; instanced geometry is excluded, so on levels whose collision is mostly instanced this may show very little (the log records how many surfaces were found)."), std::nullopt, "BSP Overlay", settings->hceBspOverlayToggle));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Draws the level's INVISIBLE collision surfaces - the walls that block you but are never rendered. Read from a real per-surface flag in the tag, not guessed. Only TRUE structure BSP is drawn; instanced geometry is excluded, so on levels whose collision is mostly instanced this may show very little (the log records how many surfaces were found)."), RebindableHotkeyEnum::hceBspOverlayToggleHotkey, "BSP Overlay", settings->hceBspOverlayToggle));
 
 				case GUIElementEnum::hceBspOverlaySettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -2424,8 +2424,8 @@ private:
 						(game, ToolTipCollection("Colour of SLIP SURFACE barriers - the ones you slide off instead of standing on."), "Slip Surface Color##hce", settings->softCeilingOverlayColorSlippy));
 
 				case GUIElementEnum::hceSoftCeilingOverlayShowDisabled:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Also draw barriers a mission script has switched OFF, in the disabled colour, instead of hiding them. Halo Campaign Evolved keeps a live enable bit per barrier and HCM reads it, so this is the real state rather than a guess. NOTE: Disable Barriers clears every one of those bits, so with it on everything correctly shows as disabled."), std::nullopt, "Show Disabled Barriers", settings->hceSoftCeilingOverlayShowDisabled));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Also draw barriers a mission script has switched OFF, in the disabled colour, instead of hiding them. Halo Campaign Evolved keeps a live enable bit per barrier and HCM reads it, so this is the real state rather than a guess. NOTE: Disable Barriers clears every one of those bits, so with it on everything correctly shows as disabled."), RebindableHotkeyEnum::hceSoftCeilingOverlayShowDisabledHotkey, "Show Disabled Barriers", settings->hceSoftCeilingOverlayShowDisabled));
 
 				case GUIElementEnum::hceSoftCeilingOverlayDisabledColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -2440,8 +2440,8 @@ private:
 						(game, ToolTipCollection("How opaque the wireframe is, from 0 (off entirely) to 1 (solid). Barriers are drawn triangle by triangle, so a dense barrier's wireframe is dense - turn this down if it reads as a solid block."), "Barrier Wireframe Opacity", settings->softCeilingOverlayWireframeTransparency));
 
 				case GUIElementEnum::hceBspOverlayInvisibleOnly:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("ON: draw only surfaces carrying the collision INVISIBLE flag. OFF (default): draw the whole structural shell. Measured warning: on the first level tested, NONE of its 575 structure surfaces had that flag set, so turning this on drew nothing - this title does not appear to mark its non-rendered structure surfaces with it. Leave it off unless a level's log shows a useful invisible count."), std::nullopt, "Invisible Surfaces Only", settings->hceBspOverlayInvisibleOnly));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("ON: draw only surfaces carrying the collision INVISIBLE flag. OFF (default): draw the whole structural shell. Measured warning: on the first level tested, NONE of its 575 structure surfaces had that flag set, so turning this on drew nothing - this title does not appear to mark its non-rendered structure surfaces with it. Leave it off unless a level's log shows a useful invisible count."), RebindableHotkeyEnum::hceBspOverlayInvisibleOnlyHotkey, "Invisible Surfaces Only", settings->hceBspOverlayInvisibleOnly));
 
 				case GUIElementEnum::hceBspOverlayRenderStyle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::TriggerRenderStyle, 150.f>>
@@ -2492,8 +2492,8 @@ private:
 						(game, ToolTipCollection("Checker cell size in WORLD units (1 unit = 10 feet on this title, so 0.5 is roughly a chest-high square). Smaller reads better up close and shimmers at distance; larger is calmer across a whole level."), "Surface Pattern Size", settings->hceBspOverlayPatternScale));
 
 				case GUIElementEnum::hceBspOverlayOccludeFarSurfaces:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("OFF (default): every surface blends through every other, so you can see far faces behind near ones - the whole shell at once, the way wireframe already shows it. ON: a nearer surface hides the ones behind it, which makes an interior read as solid walls but means you only ever see the closest one. Same property either way, so it is your call - use OFF to survey geometry, ON to read a room."), std::nullopt, "Near Surfaces Hide Far Ones", settings->hceBspOverlayOccludeFarSurfaces));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("OFF (default): every surface blends through every other, so you can see far faces behind near ones - the whole shell at once, the way wireframe already shows it. ON: a nearer surface hides the ones behind it, which makes an interior read as solid walls but means you only ever see the closest one. Same property either way, so it is your call - use OFF to survey geometry, ON to read a room."), RebindableHotkeyEnum::hceBspOverlayOccludeFarSurfacesHotkey, "Near Surfaces Hide Far Ones", settings->hceBspOverlayOccludeFarSurfaces));
 
 				case GUIElementEnum::hceBspOverlaySurfaceVariation:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 0.5f)>>
@@ -2504,24 +2504,24 @@ private:
 						(game, ToolTipCollection("How much darker a surface facing away from the light gets. 0 is flat (no shape cue at all); higher separates floors from walls from ceilings more strongly. The brightest face is always exactly the colour you picked - shading only darkens from there, and is capped so it can never make a surface invisible. If some faces look like holes, turn this DOWN or raise the opacity: a heavily darkened face at a low opacity is what reads as a hole."), "Shading Strength", settings->hceBspOverlayShadingStrength));
 
 				case GUIElementEnum::hceBspOverlayFaceShading:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Shade each surface by which way it faces, so a floor, a wall and a ceiling are visibly different tones. Leave this ON. Without it every face is the identical flat colour with no boundary between one wall and the next, and standing inside a room fills the whole screen with a single block of colour - from outside you get the shape from the silhouette, but inside there is no silhouette and the tone is the only cue."), std::nullopt, "Shade Faces By Angle", settings->hceBspOverlayFaceShading));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Shade each surface by which way it faces, so a floor, a wall and a ceiling are visibly different tones. Leave this ON. Without it every face is the identical flat colour with no boundary between one wall and the next, and standing inside a room fills the whole screen with a single block of colour - from outside you get the shape from the silhouette, but inside there is no silhouette and the tone is the only cue."), RebindableHotkeyEnum::hceBspOverlayFaceShadingHotkey, "Shade Faces By Angle", settings->hceBspOverlayFaceShading));
 
 				case GUIElementEnum::hceDisableFadeFromBlackGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Removes the fade-in from black after a checkpoint revert, so you get your view back instantly. Only affects the fade the restore path starts - script and cinematic fades are untouched. Level loads and mission restarts come back instantly too, since they share that path."), std::nullopt, "Disable Fade From Black", settings->hceDisableFadeFromBlackToggle));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Removes the fade-in from black after a checkpoint revert, so you get your view back instantly. Only affects the fade the restore path starts - script and cinematic fades are untouched. Level loads and mission restarts come back instantly too, since they share that path."), RebindableHotkeyEnum::hceDisableFadeFromBlackHotkey, "Disable Fade From Black", settings->hceDisableFadeFromBlackToggle));
 
 				case GUIElementEnum::hceFreecamGimbalBypassGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Removes the camera's pitch clamp so you can look past vertical without the view flipping. Patches four clamp sites plus a wrap-around routine on the camera update; every site is byte-checked first, so a game update disables this rather than corrupting code."), std::nullopt, "Gimbal Lock Bypass", settings->hceFreecamGimbalBypassToggle));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Removes the camera's pitch clamp so you can look past vertical without the view flipping. Patches four clamp sites plus a wrap-around routine on the camera update; every site is byte-checked first, so a game update disables this rather than corrupting code."), RebindableHotkeyEnum::hceFreecamGimbalBypassHotkey, "Gimbal Lock Bypass", settings->hceFreecamGimbalBypassToggle));
 
 				case GUIElementEnum::hceFreecamNoclipGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Lets the theater / free camera pass through geometry instead of colliding with it. Writes the camera's collision distance directly - no game code is patched."), std::nullopt, "Camera Noclip", settings->hceFreecamNoclipToggle));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Lets the theater / free camera pass through geometry instead of colliding with it. Writes the camera's collision distance directly - no game code is patched."), RebindableHotkeyEnum::hceFreecamNoclipHotkey, "Camera Noclip", settings->hceFreecamNoclipToggle));
 
 				case GUIElementEnum::hceSkyFixGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Stops the sky and world lighting vanishing when you go out of bounds. It works by keeping World Partition streaming areas from tearing down when you leave them. NOTE: turn it on while you are still IN bounds - if you enable it after the sky has already gone, walk back in once and it will hold from then on. Leaving it on for a whole level keeps every area you have visited loaded, so expect memory to grow and streaming to hitch on large levels; turn it off when you are done."), std::nullopt, "Sky Fix", settings->hceSkyFixToggle));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Stops the sky and world lighting vanishing when you go out of bounds. It works by keeping World Partition streaming areas from tearing down when you leave them. NOTE: turn it on while you are still IN bounds - if you enable it after the sky has already gone, walk back in once and it will hold from then on. Leaving it on for a whole level keeps every area you have visited loaded, so expect memory to grow and streaming to hitch on large levels; turn it off when you are done."), RebindableHotkeyEnum::hceSkyFixHotkey, "Sky Fix", settings->hceSkyFixToggle));
 
 				case GUIElementEnum::hceTriggerOverlayRenderStyle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::TriggerRenderStyle, 150.f>>
@@ -2532,16 +2532,16 @@ private:
 						(game, ToolTipCollection("Multiplies how opaque the SOLID faces are, from 0 (fully transparent) to 1 (fully opaque). Wireframe opacity is separate."), "Trigger Opacity Multiplier", settings->triggerOverlayAlpha));
 
 				case GUIElementEnum::hceTriggerOverlayHighlightActive:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Colour trigger volumes that the mission scripts are ACTIVELY testing right now differently from dormant ones. Most volumes lie dormant until a script wakes them, so this shows what could actually fire."), std::nullopt, "Highlight Active Triggers", settings->hceTriggerOverlayHighlightActive));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Colour trigger volumes that the mission scripts are ACTIVELY testing right now differently from dormant ones. Most volumes lie dormant until a script wakes them, so this shows what could actually fire."), RebindableHotkeyEnum::hceTriggerOverlayHighlightActiveHotkey, "Highlight Active Triggers", settings->hceTriggerOverlayHighlightActive));
 
 				// Hit flash / hit list. These drive the SAME settings the MCC trigger overlay uses
 				// (triggerOverlayCheckHit*), because they model exactly the same thing - the script tested
 				// this volume and the answer was YES. HaloCER needs its own ELEMENTS only because
 				// requiredServicesPerGUIElement is keyed by element and the MCC ones map to the MCC cheat.
 				case GUIElementEnum::hceTriggerOverlayFlashOnHit:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Flash a trigger volume the instant a mission script tests it AND you are inside it. This is the moment you actually crossed the trigger, which is different from 'a script is watching this volume' - that state lasts for seconds either side, because scripts poll in bursts."), std::nullopt, "Flash Triggers on Hit", settings->triggerOverlayCheckHitToggle));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Flash a trigger volume the instant a mission script tests it AND you are inside it. This is the moment you actually crossed the trigger, which is different from 'a script is watching this volume' - that state lasts for seconds either side, because scripts poll in bursts."), RebindableHotkeyEnum::hceTriggerOverlayFlashOnHitHotkey, "Flash Triggers on Hit", settings->triggerOverlayCheckHitToggle));
 
 				case GUIElementEnum::hceTriggerOverlayHitColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
@@ -2552,8 +2552,8 @@ private:
 						(game, ToolTipCollection("How long the hit flash lasts, in ticks (60 = one second). Short is usually better - the point is to see the exact moment you crossed."), "Flash for x ticks", settings->triggerOverlayCheckHitFalloff));
 
 				case GUIElementEnum::hceTriggerOverlayMessageOnHit:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Print the name of each trigger volume to the message feed as you hit it, building a running list of what you have actually triggered this run. Only volumes a script tested successfully are listed - not everything you merely walked through."), std::nullopt, "Print Triggers on Hit", settings->triggerOverlayMessageOnCheckHit));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Print the name of each trigger volume to the message feed as you hit it, building a running list of what you have actually triggered this run. Only volumes a script tested successfully are listed - not everything you merely walked through."), RebindableHotkeyEnum::hceTriggerOverlayMessageOnHitHotkey, "Print Triggers on Hit", settings->triggerOverlayMessageOnCheckHit));
 
 				case GUIElementEnum::hceTriggerOverlayActiveColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -2570,38 +2570,38 @@ private:
 							}));
 
 				case GUIElementEnum::hceTriggerOverlayShowRegular:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Ordinary box trigger volumes - anything that is not a sector, a kill volume or a zone-set switch."), std::nullopt, "Regular Triggers", settings->hceTriggerOverlayShowRegular));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Ordinary box trigger volumes - anything that is not a sector, a kill volume or a zone-set switch."), RebindableHotkeyEnum::hceTriggerOverlayShowRegularHotkey, "Regular Triggers", settings->hceTriggerOverlayShowRegular));
 
 				case GUIElementEnum::hceTriggerOverlayShowSector:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Sector volumes - an XY polygon extruded between two heights, rather than a box."), std::nullopt, "Sector Triggers", settings->hceTriggerOverlayShowSector));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Sector volumes - an XY polygon extruded between two heights, rather than a box."), RebindableHotkeyEnum::hceTriggerOverlayShowSectorHotkey, "Sector Triggers", settings->hceTriggerOverlayShowSector));
 
 				case GUIElementEnum::hceTriggerOverlayShowKill:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Kill volumes - the ones that kill you for leaving the intended play space."), std::nullopt, "Kill Triggers", settings->hceTriggerOverlayShowKill));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Kill volumes - the ones that kill you for leaving the intended play space."), RebindableHotkeyEnum::hceTriggerOverlayShowKillHotkey, "Kill Triggers", settings->hceTriggerOverlayShowKill));
 
 				case GUIElementEnum::hceTriggerOverlayShowZoneSet:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("BSP / zone-set switch volumes - crossing one loads and unloads whole areas."), std::nullopt, "Zoneset Triggers", settings->hceTriggerOverlayShowZoneSet));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("BSP / zone-set switch volumes - crossing one loads and unloads whole areas."), RebindableHotkeyEnum::hceTriggerOverlayShowZoneSetHotkey, "Zoneset Triggers", settings->hceTriggerOverlayShowZoneSet));
 
 				// Halo Campaign Evolved name filter. Drives the SAME triggerOverlayFilterString / FilterToggle /
 				// FilterExactMatch settings as MCC's version, so presets carry across; only the picker differs.
 				case GUIElementEnum::hceTriggerOverlayNameFilterButton:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-						(game, ToolTipCollection("Choose exactly which trigger volumes to draw, by name, from a checkbox list of the ones in this level. Has a search box, and All / None per category. Selecting names switches the filter on for you.\n\nYou must be in a level with the Trigger Overlay on, otherwise there are no volume names to show yet."), std::nullopt, "Filter by Name...##hce", settings->hceTriggerOverlayEditNameFilterEvent));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Choose exactly which trigger volumes to draw, by name, from a checkbox list of the ones in this level. Has a search box, and All / None per category. Selecting names switches the filter on for you.\n\nYou must be in a level with the Trigger Overlay on, otherwise there are no volume names to show yet."), RebindableHotkeyEnum::hceTriggerOverlayEditNameFilterHotkey, "Filter by Name...##hce", settings->hceTriggerOverlayEditNameFilterEvent));
 
 				case GUIElementEnum::hceTriggerOverlayNameFilterToggle:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Apply the name filter chosen above. With this off, every volume the Types Shown toggles allow is drawn.\n\nAn EMPTY name list means 'draw everything', not 'draw nothing' - so turning this on before picking anything changes nothing."), std::nullopt, "Filter by Name##hce", settings->triggerOverlayFilterToggle));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Apply the name filter chosen above. With this off, every volume the Types Shown toggles allow is drawn.\n\nAn EMPTY name list means 'draw everything', not 'draw nothing' - so turning this on before picking anything changes nothing."), RebindableHotkeyEnum::hceTriggerOverlayNameFilterToggleHotkey, "Filter by Name##hce", settings->triggerOverlayFilterToggle));
 
 				case GUIElementEnum::hceTriggerOverlayNameFilterExactMatch:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("ON: a volume is drawn only if its name matches a chosen name exactly - which is what the checkbox picker produces.\n\nOFF: the entries are treated as case-insensitive SUBSTRINGS, so typing one word like 'kill' into the filter string draws every volume whose name contains it."), std::nullopt, "Exact Name Match##hce", settings->triggerOverlayFilterExactMatch));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("ON: a volume is drawn only if its name matches a chosen name exactly - which is what the checkbox picker produces.\n\nOFF: the entries are treated as case-insensitive SUBSTRINGS, so typing one word like 'kill' into the filter string draws every volume whose name contains it."), RebindableHotkeyEnum::hceTriggerOverlayNameFilterExactMatchHotkey, "Exact Name Match##hce", settings->triggerOverlayFilterExactMatch));
 
 				case GUIElementEnum::hceTriggerOverlaySpeedrunOnly:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Draws ONLY the trigger volumes a speedrun has to hit, from the community completion-requirement lists. Everything else is hidden. Note this is a fixed name list, not something read from the level - if a game update renames a volume it will silently stop being shown, so do not treat it as proof that nothing else matters."), std::nullopt, "Speedrun Triggers Only", settings->hceTriggerOverlaySpeedrunOnly));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Draws ONLY the trigger volumes a speedrun has to hit, from the community completion-requirement lists. Everything else is hidden. Note this is a fixed name list, not something read from the level - if a game update renames a volume it will silently stop being shown, so do not treat it as proof that nothing else matters."), RebindableHotkeyEnum::hceTriggerOverlaySpeedrunOnlyHotkey, "Speedrun Triggers Only", settings->hceTriggerOverlaySpeedrunOnly));
 
 				case GUIElementEnum::hceTriggerOverlayBspColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -2620,8 +2620,8 @@ private:
 						(game, ToolTipCollection("Colour of the trigger volume name labels. Separate from the volume colours, which are too dark to read as text."), "Label Text Color", settings->hceTriggerOverlayLabelColor));
 
 				case GUIElementEnum::hceTriggerOverlayShowVertex:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Draws a sphere at the point the game uses to test the player against trigger volumes."), std::nullopt, "Show Trigger Vertex", settings->hceTriggerOverlayShowVertex));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Draws a sphere at the point the game uses to test the player against trigger volumes."), RebindableHotkeyEnum::hceTriggerOverlayShowVertexHotkey, "Show Trigger Vertex", settings->hceTriggerOverlayShowVertex));
 
 				case GUIElementEnum::hceTriggerOverlayVertexColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -2639,8 +2639,8 @@ private:
 						(game, ToolTipCollection("How far away a trigger volume is still drawn, in WORLD UNITS (1 world unit = 10 feet, so 2000 is the whole map). Drawing the entire level at once is usually unreadable - but turn it up if a filter looks empty, because a volume that is filtered IN can still be culled OUT by distance."), "Render Distance (world units)", settings->hceTriggerOverlayRenderDistance));
 
 				case GUIElementEnum::hceTriggerOverlayShowLabels:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Draw each volume's scripting name at its centre. Volumes whose name cannot be resolved are labelled trigger_<index>."), std::nullopt, "Show Labels##hce", settings->hceTriggerOverlayShowLabels));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Draw each volume's scripting name at its centre. Volumes whose name cannot be resolved are labelled trigger_<index>."), RebindableHotkeyEnum::hceTriggerOverlayShowLabelsHotkey, "Show Labels##hce", settings->hceTriggerOverlayShowLabels));
 
 				case GUIElementEnum::hceTriggerOverlayLabelScale:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(6.f, 120.f)>>

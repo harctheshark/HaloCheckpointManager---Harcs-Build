@@ -12,6 +12,12 @@ private:
 	bool hasRenderedYet = false;
 	int selectedRadioOption = 0;
 
+	// True if ANY option in this group is bindable to a hotkey. Everything hotkey-related below is gated on it,
+	// so a group without hotkeys - which is every MCC one - renders and behaves exactly as it always has. Note
+	// the two are not interchangeable: renderHotkey() draws blank padding rather than nothing when handed no
+	// hotkey, so calling it unconditionally would indent every radio button in the program.
+	bool mAnyOptionHasHotkey = false;
+
 public:
 
 	GUIRadioGroup(GameState implGame, ToolTipCollection tooltip, std::string debugName, std::vector<std::optional<std::shared_ptr<IGUIElement>>> radioButtons)
@@ -23,9 +29,10 @@ public:
 			if (maybeRadioButton.has_value())
 			{
 				mRadioButtons.push_back(std::make_pair(radioButtonCount, std::dynamic_pointer_cast<GUIRadioButton>(maybeRadioButton.value())));
+				if (maybeRadioButton.value()->getHotkey().has_value()) mAnyOptionHasHotkey = true;
 				radioButtonCount++;
 			}
-				
+
 		}
 
 		currentHeight = radioButtonCount * 20;
@@ -92,6 +99,22 @@ public:
 			}
 		}
 
+		// A hotkey changes the bound settings from outside this group, so when one exists the selection has to be
+		// re-derived from them each frame - selectedRadioOption is otherwise only ever moved by a click here, and
+		// the group would keep displaying (and keep rendering the children of) the option the user just left.
+		if (mAnyOptionHasHotkey)
+		{
+			for (int i = 0; i < mRadioButtons.size(); i++)
+			{
+				auto boundOption = mRadioButtons.at(i).second->mBoundOption.lock();
+				if (boundOption && boundOption->GetValueDisplay())
+				{
+					selectedRadioOption = i;
+					break;
+				}
+			}
+		}
+
 		bool debugAlreadyRenderedSelected = false;
 		ImGui::BeginChild(std::format("##{}", mDebugName).c_str(), {GUIWindowWidth - 30, std::max(0.f, currentHeight - GUISpacing)});
 		currentHeight = GUISpacing;
@@ -101,6 +124,11 @@ public:
 		for (auto& [radioIndex, radioBut] : mRadioButtons)
 		{
 			currentHeight += GUIFrameHeightWithSpacing;
+			if (mAnyOptionHasHotkey)
+			{
+				hotkeyRenderer.renderHotkey(radioBut->getHotkey());
+				ImGui::SameLine();
+			}
 			if (ImGui::RadioButton(radioBut->getName().data(), &selectedRadioOption, radioIndex))
 			{
 				for (auto& [otherRadioIndex, otherRadioBut] : mRadioButtons)

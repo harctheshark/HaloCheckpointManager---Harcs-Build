@@ -79,8 +79,15 @@ private:
 
 
 	// have to split up the counting here since BOOST_PP_TUPLE_SIZE can only count up to 64
-	static constexpr inline int allEventOnPressHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_SKULL_HOTKEYS));
-	static constexpr inline int allRebindableHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((NOEVENT_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_SKULL_HOTKEYS));
+	// ⚠ A NEW MACRO MUST BE ADDED TO BOTH SUMS. Each one sizes a fixed-size array below, so missing either is a
+	// compile error - but not an obvious one, and NOT one the asserts in the constructor will catch first: those
+	// are assert(), which NDEBUG deletes in Release.
+	static constexpr inline int allEventOnPressHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_HOTKEYS));
+	static constexpr inline int allRebindableHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((NOEVENT_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_HOTKEYS));
+
+	// The event array is indexed by position in HCE_HOTKEYS, so its length must equal that macro's.
+	static_assert(BOOST_PP_TUPLE_SIZE((HCE_HOTKEYS)) == SettingsStateAndEvents::kHCEHotkeyCount,
+		"HCE_HOTKEYS and SettingsStateAndEvents::hceHotkeyEvents have drifted apart - add the event when you add the hotkey");
 	static constexpr inline int rebindableOnlyCount = allRebindableHotkeyEnumCount - allEventOnPressHotkeyEnumCount;
 
 	const std::map<RebindableHotkeyEnum, std::shared_ptr<EventOnPressHotkey>>::value_type allEventOnPressHotkeysData[allEventOnPressHotkeyEnumCount]
@@ -522,6 +529,15 @@ private:
 #define initHCESkullHotkey(r, data, i, elem) initEventOnPressHotkey(elem, mSettings->hceSkullToggleHotkeyEvents[i], vsk{}),
 		BOOST_PP_SEQ_FOR_EACH_I(initHCESkullHotkey, ~, BOOST_PP_TUPLE_TO_SEQ((HCE_SKULL_HOTKEYS)))
 #undef initHCESkullHotkey
+
+		/// Halo Campaign Evolved feature hotkeys - all 48, all unbound by default.
+		//
+		// Generated for the same reason the skulls above are: every entry is identical apart from an index that
+		// must match the enumerator's position in HCE_HOTKEYS, and FOR_EACH_I takes that index from the position
+		// itself so the two cannot disagree. What each index then DOES lives in HotkeyEventsLambdas.h.
+#define initHCEHotkey(r, data, i, elem) initEventOnPressHotkey(elem, mSettings->hceHotkeyEvents[i], vsk{}),
+		BOOST_PP_SEQ_FOR_EACH_I(initHCEHotkey, ~, BOOST_PP_TUPLE_TO_SEQ((HCE_HOTKEYS)))
+#undef initHCEHotkey
 
 
 	};
