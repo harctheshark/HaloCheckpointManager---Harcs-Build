@@ -147,6 +147,13 @@ private:
 
 	uint32_t mLastTick = 0;
 	int mStillCount = 0;   // consecutive polls with an unchanged tick counter
+
+	// PAUSE vs LOADING. A frozen tick counter alone cannot tell them apart: a paused game and a mid-load game
+	// both have a still counter AND (often) a written scenario path, because the path is written early in a
+	// load. What separates them is whether THIS level's sim has ever been seen to run. See poll().
+	bool mHaveTickedThisLevel = false;
+	uintptr_t mLastStateBlock = 0;
+	char mLastScenario[128]{};
 	bool mCursorShowing = true;    // handed to HCMInternalGUI as a bool*; see pollCursor()
 	bool mOsCursorVisible = false; // real WIN32 cursor state (drives ImGui's software cursor)
 
@@ -217,11 +224,13 @@ private:
 	// THE level name: the scenario path out of the live session header. false means NO LEVEL - either the state
 	// block pointer is NULL (the teardown nulls it between levels) or the header is not written yet (mid-load).
 	// ONLY call this once ensureStateBlockSlot() has said yes.
-	bool tryReadScenarioPath(char* out, size_t cap)
+	// outStateBlock is reported so poll() can key level identity on the POINTER, not just the name - the engine
+	// nulls it on teardown, which is an unambiguous "no level" a string compare cannot give us.
+	bool tryReadScenarioPath(char* out, size_t cap, uintptr_t& outStateBlock)
 	{
-		uintptr_t stateBlock = 0;
-		if (!tryReadPointer(mStateBlockSlot, stateBlock) || !stateBlock) return false;
-		return tryReadString(stateBlock + kStateHeaderScenarioPath, out, cap);
+		outStateBlock = 0;
+		if (!tryReadPointer(mStateBlockSlot, outStateBlock) || !outStateBlock) return false;
+		return tryReadString(outStateBlock + kStateHeaderScenarioPath, out, cap);
 	}
 
 	void poll()
@@ -234,21 +243,13 @@ private:
 		if (sim)
 		{
 			uintptr_t base = (uintptr_t)sim;
-			// tick_counter is a POINTER to the counter, not the counter itself (the reference tool does
-			// read_pointer(base+rva) then read_int(that)). Reading the dword in place gave a value that never
-			// changed, so we reported "Loading" forever - which also gated every feature off.
-			uint32_t tick = 0;
-			uintptr_t tickPtr = 0;
-			if (tryReadPointer(base + kRvaTickCounter, tickPtr) && tryReadDword(tickPtr, tick))
-			{
-				// A frozen tick counter means the sim exists but isn't simulating -> loading (or paused at a
-				// transition). Require a few consecutive still polls so a single dropped frame isn't "Loading".
-				if (tick != mLastTick) { mStillCount = 0; mLastTick = tick; }
-				else if (mStillCount < 100) ++mStillCount;
 
-				newPlay = (mStillCount >= 3) ? PlayState::Loading : PlayState::Ingame;
-
-				// The level is a STRING at both sources, not an index. HCE remakes the Halo CE campaign, so map
+			// ⚠ THE LEVEL READ IS DELIBERATELY ABOVE THE TICK READ. It does not depend on the tick, and the
+			// pause rule below needs its answers. One behaviour change falls out of the move, and it is
+			// intended: when the tick pointer is unreadable we now still report the real level instead of
+			// no_map_loaded. "Sim initialising, level is d20" beats "sim initialising, no level".
+			//
+			// The level is a STRING at both sources, not an index. HCE remakes the Halo CE campaign, so map
 				// its scenario name onto the matching halo1 LevelID - those are contiguous from
 				// _map_id_halo1_pillar_of_autumn in campaign order.
 				//
@@ -263,33 +264,84 @@ private:
 				//
 				// 128 bytes: the header's scenario path field is 0x100 and the presence buffer is 0x80, so this
 				// is short enough to stay inside either field and long enough for any "levels\halo1\solo\x\x".
-				char levelName[128]{};
-				const bool haveHeader = ensureStateBlockSlot(base);
-				const bool haveName = haveHeader
-					? tryReadScenarioPath(levelName, sizeof(levelName))
-					: tryReadString(base + kRvaCurrentLevel, levelName, sizeof(levelName));
-				if (haveName) newLevel = levelIdFromHceName(levelName);
+			char levelName[128]{};
+			uintptr_t stateBlock = 0;
+			const bool haveHeader = ensureStateBlockSlot(base);
+			const bool haveName = haveHeader
+				? tryReadScenarioPath(levelName, sizeof(levelName), stateBlock)
+				: tryReadString(base + kRvaCurrentLevel, levelName, sizeof(levelName));
+			if (haveName) newLevel = levelIdFromHceName(levelName);
 
-				// ⚠ DIAGNOSTIC, and it earns its place. This path has now been wrong TWICE for different
-				// reasons (a presence cache that is never populated; then a header read that yields nothing),
-				// and both times the log said only "level=255", which is indistinguishable between "could not
-				// read the string", "read an empty string" and "read a string that matches no known level".
-				// Reported once per distinct outcome, so it cannot spam a 40 ms poll.
-				if (newLevel == LevelID::no_map_loaded)
+			// ⚠ DIAGNOSTIC, and it earns its place. This path has now been wrong TWICE for different
+			// reasons (a presence cache that is never populated; then a header read that yields nothing),
+			// and both times the log said only "level=255", which is indistinguishable between "could not
+			// read the string", "read an empty string" and "read a string that matches no known level".
+			// Reported once per distinct outcome, so it cannot spam a 40 ms poll.
+			if (newLevel == LevelID::no_map_loaded)
+			{
+				std::string report = std::format("header={} name={} raw='{}'",
+					haveHeader ? "yes" : "NO", haveName ? "yes" : "NO", levelName);
+				if (report != mLastUnmappedReport)
 				{
-					std::string report = std::format("header={} name={} raw='{}'",
-						haveHeader ? "yes" : "NO", haveName ? "yes" : "NO", levelName);
-					if (report != mLastUnmappedReport)
-					{
-						mLastUnmappedReport = report;
-						PLOG_WARNING << "HCE level unresolved: " << report
-							<< " (slot=0x" << std::hex << mStateBlockSlot << std::dec << ")";
-					}
+					mLastUnmappedReport = report;
+					PLOG_WARNING << "HCE level unresolved: " << report
+						<< " (slot=0x" << std::hex << mStateBlockSlot << std::dec << ")";
 				}
-				else if (!mLastUnmappedReport.empty())
-				{
-					mLastUnmappedReport.clear();
-				}
+			}
+			else if (!mLastUnmappedReport.empty())
+			{
+				mLastUnmappedReport.clear();
+			}
+
+			// Level identity, keyed on the state-block POINTER first: the engine's teardown nulls it, so that is
+			// an unambiguous "no level" rather than a stale string. The name compare is a backstop for a
+			// same-address reallocation. A checkpoint revert cannot flap this - the revert's memcpy writes the
+			// SAME scenario-path bytes, since that is the field it compares against.
+			if (stateBlock != mLastStateBlock || std::strcmp(levelName, mLastScenario) != 0)
+			{
+				mHaveTickedThisLevel = false;
+				mLastStateBlock = stateBlock;
+				strcpy_s(mLastScenario, levelName);
+			}
+
+			// tick_counter is a POINTER to the counter, not the counter itself (the reference tool does
+			// read_pointer(base+rva) then read_int(that)). Reading the dword in place gave a value that never
+			// changed, so we reported "Loading" forever - which also gated every feature off.
+			uint32_t tick = 0;
+			uintptr_t tickPtr = 0;
+			if (tryReadPointer(base + kRvaTickCounter, tickPtr) && tryReadDword(tickPtr, tick))
+			{
+				if (tick != mLastTick) { mStillCount = 0; mLastTick = tick; mHaveTickedThisLevel = true; }
+				else if (mStillCount < 100) ++mStillCount;
+
+				// ⚠⚠ A FROZEN TICK IS NOT THE SAME AS LOADING, AND CONFLATING THEM BROKE PAUSE.
+				//
+				// The old rule was "frozen for 3 polls -> Loading", which every cheat then read through
+				// isGameCurrentlyPlaying() as "do nothing". But a PAUSED game has a fully constructed, fully
+				// addressable world - the player object, the camera, the coordinates are all there and all
+				// valid - it simply is not advancing. So pausing switched HCM off: no buffering a teleport or a
+				// launch, no player info, no fill-from-current-position. HCM's own pause did it too. The comment
+				// that used to live here even said "loading (or paused at a transition)".
+				//
+				// LOADING  = this level's simulation has NEVER been observed to run.
+				// PAUSED   = it ran, then stopped, and the world is still addressable.
+				//
+				// That distinction needs no new offsets: poll() already reads both halves. The same fix also
+				// stops a checkpoint revert being reported as Loading, which HCESkyFix documents as a real
+				// problem it has to work around.
+				const bool frozen = (mStillCount >= 3);
+
+				// ⚠ THE SIGNATURE-FAILURE PATH KEEPS THE OLD RULE ON PURPOSE. Without the header we fall back to
+				// 0xCA2F00, which this file documents as NEVER CLEARED - it cannot express "no level". Trusting
+				// it here would report Ingame forever at the main menu once any level had been played, which is
+				// exactly the state that makes every cheat's TLS chain fire and (under Proton) costs a
+				// process-wide thread snapshot every second.
+				const bool worldIsAddressable = haveHeader && stateBlock != 0 && haveName;
+
+				newPlay = (!frozen)                                   ? PlayState::Ingame
+					: (!haveHeader)                                   ? PlayState::Loading
+					: (mHaveTickedThisLevel && worldIsAddressable)    ? PlayState::Ingame   // paused
+					:                                                   PlayState::Loading;
 			}
 			else
 			{
@@ -299,6 +351,7 @@ private:
 		else
 		{
 			mLastTick = 0; mStillCount = 0;
+			mHaveTickedThisLevel = false; mLastStateBlock = 0; mLastScenario[0] = '\0';
 		}
 
 		bool changed = false;

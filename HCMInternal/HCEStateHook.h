@@ -7,8 +7,12 @@
 // HCE is not MCC: there is no MCC gameEngineIndicator / loadIndicator / menuIndicator to read. Instead the Halo
 // simulation lives in HaloSimulation_tag_release.dll, and we derive state from that module directly:
 //   - module not loaded            -> MainMenu (the UE5 shell is up but no Halo sim yet)
-//   - loaded, tick counter frozen  -> Loading
 //   - loaded, tick counter ticking -> Ingame
+//   - loaded, tick counter FROZEN  -> depends, and the distinction matters:
+//       * this level's sim has never been seen to tick   -> Loading
+//       * it ticked before and the world is addressable  -> Ingame (the game is PAUSED)
+//     A paused game is fully addressable - player, camera, coordinates all valid - so reporting Loading
+//     switched every cheat off mid-session. See the long note in poll().
 // currentGameState is always HaloCER while the sim is loaded. HCE is a remake of the Halo CE campaign, so the
 // halo1 LevelIDs are the semantically correct mapping for currentLevelID.
 //
