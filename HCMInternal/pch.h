@@ -66,17 +66,37 @@
 #include <plog/Initializers/ConsoleInitializer.h>
 
 //https://github.com/Neargye/magic_enum/blob/master/doc/limitations.md
-// magic_enum can only reflect enumerators whose VALUE lands inside [MIN, MAX]; anything outside silently
-// reflects as an empty name (enum_name -> "") rather than failing to compile. GUIElementEnum is by far the
-// largest enum here - RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES1 (148) + ...2 (206 literal + 3 defFreeCameraInterpolator
-// uses x2 = 212) = 360 enumerators, values 0..359 - so the old bound of 256 left ~104 of them nameless in every
-// PLOG line, in the "you forgot a creation case label" message and in the GUIServiceInfo failure listings.
-// If you add another ~150 gui elements, raise this again.
-// NOTE: raising the bound is monotone - it can only ADD names, never renumber or remove them - and magic_enum
-// clamps the range to the underlying type (see reflected_max() in magic_enum.hpp), so byte-backed enums such as
-// LevelID and DifficultyEnum are pinned at 255 and are unaffected by this value.
+// magic_enum can only reflect enumerators whose VALUE lands inside [MIN, MAX]; anything outside SILENTLY
+// reflects as an empty name (enum_name -> "") rather than failing to compile. That silence is the whole
+// hazard: the symptom is not a build error, it is nameless entries in PLOG lines, in the "you forgot a
+// creation case label" message, and in the GUIServiceInfo failure listings - i.e. exactly the diagnostics
+// you would be reading while trying to work out what went wrong.
+//
+// ⚠ THE COUNT IN THIS COMMENT USED TO BE WRONG BY 132. It claimed 360 enumerators and "if you add another
+// ~150, raise this again", both written before RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES3 existed and never
+// updated. Measured 2026-08-17: list1 148 + list2 206 + list3 134 = 488 literal, plus 4
+// defFreeCameraInterpolator lines that each expand to two = 492 enumerators, values 0..491. Against the old
+// bound of 512 that was 20 spare, not the comfortable margin the comment implied - one ordinary feature
+// away from silently losing names.
+//
+// ⚠⚠ DO NOT RAISE THIS TO FIT GUIElementEnum. Every reflected enum in the process pays for this number -
+// magic_enum instantiates a __FUNCSIG__ probe per candidate VALUE, per enum - so a global big enough for the
+// biggest enum taxes the ~30 small ones too. GUIElementEnum gets its own range instead, specialised right
+// under its definition in GuiElementEnum.h. 256 here covers every other enum with room to spare
+// (OptionalCheatEnum 141, HotkeysEnum 66) and is HALF what this used to be, so the small enums got cheaper.
+//
+// ⚠⚠⚠ AND DO NOT LOWER IT BELOW 256 TO SAVE MORE. That is not free, and the reason is not obvious:
+// magic_enum clamps each enum's range to its UNDERLYING TYPE (reflected_max() in magic_enum.hpp), so
+// byte-backed enums are pinned at 255 and are currently riding on that clamp. LevelID in MCCState.h is
+// `enum class LevelID : byte` with 229 enumerators spanning 0..255. Drop this to, say, 142 and 86 of them
+// go nameless - and that is NOT cosmetic, because PointerDataParserInstantiators.h:544 does
+// enum_cast<LevelID>(levelIDString) to parse level names out of the pointer data. A nameless enumerator
+// cannot be cast FROM its string either, so pointer data for those 86 levels would silently stop loading
+// and their cheats would break with no error anywhere. 256 is the floor, not a preference.
+//
+// NOTE: raising a bound is monotone - it can only ADD names, never renumber or remove them.
 #define MAGIC_ENUM_RANGE_MIN 0
-#define MAGIC_ENUM_RANGE_MAX 512
+#define MAGIC_ENUM_RANGE_MAX 256
 #include "magic_enum\magic_enum_all.hpp" // enum reflection https://github.com/Neargye/magic_enum
 
 

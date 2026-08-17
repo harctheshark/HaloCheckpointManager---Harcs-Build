@@ -130,6 +130,12 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
+      <!-- 200 .cpp files were compiling SERIALLY: MSBuild's /m parallelises across PROJECTS, not across
+           the translation units inside one. /MP is what does that, and it was set nowhere in the solution.
+           Capped at 24 rather than defaulting to all 32 logical cores, so a build leaves the machine usable
+           and does not starve the linker (this project is /GL, so LTCG wants headroom at the end). -->
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <ProcessorNumber>24</ProcessorNumber>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING;HCM_OUTPUT_PATH=R"($(OutputPath))";HCM_DEBUG;_DEBUG;HCMINTERNAL_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -185,6 +191,12 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
+      <!-- 200 .cpp files were compiling SERIALLY: MSBuild's /m parallelises across PROJECTS, not across
+           the translation units inside one. /MP is what does that, and it was set nowhere in the solution.
+           Capped at 24 rather than defaulting to all 32 logical cores, so a build leaves the machine usable
+           and does not starve the linker (this project is /GL, so LTCG wants headroom at the end). -->
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <ProcessorNumber>24</ProcessorNumber>
       <WarningLevel>Level3</WarningLevel>
       <FunctionLevelLinking>false</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>

@@ -620,3 +620,37 @@ enum class GUIElementEnum {
 	ALLGUIELEMENTSDEBUG
 #endif
 };
+
+
+// ⚠ THIS ENUM IS TOO BIG FOR THE GLOBAL magic_enum RANGE, ON PURPOSE. It is the only one that is, so it
+// carries its own range rather than making every other reflected enum pay for its size.
+//
+// magic_enum reflects by instantiating a __FUNCSIG__ probe for every candidate VALUE in [min, max], per
+// enum. The global bound in pch.h is therefore a tax on all ~30 reflected enums, and raising it to fit this
+// one is the expensive way round. MAGIC_ENUM_RANGE_MAX is 256 there - enough for everything else, and
+// enough for the byte-backed enums that depend on it (see the warning in pch.h about LevelID).
+//
+// ⚠⚠ WHY 1024 AND NOT THE EXACT COUNT. The range is INCLUSIVE - magic_enum computes
+// `range_size = max - min + 1` - so setting max to the highest enumerator leaves ZERO headroom and the very
+// next GUI row you add silently loses its name. And "silently" is literal: an out-of-range enumerator does
+// not fail to compile, it reflects as an empty string, so the symptom is blank entries in PLOG lines, in
+// the "you forgot a creation case label" message, and in the GUIServiceInfo failure listings - the exact
+// output you would be reading while trying to work out what broke. A comment here previously undercounted
+// this enum by 132 and nearly caused that. 1024 is room for roughly another 530 rows.
+//
+// Measured 2026-08-17: list1 148 + list2 206 + list3 134 = 488 literal entries, plus 4
+// defFreeCameraInterpolator lines that each expand to two = 492 enumerators, values 0..491.
+// Re-measure by counting `((` lines per list rather than trusting this number.
+//
+// Must be visible in every TU that reflects this enum, which is why it lives in this header immediately
+// under the definition rather than in a .cpp: a specialisation seen in some TUs and not others is an ODR
+// violation, and magic_enum would quietly use different ranges in different objects.
+namespace magic_enum::customize
+{
+	template <>
+	struct enum_range<GUIElementEnum>
+	{
+		static constexpr int min = 0;
+		static constexpr int max = 1024;
+	};
+}
