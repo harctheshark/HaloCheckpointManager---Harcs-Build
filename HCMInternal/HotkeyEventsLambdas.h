@@ -77,7 +77,7 @@ public:
 
 		constexpr size_t hceToggleCount = 41; // [0..40]  flip a bool
 		constexpr size_t hceRadioCount = 4;  // [41..44] set a radio option
-		constexpr size_t hceAliasCount = 6;  // [45..50] fire an event that already has its own subscriber
+		constexpr size_t hceAliasCount = 7;  // [45..51] fire an event that already has its own subscriber
 		static_assert(hceToggleCount + hceRadioCount + hceAliasCount == SettingsStateAndEvents::kHCEHotkeyCount,
 			"The tables below no longer cover every HCE_HOTKEYS entry - a hotkey has been added without being wired up");
 

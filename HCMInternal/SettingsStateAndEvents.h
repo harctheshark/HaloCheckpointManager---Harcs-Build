@@ -43,6 +43,7 @@ public:
 		hceHotkeyEvents[48] = hceTriggerOverlayEditNameFilterEvent;
 		hceHotkeyEvents[49] = hceCameraRollResetEvent;
 		hceHotkeyEvents[50] = hceFieldOfViewResetEvent;
+		hceHotkeyEvents[51] = hceCameraMoveSpeedResetEvent;
 	}
 	~SettingsStateAndEvents() {
 		PLOG_DEBUG << "~SettingsStateAndEvents()";
@@ -181,6 +182,7 @@ public:
 	// entries of HCE_HOTKEYS alias these), so the cheat subscribes once and both routes land in the same place.
 	std::shared_ptr<ActionEvent> hceCameraRollResetEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> hceFieldOfViewResetEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> hceCameraMoveSpeedResetEvent = std::make_shared<ActionEvent>();
 
 	std::shared_ptr<ActionEvent> switchBSPEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> switchBSPSetLoadSetEvent = std::make_shared<ActionEvent>();
@@ -246,7 +248,7 @@ public:
 	//
 	// The last four elements are REPLACED IN THE CONSTRUCTOR with events that already exist (see below), so
 	// those hotkeys fire the very same event object the equivalent button does. Everything before them is new.
-	static constexpr inline int kHCEHotkeyCount = 51;
+	static constexpr inline int kHCEHotkeyCount = 52;
 	std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> hceHotkeyEvents = []()
 		{
 			std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> events;
@@ -1333,6 +1335,31 @@ public:
 			0.f,
 			[](float in) { return in >= -180.f && in <= 180.f; },
 			nameof(hceCameraRollDegrees)
+		);
+
+	// How fast the tilt keys wind the roll slider. Purely an HCM-side input rate - the game has no notion of it.
+	std::shared_ptr<BinarySetting<float>> hceCameraRollSpeed = std::make_shared<BinarySetting<float>>
+		(
+			60.f,
+			[](float in) { return in > 0.f && in <= 720.f; },
+			nameof(hceCameraRollSpeed)
+		);
+
+	// Same idea for the field-of-view keys.
+	std::shared_ptr<BinarySetting<float>> hceFieldOfViewSpeed = std::make_shared<BinarySetting<float>>
+		(
+			40.f,
+			[](float in) { return in > 0.f && in <= 360.f; },
+			nameof(hceFieldOfViewSpeed)
+		);
+
+	// The engine's own camera translation scales (forward / side / up), which all ship at 1.0. This one IS in
+	// the game, unlike the two rates above, so it moves the real camera rather than an HCM slider.
+	std::shared_ptr<BinarySetting<float>> hceCameraMoveSpeed = std::make_shared<BinarySetting<float>>
+		(
+			1.f,
+			[](float in) { return in > 0.f && in <= 50.f; },
+			nameof(hceCameraMoveSpeed)
 		);
 
 	// Field of view. The TOGGLE is deliberately absent from allSerialisableOptions (an FOV that relocks itself at

@@ -192,7 +192,7 @@ hceSkullThirdPersonHotkey
 // to what it does. The three blocks below are what those indices mean, so keep entries in their block:
 //     [0 .. 40] flip one bool setting
 //     [41..44] radio options - each SETS its option and clears its sibling
-//     [45..48] fire an event that already exists (the same object the equivalent button fires)
+//     [45..51] fire an event that already exists (the same object the equivalent button fires)
 // The names are also the on-disk serialisation keys (RebindableHotkey serialises via magic_enum::enum_name),
 // so renaming one silently drops that user's existing binding.
 #define HCE_HOTKEYS \
@@ -246,7 +246,8 @@ hceForceTeleportAbsoluteCopyHotkey, \
 hceForceTeleportAbsolutePasteHotkey, \
 hceTriggerOverlayEditNameFilterHotkey, \
 hceCameraRollResetHotkey, \
-hceFieldOfViewResetHotkey
+hceFieldOfViewResetHotkey, \
+hceCameraMoveSpeedResetHotkey
 
 
 // replay hotkeys. Like the skulls, kept in their own macro because ALL_EVENTONPRESS_HOTKEYS is near the

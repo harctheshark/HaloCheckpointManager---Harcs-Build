@@ -396,7 +396,9 @@ private:
 
 		const float frameDelta = ImGui::GetIO().DeltaTime;   // clamped by ImGui, so a stall cannot jump
 		auto& setting = settings->hceFieldOfViewDegrees;
-		const float next = std::clamp(setting->GetValue() + kFovDegreesPerSecond * frameDelta * (up ? 1.f : -1.f),
+		// Rate is a setting now rather than a constant, same as the tilt keys: an HCM-side input rate.
+		const float rate = settings->hceFieldOfViewSpeed->GetValue();
+		const float next = std::clamp(setting->GetValue() + rate * frameDelta * (up ? 1.f : -1.f),
 			kFovMinDegrees, kFovMaxDegrees);
 
 		setting->GetValueDisplay() = next;

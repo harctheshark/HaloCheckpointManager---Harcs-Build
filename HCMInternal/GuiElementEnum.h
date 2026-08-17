@@ -495,9 +495,13 @@
 	((hceCameraRollGUI, (HALOCER_ONLY)))\
 	((hceCameraRollLeftBindingGUI, (HALOCER_ONLY)))\
 	((hceCameraRollRightBindingGUI, (HALOCER_ONLY)))\
+	((hceCameraRollSpeedGUI, (HALOCER_ONLY)))\
 	((hceCameraRollResetGUI, (HALOCER_ONLY)))\
+	((hceCameraMoveSpeedGUI, (HALOCER_ONLY)))\
+	((hceCameraMoveSpeedResetGUI, (HALOCER_ONLY)))\
 	((hceFieldOfViewToggleGUI, (HALOCER_ONLY)))\
 	((hceFieldOfViewValueGUI, (HALOCER_ONLY)))\
+	((hceFieldOfViewSpeedGUI, (HALOCER_ONLY)))\
 	((hceFieldOfViewResetGUI, (HALOCER_ONLY)))\
 	((hceDisableFadeFromBlackGUI, (HALOCER_ONLY)))\
 	((hceTriggerOverlayToggleGUI, (HALOCER_ONLY)))\

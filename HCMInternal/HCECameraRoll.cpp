@@ -203,7 +203,9 @@ private:
 
 		// ImGui's delta is clamped and never zero, so a stall cannot produce a huge jump.
 		const float frameDelta = ImGui::GetIO().DeltaTime;
-		const float step = kRollDegreesPerSecond * frameDelta * (right ? 1.f : -1.f);
+		// Rate is a setting now rather than a constant - this is purely how fast the key winds the slider, the
+		// game has no notion of a tilt speed.
+		const float step = settings->hceCameraRollSpeed->GetValue() * frameDelta * (right ? 1.f : -1.f);
 
 		auto& setting = settings->hceCameraRollDegrees;
 		setting->GetValueDisplay() = wrapDegrees(setting->GetValue() + step);

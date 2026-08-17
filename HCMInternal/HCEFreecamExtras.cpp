@@ -43,6 +43,18 @@ namespace
 	constexpr uint32_t kNoclipRva = 0x9E56F8;
 	constexpr float    kNoclipOn  = -999999.f;
 
+	// CAMERA MOVEMENT SPEED - the engine's own translation scales, in the SAME tag-field block as the noclip
+	// float above (that block is proven: kNoclipRva has been working in game for a while).
+	//
+	// ⚠ RESTORE 1.0f LITERALLY. DO NOT capture-and-restore the way applyNoclip has to. The two look alike and
+	// are opposite: 0x9E56F8 ships 0.0f and the tag genuinely fills it in, so noclip MUST capture whatever the
+	// game had. These three ship 1.0f and the tag copy provably never fires for them, so 1.0f IS the default
+	// and capturing would just risk latching one of our own values.
+	constexpr uint32_t kMoveSpeedForwardRva = 0x9E56AC;
+	constexpr uint32_t kMoveSpeedSideRva    = 0x9E56B0;
+	constexpr uint32_t kMoveSpeedUpRva      = 0x9E56B4;
+	constexpr float    kMoveSpeedDefault    = 1.f;
+
 	// The wrap-around cave. 144 bytes; the E9 at offset 123 is a placeholder whose rel32 is filled in once the
 	// page is allocated. Everything else is position-independent: the rip-relative loads at the front all target
 	// the four float constants in the tail (1/2pi, 2pi, pi/2, -pi/2), so the blob only has to be copied whole.
@@ -125,6 +137,7 @@ private:
 	std::weak_ptr<IMCCStateHook> mccStateHookWeak;
 	std::weak_ptr<IMessagesGUI> messagesGUIWeak;
 	std::shared_ptr<RuntimeExceptionHandler> runtimeExceptions;
+	std::weak_ptr<SettingsStateAndEvents> settingsWeak;   // only the move-speed reset needs it
 
 	std::mutex mMutex;
 	uintptr_t mSimBase = 0;
@@ -196,6 +209,53 @@ private:
 
 		lockOrThrow(messagesGUIWeak, messagesGUI);
 		messagesGUI->addMessage("Camera noclip off.");
+	}
+
+	// ------------------------------------------------------------------------------------------------------
+	// CAMERA MOVEMENT SPEED
+	// ------------------------------------------------------------------------------------------------------
+	// All three axes get the same scale, so the camera speeds up evenly rather than skewing. Written
+	// unconditionally - these are camera universals, which is also what makes this work while the game is
+	// paused.
+	void applyMoveSpeed(float scale)
+	{
+		const uintptr_t base = simBase();
+		const uint32_t rvas[3]{ kMoveSpeedForwardRva, kMoveSpeedSideRva, kMoveSpeedUpRva };
+
+		for (uint32_t rva : rvas)
+		{
+			if (!HCEGetPlayerState::tryWriteRaw(base + rva, &scale, sizeof(scale)))
+				throw HCMRuntimeException("Could not write the HaloCER camera movement speed");
+		}
+
+		PLOG_DEBUG << "HCEFreecamExtras: camera movement scale set to " << scale;
+	}
+
+	void onMoveSpeedChanged(float& newValue)
+	{
+		try { applyMoveSpeed(newValue); }
+		catch (HCMRuntimeException ex) { runtimeExceptions->handleMessage(ex); }
+	}
+
+	// Button and hotkey share this. 1.0 is the shipped value, not a guess - see the note on kMoveSpeedDefault.
+	void onResetMoveSpeed()
+	{
+		try
+		{
+			auto settings = settingsWeak.lock();
+			if (!settings) return;
+
+			auto& setting = settings->hceCameraMoveSpeed;
+			setting->GetValueDisplay() = kMoveSpeedDefault;
+			setting->UpdateValueWithInput();   // fires onMoveSpeedChanged, which writes it
+
+			lockOrThrow(messagesGUIWeak, messagesGUI);
+			messagesGUI->addMessage("Camera movement speed reset.");
+		}
+		catch (HCMRuntimeException ex)
+		{
+			runtimeExceptions->handleMessage(ex);
+		}
 	}
 
 	// ------------------------------------------------------------------------------------------------------
@@ -322,6 +382,8 @@ private:
 	// Declared LAST - a ScopedCallback subscribes inside its own constructor.
 	ScopedCallback<ToggleEvent> mNoclipCallback;
 	ScopedCallback<ToggleEvent> mGimbalCallback;
+	ScopedCallback<eventpp::CallbackList<void(float&)>> mMoveSpeedCallback;
+	ScopedCallback<ActionEvent> mMoveSpeedResetCallback;
 
 public:
 	HCEFreecamExtrasImpl(GameState game, IDIContainer& dicon)
@@ -329,7 +391,10 @@ public:
 		mccStateHookWeak(dicon.Resolve<IMCCStateHook>()),
 		messagesGUIWeak(dicon.Resolve<IMessagesGUI>()),
 		runtimeExceptions(dicon.Resolve<RuntimeExceptionHandler>()),
+		settingsWeak(dicon.Resolve<SettingsStateAndEvents>()),
 		mNoclipCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFreecamNoclipToggle->valueChangedEvent, [this](bool& n) { onNoclipToggle(n); }),
+		mMoveSpeedCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceCameraMoveSpeed->valueChangedEvent, [this](float& n) { onMoveSpeedChanged(n); }),
+		mMoveSpeedResetCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceCameraMoveSpeedResetEvent, [this]() { onResetMoveSpeed(); }),
 		mGimbalCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFreecamGimbalBypassToggle->valueChangedEvent, [this](bool& n) { onGimbalToggle(n); })
 	{
 		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER)

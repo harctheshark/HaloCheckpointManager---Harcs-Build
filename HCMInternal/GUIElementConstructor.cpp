@@ -2170,9 +2170,13 @@ private:
 							createNestedElement(GUIElementEnum::hceCameraRollGUI),
 							createNestedElement(GUIElementEnum::hceCameraRollLeftBindingGUI),
 							createNestedElement(GUIElementEnum::hceCameraRollRightBindingGUI),
+							createNestedElement(GUIElementEnum::hceCameraRollSpeedGUI),
 							createNestedElement(GUIElementEnum::hceCameraRollResetGUI),
+							createNestedElement(GUIElementEnum::hceCameraMoveSpeedGUI),
+							createNestedElement(GUIElementEnum::hceCameraMoveSpeedResetGUI),
 							createNestedElement(GUIElementEnum::hceFieldOfViewToggleGUI),
 							createNestedElement(GUIElementEnum::hceFieldOfViewValueGUI),
+							createNestedElement(GUIElementEnum::hceFieldOfViewSpeedGUI),
 							createNestedElement(GUIElementEnum::hceFieldOfViewResetGUI),
 							createNestedElement(GUIElementEnum::freeCameraToggleGUI),
 							createNestedElement(GUIElementEnum::freeCameraSettingsSimpleSubheading),
@@ -2537,6 +2541,22 @@ private:
 				case GUIElementEnum::hceCameraRollRightBindingGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<103>>
 						(game, ToolTipCollection("Tilt the camera clockwise while held. Winds the Camera Roll slider above."), RebindableHotkeyEnum::cameraRollRightBinding, "Tilt Right"));
+
+				case GUIElementEnum::hceCameraRollSpeedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 720.f)>>
+						(game, ToolTipCollection("How fast the Tilt Left / Tilt Right keys wind the roll, in degrees per second. This is an HCM input rate - the game itself has no tilt speed."), "Tilt Speed (deg/sec)", settings->hceCameraRollSpeed));
+
+				case GUIElementEnum::hceCameraMoveSpeedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.1f, 50.f)>>
+						(game, ToolTipCollection("Multiplies how fast the camera moves. Unlike Tilt Speed this is the ENGINE's own value - it scales the camera's forward, side and up translation together, so movement speeds up evenly rather than skewing. 1.0 is the game's default."), "Camera Move Speed", settings->hceCameraMoveSpeed));
+
+				case GUIElementEnum::hceCameraMoveSpeedResetGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Puts camera movement speed back to the game's default of 1.0."), RebindableHotkeyEnum::hceCameraMoveSpeedResetHotkey, "Restore Default Move Speed", settings->hceCameraMoveSpeedResetEvent));
+
+				case GUIElementEnum::hceFieldOfViewSpeedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 360.f)>>
+						(game, ToolTipCollection("How fast the field-of-view keys wind the slider, in degrees per second. An HCM input rate, like Tilt Speed."), "FOV Speed (deg/sec)", settings->hceFieldOfViewSpeed));
 
 				case GUIElementEnum::hceCameraRollResetGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
