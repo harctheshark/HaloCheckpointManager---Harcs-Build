@@ -116,6 +116,38 @@ private:
 	// lock already held. Safe to call when nothing is installed.
 	void teardownOBSBypass(const char* reason);
 
+	// ---- OBS PRE-CAPTURE: the exact mirror of the bypass, and the fix for "OBS never captures HCM" ----
+	//
+	// The bypass draws AFTER OBS's data.capture(), so the overlay is local-only. This draws BEFORE it, so
+	// the overlay IS in the recording. Both are needed on D3D12 because hook order otherwise decides the
+	// answer and the user has no say in it:
+	//
+	//   MCC / D3D11   our present hook is a VMT hook on the swapchain, which is unconditionally OUTSIDE
+	//                 any inline detour on dxgi's shared body -> OBS always captures the overlay.
+	//   HaloCER/D3D12 we inline-patch the same bytes OBS Detours. graphics-hook64.dll injects when the
+	//                 Game Capture source starts, i.e. usually AFTER HCM is open, so OBS lands on top and
+	//                 its hook_present captures the frame before our detour has drawn anything. The
+	//                 overlay is then absent from the recording no matter what the toggle says.
+	//
+	// So when the bypass is OFF and OBS owns the entry point, we install our draw at the ENTRY of OBS's
+	// hook_present - in front of its capture - and the ordinary detour stands down for that frame.
+	//
+	// ⚠ ADDITIVE, NOT A HOOK WAR. We never re-patch dxgi to take the outermost slot back;
+	// reinstallSwapChainHooks() deliberately refuses to do that ("re-hooking on top of somebody else's
+	// patch is how hook wars escalate") and it is right. Sitting in front of OBS's own function touches
+	// nobody else's bytes and disappears cleanly when OBS unloads.
+	static DX12Present newDX12PresentOBSPreCapture;
+	static DX12Present1 newDX12Present1OBSPreCapture;
+	std::shared_ptr<ModuleInlineHook> mOBSPreCapturePresentHook;
+	std::shared_ptr<ModuleInlineHook> mOBSPreCapturePresent1Hook;
+	// Same contract as obsBypassOwnsFrame: asks the hook object, not a cached flag, and requires
+	// swapChainHookGuard to be held.
+	static bool obsPreCaptureOwnsFrame(bool forPresent1);
+	void teardownOBSPreCapture(const char* reason);
+	// Installs the pre-capture thunks if - and only if - OBS currently owns the dxgi entry points.
+	// Silent no-op otherwise, because "we are already outermost" needs no fixing.
+	void installOBSPreCapture();
+
 	// The one shared body behind both newDX12Present and newDX12Present1. Does everything except
 	// call the original - the caller owns that, because the two originals have different signatures.
 	static void renderOverlayFrame(IDXGISwapChain* pSwapChain, UINT presentFlags);

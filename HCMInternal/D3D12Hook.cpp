@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "D3D12Hook.h"
 #include "HookGraveyard.h"
+#include "ModuleCache.h"   // installOBSPreCapture asks whether graphics-hook64.dll is in the process yet
 
 #include "GlobalKill.h"
 
@@ -56,6 +57,11 @@ static std::atomic<DX12ExecuteCommandLists*> gOriginalExecuteCommandLists = null
 // at stays mapped forever and calling it is exactly right - it is OBS's own present.
 static std::atomic<DX12Present*> gOBSBypassOriginalPresent = nullptr;
 static std::atomic<DX12Present1*> gOBSBypassOriginalPresent1 = nullptr;
+// Same teardown-race fallback for the pre-capture thunks. Separate slots, because a pre-capture hook sits
+// on OBS's hook_present ENTRY while a bypass hook sits on its RealPresent trampoline - two different
+// functions, and forwarding one through the other's original would skip or duplicate OBS's capture.
+static std::atomic<DX12Present*> gOBSPreCaptureOriginalPresent = nullptr;
+static std::atomic<DX12Present1*> gOBSPreCaptureOriginalPresent1 = nullptr;
 
 // Leaked on purpose. See the long note on teardownOBSBypass: ModuleHookManager's deferred attach runs on
 // the loader thread with no synchronisation, so a retired hook must outlive any thread that might still
@@ -1742,7 +1748,7 @@ HRESULT __stdcall D3D12Hook::newDX12Present(IDXGISwapChain* pSwapChain, UINT Syn
 		// and submitted this frame's overlay; rendering again would submit it twice.
 		LOG_ONCE(PLOG_DEBUG << "Nested Present detour entry; the outer frame owns the overlay");
 	}
-	else if (obsBypassOwnsFrame(false))
+	else if (obsBypassOwnsFrame(false) || obsPreCaptureOwnsFrame(false))
 	{
 		// The OBS bypass thunk on RealPresent is live, so IT renders this frame - later in the chain,
 		// after OBS has taken its clean capture. Rendering here as well would submit the overlay twice
@@ -1772,7 +1778,7 @@ HRESULT __stdcall D3D12Hook::newDX12Present1(IDXGISwapChain1* pSwapChain, UINT S
 	{
 		LOG_ONCE(PLOG_DEBUG << "Nested Present1 detour entry; the outer frame owns the overlay");
 	}
-	else if (obsBypassOwnsFrame(true))
+	else if (obsBypassOwnsFrame(true) || obsPreCaptureOwnsFrame(true))
 	{
 		LOG_ONCE(PLOG_DEBUG << "OBS bypass owns the Present1 frame; skipping the overlay in newDX12Present1");
 	}
@@ -1890,6 +1896,65 @@ HRESULT __stdcall D3D12Hook::newDX12Present1OBSBypass(IDXGISwapChain1* pSwapChai
 		return published(pSwapChain, SyncInterval, PresentFlags, pPresentParameters);
 
 	LOG_ONCE(PLOG_ERROR << "OBS bypass thunk (Present1) could not reach OBS's original function and no "
+		"trampoline was published; dropping the frame");
+	return S_OK;
+}
+
+// static
+// Installed over the ENTRY of OBS's hook_present - i.e. in front of data.capture(). Rendering here puts the
+// overlay into the frame OBS is about to record. The exact mirror of newDX12PresentOBSBypass, which renders
+// on the far side of that same capture.
+HRESULT __stdcall D3D12Hook::newDX12PresentOBSPreCapture(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
+{
+	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::newDX12PresentOBSPreCapture");
+
+	OBSBypassDepthGuard bypassDepth;
+	DetourEntryGuard entry(swapChainHookGuard);
+
+	if (bypassDepth.isOutermost())
+		renderOverlayFrame(pSwapChain, Flags);
+
+	D3D12Hook* d3d = instance;
+	if (d3d && d3d->mOBSPreCapturePresentHook)
+	{
+		if (auto* original = d3d->mOBSPreCapturePresentHook->getInlineHook().original<DX12Present*>())
+			return original(pSwapChain, SyncInterval, Flags);
+	}
+
+	// Same teardown race the bypass thunks document: a thread can be inside here, blocked on the shared
+	// lock, while teardown holds it exclusively and destroys the hook. Forward through the parked
+	// trampoline rather than dropping a frame we would then report as presented.
+	if (auto* published = gOBSPreCaptureOriginalPresent.load(std::memory_order_acquire))
+		return published(pSwapChain, SyncInterval, Flags);
+
+	LOG_ONCE(PLOG_ERROR << "OBS pre-capture thunk (Present) could not reach OBS's hook_present and no "
+		"trampoline was published; dropping the frame");
+	return S_OK;
+}
+
+
+// static
+HRESULT __stdcall D3D12Hook::newDX12Present1OBSPreCapture(IDXGISwapChain1* pSwapChain, UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters)
+{
+	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::newDX12Present1OBSPreCapture");
+
+	OBSBypassDepthGuard bypassDepth;
+	DetourEntryGuard entry(swapChainHookGuard);
+
+	if (bypassDepth.isOutermost())
+		renderOverlayFrame(static_cast<IDXGISwapChain*>(pSwapChain), PresentFlags);
+
+	D3D12Hook* d3d = instance;
+	if (d3d && d3d->mOBSPreCapturePresent1Hook)
+	{
+		if (auto* original = d3d->mOBSPreCapturePresent1Hook->getInlineHook().original<DX12Present1*>())
+			return original(pSwapChain, SyncInterval, PresentFlags, pPresentParameters);
+	}
+
+	if (auto* published = gOBSPreCaptureOriginalPresent1.load(std::memory_order_acquire))
+		return published(pSwapChain, SyncInterval, PresentFlags, pPresentParameters);
+
+	LOG_ONCE(PLOG_ERROR << "OBS pre-capture thunk (Present1) could not reach OBS's hook_present and no "
 		"trampoline was published; dropping the frame");
 	return S_OK;
 }
@@ -2121,6 +2186,7 @@ bool D3D12Hook::reinstallSwapChainHooks()
 	// The user can re-enable the toggle afterwards; silently keeping a bypass alive across a re-hook
 	// would leave two renderers disagreeing about who owns the frame.
 	teardownOBSBypass("the swapchain hooks are being reinstalled");
+	teardownOBSPreCapture("the swapchain hooks are being reinstalled");
 
 	std::unique_lock<std::shared_mutex> guard(swapChainHookGuard);
 
@@ -2388,6 +2454,10 @@ D3D12Hook::~D3D12Hook()
 	//     present chain, and they call renderOverlayFrame just like the detours do. They must come off
 	//     BEFORE the guard block below, because teardownOBSBypass takes that same guard exclusively.
 	teardownOBSBypass("D3D12Hook is shutting down");
+	// ⚠ AND the pre-capture thunks, for exactly the same reason and with more urgency: they sit inside
+	// OBS's own module, so leaving one installed past our destruction leaves OBS calling a thunk whose
+	// `instance` is gone. Same exclusive-guard rule, so it is also outside the block below.
+	teardownOBSPreCapture("D3D12Hook is shutting down");
 
 	// 2. Drain, then remove the swapchain hooks. Taking the guard EXCLUSIVELY is what proves no
 	//    thread is inside a detour body: the old ScopedAtomicBool was wait-then-set, so two threads
@@ -2582,6 +2652,102 @@ void D3D12Hook::teardownOBSBypass(const char* reason)
 }
 
 
+bool D3D12Hook::obsPreCaptureOwnsFrame(bool forPresent1)
+{
+	D3D12Hook* d3d = instance;
+	if (!d3d) return false;
+
+	const std::shared_ptr<ModuleInlineHook>& hook =
+		forPresent1 ? d3d->mOBSPreCapturePresent1Hook : d3d->mOBSPreCapturePresentHook;
+	return hook && hook->isHookInstalled();
+}
+
+
+void D3D12Hook::teardownOBSPreCapture(const char* reason)
+{
+	std::unique_lock<std::shared_mutex> guard(swapChainHookGuard);
+
+	if (!mOBSPreCapturePresentHook && !mOBSPreCapturePresent1Hook)
+		return;
+
+	PLOG_INFO << "Retiring the OBS pre-capture hooks: " << reason;
+
+	// Identical retirement policy to the bypass: park (so OBS's bytes are restored immediately and no new
+	// caller can enter) and leak the wrapper, because ModuleHookManager's deferred attach runs lock-free on
+	// the loader thread and a destroyed-but-registered hook is a use-after-free waiting for the next
+	// LoadLibrary. The published trampolines stay valid, pointing at parked but still-mapped code.
+	const auto retire = [](std::shared_ptr<ModuleInlineHook>& hook)
+	{
+		if (!hook) return;
+		HookGraveyard::park(hook->getInlineHook());
+		retiredOBSBypassHooks().push_back(std::move(hook));
+		hook.reset();
+	};
+
+	retire(mOBSPreCapturePresentHook);
+	retire(mOBSPreCapturePresent1Hook);
+}
+
+
+// Puts HCM's draw in front of OBS's capture, but ONLY when OBS is actually the outermost hook on the dxgi
+// entry points. See the header for why that is the whole problem on D3D12.
+//
+// Deliberately quiet and best-effort: this runs whenever the bypass is switched off, which is also the
+// default state, so it must not throw, must not complain when OBS is not running, and must not complain
+// when HCM is already outermost - that last case is the one where everything already works.
+void D3D12Hook::installOBSPreCapture()
+{
+	const uintptr_t presentEntry = (uintptr_t)mHarvestedAddresses.present;
+	const uintptr_t present1Entry = (uintptr_t)mHarvestedAddresses.present1;
+	if (!presentEntry && !present1Entry) return;
+
+	// Nothing to sit in front of until OBS's hook module is actually in the process. Unlike the bypass we
+	// do NOT arm a deferred attach here: the address we would hook is inside OBS's code and is only
+	// discoverable once it has patched dxgi, so there is nothing to resolve ahead of time. The toggle is
+	// re-applied when the user flips it, and OBS loading mid-session is picked up the next time they do.
+	if (!ModuleCache::getModuleInfo(L"graphics-hook64.dll").has_value()) return;
+
+	const auto install = [&](uintptr_t dxgiEntry, const char* name, auto* thunk,
+		std::shared_ptr<ModuleInlineHook>& out)
+	{
+		if (!dxgiEntry) return;
+
+		auto pointer = std::make_shared<OBSHookEntryPointer>(dxgiEntry, name);
+		uintptr_t probe = 0;
+		if (!pointer->resolve(&probe)) return;   // OBS does not own this entry; nothing to do, and it said why
+
+		out = ModuleInlineHook::make(L"graphics-hook64.dll", pointer, thunk, true);
+	};
+
+	const auto publish = [](const std::shared_ptr<ModuleInlineHook>& hook, auto& slot)
+	{
+		if (!hook || !hook->isHookInstalled()) return;
+		using Fn = std::remove_reference_t<decltype(slot)>::value_type;
+		if (auto* original = hook->getInlineHook().original<Fn>())
+			slot.store(original, std::memory_order_release);
+	};
+
+	{
+		std::unique_lock<std::shared_mutex> guard(swapChainHookGuard);
+
+		install(presentEntry, "Present", newDX12PresentOBSPreCapture, mOBSPreCapturePresentHook);
+		if (present1Entry && present1Entry != presentEntry)
+			install(present1Entry, "Present1", newDX12Present1OBSPreCapture, mOBSPreCapturePresent1Hook);
+
+		publish(mOBSPreCapturePresentHook, gOBSPreCaptureOriginalPresent);
+		publish(mOBSPreCapturePresent1Hook, gOBSPreCaptureOriginalPresent1);
+	}
+
+	const bool present = mOBSPreCapturePresentHook && mOBSPreCapturePresentHook->isHookInstalled();
+	const bool present1 = mOBSPreCapturePresent1Hook && mOBSPreCapturePresent1Hook->isHookInstalled();
+
+	if (present || present1)
+		PLOG_INFO << std::format("OBS pre-capture installed (Present: {}, Present1: {}) - OBS Game Capture "
+			"hooked dxgi after HCM did, so the overlay is now drawn in front of its capture instead of behind it.",
+			present ? "yes" : "no", present1 ? "yes" : "no");
+}
+
+
 OBSBypassResult D3D12Hook::setOBSBypass(bool enabled)
 {
 	PLOGV << "D3D12Hook::setOBSBypass called with value: " << enabled;
@@ -2589,8 +2755,17 @@ OBSBypassResult D3D12Hook::setOBSBypass(bool enabled)
 	if (!enabled)
 	{
 		teardownOBSBypass("the user turned the bypass off");
+		// ...and put the overlay in FRONT of OBS's capture instead. Without this, "bypass off" does not
+		// mean "visible in OBS" on D3D12 - it means "whatever hook order happened to be", which for the
+		// usual sequence (open HCM, then start Game Capture) is still invisible. No-op when OBS is not
+		// running or when HCM is already the outermost hook.
+		installOBSPreCapture();
 		return OBSBypassResult::Removed;
 	}
+
+	// The two are mutually exclusive by construction: one draws before OBS's capture, the other after, and
+	// having both live would render the overlay twice and defeat the bypass at the same time.
+	teardownOBSPreCapture("the bypass is being turned on");
 
 	// OBS does not have a separate D3D12 hook to defeat - d3d12_capture is selected behind the same
 	// Present hook that d3d11_capture is - so this is the D3D11 mechanism applied to two entry points.

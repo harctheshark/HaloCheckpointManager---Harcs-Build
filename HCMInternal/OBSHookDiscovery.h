@@ -84,6 +84,29 @@ OBSDiscoveryStatus discoverRealFnRva(uintptr_t dxgiEntry, uintptr_t& rvaOut, OBS
 // bytes, so on that path a "yes" proves nothing about OBS.
 bool looksInlineHooked(uintptr_t functionEntry);
 
+
+// ====================================================================================================================
+// WHO IS OUTERMOST ON dxgi's Present - and the fix for "OBS never captures HCM at all" on D3D12.
+//
+// On MCC (D3D11) HCM's own present hook is a VMT hook on the game's swapchain object, which sits
+// unconditionally OUTSIDE any inline detour on dxgi's shared body. OBS therefore always captures a frame
+// that already contains the overlay, whoever installed first.
+//
+// On HaloCER (D3D12) HCM inline-patches the very bytes OBS Detours. Order is decided purely by who
+// installed LAST, and OBS's graphics-hook64.dll injects when a Game Capture source starts - normally after
+// HCM is already open. OBS then owns the entry point, so its hook_present runs FIRST:
+//
+//      dxgi Present entry -> OBS hook_present -> data.capture()   <- no overlay in the recording
+//                                             -> RealPresent      -> HCM's detour -> HCM draws
+//
+// which is exactly the reported symptom, and it is independent of the bypass toggle.
+//
+// This function reports who currently owns the entry point by decoding the jump that sits there and asking
+// which module it lands in. `landsInModule` is the module the jump target belongs to, so the caller can
+// tell "OBS is outermost" (graphics-hook64.dll) from "we are outermost" (HCMInternal) from "a third
+// overlay got there" (anything else) - three cases that need three different responses.
+bool followEntryDetour(uintptr_t functionEntry, uintptr_t& targetOut, std::wstring& landsInModuleOut);
+
 // Where OBSRealFnPointer sends its user-facing complaints. Set once, from OBSBypassManager.
 // It exists because the deferred re-attach happens on the LoadLibrary detour's thread, deep inside
 // ModuleInlineHook::attach(), with no service graph in reach and no way to throw.
@@ -118,5 +141,37 @@ public:
 	bool resolve(uintptr_t* resolvedOut) const override;
 
 	void setOnPermanentFailure(std::function<void()> callback) { mOnPermanentFailure = std::move(callback); }
+	uintptr_t getDxgiEntry() const { return mDxgiEntry; }
+};
+
+
+// The PRE-CAPTURE counterpart of OBSRealFnPointer, and the exact mirror of it.
+//
+//   OBSRealFnPointer  -> the trampoline OBS calls AFTER data.capture()  -> drawing there is INVISIBLE to OBS
+//   OBSHookEntryPointer -> the entry of OBS's hook_present, BEFORE data.capture() -> drawing there is CAPTURED
+//
+// Which one HCM installs is what the "Bypass OBS Capture" toggle should actually select on D3D12, because
+// hook order alone otherwise decides it and the user has no say (see followEntryDetour's comment).
+//
+// Resolution re-runs on every attach rather than caching, for the same reason the sibling does:
+// graphics-hook64.dll comes and goes with the Game Capture source, and its hook can be re-applied at a
+// different address. It refuses to resolve unless the jump at the dxgi entry lands inside
+// graphics-hook64.dll - if HCM is already outermost, or some third overlay is, there is nothing here to
+// hook and pretending otherwise would put the overlay somewhere arbitrary.
+class OBSHookEntryPointer : public MultilevelPointer
+{
+private:
+	uintptr_t mDxgiEntry;
+	const char* mFunctionName;	// "Present" / "Present1", for logs only
+	mutable std::atomic_bool mReportedFailure{ false };
+
+public:
+	explicit OBSHookEntryPointer(uintptr_t dxgiEntry, const char* functionName)
+		: MultilevelPointer(0), mDxgiEntry(dxgiEntry), mFunctionName(functionName)
+	{
+	}
+
+	bool resolve(uintptr_t* resolvedOut) const override;
+
 	uintptr_t getDxgiEntry() const { return mDxgiEntry; }
 };

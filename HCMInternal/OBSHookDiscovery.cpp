@@ -148,6 +148,65 @@ bool looksInlineHooked(uintptr_t functionEntry)
 }
 
 
+// See the header for why this matters. Decodes ONE jump at the entry point and reports where it lands.
+// Deliberately not a chain-walker: the question is only who is OUTERMOST, which is whoever's jump is
+// sitting in those first bytes right now.
+bool followEntryDetour(uintptr_t functionEntry, uintptr_t& targetOut, std::wstring& landsInModuleOut)
+{
+	targetOut = 0;
+	landsInModuleOut.clear();
+
+	if (!functionEntry || !isReadableRange(functionEntry, 8)) return false;
+
+	const uint8_t* code = (const uint8_t*)functionEntry;
+	uintptr_t landsAt = 0;
+
+	if (code[0] == 0xE9)
+	{
+		int32_t rel = 0;
+		memcpy(&rel, code + 1, sizeof(rel));
+		landsAt = functionEntry + 5 + (intptr_t)rel;
+	}
+	else if (code[0] == 0xFF && code[1] == 0x25)
+	{
+		int32_t rel = 0;
+		memcpy(&rel, code + 2, sizeof(rel));
+		const uintptr_t slot = functionEntry + 6 + (intptr_t)rel;
+		if (!isReadableRange(slot, sizeof(uintptr_t))) return false;
+		memcpy(&landsAt, (const void*)slot, sizeof(landsAt));
+	}
+	else
+	{
+		return false;   // not detoured at all - nobody is outermost, the entry is virgin
+	}
+
+	if (!landsAt) return false;
+
+	// Name the owner by asking the loader which module contains the target. GetModuleHandleEx with
+	// FROM_ADDRESS is the only reliable way round - a manually-mapped hook would have no module and is
+	// correctly reported as unknown rather than guessed at.
+	HMODULE owner = nullptr;
+	if (!GetModuleHandleExW(
+		GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+		(LPCWSTR)landsAt, &owner) || !owner)
+	{
+		targetOut = landsAt;
+		return true;   // real target, unknown module
+	}
+
+	wchar_t path[MAX_PATH]{};
+	if (GetModuleFileNameW(owner, path, MAX_PATH))
+	{
+		std::wstring full(path);
+		const size_t slash = full.find_last_of(L"\\/");
+		landsInModuleOut = (slash == std::wstring::npos) ? full : full.substr(slash + 1);
+	}
+
+	targetOut = landsAt;
+	return true;
+}
+
+
 OBSDiscoveryStatus discoverRealFnRva(uintptr_t dxgiEntry, uintptr_t& rvaOut, OBSDiscoveryDiagnostics* diagnosticsOut)
 {
 	OBSDiscoveryDiagnostics diagnostics{};
@@ -339,5 +398,49 @@ bool OBSRealFnPointer::resolve(uintptr_t* resolvedOut) const
 
 	mReportedFailure.store(false); // a later failure is a new event worth reporting
 	*resolvedOut = trampoline;
+	return true;
+}
+
+
+// The mirror of OBSRealFnPointer::resolve - see the header. Resolves to the ENTRY of whatever OBS installed
+// on the dxgi function, i.e. the point BEFORE data.capture(), so an overlay drawn there is in the recording.
+bool OBSHookEntryPointer::resolve(uintptr_t* resolvedOut) const
+{
+	if (!resolvedOut) return false;
+
+	uintptr_t target = 0;
+	std::wstring owner;
+	if (!followEntryDetour(mDxgiEntry, target, owner))
+	{
+		// Not detoured at all: OBS is not capturing (or has released the entry). Not an error - there is
+		// simply nothing to sit in front of, and the ordinary present hook is already drawing.
+		*SetLastErrorByRef() << "OBS pre-capture: dxgi " << mFunctionName << " entry is not detoured" << std::endl;
+		return false;
+	}
+
+	// ⚠ THE WHOLE POINT OF THE CHECK. If the jump lands anywhere other than OBS's hook module, then OBS is
+	// NOT outermost - either we are (in which case OBS already captures our overlay and this hook would be
+	// both pointless and a double-render), or a third overlay owns the entry (in which case hooking its
+	// internals is somebody else's business). Refuse, loudly but once.
+	if (_wcsicmp(owner.c_str(), kOBSModule) != 0)
+	{
+		if (!mReportedFailure.exchange(true))
+		{
+			PLOG_INFO << std::format(
+				"OBS pre-capture: dxgi {} entry jumps into '{}', not {} - OBS is not the outermost hook, so "
+				"there is nothing to draw in front of. This is the GOOD case when the module is HCMInternal: "
+				"our own detour already runs before OBS captures.",
+				mFunctionName,
+				owner.empty() ? std::string("<unknown module>") : std::string(owner.begin(), owner.end()),
+				std::string(std::begin(kOBSModule), std::end(kOBSModule) - 1));
+		}
+		*SetLastErrorByRef() << "OBS pre-capture: entry is not owned by OBS" << std::endl;
+		return false;
+	}
+
+	mReportedFailure.store(false);
+	PLOG_DEBUG << std::format("OBS pre-capture: dxgi {} entry 0x{:X} is owned by OBS, hook_present entry is 0x{:X}",
+		mFunctionName, mDxgiEntry, target);
+	*resolvedOut = target;
 	return true;
 }

@@ -1266,7 +1266,7 @@ private:
 							createNestedElement(GUIElementEnum::display2DInfoToggleGUI),
 							createNestedElement(GUIElementEnum::display2DInfoSettingsInfoSubheading),
 							createNestedElement(GUIElementEnum::display2DInfoSettingsVisualSubheading),
-								createNestedElement(GUIElementEnum::hceDisplayInfoToggleGUI),
+							createNestedElement(GUIElementEnum::hceDisplayInfoToggleGUI),
 							createNestedElement(GUIElementEnum::hceDisplayInfoSettingsInfoSubheading),
 							createNestedElement(GUIElementEnum::hceDisplayInfoSettingsVisualSubheading),
 							createNestedElement(GUIElementEnum::waypoint3DGUIToggle),
@@ -1525,7 +1525,6 @@ private:
 					case GUIElementEnum::display2DInfoOutline:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 							(game, ToolTipCollection("Adds a black outline to text (has a small negative performance impact)"), std::nullopt, "Info Font Outline", settings->display2DInfoOutline));
-
 
 				// ---- Halo Campaign Evolved 2D info overlay ----------------------------------------------------
 				// Same toggle, same hotkey and the SAME six visual settings as the MCC overlay - only the row
