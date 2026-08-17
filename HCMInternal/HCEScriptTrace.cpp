@@ -13,7 +13,7 @@
 #include <array>
 #include <atomic>
 #include <mutex>
-#include <set>
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 
@@ -32,13 +32,36 @@ namespace
 	// have not verified: a bad index would otherwise walk arbitrary memory.
 	constexpr int kMaxFunctionIndex = 2048;
 
-	// ⚠ THE HOOK RUNS ON THE GAME THREAD FOR EVERY SCRIPT FUNCTION EVALUATION - hundreds per second. It must
-	// not allocate, take a lock, format a string, or log. So it writes a fixed-size record into a ring buffer
-	// and nothing else; the render thread resolves names and formats.
+	// Where each implementation is hooked, and why it is not the first instruction.
+	//
+	// Every implementation starts with the same prologue and then calls ONE shared argument evaluator
+	// (rva 0x1FEC90). On return RAX POINTS AT THE EVALUATED ARGUMENTS, four bytes each - ai_place reads
+	// dword[rax] as its squad reference and word[rax+4] as the count. Hooking the first instruction gives
+	// the function index in CX but the arguments do not exist yet, which is the difference between "a
+	// spawner ran" and "a spawner ran on THIS squad". So the hook goes immediately AFTER that call.
+	//
+	// The cost of moving past the prologue is that CX and EDX are clobbered by then: the function index is
+	// gone, and the node index survives only because every implementation stashes it with `mov ebx, edx`
+	// first. The index therefore comes from the hook SLOT rather than from a register - see kThunks.
+	//
+	// The call is located by the four bytes that precede it in all six implementations,
+	// `movzx edx, word ptr [rdx+0x38]` (0F B7 52 38) followed by E8. Verified: present at +0x21..+0x2A in
+	// every implementation, all reaching the same evaluator, with no stray 0xE8 byte earlier in the
+	// prologue that a naive scan could trip over. Agreement between implementations on the evaluator's
+	// address is checked at runtime, so a build whose prologue differs refuses rather than hooking rubbish.
+	constexpr uint8_t kArgEvaluatorAnchor[]{ 0x0F, 0xB7, 0x52, 0x38, 0xE8 };
+	constexpr size_t kPrologueSearchLength = 0x40;
+
+	// ⚠ THE HOOK RUNS ON THE GAME THREAD FOR EVERY CALL TO A WATCHED FUNCTION. It must not allocate, take a
+	// lock, format a string, or log. So it writes a fixed-size record into a ring buffer and nothing else;
+	// the render thread resolves names and formats.
 	struct TraceRecord
 	{
 		uint16_t functionIndex;
-		uint32_t node;             // EDX at entry: the expression-node index of THIS call site
+		uint32_t node;             // EBX: the expression-node handle of THIS call site
+		uint32_t arg0, arg1;       // the first two evaluated arguments, four bytes each
+		uint8_t argCount;          // how many the definition declares, so unused slots are not shown
+		uint8_t haveArgs;          // 0 = the evaluator returned null, or the buffer would not read
 		uint32_t tick;             // GetTickCount, for ordering and for showing age
 	};
 
@@ -67,6 +90,20 @@ namespace
 	{
 		"print", "print_if", "ai_place", "ai_erase", "ai_living_count", "ai_actors",
 	};
+
+	// One hook per distinct implementation, and the hook has to know WHICH function it is on - which it
+	// cannot read from a register (CX is gone) and cannot read from ctx.rip either, because safetyhook
+	// documents rip as pointing into the trampoline, not at the hooked address. So each slot gets its own
+	// callback: a template thunk that closes over its slot number at compile time. Eight is well clear of
+	// the six implementations the default filter needs.
+	constexpr size_t kMaxTracedImpls = 8;
+
+	struct SlotInfo
+	{
+		std::atomic<uint16_t> functionIndex{ 0 };
+		std::atomic<uint8_t> argCount{ 0 };
+	};
+	std::array<SlotInfo, kMaxTracedImpls> gSlots{};
 }
 
 
@@ -105,30 +142,110 @@ private:
 	uint64_t mLastRendered = 0;
 	uint64_t mLoggedUpTo = 0;        // how far the log has consumed the ring
 	uint32_t mLastIdleLogTick = 0;   // rate-limits the "hook alive" line
-	std::set<uintptr_t> mWantedImpls;   // distinct runtime implementations to hook, filled by armDefaultFilter
+	// One entry per DISTINCT implementation address, in hook-slot order. `label` accumulates every name that
+	// shares the implementation, because print and print_if genuinely are the same code and claiming a call
+	// was one of them specifically would be a guess. Filled by armDefaultFilter, consumed by installImplHooks.
+	struct WantedImpl
+	{
+		uintptr_t implAddress = 0;
+		uint16_t functionIndex = 0;   // the first name found on this implementation
+		uint8_t argCount = 0;
+		std::string label;
+	};
+	std::vector<WantedImpl> mWantedImpls;
 
-	// Installs one midhook per distinct implementation. Returns how many actually attached, because "armed"
-	// and "hooked" are different things and conflating them is what hid the parse/evaluate mistake.
+	// Finds the instruction after the implementation's call to the shared argument evaluator, which is where
+	// the hook goes. Also reports the evaluator it found, so the caller can check that every implementation
+	// agrees - disagreement means the prologue is not the one this was written against and nothing should be
+	// hooked at all.
+	static bool findArgsHookPoint(uintptr_t impl, uintptr_t& hookPoint, uintptr_t& evaluator)
+	{
+		uint8_t window[kPrologueSearchLength]{};
+		if (!ReadProcessMemory(GetCurrentProcess(), (void*)impl, window, sizeof(window), nullptr))
+			return false;
+
+		for (size_t i = 0; i + sizeof(kArgEvaluatorAnchor) + 4 <= sizeof(window); ++i)
+		{
+			if (memcmp(window + i, kArgEvaluatorAnchor, sizeof(kArgEvaluatorAnchor)) != 0) continue;
+
+			const uintptr_t callAddress = impl + i + (sizeof(kArgEvaluatorAnchor) - 1);   // at the E8
+			int32_t relative = 0;
+			memcpy(&relative, window + i + sizeof(kArgEvaluatorAnchor), sizeof(relative));
+			hookPoint = callAddress + 5;
+			evaluator = hookPoint + (intptr_t)relative;
+			return true;
+		}
+		return false;
+	}
+
+	// Installs one midhook per distinct implementation, each on its own thunk so the callback knows which
+	// function it is on. Returns how many actually attached, because "armed" and "hooked" are different
+	// things and conflating them is what hid the parse/evaluate mistake for a whole test session.
 	int installImplHooks()
 	{
 		mImplHooks.clear();
-		int attached = 0;
-		for (uintptr_t impl : mWantedImpls)
+
+		// Locate every hook point first and require the implementations to agree on the evaluator. Doing this
+		// before installing anything means a mismatched build hooks NOTHING rather than hooking some of it.
+		std::vector<uintptr_t> hookPoints(mWantedImpls.size(), 0);
+		uintptr_t agreedEvaluator = 0;
+		for (size_t i = 0; i < mWantedImpls.size(); ++i)
 		{
-			void* address = (void*)impl;
+			uintptr_t hookPoint = 0, evaluator = 0;
+			if (!findArgsHookPoint(mWantedImpls[i].implAddress, hookPoint, evaluator))
+			{
+				PLOG_ERROR << "HCEScriptTrace: no argument-evaluator call found in the first "
+					<< kPrologueSearchLength << " bytes of '" << mWantedImpls[i].label << "' implementation 0x"
+					<< std::hex << mWantedImpls[i].implAddress << std::dec;
+				return 0;
+			}
+			if (agreedEvaluator == 0) agreedEvaluator = evaluator;
+			else if (agreedEvaluator != evaluator)
+			{
+				PLOG_ERROR << "HCEScriptTrace: implementations disagree on the argument evaluator ('"
+					<< mWantedImpls[i].label << "' reaches 0x" << std::hex << evaluator << ", others reach 0x"
+					<< agreedEvaluator << std::dec << "). Refusing to hook - this is not the build these "
+					"offsets were derived against.";
+				return 0;
+			}
+			hookPoints[i] = hookPoint;
+		}
+
+		int attached = 0;
+		for (size_t i = 0; i < mWantedImpls.size(); ++i)
+		{
+			// Publish the slot's identity BEFORE the hook exists, so the callback can never read a stale one.
+			gSlots[i].functionIndex.store(mWantedImpls[i].functionIndex, std::memory_order_release);
+			gSlots[i].argCount.store(mWantedImpls[i].argCount, std::memory_order_release);
+
+			void* address = (void*)hookPoints[i];
 			auto pointer = std::make_shared<MultilevelPointerSpecialisation::Resolved>(address);
-			auto hook = ModuleMidHook::make(mGame.toModuleName(), pointer, &evaluateHookFunction, true);
+			auto hook = ModuleMidHook::make(mGame.toModuleName(), pointer, kThunks[i], true);
 			if (!hook || !hook->isHookInstalled())
 			{
-				PLOG_ERROR << "HCEScriptTrace: failed to hook script implementation 0x" << std::hex << impl << std::dec;
+				PLOG_ERROR << "HCEScriptTrace: failed to hook '" << mWantedImpls[i].label << "' at 0x"
+					<< std::hex << hookPoints[i] << std::dec;
 				continue;
 			}
 			mImplHooks.push_back(std::move(hook));
 			++attached;
+			PLOG_DEBUG << "HCEScriptTrace: slot " << i << " = '" << mWantedImpls[i].label << "' argc "
+				<< (int)mWantedImpls[i].argCount << ", implementation 0x" << std::hex
+				<< mWantedImpls[i].implAddress << " hooked after the evaluator call at 0x" << hookPoints[i]
+				<< std::dec;
 		}
+
 		PLOG_DEBUG << "HCEScriptTrace: attached " << attached << " of " << mWantedImpls.size()
-			<< " script implementation hooks";
+			<< " script implementation hooks; argument evaluator 0x" << std::hex << agreedEvaluator << std::dec;
 		return attached;
+	}
+
+	// The label for a hook slot, or an empty string if the index is not one we armed. Render thread only.
+	std::string labelForIndex(uint16_t index) const
+	{
+		for (const auto& wanted : mWantedImpls)
+			if (wanted.functionIndex == index) return wanted.label;
+		return {};
 	}
 
 	// Reads the name for a function index out of the definition table. Render thread only.
@@ -252,18 +369,47 @@ private:
 
 					// def+0x20 is the RUNTIME implementation - the thing to hook. See the note on mImplHooks.
 					uintptr_t impl = 0;
-					if (HCEGetPointer(definition + kDefImplOffset, impl) && impl > 0x10000)
-					{
-						mWantedImpls.insert(impl);
-						PLOG_DEBUG << "HCEScriptTrace: tracing '" << name << "' index " << i
-							<< ", implementation 0x" << std::hex << impl << std::dec;
-						++armed;
-					}
-					else
+					if (!HCEGetPointer(definition + kDefImplOffset, impl) || impl <= 0x10000)
 					{
 						PLOG_ERROR << "HCEScriptTrace: '" << name << "' index " << i
 							<< " has no readable implementation pointer at def+0x20; not traced";
+						break;
 					}
+
+					uint16_t declaredArgs = 0;
+					{
+						uintptr_t wide = 0;
+						if (HCEGetPointer(definition + kDefArgCountOffset, wide)) declaredArgs = (uint16_t)(wide & 0xFFFF);
+					}
+
+					// Two names can share one implementation (print and print_if do), and one hook cannot tell
+					// them apart afterwards - CX is gone by then. So they share a slot and the label names both.
+					auto existing = std::find_if(mWantedImpls.begin(), mWantedImpls.end(),
+						[impl](const WantedImpl& w) { return w.implAddress == impl; });
+					if (existing != mWantedImpls.end())
+					{
+						existing->label += "/" + name;
+						// The larger count is the safe one: it only decides how many argument slots to SHOW,
+						// and showing an extra dword beats silently dropping a real one.
+						existing->argCount = (uint8_t)std::max<uint16_t>(existing->argCount, declaredArgs);
+						PLOG_DEBUG << "HCEScriptTrace: '" << name << "' index " << i
+							<< " shares implementation 0x" << std::hex << impl << std::dec << " - same slot";
+						++armed;
+						break;
+					}
+
+					if (mWantedImpls.size() >= kMaxTracedImpls)
+					{
+						PLOG_ERROR << "HCEScriptTrace: '" << name << "' index " << i
+							<< " needs a " << (mWantedImpls.size() + 1) << "th hook slot but only "
+							<< kMaxTracedImpls << " exist; not traced. Raise kMaxTracedImpls and add a thunk.";
+						break;
+					}
+
+					mWantedImpls.push_back(WantedImpl{ impl, i, (uint8_t)declaredArgs, name });
+					PLOG_DEBUG << "HCEScriptTrace: tracing '" << name << "' index " << i << ", argc "
+						<< declaredArgs << ", implementation 0x" << std::hex << impl << std::dec;
+					++armed;
 					break;
 				}
 			}
@@ -277,24 +423,59 @@ private:
 		return armed;
 	}
 
-	// ⚠ GAME THREAD, EVERY SCRIPT FUNCTION EVALUATION. Do the minimum. See the header.
-	static void evaluateHookFunction(SafetyHookContext& ctx)
+	// ⚠ GAME THREAD, EVERY CALL TO A WATCHED FUNCTION. Do the minimum. See the header.
+	static void argsHookCommon(SafetyHookContext& ctx, size_t hookSlot)
 	{
 		if (GlobalKill::isKillSet()) return;
 		if (!gTracing.load(std::memory_order_relaxed)) return;
 
-		// CX is the function index and EDX the expression node index, at the entry of EVERY implementation -
-		// which is why one shared callback serves all of them. EDX is what would be needed to walk to the
-		// argument nodes once the script string-data base is known.
 		gTotalHookCalls.fetch_add(1, std::memory_order_relaxed);
 
-		const uint16_t index = (uint16_t)(ctx.rcx & 0xFFFF);
+		const uint16_t index = gSlots[hookSlot].functionIndex.load(std::memory_order_relaxed);
 		if (index >= kMaxFunctionIndex) return;
 		if (!gWanted[index].load(std::memory_order_relaxed)) return;
 
+		TraceRecord record{};
+		record.functionIndex = index;
+		record.argCount = gSlots[hookSlot].argCount.load(std::memory_order_relaxed);
+		record.node = (uint32_t)(ctx.rbx & 0xFFFFFFFF);
+		record.tick = GetTickCount();
+
+		// ⚠ A NULL RAX IS DATA, NOT AN ERROR. The evaluator returns null when it declines to run the call -
+		// which is exactly how `print_if` short-circuits on a false condition - so "called but no args" is a
+		// meaningful thing to see rather than something to hide.
+		//
+		// Read with ReadProcessMemory rather than dereferencing: the buffer is a temporary the script thread
+		// owns and a stale or half-torn pointer here would fault on the GAME thread, killing the process to
+		// print a debug line. The syscall costs a microsecond or two and these functions run at tens of calls
+		// per second, not thousands.
+		if (ctx.rax >= 0x10000)
+		{
+			uint32_t value = 0;
+			if (ReadProcessMemory(GetCurrentProcess(), (void*)ctx.rax, &value, sizeof(value), nullptr))
+			{
+				record.arg0 = value;
+				record.haveArgs = 1;
+				// Separate read, deliberately: one 8-byte read fails ENTIRELY if the second half straddles an
+				// unmapped page, which would throw away arg0 as well.
+				if (record.argCount >= 2
+					&& ReadProcessMemory(GetCurrentProcess(), (void*)(ctx.rax + 4), &value, sizeof(value), nullptr))
+					record.arg1 = value;
+			}
+		}
+
 		const uint64_t slot = gWriteCursor.fetch_add(1, std::memory_order_acq_rel);
-		gRing[slot % kRingSize] = TraceRecord{ index, (uint32_t)(ctx.rdx & 0xFFFFFFFF), GetTickCount() };
+		gRing[slot % kRingSize] = record;
 	}
+
+	template<size_t N>
+	static void argsHookThunk(SafetyHookContext& ctx) { argsHookCommon(ctx, N); }
+
+	static constexpr safetyhook::MidHookFn kThunks[kMaxTracedImpls]
+	{
+		&argsHookThunk<0>, &argsHookThunk<1>, &argsHookThunk<2>, &argsHookThunk<3>,
+		&argsHookThunk<4>, &argsHookThunk<5>, &argsHookThunk<6>, &argsHookThunk<7>,
+	};
 
 	void onToggleChange(bool& newValue)
 	{
@@ -341,6 +522,25 @@ private:
 			mImplHooks.clear();
 			runtimeExceptions->handleMessage(ex);
 		}
+	}
+
+	// Formats one record. Node is the CALL SITE (two prints from the same script are otherwise identical) and
+	// the args are the evaluated arguments - for the ai_* functions arg0 IS the squad/encounter reference,
+	// which is the whole point of hooking after the evaluator rather than at the entry.
+	std::string describe(const TraceRecord& record)
+	{
+		std::string label = labelForIndex(record.functionIndex);
+		if (label.empty()) label = nameForIndex(record.functionIndex);
+
+		std::string args;
+		if (!record.haveArgs)
+			args = "no args (evaluator declined - a false print_if condition looks like this)";
+		else if (record.argCount >= 2)
+			args = std::format("arg0 0x{:08X}  arg1 0x{:08X}", record.arg0, record.arg1);
+		else
+			args = std::format("arg0 0x{:08X}", record.arg0);
+
+		return std::format("{} #{}  {}", label, record.node & 0xFFFF, args);
 	}
 
 	void onRenderEvent(SimpleMath::Vector2 screenSize)
@@ -392,8 +592,8 @@ private:
 				for (uint64_t i = logFrom; i < cursor; ++i)
 				{
 					const TraceRecord record = gRing[i % kRingSize];
-					PLOG_DEBUG << "HCEScriptTrace: script called '" << nameForIndex(record.functionIndex)
-						<< "' (index " << record.functionIndex << ", node " << record.node << ")";
+					PLOG_DEBUG << "HCEScriptTrace: " << describe(record)
+						<< " (index " << record.functionIndex << ", raw node 0x" << std::hex << record.node << std::dec << ")";
 				}
 				mLoggedUpTo = cursor;
 			}
@@ -414,9 +614,7 @@ private:
 			{
 				const TraceRecord record = gRing[i % kRingSize];
 				const uint32_t ageMs = now - record.tick;   // wrap-safe unsigned
-				// The node index is the CALL SITE. Two prints from the same script look identical without it,
-				// and it is the only per-call detail available until the script string base is known.
-				text += std::format("{:>6}ms  {} #{}\n", ageMs, nameForIndex(record.functionIndex), record.node);
+				text += std::format("{:>6}ms  {}\n", ageMs, describe(record));
 			}
 
 			mLastRendered = cursor;
