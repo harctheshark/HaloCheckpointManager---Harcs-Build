@@ -45,6 +45,27 @@ static std::atomic<DX12ResizeBuffers*> gOriginalResizeBuffers = nullptr;
 static std::atomic<DX12ResizeBuffers1*> gOriginalResizeBuffers1 = nullptr;
 static std::atomic<DX12ExecuteCommandLists*> gOriginalExecuteCommandLists = nullptr;
 
+// ---- OBS bypass: published trampolines and the retirement list -------------------------------------
+// Same idea as the gOriginal* pointers above. A thread can be inside a bypass thunk, blocked on the
+// shared lock, while teardownOBSBypass holds it exclusively; when it finally proceeds the hook object
+// is gone. Reading the trampoline from an atomic published at install time gives that straggler
+// somewhere to forward to, instead of it dropping the frame - which returned S_OK for a frame that was
+// never presented, so the swapchain did not flip and the waitable object was never signalled.
+//
+// NOT cleared on teardown, deliberately: the hook is PARKED rather than freed, so the code these point
+// at stays mapped forever and calling it is exactly right - it is OBS's own present.
+static std::atomic<DX12Present*> gOBSBypassOriginalPresent = nullptr;
+static std::atomic<DX12Present1*> gOBSBypassOriginalPresent1 = nullptr;
+
+// Leaked on purpose. See the long note on teardownOBSBypass: ModuleHookManager's deferred attach runs on
+// the loader thread with no synchronisation, so a retired hook must outlive any thread that might still
+// be inside attach() or resolve() on it. Function-local static so the vector itself is never destroyed.
+static std::vector<std::shared_ptr<ModuleInlineHook>>& retiredOBSBypassHooks()
+{
+	static auto* v = new std::vector<std::shared_ptr<ModuleInlineHook>>();
+	return *v;
+}
+
 // The fallbacks below call the COM method directly. That is safe precisely BECAUSE the trampoline
 // atomic is null: safetyhook has already restored dxgi's original bytes (InlineHook::destroy ->
 // disable() -> restore, then free the trampoline) and we never touched the vtable, so the interface
@@ -1825,10 +1846,19 @@ HRESULT __stdcall D3D12Hook::newDX12PresentOBSBypass(IDXGISwapChain* pSwapChain,
 			return original(pSwapChain, SyncInterval, Flags);
 	}
 
-	// Unreachable by construction: teardownOBSBypass restores OBS's pointer under the exclusive lock,
-	// after which nothing can enter this function. Calling pSwapChain->Present() here would re-enter
-	// OBS's hook and recurse forever, so we drop the frame instead and say so.
-	LOG_ONCE(PLOG_FATAL << "OBS bypass thunk (Present) could not reach OBS's original function; dropping the frame");
+	// NOT unreachable, as this comment used to claim. A thread can already be inside this function,
+	// blocked on the shared lock above, while teardownOBSBypass holds it exclusively; by the time it
+	// proceeds the hook object is gone. That is an ordinary teardown race - toggling the bypass off,
+	// re-arming, or closing HCM - not a bug, and dropping the frame here was the wrong answer: it
+	// returned S_OK for a frame that was never presented, so the swapchain never flipped.
+	//
+	// The trampoline published at install time still points at parked, still-mapped code, so forward
+	// through it. Calling pSwapChain->Present() instead would re-enter OBS's hook and recurse forever.
+	if (auto* published = gOBSBypassOriginalPresent.load(std::memory_order_acquire))
+		return published(pSwapChain, SyncInterval, Flags);
+
+	LOG_ONCE(PLOG_ERROR << "OBS bypass thunk (Present) could not reach OBS's original function and no "
+		"trampoline was published; dropping the frame");
 	return S_OK;
 }
 
@@ -1853,7 +1883,14 @@ HRESULT __stdcall D3D12Hook::newDX12Present1OBSBypass(IDXGISwapChain1* pSwapChai
 			return original(pSwapChain, SyncInterval, PresentFlags, pPresentParameters);
 	}
 
-	LOG_ONCE(PLOG_FATAL << "OBS bypass thunk (Present1) could not reach OBS's original function; dropping the frame");
+	// Same teardown race as the Present thunk - and this is the one HaloCER actually presents through,
+	// so it is the likelier of the two to be hit. Forward through the published trampoline rather than
+	// dropping a frame that we then report as S_OK.
+	if (auto* published = gOBSBypassOriginalPresent1.load(std::memory_order_acquire))
+		return published(pSwapChain, SyncInterval, PresentFlags, pPresentParameters);
+
+	LOG_ONCE(PLOG_ERROR << "OBS bypass thunk (Present1) could not reach OBS's original function and no "
+		"trampoline was published; dropping the frame");
 	return S_OK;
 }
 
@@ -2505,9 +2542,20 @@ D3D12Hook::~D3D12Hook()
 
 // Removes both bypass thunks, restoring OBS's own trampoline pointers.
 //
-// ⚠ TAKES swapChainHookGuard EXCLUSIVELY. Never call it while holding that lock. The exclusive hold is
-// the whole point: it proves no thread is inside a thunk (they all run under a shared hold of it)
-// before ~ModuleInlineHook restores the bytes.
+// ⚠ TAKES swapChainHookGuard EXCLUSIVELY. Never call it while holding that lock.
+//
+// ⚠⚠ IT RETIRES THE HOOKS, IT DOES NOT DESTROY THEM, AND THE EXCLUSIVE LOCK IS NOT ENOUGH ON ITS OWN.
+// The lock proves no thread is inside a THUNK, because thunks run under a shared hold of it. It proves
+// nothing about ModuleHookManager's deferred attach, which is the whole point of arming the bypass
+// before OBS exists: when graphics-hook64.dll finally loads, the LOADER thread runs
+// postModuleLoad_UpdateHooks -> ModuleInlineHook::attach() -> OBSRealFnPointer::resolve() -> the memory
+// scan, and it takes NO lock, because ModuleHookManager has no mutex at all.
+//
+// So destroying the shared_ptr here could free the ModuleInlineHook - and the OBSRealFnPointer it owns,
+// and the on-permanent-failure callback that captures the hook by raw pointer - underneath a loader
+// thread that is mid-scan. Toggling the bypass off, or closing HCM, at the moment OBS injects was
+// enough. Retiring instead of freeing costs two leaked objects per teardown and removes the race
+// entirely; it is the same trade HookGraveyard already makes for the dxgi detours.
 void D3D12Hook::teardownOBSBypass(const char* reason)
 {
 	std::unique_lock<std::shared_mutex> guard(swapChainHookGuard);
@@ -2515,12 +2563,22 @@ void D3D12Hook::teardownOBSBypass(const char* reason)
 	if (!mOBSPresentHook && !mOBSPresent1Hook)
 		return;
 
-	PLOG_INFO << "Removing the OBS bypass hooks: " << reason;
+	PLOG_INFO << "Retiring the OBS bypass hooks: " << reason;
 
-	// Destroyed INSIDE the lock deliberately - releasing it first would open a window for a present to
-	// enter a thunk whose hook object is being destroyed underneath it.
-	mOBSPresentHook.reset();
-	mOBSPresent1Hook.reset();
+	// Park the inner safetyhook so OBS's own pointer is restored right now and no NEW caller can enter a
+	// thunk, then hand the wrapper to the retirement list so nothing is freed. The published trampolines
+	// below are deliberately left pointing at the parked (still mapped) code, so a thread already inside
+	// a thunk has somewhere to forward to - see the fallback in the thunks.
+	const auto retire = [](std::shared_ptr<ModuleInlineHook>& hook)
+	{
+		if (!hook) return;
+		HookGraveyard::park(hook->getInlineHook());
+		retiredOBSBypassHooks().push_back(std::move(hook));
+		hook.reset();
+	};
+
+	retire(mOBSPresentHook);
+	retire(mOBSPresent1Hook);
 }
 
 
@@ -2603,6 +2661,18 @@ OBSBypassResult D3D12Hook::setOBSBypass(bool enabled)
 		realFnPointer->setOnPermanentFailure([hook]() { hook->setWantsToBeAttached(false); });
 	};
 
+	// Publish the trampolines for the thunks' teardown-race fallback. Done after install, and only if the
+	// hook actually attached - when OBS is not running yet there is no trampoline to publish, and the
+	// deferred attach will not come back through here. That is fine: with no hook installed nothing can be
+	// inside a thunk either, so there is no straggler to rescue.
+	const auto publish = [](const std::shared_ptr<ModuleInlineHook>& hook, auto& slot)
+	{
+		if (!hook || !hook->isHookInstalled()) return;
+		using Fn = std::remove_reference_t<decltype(slot)>::value_type;
+		if (auto* original = hook->getInlineHook().original<Fn>())
+			slot.store(original, std::memory_order_release);
+	};
+
 	{
 		// Same exclusive hold as teardown: the detours read these shared_ptrs under a shared hold.
 		std::unique_lock<std::shared_mutex> guard(swapChainHookGuard);
@@ -2611,6 +2681,9 @@ OBSBypassResult D3D12Hook::setOBSBypass(bool enabled)
 			install(presentEntry, "Present", newDX12PresentOBSBypass, mOBSPresentHook);
 		if (present1Status != OBSDiscoveryStatus::NoDetourFound)
 			install(present1Entry, "Present1", newDX12Present1OBSBypass, mOBSPresent1Hook);
+
+		publish(mOBSPresentHook, gOBSBypassOriginalPresent);
+		publish(mOBSPresent1Hook, gOBSBypassOriginalPresent1);
 	}
 
 	if (moduleNotLoaded)
