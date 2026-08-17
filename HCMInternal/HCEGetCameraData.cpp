@@ -108,6 +108,51 @@ namespace
 	std::atomic<uintptr_t> gPreferredDestination{ 0 };
 	uint32_t gWindowStartTick = 0;
 
+	// ⚠⚠ THE ELECTION IS A FALLBACK NOW, NOT THE PRIMARY MECHANISM.
+	//
+	// The midhook is on FMinimalViewInfo::operator=, so it fires for EVERY view-info assignment in the process,
+	// not just the render camera's. Picking the most-written destination was never a sound discriminator: it
+	// re-elected about once a second across roughly six addresses, and while it sat on the wrong one it
+	// DISCARDED every write to the real camera. That is three separate user-visible faults - the overlay going
+	// choppy, the camera "not wanting to work" for the first seconds of a mission while the window converges,
+	// and (once HCEFieldOfView started writing through it) memory corruption from treating a stray view info as
+	// a player camera manager.
+	//
+	// A destination IS the render camera's POV exactly when destination - 0x14B0 is a real APlayerCameraManager.
+	// That is checkable directly, so check it instead of voting on it: a validated destination is adopted on the
+	// FIRST frame it appears and latched, and every other destination is then ignored outright. The election
+	// below still runs when nothing has validated yet, so a build whose layout does not match degrades to the
+	// old behaviour rather than to no camera at all.
+	constexpr int64_t kDefaultFovInCameraManager = 0x2F0;   // reflected DefaultFOV, just before LockedFOV
+	constexpr uint32_t kRevalidateMs = 2000;
+
+	std::atomic<uintptr_t> gValidatedDestination{ 0 };
+	uint32_t gLastValidationTick = 0;   // hook thread only
+
+	// Same test HCEFieldOfView uses before it writes: a real APlayerCameraManager has a vtable inside the exe
+	// image and a sane DefaultFOV. A stray FMinimalViewInfo offset back by 0x14B0 satisfies neither except by
+	// coincidence. Reads go through tryReadRaw, so a bad candidate cannot fault us.
+	bool destinationIsCameraManagerPov(uintptr_t destination)
+	{
+		if (destination <= (uintptr_t)HCEGetCameraData::kPovInCameraManagerOffset) return false;
+		const uintptr_t manager = destination - (uintptr_t)HCEGetCameraData::kPovInCameraManagerOffset;
+
+		uintptr_t vtable = 0;
+		if (!HCEGetPlayerState::tryReadRaw(manager, &vtable, sizeof(vtable)) || vtable < 0x10000) return false;
+
+		const HMODULE exe = GetModuleHandleW(nullptr);
+		MODULEINFO mi{};
+		if (!exe || !GetModuleInformation(GetCurrentProcess(), exe, &mi, sizeof(mi))) return false;
+		const uintptr_t exeBase = (uintptr_t)mi.lpBaseOfDll;
+		if (vtable < exeBase || vtable >= exeBase + mi.SizeOfImage) return false;
+
+		float defaultFov = 0.f;
+		if (!HCEGetPlayerState::tryReadRaw(manager + kDefaultFovInCameraManager, &defaultFov, sizeof(defaultFov)))
+			return false;
+
+		return std::isfinite(defaultFov) && defaultFov > 20.f && defaultFov < 170.f;
+	}
+
 	// Every write to gPreferredDestination goes through here, so a change can never be made without being
 	// counted - which is what makes the consumer-side reporting below trustworthy rather than best-effort.
 	void adoptPreferredDestination(uintptr_t destination)
@@ -148,8 +193,50 @@ namespace
 		// Exactly the world origin is never a real camera in a loaded level - it is an unset/default view info.
 		if (candidate.location[0] == 0.0 && candidate.location[1] == 0.0 && candidate.location[2] == 0.0) return;
 
+		// ---- validation path: adopt the destination that IS a camera manager POV, and ignore the rest --------
+		const uintptr_t validated = gValidatedDestination.load(std::memory_order_acquire);
+
+		if (validated != 0 && destination == validated)
+		{
+			// Re-check occasionally: a level transition can retire the manager and leave us latched to freed
+			// memory. Cheap - two guarded reads every couple of seconds, on a hook that fires every frame.
+			if (now - gLastValidationTick >= kRevalidateMs)
+			{
+				gLastValidationTick = now;
+				if (!destinationIsCameraManagerPov(destination))
+				{
+					gValidatedDestination.store(0, std::memory_order_release);
+					PLOG_DEBUG << "HCEGetCameraData: latched camera destination 0x" << std::hex << destination
+						<< std::dec << " stopped validating; re-resolving";
+				}
+			}
+		}
+		else if (validated == 0)
+		{
+			// Nothing latched yet. Test this destination - the real one usually shows up within a frame or two,
+			// which is what removes the old half-second of "not wanting to work" at the start of a mission.
+			if (destinationIsCameraManagerPov(destination))
+			{
+				gValidatedDestination.store(destination, std::memory_order_release);
+				gLastValidationTick = now;
+				adoptPreferredDestination(destination);
+				PLOG_DEBUG << "HCEGetCameraData: adopted validated camera destination 0x" << std::hex
+					<< destination << std::dec << " (manager 0x" << std::hex
+					<< (destination - (uintptr_t)HCEGetCameraData::kPovInCameraManagerOffset) << std::dec << ")";
+			}
+		}
+		else
+		{
+			// Something IS latched and this is not it, so this is one of the other view infos the hook sees.
+			// Dropping it here is the entire point: the old code let a busier impostor win the election and
+			// then threw away the real camera's writes.
+			gDroppedForeignWrites.fetch_add(1, std::memory_order_relaxed);
+			return;
+		}
+
 		// Tally this write. Only the hook thread touches gTally/gWindowStartTick, so no synchronisation is
-		// needed on them - only the elected result is published atomically.
+		// needed on them - only the elected result is published atomically. This is now the FALLBACK path,
+		// reached only while nothing has validated.
 		size_t slot = kDestinationSlots;
 		for (size_t i = 0; i < kDestinationSlots; ++i)
 		{

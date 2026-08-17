@@ -84,7 +84,10 @@
 		((pauseAlsoFreesCursorGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 		((pauseAlsoBlocksInputGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
-	((OBSBypassToggleGUI, (ALL_GAMES_AND_MAINMENU)))\
+	/* HaloCER: the bypass works there now - OBS picks d3d11/d3d10/d3d12_capture behind ONE shared Present hook,
+	   so D3D12Hook::setOBSBypass does the same job against Present and Present1. The backend was wired before
+	   this row was widened, so the feature existed with no way to switch it on. */\
+	((OBSBypassToggleGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	/* The suppression itself (HCMInternalGUI.cpp) is backend-agnostic and already works on the D3D12 path;
 	   only these rows were gated off. */\
 	((HideWatermarkGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\

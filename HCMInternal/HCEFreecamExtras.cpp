@@ -35,9 +35,13 @@ namespace
 	};
 
 	// Theater camera collision distance. Not code - a float the camera reads.
+	//
+	// ⚠ THERE IS NO "OFF" CONSTANT. This used to restore 0.f, which is not what the game had - it is a third
+	// state. The field is a DISTANCE, so zero means "collide at zero range", not "collide normally", which is
+	// why switching noclip off never gave the original full-stop behaviour back. The real previous value is
+	// captured on the first enable and written back on disable; see mNoclipOriginal.
 	constexpr uint32_t kNoclipRva = 0x9E56F8;
 	constexpr float    kNoclipOn  = -999999.f;
-	constexpr float    kNoclipOff = 0.f;
 
 	// The wrap-around cave. 144 bytes; the E9 at offset 123 is a placeholder whose rel32 is filled in once the
 	// page is allocated. Everything else is position-independent: the rip-relative loads at the front all target
@@ -125,6 +129,11 @@ private:
 	std::mutex mMutex;
 	uintptr_t mSimBase = 0;
 
+	// The collision distance as the game had it, captured the first time noclip is switched on. Empty means we
+	// have never seen the original, in which case there is nothing safe to restore and disable is a no-op
+	// rather than a guess.
+	std::optional<float> mNoclipOriginal;
+
 	bool mGimbalApplied = false;
 	uintptr_t mCaveHookSite = 0;             // the signature match - where our jmp goes
 	void* mCavePage = nullptr;               // NEVER freed, see the header
@@ -144,12 +153,49 @@ private:
 	void applyNoclip(bool enable)
 	{
 		const uintptr_t address = simBase() + kNoclipRva;
-		const float value = enable ? kNoclipOn : kNoclipOff;
-		if (!HCEGetPlayerState::tryWriteRaw(address, &value, sizeof(value)))
+
+		if (enable)
+		{
+			// Capture the game's own value BEFORE the first overwrite, and only then - re-reading on a later
+			// enable would just capture our own kNoclipOn and make disable a no-op forever.
+			if (!mNoclipOriginal.has_value())
+			{
+				float current = 0.f;
+				if (HCEGetPlayerState::tryReadRaw(address, &current, sizeof(current))
+					&& std::isfinite(current) && current != kNoclipOn)
+				{
+					mNoclipOriginal = current;
+					PLOG_DEBUG << "HCEFreecamExtras: captured original camera collision distance " << current;
+				}
+				else
+				{
+					PLOG_ERROR << "HCEFreecamExtras: could not read the original camera collision distance; "
+						"noclip will not be able to restore it";
+				}
+			}
+
+			if (!HCEGetPlayerState::tryWriteRaw(address, &kNoclipOn, sizeof(kNoclipOn)))
+				throw HCMRuntimeException("Could not write the HaloCER camera collision distance");
+
+			lockOrThrow(messagesGUIWeak, messagesGUI);
+			messagesGUI->addMessage("Camera noclip on.");
+			return;
+		}
+
+		if (!mNoclipOriginal.has_value())
+		{
+			// Never captured, so we do not know what full-stop looked like. Writing a guess is what caused the
+			// original bug; say so instead.
+			throw HCMRuntimeException("HCM never saw Halo Campaign Evolved's original camera collision distance, "
+				"so it cannot restore it. Reload the level to get it back.");
+		}
+
+		const float original = *mNoclipOriginal;
+		if (!HCEGetPlayerState::tryWriteRaw(address, &original, sizeof(original)))
 			throw HCMRuntimeException("Could not write the HaloCER camera collision distance");
 
 		lockOrThrow(messagesGUIWeak, messagesGUI);
-		messagesGUI->addMessage(enable ? "Camera noclip on." : "Camera noclip off.");
+		messagesGUI->addMessage("Camera noclip off.");
 	}
 
 	// ------------------------------------------------------------------------------------------------------
@@ -297,7 +343,17 @@ public:
 
 		// Put the game back. Both are game-code / game-state changes that would otherwise outlive HCM.
 		try { if (mGimbalApplied) applyGimbalOff(); } catch (...) {}
-		try { if (mSimBase) { const float off = kNoclipOff; HCEGetPlayerState::tryWriteRaw(mSimBase + kNoclipRva, &off, sizeof(off)); } } catch (...) {}
+		// Hand the collision distance back as the GAME had it, not as 0.f - see the note on kNoclipRva. If we
+		// never captured it we also never wrote kNoclipOn, so there is nothing to undo.
+		try
+		{
+			if (mSimBase && mNoclipOriginal.has_value())
+			{
+				const float original = *mNoclipOriginal;
+				HCEGetPlayerState::tryWriteRaw(mSimBase + kNoclipRva, &original, sizeof(original));
+			}
+		}
+		catch (...) {}
 		// mCavePage is deliberately NOT freed. See the header.
 	}
 };

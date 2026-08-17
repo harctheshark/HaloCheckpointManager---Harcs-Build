@@ -7,6 +7,9 @@
 #include "IMakeOrGetCheat.h"
 #include "HCEGetPlayerState.h"
 #include "HCEGetCameraData.h"
+#include "ControlServiceContainer.h"
+#include "HotkeyDefinitions.h"
+#include <algorithm>
 #include <cmath>
 #include <mutex>
 
@@ -19,6 +22,15 @@ namespace
 
 	// 0.0f is the engine's own "unlocked" value - UnlockFOV writes exactly this.
 	constexpr float kUnlocked = 0.f;
+
+	// Must match the slider's range in GUIElementConstructor, or a held hotkey would wind the value somewhere
+	// the slider cannot represent and the two would disagree.
+	constexpr float kFovMinDegrees = 50.f;
+	constexpr float kFovMaxDegrees = 140.f;
+
+	// What "restore default" puts back. The engine's own default sits at DefaultFOV (camera manager + 0x2F0), so
+	// that is read live rather than hard-coded here; this is only the fallback when the read fails.
+	constexpr float kFovFallbackDefault = 78.f;
 
 	// Cheap enough at 4 Hz to be free, frequent enough that a level transition re-locks before the player has
 	// finished loading in. See the header for why a "one-shot" write still needs this.
@@ -49,6 +61,12 @@ private:
 	std::shared_ptr<RuntimeExceptionHandler> runtimeExceptions;
 	std::weak_ptr<HCEGetCameraData> cameraDataWeak;
 	std::weak_ptr<SettingsStateAndEvents> settingsWeak;
+	std::weak_ptr<ControlServiceContainer> controlServicesWeak;
+
+	// Shared with MCC's free camera and already defined and defaulted - we only borrow references. HaloCER and
+	// the MCC games can never be in one process, so there is nothing to collide with.
+	std::shared_ptr<RebindableHotkey> mFovIncreaseBinding;
+	std::shared_ptr<RebindableHotkey> mFovDecreaseBinding;
 
 	std::atomic<bool> mReady{ false };
 	std::atomic<bool> mWantLock{ false };
@@ -308,10 +326,43 @@ private:
 
 	// Throttled READ that writes only when the camera manager changed under us or the field no longer holds our
 	// value. Never installs or touches the hook - it runs on the render thread, where that is forbidden.
+	// Winds the FOV slider while a key is held, exactly as HCECameraRoll does for tilt. Only meaningful while the
+	// lock is on - the value has nowhere to go otherwise, and silently moving a slider the game is ignoring
+	// would just look broken.
+	static constexpr float kFovDegreesPerSecond = 40.f;
+
+	bool pollFovHotkeys()
+	{
+		if (!mFovIncreaseBinding || !mFovDecreaseBinding) return false;
+
+		// Respect the SAME disabler HotkeyManager::pollInput respects, so holding the binding while rebinding a
+		// key or typing in a text box cannot wind the field of view.
+		if (auto controls = controlServicesWeak.lock())
+			if (controls->hotkeyDisabler && controls->hotkeyDisabler->serviceIsRequested()) return false;
+
+		const bool up = mFovIncreaseBinding->isCurrentlyDown();
+		const bool down = mFovDecreaseBinding->isCurrentlyDown();
+		if (up == down) return false;   // neither, or both cancelling out
+
+		auto settings = settingsWeak.lock();
+		if (!settings) return false;
+
+		const float frameDelta = ImGui::GetIO().DeltaTime;   // clamped by ImGui, so a stall cannot jump
+		auto& setting = settings->hceFieldOfViewDegrees;
+		const float next = std::clamp(setting->GetValue() + kFovDegreesPerSecond * frameDelta * (up ? 1.f : -1.f),
+			kFovMinDegrees, kFovMaxDegrees);
+
+		setting->GetValueDisplay() = next;
+		setting->UpdateValueWithInput();   // fires the value-changed handler, which does the write
+		return true;
+	}
+
 	void onRenderEvent(SimpleMath::Vector2)
 	{
 		if (!mReady.load(std::memory_order_acquire)) return;
 		if (!mWantLock.load(std::memory_order_acquire)) return;
+
+		pollFovHotkeys();
 
 		const auto now = std::chrono::steady_clock::now();
 		{
@@ -377,12 +428,24 @@ public:
 		runtimeExceptions(dicon.Resolve<RuntimeExceptionHandler>()),
 		cameraDataWeak(resolveDependentCheat(HCEGetCameraData)),
 		settingsWeak(dicon.Resolve<SettingsStateAndEvents>()),
+		controlServicesWeak(dicon.Resolve<ControlServiceContainer>()),
 		mToggleCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFieldOfViewToggle->valueChangedEvent, [this](bool& n) { onToggleChanged(n); }),
 		mValueCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFieldOfViewDegrees->valueChangedEvent, [this](float& n) { onValueChanged(n); }),
 		mRenderEventCallback(dicon.Resolve<RenderEvent>().lock(), [this](SimpleMath::Vector2 ss) { onRenderEvent(ss); })
 	{
 		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER)
 			throw HCMInitException("HCEFieldOfView only supports Halo Campaign Evolved");
+
+		// Same borrow HCECameraRoll does for its tilt keys: these are MCC free-camera bindings that already
+		// exist and are already defaulted, and the two games can never share a process. find() rather than at(),
+		// so a missing definition surfaces as an HCMInitException instead of std::out_of_range.
+		auto& hkd = dicon.Resolve<HotkeyDefinitions>().lock()->getAllRebindableHotkeys();
+		auto increase = hkd.find(RebindableHotkeyEnum::cameraFOVIncreaseBinding);
+		auto decrease = hkd.find(RebindableHotkeyEnum::cameraFOVDecreaseBinding);
+		if (increase == hkd.end() || decrease == hkd.end())
+			throw HCMInitException("The camera field-of-view hotkeys are missing from the hotkey definitions");
+		mFovIncreaseBinding = increase->second;
+		mFovDecreaseBinding = decrease->second;
 
 		mReady.store(true, std::memory_order_release);
 	}
