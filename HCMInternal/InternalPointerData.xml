@@ -4218,19 +4218,19 @@
 	Derived from the parse-side code at sim 0x1B1BB0: lea rdx,[rip+0x66AE49] -> 0x81CA00, then [rdx+idx*8].-->
 	<VersionedEntry Name="hceScriptEvaluateFunction" Type="MultilevelPointer::ModuleOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
 				<Offset>0x350480</Offset>
 			</Offsets>
-			<ModuleName>HaloSimulation_tag_release.dll</ModuleName>
 		</Version>
 	</VersionedEntry>
 
 	<VersionedEntry Name="hceScriptFunctionTable" Type="MultilevelPointer::ModuleOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
+			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
 				<Offset>0x81CA00</Offset>
 			</Offsets>
-			<ModuleName>HaloSimulation_tag_release.dll</ModuleName>
 		</Version>
 	</VersionedEntry>
 
