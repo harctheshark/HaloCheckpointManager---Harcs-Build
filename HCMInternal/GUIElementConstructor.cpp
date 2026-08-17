@@ -1266,6 +1266,8 @@ private:
 							createNestedElement(GUIElementEnum::display2DInfoToggleGUI),
 							createNestedElement(GUIElementEnum::display2DInfoSettingsInfoSubheading),
 							createNestedElement(GUIElementEnum::display2DInfoSettingsVisualSubheading),
+							createNestedElement(GUIElementEnum::hceScriptTraceToggleGUI),
+							createNestedElement(GUIElementEnum::hceScriptTraceLineCountGUI),
 							createNestedElement(GUIElementEnum::hceDisplayInfoToggleGUI),
 							createNestedElement(GUIElementEnum::hceDisplayInfoSettingsInfoSubheading),
 							createNestedElement(GUIElementEnum::hceDisplayInfoSettingsVisualSubheading),
@@ -1530,6 +1532,16 @@ private:
 				// ---- Halo Campaign Evolved 2D info overlay ----------------------------------------------------
 				// Same toggle, same hotkey and the SAME six visual settings as the MCC overlay - only the row
 				// list is HaloCER-specific, because HCE can supply nothing but these seven values.
+				// Developer diagnostic. The campaign scripts carry their authors' own debug instrumentation and
+				// ship with it ENABLED, and nothing was reading it - see HCEScriptTrace.h.
+				case GUIElementEnum::hceScriptTraceToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("DEVELOPER: traces the level script's own function calls on screen - print, print_if, ai_place, ai_erase, ai_living_count, ai_actors - resolved by name out of the engine's script function table. Use it to see whether a spawner script actually ran. It hooks a function the engine calls for EVERY script evaluation, so leave it off unless you are debugging."), std::nullopt, "Script Trace (dev)", settings->hceScriptTraceToggle));
+
+				case GUIElementEnum::hceScriptTraceLineCountGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 40.f)>>
+						(game, ToolTipCollection("How many of the most recent script calls to show. Each line is prefixed with how long ago it happened."), "Script Trace Lines", settings->hceScriptTraceLineCount));
+
 				case GUIElementEnum::hceDisplayInfoToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Displays player and game information as text on your screen"), RebindableHotkeyEnum::display2DInfo, "Display 2D Game Info##hce", settings->display2DInfoToggle));

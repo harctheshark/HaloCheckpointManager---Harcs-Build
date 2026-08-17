@@ -17,6 +17,7 @@
 #include "HCEGetCameraData.h"
 #include "HCEFreezeAI.h"
 #include "HCEDisplayInfo.h"
+#include "HCEScriptTrace.h"
 #include "HCESkullToggler.h"
 #include "HCEForceTeleport.h"
 #include "HCEForceLaunch.h"

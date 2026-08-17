@@ -1345,6 +1345,22 @@ public:
 			nameof(hceCameraRollDegrees)
 		);
 
+	// Live trace of the level script's own function calls. See HCEScriptTrace.h - the campaign scripts ship
+	// with their own debug instrumentation enabled and nothing was reading it.
+	std::shared_ptr<BinarySetting<bool>> hceScriptTraceToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool) { return true; },
+			nameof(hceScriptTraceToggle)
+		);
+
+	std::shared_ptr<BinarySetting<float>> hceScriptTraceLineCount = std::make_shared<BinarySetting<float>>
+		(
+			12.f,
+			[](float in) { return in >= 1.f && in <= 40.f; },
+			nameof(hceScriptTraceLineCount)
+		);
+
 	// How fast the tilt keys wind the roll slider. Purely an HCM-side input rate - the game has no notion of it.
 	std::shared_ptr<BinarySetting<float>> hceCameraRollSpeed = std::make_shared<BinarySetting<float>>
 		(

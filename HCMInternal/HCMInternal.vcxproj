@@ -548,6 +548,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HCEGetCameraData.h" />
     <ClInclude Include="HCEFreezeAI.h" />
     <ClInclude Include="HCEDisplayInfo.h" />
+    <ClInclude Include="HCEScriptTrace.h" />
     <ClInclude Include="HCESkullToggler.h" />
     <ClInclude Include="HCEForceTeleport.h" />
     <ClInclude Include="HCEForceLaunch.h" />
@@ -872,6 +873,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="HCEGetCameraData.cpp" />
     <ClCompile Include="HCEFreezeAI.cpp" />
     <ClCompile Include="HCEDisplayInfo.cpp" />
+    <ClCompile Include="HCEScriptTrace.cpp" />
     <ClCompile Include="HCESkullToggler.cpp" />
     <ClCompile Include="HCEForceTeleport.cpp" />
     <ClCompile Include="HCEForceLaunch.cpp" />

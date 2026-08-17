@@ -4204,6 +4204,36 @@
 		focal = width / (2*tan(FOV/2)) is not an approximation, it is the engine's own projection, and it stays
 		correct at any landscape aspect ratio including ultrawide.
 	-->
+	<!--HaloScript tracing. Two entries, both in the SIM dll.
+
+	hceScriptEvaluateFunction = the GENERIC argument-evaluating wrapper that every one of the 1188 script
+	functions is dispatched through (it is the +0x18 field of every hs function definition, identical for
+	all of them). At entry CX holds the FUNCTION INDEX and EDX the expression node index, which is what
+	makes one hook enough to see every script call by name.
+
+	hceScriptFunctionTable = the definition table: an array of qword pointers to hs function definitions.
+	Definition layout is +0x00 return type, +0x08 name (char*), +0x18 this generic wrapper, +0x20 the
+	per-function implementation, +0x38 word argument count, +0x3A word[] argument types. So a function's
+	NAME is a lookup, not a signature scan - which is how print (index 49) and print_if (50) were found.
+	Derived from the parse-side code at sim 0x1B1BB0: lea rdx,[rip+0x66AE49] -> 0x81CA00, then [rdx+idx*8].-->
+	<VersionedEntry Name="hceScriptEvaluateFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offsets>
+				<Offset>0x350480</Offset>
+			</Offsets>
+			<ModuleName>HaloSimulation_tag_release.dll</ModuleName>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceScriptFunctionTable" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offsets>
+				<Offset>0x81CA00</Offset>
+			</Offsets>
+			<ModuleName>HaloSimulation_tag_release.dll</ModuleName>
+		</Version>
+	</VersionedEntry>
+
 	<VersionedEntry Name="hceCameraManagerUpdateFunction" Type="MultilevelPointer::ExeOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Offsets>
