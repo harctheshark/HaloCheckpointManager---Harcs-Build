@@ -86,9 +86,17 @@ namespace
 	// The known-interesting indices, resolved by NAME at construction so a different build cannot silently
 	// trace the wrong functions. print/print_if are the point; the ai_* ones show what the spawner actually
 	// did rather than what it said.
+	// ⚠ ai_erase is NOT the only way units leave. d20 marks enc7_1_cov and enc7_1_flood `ai_disposable true`
+	// in three later cleanup scripts and the level calls garbage_collect_now/_unsafe seven times, so a squad
+	// can be DELETED with no ai_erase call at all - which is exactly the hole in "2018 placements, 0 erases,
+	// no enemies". ai_migrate is here for the same reason: enc7_1 ends with
+	// `(ai_migrate enc7_1_cov sq_enc7_3_cov_jackals)`, which MOVES the squad rather than removing it, and
+	// "they spawn in a different spot" is a migration, not a failed placement.
 	constexpr const char* kDefaultTraced[] =
 	{
-		"print", "print_if", "ai_place", "ai_erase", "ai_living_count", "ai_actors",
+		"print", "print_if",
+		"ai_place", "ai_erase", "ai_living_count", "ai_actors",
+		"ai_migrate", "ai_disposable", "garbage_collect_now", "garbage_collect_unsafe",
 	};
 
 	// One hook per distinct implementation, and the hook has to know WHICH function it is on - which it
@@ -96,12 +104,17 @@ namespace
 	// documents rip as pointing into the trampoline, not at the hooked address. So each slot gets its own
 	// callback: a template thunk that closes over its slot number at compile time. Eight is well clear of
 	// the six implementations the default filter needs.
-	constexpr size_t kMaxTracedImpls = 8;
+	constexpr size_t kMaxTracedImpls = 16;
 
 	struct SlotInfo
 	{
 		std::atomic<uint16_t> functionIndex{ 0 };
 		std::atomic<uint8_t> argCount{ 0 };
+		// A zero-argument function never calls the evaluator, so it has no anchor and is hooked at its ENTRY
+		// instead. There the node is still in RDX - it has not been stashed into RBX yet - and there are no
+		// arguments to read. Both facts are per-slot, so one callback still serves every hook.
+		std::atomic<uint8_t> nodeInRdx{ 0 };
+		std::atomic<uint8_t> expectsArgs{ 0 };
 	};
 	std::array<SlotInfo, kMaxTracedImpls> gSlots{};
 }
@@ -150,6 +163,7 @@ private:
 		uintptr_t implAddress = 0;
 		uint16_t functionIndex = 0;   // the first name found on this implementation
 		uint8_t argCount = 0;
+		bool hookAtEntry = false;     // true for zero-argument functions - see SlotInfo::nodeInRdx
 		std::string label;
 	};
 	std::vector<WantedImpl> mWantedImpls;
@@ -194,9 +208,23 @@ private:
 			uintptr_t hookPoint = 0, evaluator = 0;
 			if (!findArgsHookPoint(mWantedImpls[i].implAddress, hookPoint, evaluator))
 			{
+				// A function that takes no arguments never calls the evaluator, so having no anchor is correct
+				// rather than a failure - garbage_collect_now and garbage_collect_unsafe just set a flag word.
+				// Hook the entry instead: the node is still in RDX there, and there is nothing to wait for.
+				if (mWantedImpls[i].argCount == 0)
+				{
+					mWantedImpls[i].hookAtEntry = true;
+					hookPoints[i] = mWantedImpls[i].implAddress;
+					PLOG_DEBUG << "HCEScriptTrace: '" << mWantedImpls[i].label
+						<< "' takes no arguments, hooking its entry at 0x" << std::hex
+						<< mWantedImpls[i].implAddress << std::dec;
+					continue;
+				}
+
 				PLOG_ERROR << "HCEScriptTrace: no argument-evaluator call found in the first "
-					<< kPrologueSearchLength << " bytes of '" << mWantedImpls[i].label << "' implementation 0x"
-					<< std::hex << mWantedImpls[i].implAddress << std::dec;
+					<< kPrologueSearchLength << " bytes of '" << mWantedImpls[i].label
+					<< "' implementation 0x" << std::hex << mWantedImpls[i].implAddress << std::dec
+					<< ", and it declares " << (int)mWantedImpls[i].argCount << " arguments so it should have one";
 				return 0;
 			}
 			if (agreedEvaluator == 0) agreedEvaluator = evaluator;
@@ -217,6 +245,8 @@ private:
 			// Publish the slot's identity BEFORE the hook exists, so the callback can never read a stale one.
 			gSlots[i].functionIndex.store(mWantedImpls[i].functionIndex, std::memory_order_release);
 			gSlots[i].argCount.store(mWantedImpls[i].argCount, std::memory_order_release);
+			gSlots[i].nodeInRdx.store(mWantedImpls[i].hookAtEntry ? 1 : 0, std::memory_order_release);
+			gSlots[i].expectsArgs.store(mWantedImpls[i].argCount > 0 ? 1 : 0, std::memory_order_release);
 
 			void* address = (void*)hookPoints[i];
 			auto pointer = std::make_shared<MultilevelPointerSpecialisation::Resolved>(address);
@@ -406,7 +436,7 @@ private:
 						break;
 					}
 
-					mWantedImpls.push_back(WantedImpl{ impl, i, (uint8_t)declaredArgs, name });
+					mWantedImpls.push_back(WantedImpl{ impl, i, (uint8_t)declaredArgs, false, name });
 					PLOG_DEBUG << "HCEScriptTrace: tracing '" << name << "' index " << i << ", argc "
 						<< declaredArgs << ", implementation 0x" << std::hex << impl << std::dec;
 					++armed;
@@ -438,7 +468,8 @@ private:
 		TraceRecord record{};
 		record.functionIndex = index;
 		record.argCount = gSlots[hookSlot].argCount.load(std::memory_order_relaxed);
-		record.node = (uint32_t)(ctx.rbx & 0xFFFFFFFF);
+		record.node = (uint32_t)((gSlots[hookSlot].nodeInRdx.load(std::memory_order_relaxed) ? ctx.rdx : ctx.rbx)
+			& 0xFFFFFFFF);
 		record.tick = GetTickCount();
 
 		// ⚠ A NULL RAX IS DATA, NOT AN ERROR. The evaluator returns null when it declines to run the call -
@@ -449,7 +480,7 @@ private:
 		// owns and a stale or half-torn pointer here would fault on the GAME thread, killing the process to
 		// print a debug line. The syscall costs a microsecond or two and these functions run at tens of calls
 		// per second, not thousands.
-		if (ctx.rax >= 0x10000)
+		if (gSlots[hookSlot].expectsArgs.load(std::memory_order_relaxed) && ctx.rax >= 0x10000)
 		{
 			uint32_t value = 0;
 			if (ReadProcessMemory(GetCurrentProcess(), (void*)ctx.rax, &value, sizeof(value), nullptr))
@@ -473,8 +504,10 @@ private:
 
 	static constexpr safetyhook::MidHookFn kThunks[kMaxTracedImpls]
 	{
-		&argsHookThunk<0>, &argsHookThunk<1>, &argsHookThunk<2>, &argsHookThunk<3>,
-		&argsHookThunk<4>, &argsHookThunk<5>, &argsHookThunk<6>, &argsHookThunk<7>,
+		&argsHookThunk<0>,  &argsHookThunk<1>,  &argsHookThunk<2>,  &argsHookThunk<3>,
+		&argsHookThunk<4>,  &argsHookThunk<5>,  &argsHookThunk<6>,  &argsHookThunk<7>,
+		&argsHookThunk<8>,  &argsHookThunk<9>,  &argsHookThunk<10>, &argsHookThunk<11>,
+		&argsHookThunk<12>, &argsHookThunk<13>, &argsHookThunk<14>, &argsHookThunk<15>,
 	};
 
 	void onToggleChange(bool& newValue)
@@ -533,8 +566,10 @@ private:
 		if (label.empty()) label = nameForIndex(record.functionIndex);
 
 		std::string args;
-		if (!record.haveArgs)
-			args = "no args (evaluator declined - a false print_if condition looks like this)";
+		if (record.argCount == 0)
+			args = "(takes no arguments)";
+		else if (!record.haveArgs)
+			args = "pass 1 of 2 - arguments not evaluated yet";
 		else if (label.starts_with("ai_"))
 			args = describeAiReference(record);
 		else if (record.argCount >= 2)
@@ -637,8 +672,16 @@ private:
 
 			// Newest last, so it reads like a log. Only the last wantLines records, and never more than the
 			// ring holds - if the game outran us we say so rather than pretending the trace is complete.
+			//
+			// ⚠ THE WINDOW IS WIDENED AND FIRST-PASS RECORDS ARE SKIPPED. The interpreter invokes each
+			// implementation TWICE per call - the first time the argument evaluator returns null because the
+			// arguments have not been evaluated yet, the second time it returns them. Verified: the records
+			// alternate null/valid with perfect regularity, 9842 runs of length one, every pair sharing a node.
+			// Showing both halves every visible call and tells the reader nothing, so the overlay shows only
+			// the pass that carries arguments. The LOG keeps both, because an UNPAIRED null is real information:
+			// that is what a false `print_if` condition looks like.
 			const uint64_t available = std::min<uint64_t>(cursor, kRingSize);
-			const uint64_t take = std::min<uint64_t>(available, (uint64_t)wantLines);
+			const uint64_t take = std::min<uint64_t>(available, (uint64_t)wantLines * 2);
 			const uint64_t first = cursor - take;
 
 			const uint32_t now = GetTickCount();
@@ -647,11 +690,21 @@ private:
 				text += std::format(" (dropped ~{} calls since last frame)", (cursor - mLastRendered) - kRingSize);
 			text += "\n";
 
-			for (uint64_t i = first; i < cursor; ++i)
+			// Walk NEWEST first so the lines that survive the wantLines limit are the recent ones, then emit in
+			// chronological order. Breaking out of an oldest-first loop would keep the oldest and drop the new.
+			std::vector<TraceRecord> visible;
+			visible.reserve((size_t)wantLines);
+			for (uint64_t i = cursor; i > first && (int)visible.size() < wantLines; --i)
 			{
-				const TraceRecord record = gRing[i % kRingSize];
-				const uint32_t ageMs = now - record.tick;   // wrap-safe unsigned
-				text += std::format("{:>6}ms  {}\n", ageMs, describe(record));
+				const TraceRecord record = gRing[(i - 1) % kRingSize];
+				if (record.argCount > 0 && !record.haveArgs) continue;   // first pass, carries nothing
+				visible.push_back(record);
+			}
+
+			for (auto it = visible.rbegin(); it != visible.rend(); ++it)
+			{
+				const uint32_t ageMs = now - it->tick;   // wrap-safe unsigned
+				text += std::format("{:>6}ms  {}\n", ageMs, describe(*it));
 			}
 
 			mLastRendered = cursor;
