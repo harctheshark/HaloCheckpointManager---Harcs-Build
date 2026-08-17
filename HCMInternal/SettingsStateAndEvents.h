@@ -1354,6 +1354,16 @@ public:
 			nameof(hceScriptTraceToggle)
 		);
 
+	// Writes every traced call to HCMInternal_logging.txt as well as the screen. Default ON: the whole point
+	// of the trace is a two-tick window while you are moving, which is not something you can read off a
+	// transient overlay.
+	std::shared_ptr<BinarySetting<bool>> hceScriptTraceToLog = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool) { return true; },
+			nameof(hceScriptTraceToLog)
+		);
+
 	std::shared_ptr<BinarySetting<float>> hceScriptTraceLineCount = std::make_shared<BinarySetting<float>>
 		(
 			12.f,

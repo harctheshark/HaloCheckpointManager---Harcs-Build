@@ -42,6 +42,11 @@ namespace
 	std::array<TraceRecord, kRingSize> gRing{};
 	std::atomic<uint64_t> gWriteCursor{ 0 };   // monotonic; index = cursor % kRingSize
 
+	// ⚠ COUNTS EVERY ENTRY TO THE HOOK, BEFORE THE FILTER. Without this, "nothing on screen" is ambiguous
+	// between three completely different faults: the hook never fires, it fires but no traced function is
+	// being called, or it records fine and the drawing is broken. That ambiguity cost a whole test run.
+	std::atomic<uint64_t> gTotalHookCalls{ 0 };
+
 	// Set only while the cheat is on. The hook checks this first and returns immediately when clear, so a
 	// parked-but-attached hook costs one relaxed atomic load per script call.
 	std::atomic<bool> gTracing{ false };
@@ -82,6 +87,8 @@ private:
 	std::mutex mNamesMutex;
 	std::unordered_map<uint16_t, std::string> mNames;
 	uint64_t mLastRendered = 0;
+	uint64_t mLoggedUpTo = 0;        // how far the log has consumed the ring
+	uint32_t mLastIdleLogTick = 0;   // rate-limits the "hook alive" line
 
 	// Reads the name for a function index out of the definition table. Render thread only.
 	std::string nameForIndex(uint16_t index)
@@ -223,6 +230,8 @@ private:
 
 		// CX is the function index - the whole reason one hook is enough. EDX is the expression node index,
 		// which is what would be needed to walk to the argument nodes once the string-data base is known.
+		gTotalHookCalls.fetch_add(1, std::memory_order_relaxed);
+
 		const uint16_t index = (uint16_t)(ctx.rcx & 0xFFFF);
 		if (index >= kMaxFunctionIndex) return;
 		if (!gWanted[index].load(std::memory_order_relaxed)) return;
@@ -256,7 +265,10 @@ private:
 					"Evolved's function table. The table layout may differ in this build.");
 
 			gWriteCursor.store(0, std::memory_order_release);
+			gTotalHookCalls.store(0, std::memory_order_release);
 			mLastRendered = 0;
+			mLoggedUpTo = 0;
+			mLastIdleLogTick = 0;
 			gTracing.store(true, std::memory_order_release);
 			if (mEvaluateHook) mEvaluateHook->setWantsToBeAttached(true);
 
@@ -283,7 +295,47 @@ private:
 			const int wantLines = std::clamp((int)settings->hceScriptTraceLineCount->GetValue(), 1, 40);
 
 			const uint64_t cursor = gWriteCursor.load(std::memory_order_acquire);
-			if (cursor == 0) return;
+			const uint64_t totalCalls = gTotalHookCalls.load(std::memory_order_relaxed);
+
+			// ⚠ ALWAYS DRAW SOMETHING WHILE THE TRACE IS ON. The first version drew nothing until a traced
+			// function fired, so "I never saw anything on screen" could not be told apart from "the hook is
+			// dead". A live counter proves the hook is running even when nothing matched yet.
+			if (cursor == 0)
+			{
+				const auto idleColour = ImGui::ColorConvertFloat4ToU32(ImVec4(1.0f, 0.8f, 0.4f, 1.0f));
+				RenderTextHelper::drawOutlinedText(
+					std::format("HaloScript trace ON - {} script calls seen, none traced yet", totalCalls),
+					{ 12.f, 260.f }, idleColour, 15.f);
+
+				// One line a second at most, so a quiet trace does not fill the log.
+				const uint32_t now = GetTickCount();
+				if (now - mLastIdleLogTick >= 1000)
+				{
+					mLastIdleLogTick = now;
+					PLOG_DEBUG << "HCEScriptTrace: hook alive, " << totalCalls
+						<< " script evaluations seen, 0 matched the filter so far";
+				}
+				return;
+			}
+
+			// Log every traced call exactly once, from HERE rather than from the hook - the hook is on a hot
+			// path and must not touch PLOG. This is what makes a run reviewable afterwards instead of
+			// something you have to catch on screen as it happens.
+			if (settings->hceScriptTraceToLog->GetValue())
+			{
+				const uint64_t logFrom = std::max(mLoggedUpTo, cursor > kRingSize ? cursor - kRingSize : 0ull);
+				if (cursor > logFrom && mLoggedUpTo != 0 && logFrom > mLoggedUpTo)
+					PLOG_WARNING << "HCEScriptTrace: log fell behind, " << (logFrom - mLoggedUpTo)
+						<< " traced calls were overwritten before they could be logged";
+
+				for (uint64_t i = logFrom; i < cursor; ++i)
+				{
+					const TraceRecord record = gRing[i % kRingSize];
+					PLOG_DEBUG << "HCEScriptTrace: script called '" << nameForIndex(record.functionIndex)
+						<< "' (index " << record.functionIndex << ")";
+				}
+				mLoggedUpTo = cursor;
+			}
 
 			// Newest last, so it reads like a log. Only the last wantLines records, and never more than the
 			// ring holds - if the game outran us we say so rather than pretending the trace is complete.

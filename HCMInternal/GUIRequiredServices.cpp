@@ -581,6 +581,9 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{ GUIElementEnum::hceScriptTraceLineCountGUI,
 {OptionalCheatEnum::HCEScriptTrace}
 	},
+	{ GUIElementEnum::hceScriptTraceToLogGUI,
+{OptionalCheatEnum::HCEScriptTrace}
+	},
 	{ GUIElementEnum::hceDisplayInfoToggleGUI,
 {OptionalCheatEnum::HCEDisplayInfo}
 	},

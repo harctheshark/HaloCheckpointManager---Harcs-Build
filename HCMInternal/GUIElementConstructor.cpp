@@ -1268,6 +1268,7 @@ private:
 							createNestedElement(GUIElementEnum::display2DInfoSettingsVisualSubheading),
 							createNestedElement(GUIElementEnum::hceScriptTraceToggleGUI),
 							createNestedElement(GUIElementEnum::hceScriptTraceLineCountGUI),
+							createNestedElement(GUIElementEnum::hceScriptTraceToLogGUI),
 							createNestedElement(GUIElementEnum::hceDisplayInfoToggleGUI),
 							createNestedElement(GUIElementEnum::hceDisplayInfoSettingsInfoSubheading),
 							createNestedElement(GUIElementEnum::hceDisplayInfoSettingsVisualSubheading),
@@ -1537,6 +1538,10 @@ private:
 				case GUIElementEnum::hceScriptTraceToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("DEVELOPER: traces the level script's own function calls on screen - print, print_if, ai_place, ai_erase, ai_living_count, ai_actors - resolved by name out of the engine's script function table. Use it to see whether a spawner script actually ran. It hooks a function the engine calls for EVERY script evaluation, so leave it off unless you are debugging."), std::nullopt, "Script Trace (dev)", settings->hceScriptTraceToggle));
+
+				case GUIElementEnum::hceScriptTraceToLogGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Also write every traced call to HCMInternal_logging.txt, with timestamps. On by default - the thing you are usually trying to catch happens in a couple of ticks while you are moving, which is not something you can read off the screen as it goes past."), std::nullopt, "Script Trace to Log", settings->hceScriptTraceToLog));
 
 				case GUIElementEnum::hceScriptTraceLineCountGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 40.f)>>

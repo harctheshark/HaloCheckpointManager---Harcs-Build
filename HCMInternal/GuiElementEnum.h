@@ -471,6 +471,7 @@
 	((hceSkullToggleGUI, (HALOCER_ONLY)))\
 	((hceScriptTraceToggleGUI, (HALOCER_ONLY)))\
 	((hceScriptTraceLineCountGUI, (HALOCER_ONLY)))\
+	((hceScriptTraceToLogGUI, (HALOCER_ONLY)))\
 	((hceDisplayInfoToggleGUI, (HALOCER_ONLY)))\
 	((hceDisplayInfoSettingsInfoSubheading, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowCoordinates, (HALOCER_ONLY)))\
