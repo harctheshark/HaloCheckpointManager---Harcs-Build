@@ -575,15 +575,6 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	// Halo Campaign Evolved's own info overlay. Only HCEDisplayInfo - the MCC overlay's GetPlayerDatum /
 	// GetObjectAddress dependencies have no HaloCER pointer data and are not used here. The leaf rows are pure
 	// settings and need no entry.
-	{ GUIElementEnum::hceScriptTraceToggleGUI,
-{OptionalCheatEnum::HCEScriptTrace}
-	},
-	{ GUIElementEnum::hceScriptTraceLineCountGUI,
-{OptionalCheatEnum::HCEScriptTrace}
-	},
-	{ GUIElementEnum::hceScriptTraceToLogGUI,
-{OptionalCheatEnum::HCEScriptTrace}
-	},
 	{ GUIElementEnum::hceDisplayInfoToggleGUI,
 {OptionalCheatEnum::HCEDisplayInfo}
 	},

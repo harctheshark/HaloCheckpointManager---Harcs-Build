@@ -154,7 +154,6 @@ HCEGetPlayerState,\
 HCEGetCameraData,\
 HCEFreezeAI,\
 HCEDisplayInfo,\
-HCEScriptTrace,\
 HCESkullToggler,\
 HCEForceTeleport,\
 HCEForceLaunch,\
