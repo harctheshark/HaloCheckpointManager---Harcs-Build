@@ -44,7 +44,7 @@ namespace
 	// gone, and the node index survives only because every implementation stashes it with `mov ebx, edx`
 	// first. The index therefore comes from the hook SLOT rather than from a register - see kThunks.
 	//
-	// The call is located by the four bytes that precede it in all six implementations,
+	// The call is located by the four bytes that precede it in every argument-taking implementation,
 	// `movzx edx, word ptr [rdx+0x38]` (0F B7 52 38) followed by E8. Verified: present at +0x21..+0x2A in
 	// every implementation, all reaching the same evaluator, with no stray 0xE8 byte earlier in the
 	// prologue that a naive scan could trip over. Agreement between implementations on the evaluator's
@@ -102,8 +102,8 @@ namespace
 	// One hook per distinct implementation, and the hook has to know WHICH function it is on - which it
 	// cannot read from a register (CX is gone) and cannot read from ctx.rip either, because safetyhook
 	// documents rip as pointing into the trampoline, not at the hooked address. So each slot gets its own
-	// callback: a template thunk that closes over its slot number at compile time. Eight is well clear of
-	// the six implementations the default filter needs.
+	// callback: a template thunk that closes over its slot number at compile time. Sixteen is well clear of
+	// the ten implementations the default filter needs.
 	constexpr size_t kMaxTracedImpls = 16;
 
 	struct SlotInfo
