@@ -58,6 +58,7 @@ private:
 	std::mutex mMutex;
 	bool mHookRequested = false;          // our half of HCEGetCameraData's reference count
 	uintptr_t mLockedCameraManager = 0;   // the PCM currently holding OUR value, 0 = none
+	uintptr_t mValidatedCameraManager = 0;// a PCM that passed looksLikeCameraManager, latched. 0 = not resolved yet
 	float mLockedValue = 0.f;             // what we last wrote there
 	std::chrono::steady_clock::time_point mLastPoll{};
 	std::chrono::steady_clock::time_point mFailingSince{};
@@ -70,11 +71,61 @@ private:
 		return settings->hceFieldOfViewDegrees->GetValue();
 	}
 
+	// ⚠⚠ WHY THIS IS NOT JUST getPlayerCameraManager().
+	//
+	// That helper computes gPreferredDestination - 0x14B0, and gPreferredDestination is the CAMERA ELECTION's
+	// current winner: the FMinimalViewInfo destination that has been written most in the last window. The midhook
+	// sits on FMinimalViewInfo::operator=, so it sees EVERY view-info assignment in the process, and the election
+	// re-elects roughly once a second, cycling among about six addresses (measured in the user's own logs).
+	//
+	// Only ONE of those is a POV embedded in an APlayerCameraManager. Subtract 0x14B0 from any of the others and
+	// the result is a pointer into unrelated memory - and this cheat then writes four bytes at +0x2F4 into it.
+	// That is a live memory corruption, and it is the reported crash. It is also why locking the FOV worked only
+	// sometimes: when the election sat elsewhere we locked the wrong object, the real camera manager's LockedFOV
+	// stayed 0, and the engine's own FOV won.
+	//
+	// So the candidate is VALIDATED before it is ever written to, and the first one that passes is LATCHED. The
+	// real APlayerCameraManager is stable for the session, so following the election afterwards buys nothing and
+	// risks everything.
+	static constexpr int64_t kDefaultFovOffset = 0x2F0;   // reflected DefaultFOV, sits just before LockedFOV
+
+	// A real APlayerCameraManager has a vtable inside the exe image and a sane DefaultFOV. A stray
+	// FMinimalViewInfo offset back by 0x14B0 satisfies neither except by coincidence.
+	bool looksLikeCameraManager(uintptr_t candidate) const
+	{
+		if (candidate < 0x10000) return false;
+
+		uintptr_t vtable = 0;
+		if (!HCEGetPlayerState::tryReadRaw(candidate, &vtable, sizeof(vtable)) || vtable < 0x10000) return false;
+
+		const HMODULE exe = GetModuleHandleW(nullptr);
+		MODULEINFO mi{};
+		if (!exe || !GetModuleInformation(GetCurrentProcess(), exe, &mi, sizeof(mi))) return false;
+		const uintptr_t exeBase = (uintptr_t)mi.lpBaseOfDll;
+		if (vtable < exeBase || vtable >= exeBase + mi.SizeOfImage) return false;
+
+		float defaultFov = 0.f;
+		if (!HCEGetPlayerState::tryReadRaw(candidate + kDefaultFovOffset, &defaultFov, sizeof(defaultFov)))
+			return false;
+
+		return std::isfinite(defaultFov) && defaultFov > 20.f && defaultFov < 170.f;
+	}
+
 	// The APlayerCameraManager the render camera belongs to. Throws rather than returning 0, because every caller
 	// wants the reason, and "the midhook has not fired yet" is a completely different fault from "the cheat is
-	// not wired up" - see the counters HCEGetCameraData keeps.
+	// not wired up" - see the counters HCEGetCameraData keeps. CALLER MUST HOLD mMutex.
 	uintptr_t resolveCameraManager() // throws HCMRuntimeException
 	{
+		// Keep using a camera manager we already proved, as long as it still looks like one. A level transition
+		// is what invalidates it, and that shows up here as the validation failing.
+		if (mValidatedCameraManager != 0)
+		{
+			if (looksLikeCameraManager(mValidatedCameraManager)) return mValidatedCameraManager;
+			PLOG_DEBUG << "HCEFieldOfView: latched camera manager 0x" << std::hex << mValidatedCameraManager
+				<< std::dec << " no longer validates; re-resolving";
+			mValidatedCameraManager = 0;
+		}
+
 		lockOrThrow(cameraDataWeak, cameraData);
 
 		const uintptr_t cameraManager = cameraData->getPlayerCameraManager();
@@ -84,6 +135,14 @@ private:
 				"time(s) and the hook is {}installed). Load into a level and try again.",
 				cameraData->getHookFireCount(), cameraData->isHookInstalled() ? "" : "NOT "));
 
+		if (!looksLikeCameraManager(cameraManager))
+			throw HCMRuntimeException(std::format(
+				"The Halo Campaign Evolved render camera HCM is currently tracking (0x{:X}) is not a player camera "
+				"manager, so its field of view cannot be locked safely. This is normal for a moment after a level "
+				"loads or during a cutscene - try again once you are in control.", cameraManager));
+
+		mValidatedCameraManager = cameraManager;
+		PLOG_DEBUG << "HCEFieldOfView: latched camera manager 0x" << std::hex << cameraManager << std::dec;
 		return cameraManager;
 	}
 

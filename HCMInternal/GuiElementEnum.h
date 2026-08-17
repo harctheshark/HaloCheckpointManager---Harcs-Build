@@ -490,6 +490,8 @@
 	((hceFreecamNoclipGUI, (HALOCER_ONLY)))\
 	((hceFreecamGimbalBypassGUI, (HALOCER_ONLY)))\
 	((hceCameraRollGUI, (HALOCER_ONLY)))\
+	((hceCameraRollLeftBindingGUI, (HALOCER_ONLY)))\
+	((hceCameraRollRightBindingGUI, (HALOCER_ONLY)))\
 	((hceFieldOfViewToggleGUI, (HALOCER_ONLY)))\
 	((hceFieldOfViewValueGUI, (HALOCER_ONLY)))\
 	((hceDisableFadeFromBlackGUI, (HALOCER_ONLY)))\

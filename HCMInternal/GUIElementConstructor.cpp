@@ -2522,6 +2522,18 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(-180.f, 180.f)>>
 						(game, ToolTipCollection("Banks the free camera about the direction it is facing, in degrees. This is NOT Gimbal Lock Bypass above - that one removes the up/down limit, this one tilts the horizon. It applies only while the free camera is on, because during normal play the game would have nothing to level your view back out with. The camera's own roll keys (default G and T) wind this slider while held. Changing camera mode - a cutscene, or toggling the free camera off and on - resets the game's roll to zero, so HCM re-applies the value four times a second."), "Camera Roll (degrees)", settings->hceCameraRollDegrees));
 
+				// The two roll keys were always live on HaloCER - HCECameraRoll polls these same bindings - but
+				// they had no rebind row here, so the only way to discover or change them was the tooltip above.
+				// Same RebindableHotkeyEnum values the MCC free camera uses: HaloCER and the MCC games can never
+				// share a process, so there is nothing to collide with.
+				case GUIElementEnum::hceCameraRollLeftBindingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<103>>
+						(game, ToolTipCollection("Tilt the camera anticlockwise while held. Winds the Camera Roll slider above."), RebindableHotkeyEnum::cameraRollLeftBinding, "Tilt Left"));
+
+				case GUIElementEnum::hceCameraRollRightBindingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<103>>
+						(game, ToolTipCollection("Tilt the camera clockwise while held. Winds the Camera Roll slider above."), RebindableHotkeyEnum::cameraRollRightBinding, "Tilt Right"));
+
 				case GUIElementEnum::hceFieldOfViewToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Locks the game's field of view to the value below. Turning this off hands the field of view straight back to the game, and so does closing HCM - it is never left locked behind you."), RebindableHotkeyEnum::hceFieldOfViewHotkey, "Field of View", settings->hceFieldOfViewToggle));
