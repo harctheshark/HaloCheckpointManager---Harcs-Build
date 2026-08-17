@@ -863,7 +863,6 @@ private:
 
 		const uint64_t slot = gWriteCursor.fetch_add(1, std::memory_order_acq_rel);
 		gRing[slot % kRingSize] = record;
-		gLastSquadRecord.store(slot, std::memory_order_release);
 	}
 
 	// ⚠ GAME THREAD. Fires ON the real worker's early-exit compare, completing the squad record written
@@ -907,6 +906,13 @@ private:
 
 		const uint64_t slot = gWriteCursor.fetch_add(1, std::memory_order_acq_rel);
 		gRing[slot % kRingSize] = record;
+
+		// ⚠⚠ THIS STORE MUST LIVE HERE, IN THE PER-SQUAD HOOK. It was originally applied to the per-CALL gate
+		// hook instead, so squadFlagHook always loaded a kKindPlacementGate record, failed its kind check and
+		// returned - producing "no gate reading" for every squad across two whole test runs. The symptom
+		// (a hook that never fires) looks exactly like "the code path is never executed", which is how it got
+		// misdiagnosed as a control-flow discovery rather than a bug in the pairing.
+		gLastSquadRecord.store(slot, std::memory_order_release);
 	}
 
 	template<size_t N>
