@@ -52,6 +52,26 @@ namespace
 	constexpr uint8_t kArgEvaluatorAnchor[]{ 0x0F, 0xB7, 0x52, 0x38, 0xE8 };
 	constexpr size_t kPrologueSearchLength = 0x40;
 
+	// CAPTURING A RETURN VALUE, NOT JUST ARGUMENTS.
+	//
+	// Knowing that a spawner called ai_living_count does not say what the count WAS, and the count is the
+	// whole question: a top-up loop that keeps placing is telling us its input reads low. The count functions
+	// pass the reference to a worker and then store the 16-bit result:
+	//
+	//     call <worker>                       ; ai_living_count -> 0xFB0C0
+	//     mov  word ptr [rsp+0x48], ax        ; 66 89 44 24 48  <- AX IS THE COUNT
+	//
+	// So the hook goes ON that store, where AX is still live. Verified: ai_living_count 0x1C5B67 and
+	// ai_nonswarm_count 0x1C5F2A, each with exactly ONE call between the argument hook and the store, which is
+	// what proves AX came from the worker and not from something else.
+	//
+	// ⚠ ALLOWLISTED BY NAME, DELIBERATELY. `mov word [rsp+x], ax` is an ordinary instruction; finding it in an
+	// arbitrary function would NOT mean AX holds a meaningful count. list_count and list_count_not_dead do not
+	// have this shape at all. Labelling a random register as "= 7" would be a fabricated measurement.
+	constexpr uint8_t kAxStoreAnchor[]{ 0x66, 0x89, 0x44, 0x24 };
+	constexpr size_t kResultSearchLength = 0x40;
+	constexpr const char* kResultCaptured[]{ "ai_living_count", "ai_nonswarm_count" };
+
 	// ⚠ THE HOOK RUNS ON THE GAME THREAD FOR EVERY CALL TO A WATCHED FUNCTION. It must not allocate, take a
 	// lock, format a string, or log. So it writes a fixed-size record into a ring buffer and nothing else;
 	// the render thread resolves names and formats.
@@ -62,6 +82,8 @@ namespace
 		uint32_t arg0, arg1;       // the first two evaluated arguments, four bytes each
 		uint8_t argCount;          // how many the definition declares, so unused slots are not shown
 		uint8_t haveArgs;          // 0 = the evaluator returned null, or the buffer would not read
+		uint16_t result;           // the 16-bit return value, for the allowlisted count functions
+		uint8_t haveResult;        // 0 = no result hook on this function, or it has not run yet
 		uint32_t tick;             // GetTickCount, for ordering and for showing age
 	};
 
@@ -121,6 +143,13 @@ namespace
 		std::atomic<uint8_t> expectsArgs{ 0 };
 	};
 	std::array<SlotInfo, kMaxTracedImpls> gSlots{};
+
+	// Where each slot's most recent record landed, so the result hook can complete the record the ARGUMENT
+	// hook just wrote rather than emitting a second, disconnected line. Safe because the two fire back to back
+	// on the same thread with only the worker call between them, and the worker does not run script functions.
+	// The result hook still re-checks the record's function index before touching it.
+	std::array<std::atomic<uint64_t>, kMaxTracedImpls> gLastRecordIndex{};
+	constexpr uint64_t kNoRecord = ~0ull;
 }
 
 
@@ -168,6 +197,7 @@ private:
 		uint16_t functionIndex = 0;   // the first name found on this implementation
 		uint8_t argCount = 0;
 		bool hookAtEntry = false;     // true for zero-argument functions - see SlotInfo::nodeInRdx
+		bool wantsResult = false;     // allowlisted count function - also hook where it stores AX
 		std::string label;
 	};
 	std::vector<WantedImpl> mWantedImpls;
@@ -191,6 +221,29 @@ private:
 			memcpy(&relative, window + i + sizeof(kArgEvaluatorAnchor), sizeof(relative));
 			hookPoint = callAddress + 5;
 			evaluator = hookPoint + (intptr_t)relative;
+			return true;
+		}
+		return false;
+	}
+
+	// Finds the `mov word ptr [rsp+x], ax` that stores an allowlisted count function's return value, searching
+	// forward from the argument hook. Requires EXACTLY ONE call in between: that is what establishes AX as the
+	// worker's return rather than a leftover. Returns false if the shape is not what we verified.
+	static bool findResultHookPoint(uintptr_t argsHookPoint, uintptr_t& hookPoint)
+	{
+		uint8_t window[kResultSearchLength]{};
+		if (!ReadProcessMemory(GetCurrentProcess(), (void*)argsHookPoint, window, sizeof(window), nullptr))
+			return false;
+
+		for (size_t i = 0; i + sizeof(kAxStoreAnchor) <= sizeof(window); ++i)
+		{
+			if (memcmp(window + i, kAxStoreAnchor, sizeof(kAxStoreAnchor)) != 0) continue;
+
+			size_t calls = 0;
+			for (size_t j = 0; j < i; ++j) if (window[j] == 0xE8) ++calls;
+			if (calls != 1) return false;   // not the shape this was written against
+
+			hookPoint = argsHookPoint + i;
 			return true;
 		}
 		return false;
@@ -263,6 +316,33 @@ private:
 			}
 			mImplHooks.push_back(std::move(hook));
 			++attached;
+
+			if (mWantedImpls[i].wantsResult && !mWantedImpls[i].hookAtEntry)
+			{
+				uintptr_t resultPoint = 0;
+				if (!findResultHookPoint(hookPoints[i], resultPoint))
+				{
+					PLOG_ERROR << "HCEScriptTrace: '" << mWantedImpls[i].label
+						<< "' should store its result in AX but the expected instruction was not found; "
+						"the count will be missing rather than wrong";
+				}
+				else
+				{
+					void* resultAddress = (void*)resultPoint;
+					auto resultPointer = std::make_shared<MultilevelPointerSpecialisation::Resolved>(resultAddress);
+					auto resultHook = ModuleMidHook::make(mGame.toModuleName(), resultPointer, kResultThunks[i], true);
+					if (!resultHook || !resultHook->isHookInstalled())
+						PLOG_ERROR << "HCEScriptTrace: failed to hook '" << mWantedImpls[i].label
+							<< "' result at 0x" << std::hex << resultPoint << std::dec;
+					else
+					{
+						mImplHooks.push_back(std::move(resultHook));
+						PLOG_DEBUG << "HCEScriptTrace: slot " << i << " captures '" << mWantedImpls[i].label
+							<< "' RETURN at 0x" << std::hex << resultPoint << std::dec;
+					}
+				}
+			}
+
 			PLOG_DEBUG << "HCEScriptTrace: slot " << i << " = '" << mWantedImpls[i].label << "' argc "
 				<< (int)mWantedImpls[i].argCount << ", implementation 0x" << std::hex
 				<< mWantedImpls[i].implAddress << " hooked after the evaluator call at 0x" << hookPoints[i]
@@ -370,6 +450,7 @@ private:
 			<< ", function table 0x" << tableAddress << std::dec;
 
 		for (auto& slot : gWanted) slot.store(0, std::memory_order_relaxed);
+		for (auto& last : gLastRecordIndex) last.store(kNoRecord, std::memory_order_relaxed);
 		mWantedImpls.clear();   // must not accumulate across toggles
 
 		int slotsRead = 0, plausibleDefs = 0, namedDefs = 0, armed = 0;
@@ -440,7 +521,10 @@ private:
 						break;
 					}
 
-					mWantedImpls.push_back(WantedImpl{ impl, i, (uint8_t)declaredArgs, false, name });
+					bool wantsResult = false;
+				for (const char* counted : kResultCaptured) if (name == counted) wantsResult = true;
+
+				mWantedImpls.push_back(WantedImpl{ impl, i, (uint8_t)declaredArgs, false, wantsResult, name });
 					PLOG_DEBUG << "HCEScriptTrace: tracing '" << name << "' index " << i << ", argc "
 						<< declaredArgs << ", implementation 0x" << std::hex << impl << std::dec;
 					++armed;
@@ -501,10 +585,38 @@ private:
 
 		const uint64_t slot = gWriteCursor.fetch_add(1, std::memory_order_acq_rel);
 		gRing[slot % kRingSize] = record;
+
+		// Publish where it landed so the result hook can complete THIS record instead of emitting a separate,
+		// disconnected line. Only meaningful for pass 2 - pass 1 jumps straight to the epilogue and never
+		// reaches the worker call, so it can never be completed.
+		gLastRecordIndex[hookSlot].store(record.haveArgs ? slot : kNoRecord, std::memory_order_release);
+	}
+
+	// ⚠ GAME THREAD. Fires ON the `mov word [rsp+x], ax` that stores an allowlisted count function's return,
+	// so AX is still live. Completes the record the argument hook wrote microseconds earlier.
+	static void resultHookCommon(SafetyHookContext& ctx, size_t hookSlot)
+	{
+		if (GlobalKill::isKillSet()) return;
+		if (!gTracing.load(std::memory_order_relaxed)) return;
+
+		const uint64_t slot = gLastRecordIndex[hookSlot].load(std::memory_order_acquire);
+		if (slot == kNoRecord) return;
+
+		// Re-check ownership: if the ring wrapped or another function's record landed here, leave it alone
+		// rather than stamping a count onto an unrelated call.
+		TraceRecord& record = gRing[slot % kRingSize];
+		if (record.functionIndex != gSlots[hookSlot].functionIndex.load(std::memory_order_relaxed)) return;
+
+		record.result = (uint16_t)(ctx.rax & 0xFFFF);
+		record.haveResult = 1;
+		gLastRecordIndex[hookSlot].store(kNoRecord, std::memory_order_release);
 	}
 
 	template<size_t N>
 	static void argsHookThunk(SafetyHookContext& ctx) { argsHookCommon(ctx, N); }
+
+	template<size_t N>
+	static void resultHookThunk(SafetyHookContext& ctx) { resultHookCommon(ctx, N); }
 
 	static constexpr safetyhook::MidHookFn kThunks[kMaxTracedImpls]
 	{
@@ -512,6 +624,15 @@ private:
 		&argsHookThunk<4>,  &argsHookThunk<5>,  &argsHookThunk<6>,  &argsHookThunk<7>,
 		&argsHookThunk<8>,  &argsHookThunk<9>,  &argsHookThunk<10>, &argsHookThunk<11>,
 		&argsHookThunk<12>, &argsHookThunk<13>, &argsHookThunk<14>, &argsHookThunk<15>,
+	};
+
+	// Paired with kThunks by index: slot i's result hook completes slot i's argument record.
+	static constexpr safetyhook::MidHookFn kResultThunks[kMaxTracedImpls]
+	{
+		&resultHookThunk<0>,  &resultHookThunk<1>,  &resultHookThunk<2>,  &resultHookThunk<3>,
+		&resultHookThunk<4>,  &resultHookThunk<5>,  &resultHookThunk<6>,  &resultHookThunk<7>,
+		&resultHookThunk<8>,  &resultHookThunk<9>,  &resultHookThunk<10>, &resultHookThunk<11>,
+		&resultHookThunk<12>, &resultHookThunk<13>, &resultHookThunk<14>, &resultHookThunk<15>,
 	};
 
 	void onToggleChange(bool& newValue)
@@ -581,7 +702,9 @@ private:
 		else
 			args = std::format("arg0 0x{:08X}", record.arg0);
 
-		return std::format("{} #{}  {}", label, record.node & 0xFFFF, args);
+		std::string result;
+		if (record.haveResult) result = std::format("  = {}", record.result);
+		return std::format("{} thread {:08X}  {}{}", label, record.node, args, result);
 	}
 
 	// Decodes an hs "ai" argument. NOT a guess - this is the dispatch that ai_place's worker (rva 0xFD810)
