@@ -244,7 +244,9 @@ hceForceLaunchManualHotkey, \
 hceForceTeleportAbsoluteFillCurrentHotkey, \
 hceForceTeleportAbsoluteCopyHotkey, \
 hceForceTeleportAbsolutePasteHotkey, \
-hceTriggerOverlayEditNameFilterHotkey
+hceTriggerOverlayEditNameFilterHotkey, \
+hceCameraRollResetHotkey, \
+hceFieldOfViewResetHotkey
 
 
 // replay hotkeys. Like the skulls, kept in their own macro because ALL_EVENTONPRESS_HOTKEYS is near the

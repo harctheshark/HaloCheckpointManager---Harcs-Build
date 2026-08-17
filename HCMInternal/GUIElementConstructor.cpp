@@ -2168,8 +2168,12 @@ private:
 							createNestedElement(GUIElementEnum::hceFreecamNoclipGUI),
 							createNestedElement(GUIElementEnum::hceFreecamGimbalBypassGUI),
 							createNestedElement(GUIElementEnum::hceCameraRollGUI),
+							createNestedElement(GUIElementEnum::hceCameraRollLeftBindingGUI),
+							createNestedElement(GUIElementEnum::hceCameraRollRightBindingGUI),
+							createNestedElement(GUIElementEnum::hceCameraRollResetGUI),
 							createNestedElement(GUIElementEnum::hceFieldOfViewToggleGUI),
 							createNestedElement(GUIElementEnum::hceFieldOfViewValueGUI),
+							createNestedElement(GUIElementEnum::hceFieldOfViewResetGUI),
 							createNestedElement(GUIElementEnum::freeCameraToggleGUI),
 							createNestedElement(GUIElementEnum::freeCameraSettingsSimpleSubheading),
 							createNestedElement(GUIElementEnum::freeCameraSettingsAdvancedSubheading),
@@ -2533,6 +2537,14 @@ private:
 				case GUIElementEnum::hceCameraRollRightBindingGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<103>>
 						(game, ToolTipCollection("Tilt the camera clockwise while held. Winds the Camera Roll slider above."), RebindableHotkeyEnum::cameraRollRightBinding, "Tilt Right"));
+
+				case GUIElementEnum::hceCameraRollResetGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Levels the horizon again - sets Camera Roll back to zero."), RebindableHotkeyEnum::hceCameraRollResetHotkey, "Restore Default Tilt", settings->hceCameraRollResetEvent));
+
+				case GUIElementEnum::hceFieldOfViewResetGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Puts the field of view back to the game's own default. That default is read live out of the engine (DefaultFOV on the player camera manager), so it is right for this level rather than a number baked into HCM."), RebindableHotkeyEnum::hceFieldOfViewResetHotkey, "Restore Default FOV", settings->hceFieldOfViewResetEvent));
 
 				case GUIElementEnum::hceFieldOfViewToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>

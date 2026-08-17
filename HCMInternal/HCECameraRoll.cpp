@@ -45,6 +45,9 @@ private:
 	GameState mGame;
 
 	std::weak_ptr<IMCCStateHook> mccStateHookWeak;
+	// Only the reset action needs this: the slider moving is its own feedback, but a hotkey press with the menu
+	// closed would otherwise be silent.
+	std::weak_ptr<IMessagesGUI> messagesGUIWeak;
 	std::shared_ptr<RuntimeExceptionHandler> runtimeExceptions;
 	std::weak_ptr<HCEGetPlayerState> playerStateWeak;
 	std::weak_ptr<SettingsStateAndEvents> settingsWeak;
@@ -158,6 +161,29 @@ private:
 	// Winds the setting while a roll key is held. Runs on the render thread inside ImGui's frame, which is the
 	// only place ImGui's key state and frame delta are meaningful.
 	// Returns true if the value was changed (in which case onRollChanged has already run and written it).
+	// Button and hotkey both land here - they share one event, so there is nothing to keep in sync. Zero is the
+	// real default: the engine initialises roll to zero and every camera-mode change resets it there.
+	void onResetRoll()
+	{
+		if (!mReady.load(std::memory_order_acquire)) return;
+		try
+		{
+			auto settings = settingsWeak.lock();
+			if (!settings) return;
+
+			auto& setting = settings->hceCameraRollDegrees;
+			setting->GetValueDisplay() = 0.f;
+			setting->UpdateValueWithInput();   // fires onRollChanged, which writes it
+
+			lockOrThrow(messagesGUIWeak, messagesGUI);
+			messagesGUI->addMessage("Camera tilt reset.");
+		}
+		catch (HCMRuntimeException ex)
+		{
+			runtimeExceptions->handleMessage(ex);
+		}
+	}
+
 	bool pollRollHotkeys()
 	{
 		if (!mRollLeftBinding || !mRollRightBinding) return false;
@@ -249,17 +275,20 @@ private:
 
 	// Declared LAST, see HCECheckpointDetours.cpp - a ScopedCallback subscribes inside its own constructor.
 	ScopedCallback<eventpp::CallbackList<void(float&)>> mRollChangedCallback;
+	ScopedCallback<ActionEvent> mResetCallback;
 	ScopedCallback<RenderEvent> mRenderEventCallback;
 
 public:
 	HCECameraRollImpl(GameState game, IDIContainer& dicon)
 		: mGame(game),
 		mccStateHookWeak(dicon.Resolve<IMCCStateHook>()),
+		messagesGUIWeak(dicon.Resolve<IMessagesGUI>()),
 		runtimeExceptions(dicon.Resolve<RuntimeExceptionHandler>()),
 		playerStateWeak(resolveDependentCheat(HCEGetPlayerState)),
 		settingsWeak(dicon.Resolve<SettingsStateAndEvents>()),
 		controlServicesWeak(dicon.Resolve<ControlServiceContainer>()),
 		mRollChangedCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceCameraRollDegrees->valueChangedEvent, [this](float& n) { onRollChanged(n); }),
+		mResetCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceCameraRollResetEvent, [this]() { onResetRoll(); }),
 		mRenderEventCallback(dicon.Resolve<RenderEvent>().lock(), [this](SimpleMath::Vector2 ss) { onRenderEvent(ss); })
 	{
 		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER)

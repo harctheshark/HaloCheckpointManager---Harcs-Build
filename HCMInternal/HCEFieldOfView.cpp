@@ -331,6 +331,53 @@ private:
 	// would just look broken.
 	static constexpr float kFovDegreesPerSecond = 40.f;
 
+	// Button and hotkey share one event. "Default" is read LIVE out of the engine rather than hard-coded: the
+	// camera manager's own DefaultFOV at +0x2F0 is exactly what GetFOVAngle falls back to when LockedFOV is
+	// unset, so it is right for this level even if the game varies it. kFovFallbackDefault is only for when the
+	// read fails.
+	//
+	// This restores the VALUE, it does not switch the lock off - so pressing it while locked snaps you back to
+	// the game's framing without also handing the field of view back mid-look. Switch the toggle off for that.
+	void onResetFov()
+	{
+		if (!mReady.load(std::memory_order_acquire)) return;
+		try
+		{
+			auto settings = settingsWeak.lock();
+			if (!settings) return;
+
+			float engineDefault = kFovFallbackDefault;
+			{
+				std::scoped_lock lock(mMutex);
+				try
+				{
+					const uintptr_t manager = resolveCameraManager();
+					float candidate = 0.f;
+					if (HCEGetPlayerState::tryReadRaw(manager + kDefaultFovOffset, &candidate, sizeof(candidate))
+						&& std::isfinite(candidate) && candidate >= kFovMinDegrees && candidate <= kFovMaxDegrees)
+					{
+						engineDefault = candidate;
+					}
+				}
+				catch (HCMRuntimeException)
+				{
+					// No camera resolved yet - the fallback is still a sane thing to put in the slider.
+				}
+			}
+
+			auto& setting = settings->hceFieldOfViewDegrees;
+			setting->GetValueDisplay() = engineDefault;
+			setting->UpdateValueWithInput();   // fires onValueChanged, which writes it if the lock is on
+
+			lockOrThrow(messagesGUIWeak, messagesGUI);
+			messagesGUI->addMessage(std::format("Field of view reset to {:.1f} degrees.", engineDefault));
+		}
+		catch (HCMRuntimeException ex)
+		{
+			runtimeExceptions->handleMessage(ex);
+		}
+	}
+
 	bool pollFovHotkeys()
 	{
 		if (!mFovIncreaseBinding || !mFovDecreaseBinding) return false;
@@ -418,6 +465,7 @@ private:
 	// Declared LAST - a ScopedCallback subscribes inside its own constructor.
 	ScopedCallback<ToggleEvent> mToggleCallback;
 	ScopedCallback<eventpp::CallbackList<void(float&)>> mValueCallback;
+	ScopedCallback<ActionEvent> mResetCallback;
 	ScopedCallback<RenderEvent> mRenderEventCallback;
 
 public:
@@ -431,6 +479,7 @@ public:
 		controlServicesWeak(dicon.Resolve<ControlServiceContainer>()),
 		mToggleCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFieldOfViewToggle->valueChangedEvent, [this](bool& n) { onToggleChanged(n); }),
 		mValueCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFieldOfViewDegrees->valueChangedEvent, [this](float& n) { onValueChanged(n); }),
+		mResetCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFieldOfViewResetEvent, [this]() { onResetFov(); }),
 		mRenderEventCallback(dicon.Resolve<RenderEvent>().lock(), [this](SimpleMath::Vector2 ss) { onRenderEvent(ss); })
 	{
 		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER)

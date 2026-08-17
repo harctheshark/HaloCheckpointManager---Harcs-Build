@@ -41,6 +41,8 @@ public:
 		hceHotkeyEvents[46] = forceTeleportAbsoluteCopy;
 		hceHotkeyEvents[47] = forceTeleportAbsolutePaste;
 		hceHotkeyEvents[48] = hceTriggerOverlayEditNameFilterEvent;
+		hceHotkeyEvents[49] = hceCameraRollResetEvent;
+		hceHotkeyEvents[50] = hceFieldOfViewResetEvent;
 	}
 	~SettingsStateAndEvents() {
 		PLOG_DEBUG << "~SettingsStateAndEvents()";
@@ -175,6 +177,11 @@ public:
 	std::shared_ptr<ActionEvent> freeCameraUserInputCameraSetVelocityFillCurrent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraUserInputCameraSetVelocityCopy = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraUserInputCameraSetVelocityPaste = std::make_shared<ActionEvent>();
+	// Restore-default actions for the HaloCER camera. Both are driven by a button AND by a hotkey (the last two
+	// entries of HCE_HOTKEYS alias these), so the cheat subscribes once and both routes land in the same place.
+	std::shared_ptr<ActionEvent> hceCameraRollResetEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> hceFieldOfViewResetEvent = std::make_shared<ActionEvent>();
+
 	std::shared_ptr<ActionEvent> switchBSPEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> switchBSPSetLoadSetEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> switchBSPLoadIndexEvent = std::make_shared<ActionEvent>();
@@ -239,7 +246,7 @@ public:
 	//
 	// The last four elements are REPLACED IN THE CONSTRUCTOR with events that already exist (see below), so
 	// those hotkeys fire the very same event object the equivalent button does. Everything before them is new.
-	static constexpr inline int kHCEHotkeyCount = 49;
+	static constexpr inline int kHCEHotkeyCount = 51;
 	std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> hceHotkeyEvents = []()
 		{
 			std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> events;
