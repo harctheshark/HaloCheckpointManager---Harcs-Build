@@ -110,24 +110,29 @@ namespace
 	constexpr uint8_t kSquadPlaceAnchor[]{ 0x48, 0x8D, 0x54, 0x24, 0x20, 0xE8 };
 	constexpr size_t kWorkerBodyLength = 0x400;
 
-	// THE PER-SQUAD SUPPRESSION FLAG - the last thing above "units simply do not appear".
+	// THE PLACEMENT WORKER'S EARLY EXIT - the last thing above "units simply do not appear".
 	//
-	// A full run and a deload run are IDENTICAL at every level above this: same gate verdict, same group
-	// expansion, the same seven squads placed. Only the number of units differs. Inside 0x48EC0 there are two
-	// bail-outs before any work happens:
+	// ⚠⚠ AN EARLIER VERSION HOOKED THE WRONG THING HERE AND LABELLED IT "the per-squad suppression flag".
+	// Inside 0x48EC0 there is a block testing a global bit and then `test byte [rax+rcx*4+0x48], 1`, and both
+	// tests jump to 0x49564 - which I called a bail. IT IS NOT A BAIL, IT IS A TAIL CALL:
+	//     0x49564: mov rdx,r13 / mov ecx,edi / add rsp,0xA8 / pop r15,r13,r12,rdi / jmp 0x49580
+	// It restores the frame and jumps to the REAL worker, passing the squad index. So that block is
+	// conditional (note the message sink `call 0x2040D0` right before it) and skipping it is the NORMAL path -
+	// every placement in a working run takes it. The log said so plainly: 100% "BAILED", including runs that
+	// spawned units.
 	//
-	//     test qword [rax+0x1EBE0], 0x2000000000  / je  bail    ; a global flag bit
-	//     movzx ecx, di                                          ; di = THE SQUAD INDEX
-	//     test byte [rax + rcx*4 + 0x48], 1       / jne bail    ; F6 44 88 48 01 <- HOOK HERE
+	// ★ THE CHECK THAT WOULD HAVE CAUGHT IT, AND IS APPLIED HERE: follow the jump target and confirm it is an
+	// EPILOGUE before calling anything a bail. 0x4AEF5 is `add rsp,0x58D8 / pop r14 / pop rbx / ret` - a real
+	// return - whereas 0x49564 ends in `jmp`, which is a continuation.
 	//
-	// The second is indexed by the squad index itself, and when bit 0 is set the call returns having done
-	// nothing - no gate rejection, no error, and it still looks like a placement from outside. RAX and RCX are
-	// both live at the test, so the flag byte can be read exactly where the game reads it.
-	//
-	// Reaching this instruction at all means the GLOBAL bit passed, so a squad placement with no flag record
-	// bailed at the global test instead - which is why the absence of a record is reported rather than ignored.
-	constexpr uint8_t kSquadFlagAnchor[]{ 0xF6, 0x44, 0x88, 0x48, 0x01 };
-	constexpr size_t kSquadPlaceBodyLength = 0x100;
+	// The real worker 0x49580 has a genuine early exit:
+	//     mov eax, 0x40 / mov rax, [rax+rbx]    ; rax = [tls slot + 0x40]
+	//     cmp byte [rax+1], 0 / je 0x4AEF5      ; zero -> RETURN, having done nothing
+	// Hooking the compare (rax live) reads the byte the game is about to test. Anchored on the whole
+	// mov/mov/cmp sequence, which is unique within 0x1000 bytes of the per-squad entry.
+	constexpr uint8_t kWorkerGateAnchor[]{ 0xB8, 0x40, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x04, 0x18, 0x80, 0x78, 0x01, 0x00 };
+	constexpr size_t kWorkerGateAnchorCompareOffset = 9;   // the cmp within the anchor
+	constexpr size_t kSquadPlaceBodyLength = 0x1000;
 
 	// What a record describes. Neither the gate nor a squad placement is a script call, so they cannot be
 	// labelled from the function table.
@@ -378,13 +383,14 @@ private:
 	// if it were the flag.
 	static bool findSquadFlagTest(uintptr_t squadPlace, uintptr_t& flagTest)
 	{
-		uint8_t body[kSquadPlaceBodyLength]{};
-		if (!ReadProcessMemory(GetCurrentProcess(), (void*)squadPlace, body, sizeof(body), nullptr)) return false;
+		std::vector<uint8_t> body(kSquadPlaceBodyLength);
+		if (!ReadProcessMemory(GetCurrentProcess(), (void*)squadPlace, body.data(), body.size(), nullptr))
+			return false;
 
-		for (size_t i = 0; i + sizeof(kSquadFlagAnchor) <= sizeof(body); ++i)
+		for (size_t i = 0; i + sizeof(kWorkerGateAnchor) <= body.size(); ++i)
 		{
-			if (memcmp(body + i, kSquadFlagAnchor, sizeof(kSquadFlagAnchor)) != 0) continue;
-			flagTest = squadPlace + i;
+			if (memcmp(body.data() + i, kWorkerGateAnchor, sizeof(kWorkerGateAnchor)) != 0) continue;
+			flagTest = squadPlace + i + kWorkerGateAnchorCompareOffset;
 			return true;
 		}
 		return false;
@@ -506,7 +512,7 @@ private:
 								uintptr_t flagTest = 0;
 								if (!findSquadFlagTest(squadPlace, flagTest))
 									PLOG_ERROR << "HCEScriptTrace: per-squad suppression flag test not found; "
-										"squads will show as placed without saying whether they were suppressed";
+										"squads will show as placed without saying whether the worker ran";
 								else
 								{
 									void* flagAddress = (void*)flagTest;
@@ -519,7 +525,7 @@ private:
 									else
 									{
 										mImplHooks.push_back(std::move(flagHook));
-										PLOG_DEBUG << "HCEScriptTrace: per-squad suppression flag hooked at 0x"
+										PLOG_DEBUG << "HCEScriptTrace: placement worker gate hooked at 0x"
 											<< std::hex << flagTest << std::dec;
 									}
 								}
@@ -860,8 +866,8 @@ private:
 		gLastSquadRecord.store(slot, std::memory_order_release);
 	}
 
-	// ⚠ GAME THREAD. Fires ON the per-squad flag test, completing the squad record written microseconds
-	// earlier by squadPlacementHook - same thread, nothing in between but the global-bit test.
+	// ⚠ GAME THREAD. Fires ON the real worker's early-exit compare, completing the squad record written
+	// microseconds earlier by squadPlacementHook - same thread, one tail call in between.
 	static void squadFlagHook(SafetyHookContext& ctx)
 	{
 		if (GlobalKill::isKillSet()) return;
@@ -873,8 +879,8 @@ private:
 		TraceRecord& record = gRing[slot % kRingSize];
 		if (record.kind != kKindSquadPlacement) return;
 
-		// Exactly the address the game tests: rax + rcx*4 + 0x48.
-		const uintptr_t flagAddress = ctx.rax + (ctx.rcx * 4) + 0x48;
+		// Exactly the byte the game is about to test: [rax+1].
+		const uintptr_t flagAddress = ctx.rax + 1;
 		uint8_t flags = 0;
 		if (flagAddress >= 0x10000
 			&& ReadProcessMemory(GetCurrentProcess(), (void*)flagAddress, &flags, sizeof(flags), nullptr))
@@ -995,10 +1001,10 @@ private:
 		if (record.kind == kKindSquadPlacement)
 		{
 			if (!record.haveResult)
-				return std::format("  -> squad {} BAILED before the per-squad flag test (global bit clear)",
+				return std::format("  -> squad {} (no gate reading - the worker was not reached)",
 					(int32_t)record.arg0);
-			return std::format("  -> squad {} flags 0x{:02X} -> {}", (int32_t)record.arg0, record.result,
-				(record.result & 1) ? "SUPPRESSED, places nothing" : "placing");
+			return std::format("  -> squad {} gate 0x{:02X} -> {}", (int32_t)record.arg0, record.result,
+				record.result == 0 ? "RETURNS IMMEDIATELY, places nothing" : "proceeding");
 		}
 
 		std::string label = labelForIndex(record.functionIndex);
