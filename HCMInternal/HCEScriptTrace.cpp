@@ -72,6 +72,50 @@ namespace
 	constexpr size_t kResultSearchLength = 0x40;
 	constexpr const char* kResultCaptured[]{ "ai_living_count", "ai_nonswarm_count" };
 
+	// WHY ai_place DECLINES - the placement gate.
+	//
+	// Both ai_place implementations call one worker (rva 0xFD810), and before it looks at the squad reference
+	// at all it walks TLS to a state object and tests it:
+	//
+	//     mov rax, gs:[0x58] ... mov rax, [0x60 + rsi]   ; rax = the state object
+	//     cmp byte [rax+0x10], 1   / je proceed          ; 80 78 10 01  <- HOOK HERE
+	//     test rax,rax             / je fail
+	//     cmp byte [rax], 0        / jne .check
+	//     cmp byte [rax+1], 0      / je fail
+	//     .check: cmp byte [rax+0x10], 2 / jne fail
+	//
+	// So it proceeds iff state==1, or state==2 with one of the two leading bytes set. Otherwise it returns
+	// having done nothing - no error, no erase, no units, which is exactly the observed failure.
+	//
+	// Hooking ON the compare rather than at the entry means the GAME has already done the TLS walk and rax
+	// holds the object: no need to reproduce a gs:[0x58] chain from the hook, which is the fragile part. RBX
+	// already holds the squad reference by then (mov ebx,ecx at +0x13) and RDX still holds the count, so one
+	// hook yields the reference, the count AND the verdict.
+	constexpr uint8_t kPlacementGateAnchor[]{ 0x80, 0x78, 0x10, 0x01 };
+	constexpr size_t kWorkerSearchLength = 0x40;
+
+	// PER-SQUAD PLACEMENT - the layer below the gate.
+	//
+	// One ai_place on a GROUP (type 2) expands through an iterator into many squads, and both the group branch
+	// and the single-squad branch of the worker funnel each one through the same call:
+	//
+	//     lea rdx, [rsp+0x20] / call 0x48EC0      ; 48 8D 54 24 20 E8, at 0xFDAE4 and 0xFDB54
+	//
+	// with ECX = the squad index. So a hook on 0x48EC0 counts the squads a placement ACTUALLY performed, which
+	// is the difference between "the group expanded to eight squads" and "the group expanded to two". The gate
+	// says whether the call was allowed to proceed; this says how far it got.
+	//
+	// ⚠ 0x48EC0 is generic, so other systems may reach it too. Records are labelled as what they are - a squad
+	// placement - rather than being attributed to the script call that happened to be nearby.
+	constexpr uint8_t kSquadPlaceAnchor[]{ 0x48, 0x8D, 0x54, 0x24, 0x20, 0xE8 };
+	constexpr size_t kWorkerBodyLength = 0x400;
+
+	// What a record describes. Neither the gate nor a squad placement is a script call, so they cannot be
+	// labelled from the function table.
+	constexpr uint8_t kKindScriptCall = 0;
+	constexpr uint8_t kKindPlacementGate = 1;
+	constexpr uint8_t kKindSquadPlacement = 2;
+
 	// ⚠ THE HOOK RUNS ON THE GAME THREAD FOR EVERY CALL TO A WATCHED FUNCTION. It must not allocate, take a
 	// lock, format a string, or log. So it writes a fixed-size record into a ring buffer and nothing else;
 	// the render thread resolves names and formats.
@@ -82,8 +126,10 @@ namespace
 		uint32_t arg0, arg1;       // the first two evaluated arguments, four bytes each
 		uint8_t argCount;          // how many the definition declares, so unused slots are not shown
 		uint8_t haveArgs;          // 0 = the evaluator returned null, or the buffer would not read
-		uint16_t result;           // the 16-bit return value, for the allowlisted count functions
+		uint16_t result;           // the 16-bit return value, or the placement gate's state byte
 		uint8_t haveResult;        // 0 = no result hook on this function, or it has not run yet
+		uint8_t kind;              // kScriptCall / kPlacementGate
+		uint8_t gateB0, gateB1;    // the two leading bytes the gate consults when state == 2
 		uint32_t tick;             // GetTickCount, for ordering and for showing age
 	};
 
@@ -249,6 +295,64 @@ private:
 		return false;
 	}
 
+	// From an ai_place argument hook, follows the first call to the placement worker and locates the gate
+	// compare inside it. Returns false if either step does not match what was verified, in which case no gate
+	// hook is installed and the verdict is simply absent.
+	static bool findPlacementGate(uintptr_t argsHookPoint, uintptr_t& gatePoint, uintptr_t& worker)
+	{
+		uint8_t window[kResultSearchLength]{};
+		if (!ReadProcessMemory(GetCurrentProcess(), (void*)argsHookPoint, window, sizeof(window), nullptr))
+			return false;
+
+		size_t call = 0;
+		for (; call + 5 <= sizeof(window); ++call) if (window[call] == 0xE8) break;
+		if (call + 5 > sizeof(window)) return false;
+
+		int32_t relative = 0;
+		memcpy(&relative, window + call + 1, sizeof(relative));
+		worker = argsHookPoint + call + 5 + (intptr_t)relative;
+
+		uint8_t body[kWorkerSearchLength]{};
+		if (!ReadProcessMemory(GetCurrentProcess(), (void*)worker, body, sizeof(body), nullptr)) return false;
+
+		for (size_t i = 0; i + sizeof(kPlacementGateAnchor) <= sizeof(body); ++i)
+		{
+			if (memcmp(body + i, kPlacementGateAnchor, sizeof(kPlacementGateAnchor)) != 0) continue;
+			gatePoint = worker + i;
+			return true;
+		}
+		return false;
+	}
+
+	// Finds the per-squad placement call inside the worker. Every occurrence must agree on the target, which is
+	// what confirms the two branches really do funnel through one function.
+	static bool findSquadPlacement(uintptr_t worker, uintptr_t& squadPlace)
+	{
+		std::vector<uint8_t> body(kWorkerBodyLength);
+		if (!ReadProcessMemory(GetCurrentProcess(), (void*)worker, body.data(), body.size(), nullptr))
+			return false;
+
+		bool found = false;
+		for (size_t i = 0; i + sizeof(kSquadPlaceAnchor) + 4 <= body.size(); ++i)
+		{
+			if (memcmp(body.data() + i, kSquadPlaceAnchor, sizeof(kSquadPlaceAnchor)) != 0) continue;
+
+			const uintptr_t callAddress = worker + i + (sizeof(kSquadPlaceAnchor) - 1);
+			int32_t relative = 0;
+			memcpy(&relative, body.data() + i + sizeof(kSquadPlaceAnchor), sizeof(relative));
+			const uintptr_t target = callAddress + 5 + (intptr_t)relative;
+
+			if (!found) { squadPlace = target; found = true; }
+			else if (squadPlace != target)
+			{
+				PLOG_ERROR << "HCEScriptTrace: the worker's per-squad calls disagree (0x" << std::hex
+					<< squadPlace << " vs 0x" << target << std::dec << "); not hooking per-squad placement";
+				return false;
+			}
+		}
+		return found;
+	}
+
 	// Installs one midhook per distinct implementation, each on its own thunk so the callback knows which
 	// function it is on. Returns how many actually attached, because "armed" and "hooked" are different
 	// things and conflating them is what hid the parse/evaluate mistake for a whole test session.
@@ -297,6 +401,7 @@ private:
 		}
 
 		int attached = 0;
+		bool gateHooked = false;
 		for (size_t i = 0; i < mWantedImpls.size(); ++i)
 		{
 			// Publish the slot's identity BEFORE the hook exists, so the callback can never read a stale one.
@@ -316,6 +421,55 @@ private:
 			}
 			mImplHooks.push_back(std::move(hook));
 			++attached;
+
+			// Both ai_place implementations funnel into the same worker, so the gate is hooked ONCE.
+			if (mWantedImpls[i].label == "ai_place" && !gateHooked && !mWantedImpls[i].hookAtEntry)
+			{
+				uintptr_t gatePoint = 0, worker = 0;
+				if (!findPlacementGate(hookPoints[i], gatePoint, worker))
+				{
+					PLOG_ERROR << "HCEScriptTrace: could not locate the placement gate from ai_place at 0x"
+						<< std::hex << hookPoints[i] << std::dec
+						<< "; placements will be logged without a verdict";
+				}
+				else
+				{
+					void* gateAddress = (void*)gatePoint;
+					auto gatePointer = std::make_shared<MultilevelPointerSpecialisation::Resolved>(gateAddress);
+					auto gateHook = ModuleMidHook::make(mGame.toModuleName(), gatePointer, &placementGateHook, true);
+					if (!gateHook || !gateHook->isHookInstalled())
+						PLOG_ERROR << "HCEScriptTrace: failed to hook the placement gate at 0x"
+							<< std::hex << gatePoint << std::dec;
+					else
+					{
+						mImplHooks.push_back(std::move(gateHook));
+						gateHooked = true;
+						PLOG_DEBUG << "HCEScriptTrace: placement worker 0x" << std::hex << worker
+							<< ", gate hooked at 0x" << gatePoint << std::dec;
+
+						uintptr_t squadPlace = 0;
+						if (!findSquadPlacement(worker, squadPlace))
+							PLOG_ERROR << "HCEScriptTrace: per-squad placement call not found in the worker; "
+								"placements will show a verdict but not how many squads they placed";
+						else
+						{
+							void* squadAddress = (void*)squadPlace;
+							auto squadPointer = std::make_shared<MultilevelPointerSpecialisation::Resolved>(squadAddress);
+							auto squadHook = ModuleMidHook::make(mGame.toModuleName(), squadPointer,
+								&squadPlacementHook, true);
+							if (!squadHook || !squadHook->isHookInstalled())
+								PLOG_ERROR << "HCEScriptTrace: failed to hook per-squad placement at 0x"
+									<< std::hex << squadPlace << std::dec;
+							else
+							{
+								mImplHooks.push_back(std::move(squadHook));
+								PLOG_DEBUG << "HCEScriptTrace: per-squad placement hooked at 0x"
+									<< std::hex << squadPlace << std::dec;
+							}
+						}
+					}
+				}
+			}
 
 			if (mWantedImpls[i].wantsResult && !mWantedImpls[i].hookAtEntry)
 			{
@@ -612,6 +766,58 @@ private:
 		gLastRecordIndex[hookSlot].store(kNoRecord, std::memory_order_release);
 	}
 
+	// ⚠ GAME THREAD, once per ai_place worker call. Fires ON the gate's `cmp byte [rax+0x10], 1`, so the game
+	// has already done the TLS walk for us and RAX is the state object. RBX is the squad reference and RDX the
+	// count - the whole verdict in one hook, with no gs:[0x58] chain to reproduce.
+	static void placementGateHook(SafetyHookContext& ctx)
+	{
+		if (GlobalKill::isKillSet()) return;
+		if (!gTracing.load(std::memory_order_relaxed)) return;
+		gTotalHookCalls.fetch_add(1, std::memory_order_relaxed);
+
+		TraceRecord record{};
+		record.kind = kKindPlacementGate;
+		record.arg0 = (uint32_t)(ctx.rbx & 0xFFFFFFFF);   // the squad/group reference
+		record.arg1 = (uint32_t)(ctx.rdx & 0xFFFF);       // the count argument
+		record.argCount = 2;
+		record.haveArgs = 1;
+		record.tick = GetTickCount();
+
+		// One read covering [0] through [0x10]: the gate consults exactly those three bytes. If it fails the
+		// verdict is reported as unknown rather than assumed - a guessed verdict is the whole thing we are
+		// trying to avoid here.
+		uint8_t state[0x11]{};
+		if (ctx.rax >= 0x10000
+			&& ReadProcessMemory(GetCurrentProcess(), (void*)ctx.rax, state, sizeof(state), nullptr))
+		{
+			record.result = state[0x10];
+			record.gateB0 = state[0];
+			record.gateB1 = state[1];
+			record.haveResult = 1;
+		}
+
+		const uint64_t slot = gWriteCursor.fetch_add(1, std::memory_order_acq_rel);
+		gRing[slot % kRingSize] = record;
+	}
+
+	// ⚠ GAME THREAD, once per squad a placement actually performs. ECX is the squad index.
+	static void squadPlacementHook(SafetyHookContext& ctx)
+	{
+		if (GlobalKill::isKillSet()) return;
+		if (!gTracing.load(std::memory_order_relaxed)) return;
+		gTotalHookCalls.fetch_add(1, std::memory_order_relaxed);
+
+		TraceRecord record{};
+		record.kind = kKindSquadPlacement;
+		record.arg0 = (uint32_t)(ctx.rcx & 0xFFFFFFFF);
+		record.argCount = 1;
+		record.haveArgs = 1;
+		record.tick = GetTickCount();
+
+		const uint64_t slot = gWriteCursor.fetch_add(1, std::memory_order_acq_rel);
+		gRing[slot % kRingSize] = record;
+	}
+
 	template<size_t N>
 	static void argsHookThunk(SafetyHookContext& ctx) { argsHookCommon(ctx, N); }
 
@@ -687,6 +893,23 @@ private:
 	// which is the whole point of hooking after the evaluator rather than at the entry.
 	std::string describe(const TraceRecord& record)
 	{
+		if (record.kind == kKindPlacementGate)
+		{
+			std::string verdict = "verdict UNKNOWN (state object unreadable)";
+			if (record.haveResult)
+			{
+				// Exactly the worker's own rule: state==1, or state==2 with one of the two leading bytes set.
+				const bool accepted = record.result == 1
+					|| (record.result == 2 && (record.gateB0 != 0 || record.gateB1 != 0));
+				verdict = std::format("state {} b0 {} b1 {} -> {}", record.result, record.gateB0, record.gateB1,
+					accepted ? "ACCEPTED" : "REJECTED, places nothing");
+			}
+			return std::format("ai_place GATE  {}  {}", describeAiReference(record), verdict);
+		}
+
+		if (record.kind == kKindSquadPlacement)
+			return std::format("  -> PLACED squad index {}", (int32_t)record.arg0);
+
 		std::string label = labelForIndex(record.functionIndex);
 		if (label.empty()) label = nameForIndex(record.functionIndex);
 
@@ -824,7 +1047,8 @@ private:
 			for (uint64_t i = cursor; i > first && (int)visible.size() < wantLines; --i)
 			{
 				const TraceRecord record = gRing[(i - 1) % kRingSize];
-				if (record.argCount > 0 && !record.haveArgs) continue;   // first pass, carries nothing
+				if (record.kind == kKindScriptCall && record.argCount > 0 && !record.haveArgs)
+					continue;   // first pass, carries nothing
 				visible.push_back(record);
 			}
 
