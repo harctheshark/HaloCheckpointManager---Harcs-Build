@@ -535,12 +535,49 @@ private:
 		std::string args;
 		if (!record.haveArgs)
 			args = "no args (evaluator declined - a false print_if condition looks like this)";
+		else if (label.starts_with("ai_"))
+			args = describeAiReference(record);
 		else if (record.argCount >= 2)
 			args = std::format("arg0 0x{:08X}  arg1 0x{:08X}", record.arg0, record.arg1);
 		else
 			args = std::format("arg0 0x{:08X}", record.arg0);
 
 		return std::format("{} #{}  {}", label, record.node & 0xFFFF, args);
+	}
+
+	// Decodes an hs "ai" argument. NOT a guess - this is the dispatch that ai_place's worker (rva 0xFD810)
+	// performs on the value it is handed:
+	//
+	//     cmp  ebx, -1        ; -1 is "none" and does nothing
+	//     test dx, dx         ; a zero count also does nothing
+	//     shr  ecx, 0x1d      ; the TOP THREE BITS are a type tag
+	//     sub ecx,1 / je ...  ; and only types 1, 2, 4, 5 and 7 have a branch. Anything else falls through
+	//     ...                 ; to the same failure exit as a -1 reference.
+	//
+	// The type 1 branch then uses BX as a signed 16-bit index and rejects it unless it is below the count at
+	// scenario+0x348, so the low half is an index into a scenario block. The remaining bits are a second
+	// field this has not pinned down yet, so they are shown raw rather than named.
+	static std::string describeAiReference(const TraceRecord& record)
+	{
+		const uint32_t reference = record.arg0;
+		if (reference == 0xFFFFFFFF) return "ai=NONE (-1)";
+
+		const uint32_t type = reference >> 29;
+		const uint16_t index = (uint16_t)(reference & 0xFFFF);
+		const uint32_t middle = (reference >> 16) & 0x1FFF;
+
+		std::string decoded = std::format("ai type {} idx {}", type, index);
+		if (middle != 0) decoded += std::format(" mid {}", middle);
+		if (type != 1 && type != 2 && type != 4 && type != 5 && type != 7)
+			decoded += " ⚠ NO BRANCH FOR THIS TYPE - the worker rejects it";
+		decoded += std::format(" (raw 0x{:08X})", reference);
+
+		// ai_place's second argument is the count, and the worker bails outright when it is zero.
+		if (record.argCount >= 2)
+			decoded += std::format("  count {}{}", (uint16_t)(record.arg1 & 0xFFFF),
+				(uint16_t)(record.arg1 & 0xFFFF) == 0 ? " ⚠ ZERO - places nothing" : "");
+
+		return decoded;
 	}
 
 	void onRenderEvent(SimpleMath::Vector2 screenSize)
