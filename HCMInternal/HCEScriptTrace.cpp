@@ -97,6 +97,10 @@ namespace
 		"print", "print_if",
 		"ai_place", "ai_erase", "ai_living_count", "ai_actors",
 		"ai_migrate", "ai_disposable", "garbage_collect_now", "garbage_collect_unsafe",
+		// ai_nonswarm_count is the OTHER half of enc6_1_manager's logic and was the blind spot in the first
+		// trace: the covenant reinforcement wave is gated on it, and so is the limiter increment that is
+		// supposed to cap the waves at four. Without it the manager's covenant branch is invisible.
+		"ai_nonswarm_count",
 	};
 
 	// One hook per distinct implementation, and the hook has to know WHICH function it is on - which it
