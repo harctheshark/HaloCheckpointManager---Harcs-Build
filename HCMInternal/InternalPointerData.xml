@@ -20,7 +20,7 @@
 	<!--Supported HCM Versions. User will be informed via message that a newer version is available, if the current HCM version isn't one of these.-->
 	<!--IMPORTANT! Must update in both External AND Internal xmls-->
 	<SupportedHCMVersions>
-		<Entry>3.1.9.0</Entry>
+		<Entry>4.2.0.67</Entry>
 	</SupportedHCMVersions>
 
 

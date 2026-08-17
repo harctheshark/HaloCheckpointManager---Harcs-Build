@@ -267,7 +267,11 @@ cameraTranslateDownBinding,\
 cameraRollLeftBinding,\
 cameraRollRightBinding,\
 cameraFOVIncreaseBinding,\
-cameraFOVDecreaseBinding
+cameraFOVDecreaseBinding,\
+hceCameraRollLeftBinding,\
+hceCameraRollRightBinding,\
+hceFieldOfViewIncreaseBinding,\
+hceFieldOfViewDecreaseBinding
 
 // both event and non-event hotkeys are rebindable
 #define ALL_REBINDABLE_HOTKEYS ALL_EVENTONPRESS_HOTKEYS, NOEVENT_HOTKEYS, SKULL_HOTKEYS, REPLAY_HOTKEYS, HCE_SKULL_HOTKEYS, HCE_HOTKEYS

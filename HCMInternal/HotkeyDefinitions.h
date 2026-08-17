@@ -563,6 +563,17 @@ private:
 						initRebindableHotkey(cameraFOVDecreaseBinding,
 			(vsk{{ ImGuiKey_H }, { ImGuiKey_GamepadR2 }})),
 
+		// Halo Campaign Evolved gets its OWN tilt / FOV bindings rather than borrowing the four above.
+		// ⚠ The reason is the DEFAULTS. Those four ship bound to G / T / Y / H plus gamepad buttons because
+		// MCC's free camera wants them there. Reusing them would either force those keys onto HaloCER, or - if
+		// we blanked them to suit HaloCER - strip MCC users of their free-camera roll and FOV keys. Separate
+		// enumerators cost nothing (NOEVENT_HOTKEYS had 6 of 64 used) and let HaloCER default to UNBOUND, which
+		// is the point: on HaloCER these rows are buttons first and a key is opt-in.
+						initRebindableHotkey(hceCameraRollLeftBinding, (vsk{})),
+						initRebindableHotkey(hceCameraRollRightBinding, (vsk{})),
+						initRebindableHotkey(hceFieldOfViewIncreaseBinding, (vsk{})),
+						initRebindableHotkey(hceFieldOfViewDecreaseBinding, (vsk{})),
+
 
 	};
 

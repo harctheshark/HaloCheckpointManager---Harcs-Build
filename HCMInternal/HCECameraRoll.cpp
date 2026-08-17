@@ -53,8 +53,9 @@ private:
 	std::weak_ptr<SettingsStateAndEvents> settingsWeak;
 	std::weak_ptr<ControlServiceContainer> controlServicesWeak;
 
-	// The two bindings MCC's free camera already owns. Held directly rather than going through
-	// UserCameraInputReader - see the header.
+	// HaloCER's OWN tilt bindings, default UNBOUND. Deliberately not MCC's cameraRollLeft/RightBinding: those
+	// ship bound to G / T for MCC's free camera, and sharing them would either force those keys onto HaloCER or
+	// strip MCC's defaults. Held directly rather than going through UserCameraInputReader - see the header.
 	std::shared_ptr<RebindableHotkey> mRollLeftBinding;
 	std::shared_ptr<RebindableHotkey> mRollRightBinding;
 
@@ -184,6 +185,29 @@ private:
 		}
 	}
 
+	// One click of the Tilt Left / Tilt Right button. Worth a tenth of a second of holding the key, so the Tilt
+	// Speed slider governs the button and the key together rather than the two drifting apart.
+	static constexpr float kButtonNudgeSeconds = 0.1f;
+
+	void onTiltButton(bool right)
+	{
+		if (!mReady.load(std::memory_order_acquire)) return;
+		try
+		{
+			auto settings = settingsWeak.lock();
+			if (!settings) return;
+
+			const float step = settings->hceCameraRollSpeed->GetValue() * kButtonNudgeSeconds * (right ? 1.f : -1.f);
+			auto& setting = settings->hceCameraRollDegrees;
+			setting->GetValueDisplay() = wrapDegrees(setting->GetValue() + step);
+			setting->UpdateValueWithInput();   // fires onRollChanged, which writes it
+		}
+		catch (HCMRuntimeException ex)
+		{
+			runtimeExceptions->handleMessage(ex);
+		}
+	}
+
 	bool pollRollHotkeys()
 	{
 		if (!mRollLeftBinding || !mRollRightBinding) return false;
@@ -278,6 +302,8 @@ private:
 	// Declared LAST, see HCECheckpointDetours.cpp - a ScopedCallback subscribes inside its own constructor.
 	ScopedCallback<eventpp::CallbackList<void(float&)>> mRollChangedCallback;
 	ScopedCallback<ActionEvent> mResetCallback;
+	ScopedCallback<ActionEvent> mTiltLeftCallback;
+	ScopedCallback<ActionEvent> mTiltRightCallback;
 	ScopedCallback<RenderEvent> mRenderEventCallback;
 
 public:
@@ -291,6 +317,8 @@ public:
 		controlServicesWeak(dicon.Resolve<ControlServiceContainer>()),
 		mRollChangedCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceCameraRollDegrees->valueChangedEvent, [this](float& n) { onRollChanged(n); }),
 		mResetCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceCameraRollResetEvent, [this]() { onResetRoll(); }),
+		mTiltLeftCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceCameraTiltLeftEvent, [this]() { onTiltButton(false); }),
+		mTiltRightCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceCameraTiltRightEvent, [this]() { onTiltButton(true); }),
 		mRenderEventCallback(dicon.Resolve<RenderEvent>().lock(), [this](SimpleMath::Vector2 ss) { onRenderEvent(ss); })
 	{
 		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER)
@@ -300,8 +328,8 @@ public:
 		// borrow references to them. at() would throw std::out_of_range rather than an HCMInitException, so ask
 		// first and convert.
 		auto& hkd = dicon.Resolve<HotkeyDefinitions>().lock()->getAllRebindableHotkeys();
-		auto left = hkd.find(RebindableHotkeyEnum::cameraRollLeftBinding);
-		auto right = hkd.find(RebindableHotkeyEnum::cameraRollRightBinding);
+		auto left = hkd.find(RebindableHotkeyEnum::hceCameraRollLeftBinding);
+		auto right = hkd.find(RebindableHotkeyEnum::hceCameraRollRightBinding);
 		if (left == hkd.end() || right == hkd.end())
 			throw HCMInitException("The camera roll hotkeys are missing from the hotkey definitions");
 		mRollLeftBinding = left->second;

@@ -2537,12 +2537,12 @@ private:
 				// Same RebindableHotkeyEnum values the MCC free camera uses: HaloCER and the MCC games can never
 				// share a process, so there is nothing to collide with.
 				case GUIElementEnum::hceCameraRollLeftBindingGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<103>>
-						(game, ToolTipCollection("Tilt the camera anticlockwise while held. Winds the Camera Roll slider above."), RebindableHotkeyEnum::cameraRollLeftBinding, "Tilt Left"));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Tilt the camera anticlockwise. Click to nudge, or bind a key and hold to wind it continuously - one click is worth a tenth of a second of holding, so Tilt Speed governs both. Unbound by default: HaloCER has its own binding rather than borrowing MCC's G/T."), RebindableHotkeyEnum::hceCameraRollLeftBinding, "Tilt Left", settings->hceCameraTiltLeftEvent));
 
 				case GUIElementEnum::hceCameraRollRightBindingGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<103>>
-						(game, ToolTipCollection("Tilt the camera clockwise while held. Winds the Camera Roll slider above."), RebindableHotkeyEnum::cameraRollRightBinding, "Tilt Right"));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Tilt the camera clockwise. Click to nudge, or bind a key and hold to wind it continuously - one click is worth a tenth of a second of holding, so Tilt Speed governs both. Unbound by default."), RebindableHotkeyEnum::hceCameraRollRightBinding, "Tilt Right", settings->hceCameraTiltRightEvent));
 
 				case GUIElementEnum::hceCameraRollSpeedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 720.f)>>
@@ -2559,12 +2559,12 @@ private:
 				// Like the tilt keys, these bindings were already live and polled (HCEFieldOfView::pollFovHotkeys)
 				// but had no rebind row, so there was no way to see or change them.
 				case GUIElementEnum::hceFieldOfViewIncreaseBindingGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<103>>
-						(game, ToolTipCollection("Widen the field of view while held (zoom out). Winds the slider above; only does anything while the Field of View toggle is on."), RebindableHotkeyEnum::cameraFOVIncreaseBinding, "FOV Up"));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Widen the field of view (zoom out). Click to nudge, or bind a key and hold to wind it continuously - one click is worth a tenth of a second of holding, so FOV Speed governs both. Only does anything while the Field of View toggle is on. Unbound by default."), RebindableHotkeyEnum::hceFieldOfViewIncreaseBinding, "FOV Up", settings->hceFieldOfViewIncreaseEvent));
 
 				case GUIElementEnum::hceFieldOfViewDecreaseBindingGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<103>>
-						(game, ToolTipCollection("Narrow the field of view while held (zoom in). Winds the slider above; only does anything while the Field of View toggle is on."), RebindableHotkeyEnum::cameraFOVDecreaseBinding, "FOV Down"));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Narrow the field of view (zoom in). Click to nudge, or bind a key and hold to wind it continuously - one click is worth a tenth of a second of holding, so FOV Speed governs both. Only does anything while the Field of View toggle is on. Unbound by default."), RebindableHotkeyEnum::hceFieldOfViewDecreaseBinding, "FOV Down", settings->hceFieldOfViewDecreaseEvent));
 
 				case GUIElementEnum::hceFieldOfViewSpeedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 360.f)>>

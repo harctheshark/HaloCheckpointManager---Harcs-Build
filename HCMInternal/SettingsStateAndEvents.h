@@ -184,6 +184,14 @@ public:
 	std::shared_ptr<ActionEvent> hceFieldOfViewResetEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> hceCameraMoveSpeedResetEvent = std::make_shared<ActionEvent>();
 
+	// The nudge buttons. Each row is a button AND a rebindable key: clicking fires one of these for a single
+	// step, holding the key winds continuously through the pollers. One click is worth a tenth of a second of
+	// holding, so the Tilt Speed / FOV Speed sliders govern both input methods.
+	std::shared_ptr<ActionEvent> hceCameraTiltLeftEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> hceCameraTiltRightEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> hceFieldOfViewIncreaseEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> hceFieldOfViewDecreaseEvent = std::make_shared<ActionEvent>();
+
 	std::shared_ptr<ActionEvent> switchBSPEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> switchBSPSetLoadSetEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> switchBSPLoadIndexEvent = std::make_shared<ActionEvent>();

@@ -63,8 +63,8 @@ private:
 	std::weak_ptr<SettingsStateAndEvents> settingsWeak;
 	std::weak_ptr<ControlServiceContainer> controlServicesWeak;
 
-	// Shared with MCC's free camera and already defined and defaulted - we only borrow references. HaloCER and
-	// the MCC games can never be in one process, so there is nothing to collide with.
+	// HaloCER's OWN field-of-view bindings, default UNBOUND. Deliberately not MCC's cameraFOVIncrease/Decrease,
+	// which ship bound to Y / H for MCC's free camera.
 	std::shared_ptr<RebindableHotkey> mFovIncreaseBinding;
 	std::shared_ptr<RebindableHotkey> mFovDecreaseBinding;
 
@@ -378,6 +378,29 @@ private:
 		}
 	}
 
+	// One click of the FOV Up / FOV Down button. Worth a tenth of a second of holding the key, so the FOV Speed
+	// slider governs both input methods.
+	static constexpr float kButtonNudgeSeconds = 0.1f;
+
+	void onFovButton(bool up)
+	{
+		if (!mReady.load(std::memory_order_acquire)) return;
+		try
+		{
+			auto settings = settingsWeak.lock();
+			if (!settings) return;
+
+			const float step = settings->hceFieldOfViewSpeed->GetValue() * kButtonNudgeSeconds * (up ? 1.f : -1.f);
+			auto& setting = settings->hceFieldOfViewDegrees;
+			setting->GetValueDisplay() = std::clamp(setting->GetValue() + step, kFovMinDegrees, kFovMaxDegrees);
+			setting->UpdateValueWithInput();   // fires onValueChanged, which writes it if the lock is on
+		}
+		catch (HCMRuntimeException ex)
+		{
+			runtimeExceptions->handleMessage(ex);
+		}
+	}
+
 	bool pollFovHotkeys()
 	{
 		if (!mFovIncreaseBinding || !mFovDecreaseBinding) return false;
@@ -468,6 +491,8 @@ private:
 	ScopedCallback<ToggleEvent> mToggleCallback;
 	ScopedCallback<eventpp::CallbackList<void(float&)>> mValueCallback;
 	ScopedCallback<ActionEvent> mResetCallback;
+	ScopedCallback<ActionEvent> mFovUpCallback;
+	ScopedCallback<ActionEvent> mFovDownCallback;
 	ScopedCallback<RenderEvent> mRenderEventCallback;
 
 public:
@@ -482,6 +507,8 @@ public:
 		mToggleCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFieldOfViewToggle->valueChangedEvent, [this](bool& n) { onToggleChanged(n); }),
 		mValueCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFieldOfViewDegrees->valueChangedEvent, [this](float& n) { onValueChanged(n); }),
 		mResetCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFieldOfViewResetEvent, [this]() { onResetFov(); }),
+		mFovUpCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFieldOfViewIncreaseEvent, [this]() { onFovButton(true); }),
+		mFovDownCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->hceFieldOfViewDecreaseEvent, [this]() { onFovButton(false); }),
 		mRenderEventCallback(dicon.Resolve<RenderEvent>().lock(), [this](SimpleMath::Vector2 ss) { onRenderEvent(ss); })
 	{
 		if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER)
@@ -491,8 +518,8 @@ public:
 		// exist and are already defaulted, and the two games can never share a process. find() rather than at(),
 		// so a missing definition surfaces as an HCMInitException instead of std::out_of_range.
 		auto& hkd = dicon.Resolve<HotkeyDefinitions>().lock()->getAllRebindableHotkeys();
-		auto increase = hkd.find(RebindableHotkeyEnum::cameraFOVIncreaseBinding);
-		auto decrease = hkd.find(RebindableHotkeyEnum::cameraFOVDecreaseBinding);
+		auto increase = hkd.find(RebindableHotkeyEnum::hceFieldOfViewIncreaseBinding);
+		auto decrease = hkd.find(RebindableHotkeyEnum::hceFieldOfViewDecreaseBinding);
 		if (increase == hkd.end() || decrease == hkd.end())
 			throw HCMInitException("The camera field-of-view hotkeys are missing from the hotkey definitions");
 		mFovIncreaseBinding = increase->second;
