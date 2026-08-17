@@ -501,6 +501,8 @@
 	((hceCameraMoveSpeedResetGUI, (HALOCER_ONLY)))\
 	((hceFieldOfViewToggleGUI, (HALOCER_ONLY)))\
 	((hceFieldOfViewValueGUI, (HALOCER_ONLY)))\
+	((hceFieldOfViewIncreaseBindingGUI, (HALOCER_ONLY)))\
+	((hceFieldOfViewDecreaseBindingGUI, (HALOCER_ONLY)))\
 	((hceFieldOfViewSpeedGUI, (HALOCER_ONLY)))\
 	((hceFieldOfViewResetGUI, (HALOCER_ONLY)))\
 	((hceDisableFadeFromBlackGUI, (HALOCER_ONLY)))\

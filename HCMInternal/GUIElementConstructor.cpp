@@ -2176,6 +2176,8 @@ private:
 							createNestedElement(GUIElementEnum::hceCameraMoveSpeedResetGUI),
 							createNestedElement(GUIElementEnum::hceFieldOfViewToggleGUI),
 							createNestedElement(GUIElementEnum::hceFieldOfViewValueGUI),
+							createNestedElement(GUIElementEnum::hceFieldOfViewIncreaseBindingGUI),
+							createNestedElement(GUIElementEnum::hceFieldOfViewDecreaseBindingGUI),
 							createNestedElement(GUIElementEnum::hceFieldOfViewSpeedGUI),
 							createNestedElement(GUIElementEnum::hceFieldOfViewResetGUI),
 							createNestedElement(GUIElementEnum::freeCameraToggleGUI),
@@ -2553,6 +2555,16 @@ private:
 				case GUIElementEnum::hceCameraMoveSpeedResetGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
 						(game, ToolTipCollection("Puts camera movement speed back to the game's default of 1.0."), RebindableHotkeyEnum::hceCameraMoveSpeedResetHotkey, "Restore Default Move Speed", settings->hceCameraMoveSpeedResetEvent));
+
+				// Like the tilt keys, these bindings were already live and polled (HCEFieldOfView::pollFovHotkeys)
+				// but had no rebind row, so there was no way to see or change them.
+				case GUIElementEnum::hceFieldOfViewIncreaseBindingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<103>>
+						(game, ToolTipCollection("Widen the field of view while held (zoom out). Winds the slider above; only does anything while the Field of View toggle is on."), RebindableHotkeyEnum::cameraFOVIncreaseBinding, "FOV Up"));
+
+				case GUIElementEnum::hceFieldOfViewDecreaseBindingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<103>>
+						(game, ToolTipCollection("Narrow the field of view while held (zoom in). Winds the slider above; only does anything while the Field of View toggle is on."), RebindableHotkeyEnum::cameraFOVDecreaseBinding, "FOV Down"));
 
 				case GUIElementEnum::hceFieldOfViewSpeedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 360.f)>>
