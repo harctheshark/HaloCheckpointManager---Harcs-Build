@@ -15,24 +15,30 @@
 //
 // The game is already saying what it did. Nothing was reading it.
 //
-// HOW IT WORKS. Every one of the 1188 script functions is dispatched through ONE generic
-// argument-evaluating wrapper (sim rva 0x350480), and at its entry CX is the FUNCTION INDEX. So a single
-// midhook sees every script call, and the name comes from the function definition table (sim rva
-// 0x81CA00, an array of qword pointers to definitions whose +0x08 is a char*). That is why this needed no
-// signature scanning: a function is found by NAME through the table.
+// HOW IT WORKS. The hs function definition table (sim rva 0x81BA20) is an array of qword pointers to
+// definitions whose +0x08 is the function's name and whose +0x20 is its RUNTIME implementation. So the
+// functions to watch are found BY NAME - no signature scanning - and one midhook is installed per distinct
+// implementation address. At the entry of every implementation CX is the function index and EDX the
+// expression-node index of the call site, so a single shared callback serves all of them.
 //
-// ⚠ THIS DOES NOT PRINT THE SCRIPT'S STRING ARGUMENTS, AND DELIBERATELY DOES NOT PRETEND TO. The
-// evaluated arguments are four bytes each in a buffer the script thread allocates, so a string argument
-// is an OFFSET into the scenario's script string data, not a pointer. Resolving it needs the string-data
-// base, which is not mapped yet. Until it is, `print` is reported as a call plus its raw argument dword -
-// which is still enough to tell a spawner that ran from one that never did, and the dwords can be
-// correlated against the .hsc source offline. Guessing the base would produce plausible-looking garbage,
-// which is worse than a number.
+// ⚠⚠ NOT def+0x18. That field is the same function for all 1188 definitions and also takes the index in CX,
+// which makes it look like the one choke point that sees everything. It is the COMPILE-TIME argument
+// type-checker. Scripts are compiled when the scenario tag is built, so in a running game it is called
+// exactly zero times - the first version of this hooked it, attached cleanly, and reported 0 script calls
+// for a whole test session.
 //
-// The hook is on the SIM and fires for EVERY script function evaluation - several hundred a second in a
-// busy level - so it does the absolute minimum on the game thread: one atomic load, one compare against
-// the filter, and a push into a lock-free-ish ring buffer. All name resolution, formatting and drawing
-// happens later, on the render thread.
+// ⚠ THIS DOES NOT PRINT THE SCRIPT'S STRING ARGUMENTS, AND DELIBERATELY DOES NOT PRETEND TO. A string
+// argument is a four-byte OFFSET into the scenario's script string data, not a pointer, and the base of
+// that blob is not mapped yet. So each call is reported as name plus its expression-node index - the call
+// SITE, which distinguishes one `print` from another and can be correlated against the .hsc offline.
+// Guessing the base would render convincing nonsense, which is worse than a number. (The engine's own
+// console sink, rva 0x2040D0, takes the same id in ECX but has 1417 callers across the whole engine, so
+// hooking it would drown the script in engine chatter rather than resolve anything.)
+//
+// The hooks are on the SIM and fire on every call to the watched functions, so they do the absolute
+// minimum on the game thread: one atomic load, one compare against the filter, and a push into a
+// lock-free-ish ring buffer. All name resolution, formatting and drawing happens later, on the render
+// thread.
 class HCEScriptTrace : public IOptionalCheat
 {
 private:

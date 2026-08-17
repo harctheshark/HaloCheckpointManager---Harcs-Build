@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -23,6 +24,8 @@ namespace
 	// hs function definition layout. Only two fields are read here; the rest are documented in the header
 	// and in the InternalPointerData comment on hceScriptFunctionTable.
 	constexpr int64_t kDefNameOffset = 0x08;   // char*
+	constexpr int64_t kDefParseOffset = 0x18;   // COMPILE-TIME parse. Never called at runtime - do not hook.
+	constexpr int64_t kDefImplOffset = 0x20;   // the runtime evaluate. THIS is the one to hook.
 	constexpr int64_t kDefArgCountOffset = 0x38;   // word
 
 	// The table is 1188 entries in the shipped build. Read a bounded number rather than trusting a count we
@@ -35,6 +38,7 @@ namespace
 	struct TraceRecord
 	{
 		uint16_t functionIndex;
+		uint32_t node;             // EDX at entry: the expression-node index of THIS call site
 		uint32_t tick;             // GetTickCount, for ordering and for showing age
 	};
 
@@ -76,9 +80,21 @@ private:
 	std::shared_ptr<RuntimeExceptionHandler> runtimeExceptions;
 	std::weak_ptr<SettingsStateAndEvents> settingsWeak;
 
-	std::shared_ptr<MultilevelPointer> mEvaluateFunction;
 	std::shared_ptr<MultilevelPointer> mFunctionTable;
-	std::shared_ptr<ModuleMidHook> mEvaluateHook;
+
+	// ⚠⚠ ONE HOOK PER TRACED IMPLEMENTATION, NOT ONE SHARED HOOK.
+	//
+	// The first version hooked the function at definition +0x18 because it is identical for every script
+	// function and takes the function index in CX, which looked like the perfect single choke point. It fires
+	// ZERO times in a running game. That field is the COMPILE-TIME PARSE function: it type-checks arguments
+	// against def+0x3A and formats compiler error messages. Script compilation happened when the tag was
+	// built, so at runtime it is never called - the hook attached successfully and the counter sat at 0.
+	//
+	// The RUNTIME evaluate is definition +0x20. It calls the argument evaluator that walks the TLS script
+	// THREAD structures, which only exist while the game is running. It is per-function (print and print_if
+	// share one), so tracing N functions needs a hook per DISTINCT implementation address - resolved out of
+	// the table at runtime, because these are not fixed pointer-data entries.
+	std::vector<std::shared_ptr<ModuleMidHook>> mImplHooks;
 
 	std::atomic<bool> mReady{ false };
 
@@ -89,6 +105,31 @@ private:
 	uint64_t mLastRendered = 0;
 	uint64_t mLoggedUpTo = 0;        // how far the log has consumed the ring
 	uint32_t mLastIdleLogTick = 0;   // rate-limits the "hook alive" line
+	std::set<uintptr_t> mWantedImpls;   // distinct runtime implementations to hook, filled by armDefaultFilter
+
+	// Installs one midhook per distinct implementation. Returns how many actually attached, because "armed"
+	// and "hooked" are different things and conflating them is what hid the parse/evaluate mistake.
+	int installImplHooks()
+	{
+		mImplHooks.clear();
+		int attached = 0;
+		for (uintptr_t impl : mWantedImpls)
+		{
+			void* address = (void*)impl;
+			auto pointer = std::make_shared<MultilevelPointerSpecialisation::Resolved>(address);
+			auto hook = ModuleMidHook::make(mGame.toModuleName(), pointer, &evaluateHookFunction, true);
+			if (!hook || !hook->isHookInstalled())
+			{
+				PLOG_ERROR << "HCEScriptTrace: failed to hook script implementation 0x" << std::hex << impl << std::dec;
+				continue;
+			}
+			mImplHooks.push_back(std::move(hook));
+			++attached;
+		}
+		PLOG_DEBUG << "HCEScriptTrace: attached " << attached << " of " << mWantedImpls.size()
+			<< " script implementation hooks";
+		return attached;
+	}
 
 	// Reads the name for a function index out of the definition table. Render thread only.
 	std::string nameForIndex(uint16_t index)
@@ -178,6 +219,7 @@ private:
 			<< ", function table 0x" << tableAddress << std::dec;
 
 		for (auto& slot : gWanted) slot.store(0, std::memory_order_relaxed);
+		mWantedImpls.clear();   // must not accumulate across toggles
 
 		int slotsRead = 0, plausibleDefs = 0, namedDefs = 0, armed = 0;
 		std::string firstFewNames;
@@ -207,8 +249,21 @@ private:
 						std::scoped_lock lock(mNamesMutex);
 						mNames[i] = name;
 					}
-					PLOG_DEBUG << "HCEScriptTrace: tracing '" << name << "' at function index " << i;
-					++armed;
+
+					// def+0x20 is the RUNTIME implementation - the thing to hook. See the note on mImplHooks.
+					uintptr_t impl = 0;
+					if (HCEGetPointer(definition + kDefImplOffset, impl) && impl > 0x10000)
+					{
+						mWantedImpls.insert(impl);
+						PLOG_DEBUG << "HCEScriptTrace: tracing '" << name << "' index " << i
+							<< ", implementation 0x" << std::hex << impl << std::dec;
+						++armed;
+					}
+					else
+					{
+						PLOG_ERROR << "HCEScriptTrace: '" << name << "' index " << i
+							<< " has no readable implementation pointer at def+0x20; not traced";
+					}
 					break;
 				}
 			}
@@ -228,8 +283,9 @@ private:
 		if (GlobalKill::isKillSet()) return;
 		if (!gTracing.load(std::memory_order_relaxed)) return;
 
-		// CX is the function index - the whole reason one hook is enough. EDX is the expression node index,
-		// which is what would be needed to walk to the argument nodes once the string-data base is known.
+		// CX is the function index and EDX the expression node index, at the entry of EVERY implementation -
+		// which is why one shared callback serves all of them. EDX is what would be needed to walk to the
+		// argument nodes once the script string-data base is known.
 		gTotalHookCalls.fetch_add(1, std::memory_order_relaxed);
 
 		const uint16_t index = (uint16_t)(ctx.rcx & 0xFFFF);
@@ -237,7 +293,7 @@ private:
 		if (!gWanted[index].load(std::memory_order_relaxed)) return;
 
 		const uint64_t slot = gWriteCursor.fetch_add(1, std::memory_order_acq_rel);
-		gRing[slot % kRingSize] = TraceRecord{ index, GetTickCount() };
+		gRing[slot % kRingSize] = TraceRecord{ index, (uint32_t)(ctx.rdx & 0xFFFFFFFF), GetTickCount() };
 	}
 
 	void onToggleChange(bool& newValue)
@@ -250,7 +306,8 @@ private:
 			if (!newValue)
 			{
 				gTracing.store(false, std::memory_order_release);
-				if (mEvaluateHook) mEvaluateHook->setWantsToBeAttached(false);
+				mImplHooks.clear();       // detaches and destroys every implementation hook
+				mWantedImpls.clear();
 				messagesGUI->addMessage("Script trace off.");
 				return;
 			}
@@ -270,14 +327,18 @@ private:
 			mLoggedUpTo = 0;
 			mLastIdleLogTick = 0;
 			gTracing.store(true, std::memory_order_release);
-			if (mEvaluateHook) mEvaluateHook->setWantsToBeAttached(true);
 
-			messagesGUI->addMessage(std::format("Script trace on - watching {} script functions.", armed));
+			const int hooked = installImplHooks();
+			if (hooked == 0)
+				throw HCMRuntimeException("Found the script functions to trace but could not hook any of their "
+					"implementations. See HCMInternal_logging.txt for the addresses that failed.");
+
+			messagesGUI->addMessage(std::format("Script trace on - {} functions via {} hooks.", armed, hooked));
 		}
 		catch (HCMRuntimeException ex)
 		{
 			gTracing.store(false, std::memory_order_release);
-			if (mEvaluateHook) mEvaluateHook->setWantsToBeAttached(false);
+			mImplHooks.clear();
 			runtimeExceptions->handleMessage(ex);
 		}
 	}
@@ -332,7 +393,7 @@ private:
 				{
 					const TraceRecord record = gRing[i % kRingSize];
 					PLOG_DEBUG << "HCEScriptTrace: script called '" << nameForIndex(record.functionIndex)
-						<< "' (index " << record.functionIndex << ")";
+						<< "' (index " << record.functionIndex << ", node " << record.node << ")";
 				}
 				mLoggedUpTo = cursor;
 			}
@@ -353,7 +414,9 @@ private:
 			{
 				const TraceRecord record = gRing[i % kRingSize];
 				const uint32_t ageMs = now - record.tick;   // wrap-safe unsigned
-				text += std::format("{:>6}ms  {}\n", ageMs, nameForIndex(record.functionIndex));
+				// The node index is the CALL SITE. Two prints from the same script look identical without it,
+				// and it is the only per-call detail available until the script string base is known.
+				text += std::format("{:>6}ms  {} #{}\n", ageMs, nameForIndex(record.functionIndex), record.node);
 			}
 
 			mLastRendered = cursor;
@@ -385,12 +448,10 @@ public:
 			throw HCMInitException("HCEScriptTrace only supports Halo Campaign Evolved");
 
 		auto ptr = dicon.Resolve<PointerDataStore>().lock();
-		mEvaluateFunction = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(hceScriptEvaluateFunction), game);
 		mFunctionTable = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(hceScriptFunctionTable), game);
 
-		// startEnabled = false. This hook fires on EVERY script function evaluation, so it stays unpatched
-		// until the user asks for the trace.
-		mEvaluateHook = ModuleMidHook::make(mGame.toModuleName(), mEvaluateFunction, &evaluateHookFunction, false);
+		// No hooks are created here. The implementations to hook are read out of the function table by name
+		// when the trace is switched on, so nothing is patched until then.
 
 		mReady.store(true, std::memory_order_release);
 	}
@@ -401,7 +462,7 @@ public:
 		gTracing.store(false, std::memory_order_release);
 		mToggleCallback.removeCallback();
 		mRenderEventCallback.removeCallback();
-		mEvaluateHook.reset();
+		mImplHooks.clear();
 	}
 };
 
