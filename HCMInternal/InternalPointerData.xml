@@ -4215,12 +4215,27 @@
 	Definition layout is +0x00 return type, +0x08 name (char*), +0x18 this generic wrapper, +0x20 the
 	per-function implementation, +0x38 word argument count, +0x3A word[] argument types. So a function's
 	NAME is a lookup, not a signature scan - which is how print (index 49) and print_if (50) were found.
-	Derived from the parse-side code at sim 0x1B1BB0: lea rdx,[rip+0x66AE49] -> 0x81CA00, then [rdx+idx*8].-->
+	⚠⚠ THESE TWO WERE FIRST DERIVED FROM THE WRONG BINARY AND BOTH WERE WRONG. A copy of the sim dll sitting
+	in Downloads (14,670,608 bytes, dated 2026-07-31) is a DIFFERENT BUILD from the one the game actually
+	loads (14,668,560 bytes, 2026-07-29). The two are only 2 KB apart, so most offsets happened to match -
+	the camera roll and freecam ones did - but the function table had MOVED by 0xFE0 and the evaluate wrapper
+	by 0x10. The symptom was 1198 script functions resolving by name at runtime with not one of them being
+	the ones we wanted, because we were reading a neighbouring array. ALWAYS derive against
+	F:\SteamLibrary\...\Meteorite\Binaries\Win64\HaloSimulation_tag_release.dll, not a copy.
+
+	The table is self-checking in practice: HCEScriptTrace resolves every function it wants BY NAME out of
+	this table, so a wrong table address shows up as "0 armed" plus a log line listing the names it did find,
+	rather than as silently tracing the wrong functions.
+
+	Wrong-build values, kept as a warning: table 0x81CA00, evaluate 0x350480.
+	Derivation for the shipped build: find the "print" string (rva 0x7F16A0), find the definition whose +0x08
+	points at it (0x81AD50), find the table slot pointing at that definition, walk back while slots still look
+	like definition pointers -> table base 0x81BA20, print at index 49. Its +0x18 gives 0x350490.-->
 	<VersionedEntry Name="hceScriptEvaluateFunction" Type="MultilevelPointer::ModuleOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
-				<Offset>0x350480</Offset>
+				<Offset>0x350490</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -4229,7 +4244,7 @@
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
-				<Offset>0x81CA00</Offset>
+				<Offset>0x81BA20</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>

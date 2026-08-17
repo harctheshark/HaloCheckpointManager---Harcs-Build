@@ -9,6 +9,7 @@
 #include "ModuleHook.h"
 #include "RenderTextHelper.h"
 #include "GlobalKill.h"
+#include "ModuleCache.h"
 #include <array>
 #include <atomic>
 #include <mutex>
@@ -130,43 +131,87 @@ private:
 		return ReadProcessMemory(GetCurrentProcess(), (void*)address, &out, sizeof(out), nullptr);
 	}
 
+	// ⚠ ONE BYTE AT A TIME, DELIBERATELY. A single ReadProcessMemory of 63 bytes fails ENTIRELY - not
+	// partially - if any part of the range is unmapped, so a name sitting near the end of a committed page
+	// reads as "no name" and the function silently does not match. That is a plausible cause of finding zero
+	// functions in a table that demonstrably contains them.
+	static bool readCString(uintptr_t address, std::string& out, size_t maxLength = 63)
+	{
+		out.clear();
+		for (size_t i = 0; i < maxLength; ++i)
+		{
+			char c = 0;
+			if (!ReadProcessMemory(GetCurrentProcess(), (void*)(address + i), &c, 1, nullptr))
+				return !out.empty();   // truncated is still usable
+			if (c == '\0') return true;
+			if (!(isalnum((unsigned char)c) || c == '_')) return false;   // not a script function name
+			out.push_back(c);
+		}
+		return !out.empty();
+	}
+
 	// Resolves every default-traced name to its index and arms the filter. Returns how many were found, so
 	// the caller can say something truthful if the table did not look as expected.
+	// ⚠ THIS LOGS ITS WORKING OUT ON FAILURE, ON PURPOSE. The first version logged only successes, so when it
+	// found nothing the log said only "could not find any" - which is indistinguishable between a wrong table
+	// address, an unreadable table, a wrong name offset, and a name-read that fails. All four need different
+	// fixes. Never ship a scan whose failure is a single unexplained sentence.
 	int armDefaultFilter()
 	{
 		uintptr_t tableAddress = 0;
-		if (!mFunctionTable || !mFunctionTable->resolve(&tableAddress)) return 0;
+		if (!mFunctionTable || !mFunctionTable->resolve(&tableAddress))
+		{
+			PLOG_ERROR << "HCEScriptTrace: could not resolve the script function table pointer at all";
+			return 0;
+		}
+
+		const auto simBase = ModuleCache::getModuleHandle(mGame.toModuleName());
+		PLOG_DEBUG << "HCEScriptTrace: sim base 0x" << std::hex
+			<< (simBase.has_value() ? (uintptr_t)simBase.value() : 0)
+			<< ", function table 0x" << tableAddress << std::dec;
 
 		for (auto& slot : gWanted) slot.store(0, std::memory_order_relaxed);
 
-		int armed = 0;
+		int slotsRead = 0, plausibleDefs = 0, namedDefs = 0, armed = 0;
+		std::string firstFewNames;
+
 		for (uint16_t i = 0; i < kMaxFunctionIndex; ++i)
 		{
 			uintptr_t definition = 0;
-			if (!HCEGetPointer(tableAddress + (uintptr_t)i * 8, definition) || definition <= 0x10000) continue;
+			if (!HCEGetPointer(tableAddress + (uintptr_t)i * 8, definition)) continue;
+			++slotsRead;
+			if (definition <= 0x10000) continue;
+			++plausibleDefs;
 
 			uintptr_t namePtr = 0;
 			if (!HCEGetPointer(definition + kDefNameOffset, namePtr) || namePtr <= 0x10000) continue;
 
-			char buffer[64]{};
-			if (!ReadProcessMemory(GetCurrentProcess(), (void*)namePtr, buffer, sizeof(buffer) - 1, nullptr)) continue;
-			buffer[sizeof(buffer) - 1] = '\0';
+			std::string name;
+			if (!readCString(namePtr, name) || name.empty()) continue;
+			++namedDefs;
+			if (namedDefs <= 6) firstFewNames += (firstFewNames.empty() ? "" : ", ") + std::format("{}={}", i, name);
 
 			for (const char* wanted : kDefaultTraced)
 			{
-				if (std::strcmp(buffer, wanted) == 0)
+				if (name == wanted)
 				{
 					gWanted[i].store(1, std::memory_order_release);
 					{
 						std::scoped_lock lock(mNamesMutex);
-						mNames[i] = buffer;
+						mNames[i] = name;
 					}
-					PLOG_DEBUG << "HCEScriptTrace: tracing '" << buffer << "' at function index " << i;
+					PLOG_DEBUG << "HCEScriptTrace: tracing '" << name << "' at function index " << i;
 					++armed;
 					break;
 				}
 			}
 		}
+
+		// Logged whether it worked or not - the counts are what identify which stage broke.
+		PLOG_DEBUG << "HCEScriptTrace: scanned " << kMaxFunctionIndex << " slots: " << slotsRead
+			<< " readable, " << plausibleDefs << " plausible definitions, " << namedDefs
+			<< " with names, " << armed << " armed. First names: " << (firstFewNames.empty() ? "(none)" : firstFewNames);
+
 		return armed;
 	}
 
