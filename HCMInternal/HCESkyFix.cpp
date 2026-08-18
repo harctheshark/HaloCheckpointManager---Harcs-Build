@@ -550,10 +550,35 @@ private:
 		if (!mFunction->readArrayData(actual.data(), actual.size()))
 			throw HCMRuntimeException(std::format("Could not read the HaloCER sky fix site: {}", MultilevelPointer::GetLastError()));
 
-		if (actual != expected)
+		// ⚠⚠ COMPARE rel32 CALL TARGETS AS WILDCARDS, NOT AS BYTES. The 2026-08-17 game update moved this
+		// site by 0x6540 and, once re-pointed, the guard STILL refused it - over four bytes, the rel32 of the
+		// `call` at +13. Its callee had shifted; the site itself was byte-identical. A relative branch
+		// displacement encodes WHERE THE TARGET IS, not what this code does, so a change in it is not a
+		// change in the instruction sequence we are about to patch.
+		//
+		// This is the same rule resolveAddOccupant() already applies to its signature ("wildcarding its two
+		// rel32 call targets") - the guard simply was not applying it to itself. Everything the comment above
+		// says this check proves - the hook site, the +0x2D8 offset, the jne-skips-teardown structure - is
+		// still proven, because those are all opcode and displacement-into-a-STRUCT bytes, none of which are
+		// wildcarded here.
+		const auto differsIgnoringRel32 = [](const std::vector<byte>& a, const std::vector<byte>& b)
+		{
+			if (a.size() != b.size()) return true;
+			for (size_t i = 0; i < a.size(); )
+			{
+				if (a[i] != b[i]) return true;
+				// E8 = call rel32, E9 = jmp rel32. Skip the 4 displacement bytes that follow.
+				if ((a[i] == 0xE8 || a[i] == 0xE9) && i + 5 <= a.size()) { i += 5; continue; }
+				++i;
+			}
+			return false;
+		};
+
+		if (differsIgnoringRel32(actual, expected))
 			throw HCMRuntimeException(std::format(
 				"The HaloCER sky fix site did not match its expected original bytes - this build of Halo "
-				"Campaign Evolved is not supported. Expected [{}], found [{}]",
+				"Campaign Evolved is not supported. Expected [{}], found [{}] (rel32 call targets are ignored "
+				"in this comparison, so this is a real instruction difference)",
 				bytesToString(expected), bytesToString(actual)));
 	}
 
