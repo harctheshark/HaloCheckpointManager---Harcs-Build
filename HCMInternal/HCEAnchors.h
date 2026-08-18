@@ -51,6 +51,15 @@ namespace HCEAnchors
 		CheckpointSaveInFlight,
 		CheckpointShell,
 		CheckpointStateBlock,
+		// ---- PATCH SITES. Added 2026-08-18; these are the ones the 2026-08-17 update actually moved. ----
+		// Unlike everything above, these are not data addresses read through a rip-relative operand - the
+		// matched address IS the site, and HCM WRITES to it. pauseGameFunction being 16 bytes stale is what
+		// shipped a reliable crash-on-pause to users: the patch landed in the middle of a live instruction.
+		PauseGameFunction,        // the patched `test al,al` in the pause predicate
+		FadeFromBlackGuardSite,   // the `mov r9d, 3Ch` whose imm32 the fade patch overwrites (target = +2)
+		TriggerVolumeTestPoint,   // the stubbed function; its EIGHT call sites need no anchor of their own,
+		                          // because HCETriggerActivity already proves each is an E8 whose target
+		                          // equals this address - a structural check stronger than a signature.
 		Count
 	};
 

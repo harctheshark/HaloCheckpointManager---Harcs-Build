@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "HCEAnchors.h"
 #include "PauseGame.h"
 #include "ModuleHook.h"
 #include "MidhookContextInterpreter.h"
@@ -36,6 +37,19 @@ public:
 			{
 				auto pauseGameFunction = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(pauseGameFunction), game);
 				auto pauseGameCode = ptr->getVectorData<byte>(nameof(pauseGameCode), game);
+
+				// ⚠ HALOCER ONLY, AND THIS IS THE ONE THAT ACTUALLY BIT. HaloCER reports version 0.0.0.0 on
+				// every build, so a game update cannot be detected from the pointer data; the 2026-08-17 one
+				// moved this site 0x10 and the patch landed mid-instruction, making pausing a reliable crash.
+				// Cross-checking against an independent byte signature turns that into a refusal.
+				// Throws only if the two derivations DISAGREE - see HCEAnchors.h for why an unresolved anchor
+				// deliberately warns and permits instead.
+				if (game.operator GameState::Value() == GameState::Value::HaloCER)
+				{
+					uintptr_t pauseSite = 0;
+					if (pauseGameFunction && pauseGameFunction->resolve(&pauseSite) && pauseSite)
+						HCEAnchors::crossCheck(HCEAnchors::Anchor::PauseGameFunction, pauseSite, "Pause Game");
+				}
 
 				std::unique_ptr<ModulePatch> patch = ModulePatch::make(game.toModuleName(), pauseGameFunction, *pauseGameCode.get(), false);
 

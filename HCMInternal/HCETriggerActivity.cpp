@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "HCEAnchors.h"
 #include "HCETriggerActivity.h"
 #include "MultilevelPointer.h"
 #include "PointerDataStore.h"
@@ -384,6 +385,12 @@ private:
 		uintptr_t function = 0;
 		if (!mFunction->resolve(&function))
 			throw HCMRuntimeException(std::format("HCETriggerActivity: could not resolve trigger_volume_test_point: {}", MultilevelPointer::GetLastError()));
+
+		// Cross-check the address BEFORE comparing the fingerprint. If the function has merely relocated, the
+		// signature finds it and this throws with both numbers - which is a far better diagnostic than the
+		// fingerprint's "did not match its expected original bytes", whose failure text cannot distinguish
+		// "moved" from "changed". Throws only on disagreement; see HCEAnchors.h.
+		HCEAnchors::crossCheck(HCEAnchors::Anchor::TriggerVolumeTestPoint, function, "Trigger Volume live activity");
 
 		const std::vector<byte>& expected = *mExpectedBytes;
 		std::vector<byte> actual(expected.size());

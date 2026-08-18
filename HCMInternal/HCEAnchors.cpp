@@ -125,6 +125,41 @@ namespace
 		  Extract::RipRelative, 7, 3, 7,
 		  "Same instruction pair as CheckpointStateLength, different operand. Already shipped as "
 		  "kSigStateBlockSlot in HCEStateHook.cpp and confirmed to agree with it." },
+		// ================================ PATCH SITES ================================
+		// These three are why this file now has consumers. Every anchor above resolves a DATA address that HCM
+		// reads or writes a flag in; these resolve CODE that HCM overwrites. A stale one does not produce a
+		// wrong number, it produces a patch landing mid-instruction - which is exactly what shipped on
+		// 2026-08-17, when pauseGameFunction moved 0x10 and pausing became a reliable crash.
+		//
+		// ⚠ EVERY RELATIVE OPERAND IS WILDCARDED - rel32 branch displacements AND rip-relative memory
+		// displacements. That is not tidiness, it is the whole reason these survive an update: a displacement
+		// encodes WHERE THE TARGET IS, so it changes whenever the function or its target moves, even though
+		// the instruction sequence is identical. The trigger fingerprint in InternalPointerData.xml learned
+		// this the hard way - it bakes in three rip displacements and therefore refuses after any relocation.
+
+		{ Anchor::PauseGameFunction, "PauseGameFunction",
+		  "84 C0 0F 85 ?? ?? ?? ?? 4E 8B 04 36 C4 C1 78 2F 78 10 0F 83 ?? ?? ?? ?? B8 A8 00 00 00 45 32 FF 48 8B 04 06 48 85 C0 74 ??",
+		  Extract::MatchIsTarget, 0, 0, 0,
+		  "The `test al,al` HCM overwrites to force the pause predicate, plus the AVX compare and the 0xA8 slot "
+		  "load that follow it. Unique at 12 of these 41 bytes; the rest is deliberate redundancy." },
+
+		{ Anchor::FadeFromBlackGuardSite, "FadeFromBlackGuardSite",
+		  "41 B9 3C 00 00 00 C5 E8 57 D2 C5 F0 57 C9 C5 F8 57 C0 E8 ?? ?? ?? ?? 4C 8B 6C 24 60 4C 8B 74 24 58 40 84 F6 48 8B 74 24 78",
+		  Extract::MatchIsTarget, 0, 0, 0,
+		  "`mov r9d, 3Ch` (the fade duration) followed by three vxorps zeroing the colour. HCM patches the "
+		  "IMM32 INSIDE this instruction, so the patch target is this address + 2 and the guard site is this "
+		  "address - keeping both derived from one anchor is what stops them drifting apart. The imm 3C is "
+		  "part of the pattern on purpose: it proves this is the fade call and not another vxorps triple. "
+		  "Unique at 10 of these 41 bytes." },
+
+		{ Anchor::TriggerVolumeTestPoint, "TriggerVolumeTestPoint",
+		  "40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 E8 48 81 EC 18 01 00 00 48 63 D9 4D 8B F0 8B 0D ?? ?? ?? ?? C5 F8 29 B4 24 00 01 00 00",
+		  Extract::MatchIsTarget, 0, 0, 0,
+		  "trigger_volume_test_point's prologue. Its eight HaloScript call sites deliberately have NO anchors: "
+		  "HCETriggerActivity already requires each recorded site to be an E8 whose target equals this "
+		  "function, which validates all eight against one resolved address and cannot drift out of sync with "
+		  "them. Unique at 28 of these 46 bytes." },
+
 	};
 
 	static_assert(std::size(kAnchors) == (size_t)Anchor::Count, "every Anchor needs exactly one definition");

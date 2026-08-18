@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "HCEAnchors.h"
 #include "HCEDisableFadeFromBlack.h"
 #include "IMCCStateHook.h"
 #include "IMessagesGUI.h"
@@ -52,6 +53,16 @@ private:
 	void verifyOriginalBytes()
 	{
 		if (!mGuardSite) throw HCMRuntimeException("No guard pointer data for the HaloCER fade patch");
+
+		// Cross-check the guard site against an independent byte signature before trusting the bytes it holds.
+		// The guard below proves "these bytes are what we expect"; this proves "and this is the right address
+		// to be looking at" - two different questions, and after the 2026-08-17 relocation the second is the
+		// one that was wrong. Throws only on disagreement; see HCEAnchors.h.
+		{
+			uintptr_t guardAddress = 0;
+			if (mGuardSite->resolve(&guardAddress) && guardAddress)
+				HCEAnchors::crossCheck(HCEAnchors::Anchor::FadeFromBlackGuardSite, guardAddress, "Disable Fade From Black");
+		}
 		if (!mExpectedBytes || mExpectedBytes->empty()) throw HCMRuntimeException("No expected original bytes for the HaloCER fade patch");
 
 		const std::vector<byte>& expected = *mExpectedBytes;
