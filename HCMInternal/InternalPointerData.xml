@@ -1375,7 +1375,7 @@
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
-				<Offset>0x210175</Offset>
+				<Offset>0x210185</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -3765,7 +3765,7 @@
 	<VersionedEntry Name="blockGameInputHCEWndProcFunction" Type="MultilevelPointer::ExeOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Offsets>
-				<Offset>0x39FCDD0</Offset>
+				<Offset>0x39FCCA0</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -4071,7 +4071,7 @@
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
-				<Offset>0x2117CA</Offset>
+				<Offset>0x2117DA</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -4079,7 +4079,7 @@
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
-				<Offset>0x2117C8</Offset>
+				<Offset>0x2117D8</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -4144,7 +4144,7 @@
 	<VersionedEntry Name="hceSkyFixRemoveOccupantFunction" Type="MultilevelPointer::ExeOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Offsets>
-				<Offset>0x95B1350</Offset>
+				<Offset>0x95B7890</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -4208,7 +4208,7 @@
 	<VersionedEntry Name="hceCameraManagerUpdateFunction" Type="MultilevelPointer::ExeOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Offsets>
-				<Offset>0x5AA7BB0</Offset>
+				<Offset>0x5AA79E0</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -4965,7 +4965,7 @@
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
-				<Offset>0x2E45F0</Offset>
+				<Offset>0x2E4600</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -5060,7 +5060,7 @@
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
-				<Offset>0x2E50D6</Offset>
+				<Offset>0x2E50E6</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
