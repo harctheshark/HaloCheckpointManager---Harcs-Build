@@ -1,6 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
 <root>
 
+	<!--⚠⚠⚠ HALO CAMPAIGN EVOLVED HAS NO VERSION RESOURCE, SO HCM CANNOT TELL ITS BUILDS APART.
+	Every HaloCER entry below is keyed to version 0.0.0.0, which is what the sim dll reports for EVERY build
+	it has ever shipped. When the game updates, HCM does not detect it - it applies whatever offsets are in
+	this file. For entries HCM merely READS that is a wrong value; for entries HCM PATCHES it is a write into
+	the middle of a live instruction, i.e. an immediate crash.
+
+	=== 2026-08-17 GAME UPDATE: 8 addresses moved. Recorded here because the derivation comments further
+	    down still quote the OLD numbers in their worked examples. ===
+	The new sim dll is byte-for-byte the SAME SIZE (14,668,560) as the previous one and still reports
+	0.0.0.0, so nothing about it looks new. 37 HaloCER addresses were audited against pre-update IDA
+	databases; 19 code and 10 data addresses were unchanged, and these 8 moved:
+
+	    sim (HaloSimulation_tag_release.dll), all exactly +0x10:
+	        pauseGameFunction                         0x210175  -> 0x210185
+	        hceDisableFadeFromBlackGuardSite          0x2117C8  -> 0x2117D8
+	        hceDisableFadeFromBlackFunction           0x2117CA  -> 0x2117DA
+	        hceTriggerVolumeTestPointFunction         0x2E45F0  -> 0x2E4600
+	        hceTriggerVolumeTestPointScriptCallSite8  0x2E50D6  -> 0x2E50E6
+	    exe (HaloCampaignEvolved.exe), each a DIFFERENT delta - the exe changed more:
+	        blockGameInputHCEWndProcFunction          0x39FCDD0 -> 0x39FCCA0   (-0x130)
+	        hceCameraManagerUpdateFunction            0x5AA7BB0 -> 0x5AA79E0   (-0x1D0)
+	        hceSkyFixRemoveOccupantFunction           0x95B1350 -> 0x95B7890   (+0x6540)
+
+	★ HOW TO REDO THIS AFTER THE NEXT UPDATE. Do not eyeball it. Dump the old bytes at each RVA from a
+	pre-update IDA database (headless: idat -A -S"dump.py"), then find them in the new image and confirm the
+	match by DISASSEMBLING both and comparing the instruction sequence with operand addresses normalised.
+	A raw byte compare gives false negatives, because a 64-byte window contains rip-relative and jcc
+	displacements that legitimately differ even when the code is identical - masking only E8/E9 rel32 is not
+	enough. Data addresses in uninitialised .data (above rva 0xD72800) cannot be compared at all - a file
+	image reads 00 there and IDA reads FF - so resolve those through the rip-relative operand of an
+	instruction that REFERENCES them instead.
+
+	★★ THE DURABLE FIX IS BYTE VERIFICATION, NOT VIGILANCE. The checkpoint detours store their expected
+	bytes (hceCheckpointGate1OriginalBytes and friends) and verify before patching - which is exactly why
+	they came through this update unharmed while pauseGameFunction corrupted the game. Any entry HCM writes
+	to should carry the same guard, so that a moved site reports the feature as unavailable instead of
+	crashing.-->
+
 
 	<!--Supported game versions. HCM will forcibly fail to initialize if MCC version isn't one of these.-->
 	<SupportedGameVersions>
