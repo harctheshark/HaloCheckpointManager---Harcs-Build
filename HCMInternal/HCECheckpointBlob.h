@@ -240,7 +240,15 @@ public:
 		static constexpr int64_t engineBuild = 0x108;       // NUL-terminated ASCII
 		static constexpr int64_t stateIdentity = 0x128;     // DWORD - sub_18019F450()
 		static constexpr int64_t gameOptions = 0x130;       // see compareGameOptions
-		static constexpr int64_t bspIndex = 0x1ECA4;        // DWORD - mirrors dword_1809A14E0. Informational only.
+		// ⚠ WAS 0x1ECA4, WHICH IS NOT THIS FIELD AND IS NOT ANY FIELD. Corrected 2026-08-18 after auditing the
+		// post-update build: a sweep of .text finds the 4-byte value 0x1ECA4 as a memory displacement ZERO
+		// times, and 0x1ECE4 five times - including the engine's own compare of this header against the live
+		// global, `0019EA05 cmp dword ptr [rbx+0x1ece4], r8d` with r8d loaded from 0x9A14E0 (the BSP global,
+		// which is what hceCurrentBSP resolves to). The setter is `0019D33E mov [rcx+0x1ece4], eax` from that
+		// same global. 0x1ECA4 was reading the tail of the 0x1EBB0-byte options struct - junk.
+		// ★ Note this field is INSIDE sessionBlock (0x1ECE0 + 0x4), so it is already one of the seven dwords
+		// sub_18019CD70 compares exactly; it is surfaced separately only to show the user a number.
+		static constexpr int64_t bspIndex = 0x1ECE4;        // DWORD - mirrors dword_1809A14E0. Informational only.
 		static constexpr int64_t sessionBlock = 0x1ECE0;    // 7 DWORDs compared exactly by sub_18019CD70
 		static constexpr int64_t sessionBlockLength = 0x1C;
 

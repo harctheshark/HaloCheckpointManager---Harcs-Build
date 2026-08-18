@@ -135,7 +135,29 @@ private:
 	int64_t mFreecamToggleOffset = 0x9C8;
 	int64_t mCameraEntriesTlsOffset = 0x148;
 	int64_t mCameraEntryStride = 0x1AC;
+	// ⚠⚠ +0x20 IS NOT A POSITION AND NEVER WAS. Kept only because the pointer data still carries it and
+	// removing an entry is a separate change; getCameraView no longer reads it. The camera entry's +0x20 is a
+	// WORD (`00215D0D mov word ptr [rdi+0x20], r9w`) and +0x28 holds a vftable pointer
+	// (`00215C96 lea rax,[rip+0x66c703]` -> 0x8823A0, whose first qwords are real code addresses), so a
+	// 12-byte float3 read at +0x20 straddles a vptr and returns garbage. Symptom: "Teleport to Camera" sent
+	// the player to a bogus world point; Renderer3DImplD3D12.cpp:808 had already noticed the same value was
+	// wrong and worked around it locally instead of fixing the source.
 	int64_t mCameraPositionOffset = 0x20;
+
+	// THE REAL CAMERA POSITION lives in "observer globals", not in the camera entry:
+	//     observerIndex = *(int32*)(cameraEntry + 0x180)
+	//     observer      = *(tls + 0x4E8) + observerIndex * 0x410
+	//     position      = observer + 0x154   (three floats: x, y, z)
+	// Proven live rather than by construction: the engine builds its camera descriptor from exactly this
+	// field every frame - `0000CF0C imul rdi, r14, 0x410`, then `0000CFA1/CFAA/CFB3 vmovss xmm2/3/4,
+	// [rdi+rbx+0x154/+0x158/+0x15C]` feeding the descriptor stores at 0xCFD5/CFDA/CFDF.
+	// ⚠ DO NOT "simplify" THIS TO cameraEntry+0x50. That field holds the same value but is written ONCE at
+	// construction (`00215CE3 vmovsd [rdi+0x50], xmm0`) and has NO reader anywhere in the module - a freecam
+	// that has moved since the entry was built would teleport the player to where the camera STARTED.
+	int64_t mCameraObserverIndexOffset = 0x180;
+	int64_t mObserverGlobalsTlsOffset = 0x4E8;
+	int64_t mObserverStride = 0x410;
+	int64_t mObserverPositionOffset = 0x154;
 	// s_player_control. The TLS slot is the SAME 0xB8 block the freecam toggle byte lives in (its +0x9C8 is
 	// the last flag byte of these player-control globals); it is named separately because it is a different
 	// structure inside that block, not because it is a different pointer.
@@ -446,9 +468,31 @@ public:
 		const uintptr_t tls = getTlsBase();     // ONE walk for both, see the PERF note at the top of this file
 		const uintptr_t cameraEntry = activeCameraEntryOf(tls);
 
+		// See the offsets block above for why this does NOT read cameraEntry + mCameraPositionOffset.
+		int32_t observerIndex = -1;
+		if (!HCEGetPlayerState::tryReadRaw(cameraEntry + mCameraObserverIndexOffset, &observerIndex, sizeof(observerIndex)))
+			throw HCMRuntimeException("Could not read the HaloCER camera's observer index");
+
+		// The index is a slot into a small fixed table (the block is 0x1050 bytes at stride 0x410, so four
+		// entries). Bounds-check it rather than trusting it: this value scales a pointer, and the engine
+		// itself leaves it at -1 until the camera is bound to an observer.
+		if (observerIndex < 0 || (int64_t)observerIndex * mObserverStride >= 0x1050)
+			throw HCMRuntimeException("The HaloCER camera is not bound to an observer right now");
+
+		const uintptr_t observers = readSlotOf(tls, mObserverGlobalsTlsOffset, "observer globals");
+		const uintptr_t observer = observers + (uintptr_t)observerIndex * mObserverStride;
+
 		float coords[3]{};
-		if (!HCEGetPlayerState::tryReadRaw(cameraEntry + mCameraPositionOffset, coords, sizeof(coords)))
+		if (!HCEGetPlayerState::tryReadRaw(observer + mObserverPositionOffset, coords, sizeof(coords)))
 			throw HCMRuntimeException("Could not read the HaloCER camera position");
+
+		// A camera that has never been positioned reads as exactly the origin. Returning it would look like a
+		// successful read and teleport the player into the void, which is the failure this whole change is
+		// about - so treat it as "not available yet" instead.
+		if (!std::isfinite(coords[0]) || !std::isfinite(coords[1]) || !std::isfinite(coords[2])
+			|| (coords[0] == 0.f && coords[1] == 0.f))
+			throw HCMRuntimeException("The HaloCER camera position is not available right now");
+
 		outCameraPosition = SimpleMath::Vector3(coords[0], coords[1], coords[2]);
 
 		outViewAngle = viewAngleOf(playerControlEntryOf(tls));
