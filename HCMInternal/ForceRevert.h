@@ -44,9 +44,21 @@ private:
 				// The reference tool (HCM_Evolved checkpoints.py force_revert -> pymem write_int) writes
 				// int 1 at HaloSimulation_tag_release.dll+0x135706A, which spans 0x135706A..0x135706D. The
 				// last of those bytes is the global the GAME reads in its checkpoint "gate2" predicate
-				// (cmp byte [0x135706D],0 at 0x1AE0A2), so the wide write additionally sets that permission
-				// byte as a side effect. Note HCECheckpointDetours never reads or writes 0x135706D - it steps
-				// over that cmp instead - so the two features do not interact through this address.
+				// (cmp byte [0x135706D],0 at 0x1AE0A2).
+				//
+				// ⚠ THIS COMMENT USED TO SAY THE WIDE WRITE "SETS" THAT PERMISSION BYTE. IT CLEARS IT.
+				// int32 1 is little-endian 01 00 00 00 over 0x135706A..0x135706D, so 0x135706D lands on the
+				// 00. Corrected 2026-08-18. Note HCECheckpointDetours never reads or writes 0x135706D - it
+				// steps over that cmp instead - so the two features still do not interact through it.
+				//
+				// ⚠ AND 0x135706B IS THE REVERT *KIND*, WHICH THIS WRITE ZEROES. The engine's own request is
+				// `001ADA9A mov word ptr [rip+0x11a95c7], 0x401` -> flag 0x01 at 0x135706A AND kind 0x04 at
+				// 0x135706B; the consumer then does `001ADAB7 movzx eax, byte ptr [0x135706B]` and passes it
+				// to sub_18019D730, which branches on its bits. Writing int 1 requests kind 0, so a block the
+				// engine would run for kind 4 is skipped. This is NOT new and is not known to misbehave - it
+				// reproduces HCM_Evolved's pymem write_int exactly, which is the known-good behaviour this was
+				// ported from - but the kind byte was undocumented, and anyone widening or narrowing this
+				// write needs to know it is there.
 				// The 4 byte width is part of the known-good observed behaviour of the tool this was ported
 				// from, so it is reproduced exactly rather than narrowed to a single byte.
 				//

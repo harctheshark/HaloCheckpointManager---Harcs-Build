@@ -290,6 +290,10 @@ namespace
 	{
 		for (auto& slot : gHeldActors) slot.store(0, std::memory_order_release);
 		gLoggedHeldFull.store(false, std::memory_order_release);
+
+// ⚠ gLastAreaActor and gWantReArm must be cleared too, and ARE - at the call site in
+		// onGameStateChanged, because they are declared further down this file than this function.
+		// See the comment there; that clearing is not optional.
 	}
 
 	// RCX at RemoveOccupant's entry IS the AHaloWorldStreamingAreaActor* - the game just called a member
@@ -698,6 +702,25 @@ private:
 
 		mLastSeenLevel = newState.currentLevelID;
 		forgetHeldReferences();
+
+		// ⚠⚠ AND THE LAST-AREA ACTOR, WHOSE ABSENCE HERE WAS A CRASH. forgetHeldReferences exists because,
+		// as the comment above says, after a level change those pointers are freed memory and "the SEH around
+		// the release only catches an unmapped page, not memory the allocator has already handed to something
+		// else" - but it only cleared gHeldActors, so gLastAreaActor survived holding a destroyed
+		// AHaloWorldStreamingAreaActor.
+		//
+		// That pointer is not merely read. serviceReArmRequest() runs from the game-thread tick EVERY FRAME,
+		// not only at area boundaries, and on a pending request it reads *(actor+0x2D8) and then CALLS
+		// AddOccupant(actor) - engine code, on the game thread, on a recycled UObject. AddOccupant writes
+		// through *(actor+0x2E0) and walks the TArray at +0x2E8/+0x2F0, so recycled pool memory does not
+		// fault and the __except never fires: it corrupts whatever owns that allocation now.
+		//
+		// Reachable in ordinary use: arm the fix in one level, cross an area boundary, change level, then
+		// re-toggle the fix or trigger a seated teleport (HCEGetPlayerState calls requestAreaReArm()).
+		//
+		// The queued request goes with it - a re-arm asked for in the old level must not be serviced in the new.
+		gLastAreaActor.store(0, std::memory_order_release);
+		gWantReArm.store(false, std::memory_order_release);
 	}
 
 	// Declared LAST - a ScopedCallback subscribes inside its own constructor.

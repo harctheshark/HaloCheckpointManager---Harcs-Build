@@ -26,7 +26,7 @@
 //
 // ⚠⚠⚠ THIS IS THE DANGEROUS ONE, AND THE DANGER IS NOT A CRASH.
 // Every failure path in the revert (sub_18019D730) falls through to LABEL_95, which sets word_181357067 and
-// byte_181357069, and the checkpoint host at 0x1ADB83 turns that pair into sub_18020C910 - A LEVEL RESTART. A bad
+// byte_181357069, and the checkpoint host at 0x1ADB83 turns that pair into sub_18020C920 - A LEVEL RESTART. A bad
 // digest, a checkpoint from another level, or one made on another difficulty does not produce an error message or
 // even a crash the user could alt-tab out of: it silently throws away their run. There is also no bypass to hide
 // behind - the 0xBB x 20 sentinel the verifier honours is unreachable from the revert, which calls it with
@@ -57,7 +57,7 @@
 //
 //            ⚠⚠ THE ARGUMENT, NOT THE BUFFER. RDX at that site is the LIVE GAME STATE (the block a revert
 //            restores into), not a staging copy. Writing our blob into it would corrupt the running session.
-//            ★ It also means the engine re-signs the blob for us, via the sub_1803274C0 callback it passes as
+//            ★ It also means the engine re-signs the blob for us, via the sub_1803274D0 callback it passes as
 //            the 5th argument, so a stale checksum cannot survive the trip.
 //
 // The three warning toggles deliberately reuse MCC's injectCheckpointLevelCheck / injectCheckpointVersionCheck /
@@ -66,7 +66,7 @@
 // process, so only one implementation is ever listening.
 //
 // Everything that knows the blob format - the slot ring, the publication barrier, the header layout, the ported
-// sub_1802096E0 options comparison and the SHA-1 recipe - lives in HCECheckpointBlob, shared with the dump side.
+// sub_1802096F0 options comparison and the SHA-1 recipe - lives in HCECheckpointBlob, shared with the dump side.
 // ================================================================================================================
 class HCEInjectCheckpoint : public IOptionalCheat
 {

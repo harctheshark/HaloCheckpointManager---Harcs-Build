@@ -317,7 +317,7 @@ private:
 
 				// SIGN IT. What the shadow holds is the live game state as the engine handed it over, whose header
 				// digest field is whatever the last revert left behind - the engine only signs the copy it gives
-				// the provider, through the sub_1803274C0 callback, which runs on bytes we do not own. Re-signing
+				// the provider, through the sub_1803274D0 callback, which runs on bytes we do not own. Re-signing
 				// here is deterministic and covers the whole blob, so the FILE verifies on its own terms.
 				mBlob.applySHA1(checkpointData);
 				origin = "shadowed at the storage hand-off";

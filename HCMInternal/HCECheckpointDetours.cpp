@@ -111,7 +111,7 @@
 //
 // That is exactly what the python cave does, and its code4 carries the same warning in as many words.
 //
-// ★ The SHA-1 comes free. The 5th argument the engine passes at 0x19D4FE is sub_1803274C0, which is
+// ★ The SHA-1 comes free. The 5th argument the engine passes at 0x19D4FE is sub_1803274D0, which is
 // mov rdx,rcx / xor ecx,ecx / jmp sub_18019E5E0 - that is sub_18019E5E0(0, blob), and a2 = 0 is the branch that
 // regenerates the salt and writes a fresh digest. The provider runs it over the bytes it is about to persist, so
 // an injected blob is re-signed by the engine itself. HCM still signs its own copy first, which is belt and
@@ -131,7 +131,7 @@
 // exactly the case the bracket is designed to exclude - and runs after it, reading ctx.rdx fresh, so that if an
 // injection did swap the pointer the shadow holds what the provider actually stored.
 //
-// ⚠ save_checkpoint has THREE callers - 0x19E482, 0x1AE0E2 and 0x21552B - and only 0x1AE0E2 is hooked. The
+// ⚠ save_checkpoint has THREE callers - 0x19E482, 0x1AE0E2 and 0x21553B - and only 0x1AE0E2 is hooked. The
 // consume-on-use above is what makes that safe: after any forced checkpoint the flag is already back to false, so
 // a save arriving from one of the other two call sites finds it clear and is left completely alone. The single
 // residual is a forced checkpoint that enters save_checkpoint but never reaches the hand-off, which on a provider

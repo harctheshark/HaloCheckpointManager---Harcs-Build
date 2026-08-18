@@ -54,13 +54,13 @@
 //     save in flight (rva 0x142AA30, DWORD)   2 while a save is running, 0 when it has been published
 //
 // ⚠⚠ THE DIGEST IS COMPUTED ON A WORKER TASK, NOT THE GAME THREAD. save_checkpoint memcpys the state on the game
-// thread, sets the in-flight dword to 2 and queues sub_180327440 -> sub_18019E5E0; only when THAT finishes does it
+// thread, sets the in-flight dword to 2 and queues sub_180327450 -> sub_18019E5E0; only when THAT finishes does it
 // set slot+8 = 1 and the in-flight dword back to 0. So `slot.valid == 1 && inFlight == 0` is the engine's own
 // publication barrier, and it is the only thing that distinguishes "a finished checkpoint" from "12 MB that is
 // being overwritten right now, whose digest field is still stale". readCurrentCheckpoint gates on that pair
 // BEFORE the copy and re-checks it AFTER, retrying if anything moved - a torn dump would be a file that always
 // fails its SHA, and on HaloCER a rejected revert does not fail softly, IT RESTARTS THE LEVEL (every failure path
-// in sub_18019D730 falls to LABEL_95, which the checkpoint host at 0x1ADB83 turns into sub_18020C910).
+// in sub_18019D730 falls to LABEL_95, which the checkpoint host at 0x1ADB83 turns into sub_18020C920).
 //
 // ⚠ NOTHING MAY BE STAMPED INTO THE BLOB. The SHA-1 at blob+0x1ED20 covers the WHOLE buffer, so MCC's habit of
 // writing a 10-byte version string over the last 10 bytes of a dump would invalidate every file. HaloCER also has
@@ -201,7 +201,7 @@ public:
 	//
 	// A checkpoint's first 0x1ED38 bytes are a header describing the session that produced it. The revert
 	// (sub_18019D730) hands it to sub_18019EB50, which is a straight field-by-field comparison against the live
-	// session, and EVERY failure path in the revert falls to LABEL_95 -> sub_18020C910 = A LEVEL RESTART. So these
+	// session, and EVERY failure path in the revert falls to LABEL_95 -> sub_18020C920 = A LEVEL RESTART. So these
 	// offsets are not documentation, they are the difference between an injected checkpoint and a lost run.
 	//
 	// The revert memcpys the checkpoint's 0x1ED38-byte header into a stack local (0x19D8D1: mov r8d, 1ED38h) and
@@ -212,13 +212,13 @@ public:
 	//               equality; the override flag at 0x97C5E0 is the only way past it.
 	//     0x19D939  *(DWORD*)(blob+0x000) == *(DWORD*)0x12945C0  - the build's state-layout CRC32
 	//     0x19D94B  the scenario path at blob+0x008 must be non-empty
-	//     0x19D967  sub_180208CA0(blob+0x130)                - the options must be self-consistent
+	//     0x19D967  sub_180208CB0(blob+0x130)                - the options must be self-consistent
 	//     0x19D981  sub_18019E960(blob, 0, 0)                - the options must match a live session entry
 	//     0x19D99C  sub_18019EB50(live, blob), which is:
 	//                   sub_18019E880(blob)                     - build string and CRC again
 	//                   strcmp(live+0x008, blob+0x008) == 0     - scenario path
 	//                   sub_18019F450() == *(DWORD*)(blob+0x128)- state identity
-	//                   sub_1802096E0(live+0x130, blob+0x130)   - game options - see compareGameOptions
+	//                   sub_1802096F0(live+0x130, blob+0x130)   - game options - see compareGameOptions
 	//                   sub_18019CD70(live+0x1ECE0, blob+0x1ECE0) - seven dwords, an exact 28-byte compare
 	//     0x19DBBA  sub_18019EC00(blob, 0)                   - the SHA-1. a2 = 0, so no bypass. see applySHA1.
 	//
@@ -320,7 +320,7 @@ private:
 
 	static uintptr_t resolveOrThrow(const std::shared_ptr<MultilevelPointer>& mlp, const char* what);
 
-	// A direct port of sub_1802096E0, the engine's game-options comparison (difficulty, skulls, game type, ...).
+	// A direct port of sub_1802096F0, the engine's game-options comparison (difficulty, skulls, game type, ...).
 	// Ported rather than called: calling into the sim from the hotkey thread would be a far bigger risk than
 	// reimplementing five field compares, and this way it runs entirely on two byte buffers HCM already owns.
 	// `detail` gets a human-readable name for the first field that disagreed. Returns true = compatible.

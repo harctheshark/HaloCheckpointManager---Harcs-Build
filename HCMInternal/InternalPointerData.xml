@@ -2354,7 +2354,7 @@
 	      ctrl+0xC = 0 when coop is active, so slot 1 is never used.
 	    ⚠⚠ A REVERT THAT THE ENGINE REJECTS DOES NOT FAIL SOFTLY - every failure path in sub_18019D730 falls to
 	      LABEL_95, which sets word_181357067 = 1 and byte_181357069 = 1, and the checkpoint host at 0x1ADB83
-	      turns that into sub_18020C910, A LEVEL RESTART. So double-reverting when the previous checkpoint does
+	      turns that into sub_18020C920, A LEVEL RESTART. So double-reverting when the previous checkpoint does
 	      not exist costs the run. The guard byte at rva 0x1294599 (ctrl+9) is set from ctrl+8 BEFORE the ring
 	      advances (0x19D477: movzx eax,[ctrl+8] / 0x19D47E: mov [ctrl+9],al), so it means precisely "two
 	      checkpoints exist" and is correct in both the local and provider storage paths.-->
@@ -3530,7 +3530,7 @@
 		"Do not overwrite that live image: redirect only the callback argument to the staged blob".
 		Dumping is the mirror image and is always safe, because it only READS through RDX.
 
-		★ INJECTING HERE GETS A FRESH SHA-1 FOR FREE. sub_1803274C0 is mov rdx,rcx / xor ecx,ecx / jmp
+		★ INJECTING HERE GETS A FRESH SHA-1 FOR FREE. sub_1803274D0 is mov rdx,rcx / xor ecx,ecx / jmp
 		sub_18019E5E0, i.e. sub_18019E5E0(0, blob), and a2 = 0 is the branch that regenerates the salt and writes
 		the digest. The provider invokes it on the bytes it is about to persist, so a stale checksum in the file
 		cannot survive. HCM still recomputes on its own copy first; that is belt and braces, not a requirement.
@@ -3586,14 +3586,14 @@
 		the blob's own layout numbers, live in this file.
 
 		⚠⚠ THE DIGEST IS ASYNCHRONOUS. save_checkpoint memcpys the state on the game thread, sets
-		dword_18142AA30 = 2 and queues sub_180327440 -> sub_18019E5E0 (writer) on a WORKER TASK; only when that
+		dword_18142AA30 = 2 and queues sub_180327450 -> sub_18019E5E0 (writer) on a WORKER TASK; only when that
 		completes does it set slot+8 = 1 and dword_18142AA30 back to 0. So (slot.valid == 1 && inFlight == 0) is
 		the engine's own publication barrier and the ONLY way to tell a finished checkpoint from 12 MB that is
 		mid-write with a stale digest. HCECheckpointBlob gates on it, copies, then re-checks it.
 
 		⚠ A REJECTED REVERT DOES NOT FAIL SOFTLY - IT RESTARTS THE LEVEL. Every failure path in the revert
 		(sub_18019D730) falls to LABEL_95, which sets word_181357067 = 1 / byte_181357069 = 1, and the checkpoint
-		host at 0x1ADB83 turns that into sub_18020C910. A torn dump, or a dump with anything stamped into it, is
+		host at 0x1ADB83 turns that into sub_18020C920. A torn dump, or a dump with anything stamped into it, is
 		therefore a file that costs the user their run when they inject it. There is no checksum bypass either:
 		the verifier's 0xBB x 20 sentinel is unreachable from revert, which calls it with a2 = 0 (19DBB8:
 		xor edx,edx).
@@ -3616,7 +3616,7 @@
 		session setup at 0x19D21B, so it is live at all times and is what hceCheckpointStateBlock exposes:
 		state signature CRC32 at +0x000 (from dword_1812945C0), scenario path at +0x008, engine build string at
 		+0x108 (from the global at 0x182CBE0), state identity at +0x128 (sub_18019F450), the game options struct
-		at +0x130 (0x1EBB0 bytes, compared live vs file by sub_1802096E0 and A MISMATCH THERE HARD FAILS THE
+		at +0x130 (0x1EBB0 bytes, compared live vs file by sub_1802096F0 and A MISMATCH THERE HARD FAILS THE
 		REVERT), the BSP index at +0x1ECA4 and the session block at +0x1ECE0. blob+0x1ED0C holds a 20 byte salt
 		that is regenerated per hash, so the same game state does not produce the same file twice.
 	-->

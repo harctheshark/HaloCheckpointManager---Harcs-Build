@@ -464,16 +464,16 @@ std::string HCECheckpointBlob::printableCopy(const std::string& raw)
 bool HCECheckpointBlob::compareGameOptions(const byte* a, const byte* b, size_t available, std::string& detail)
 {
 	// Offsets below are into the options struct itself, i.e. blob + 0x130. A direct transcription of
-	// sub_1802096E0:
+	// sub_1802096F0:
 	//
-	//     sub_180382100 canonicalises the string at +0x44 into a 0x100-byte scratch on each side, then those two
+	//     sub_180382110 canonicalises the string at +0x44 into a 0x100-byte scratch on each side, then those two
 	//         scratches are compared - it is a map name, and the canonicaliser strips the directory prefix
 	//     byte  +0x000    game type; also the switch selector for everything below
 	//     word  +0x006
 	//     byte  +0x1D4    only when the type byte is 1
-	//     sub_180216460(+0x15E0) when the type byte is 1, 2 or 3; any other type returns "compatible" right here
+	//     sub_180216470(+0x15E0) when the type byte is 1, 2 or 3; any other type returns "compatible" right here
 	//
-	// and sub_180216460(A, B) is: the dword at A+0 must equal B+0, then memcmp(A+0xC, B+0xC, n) with n selected
+	// and sub_180216470(A, B) is: the dword at A+0 must equal B+0, then memcmp(A+0xC, B+0xC, n) with n selected
 	// off that dword - 1 -> 0xF888, 2 -> 0xF858, 3 -> 0x830, 4 -> 0x9C8, 0 or >4 -> 0x730.
 	//
 	// ⚠ THAT TRAILING BLOCK IS *NOT* "campaign difficulty, skulls", which is what this comment used to claim
@@ -501,7 +501,7 @@ bool HCECheckpointBlob::compareGameOptions(const byte* a, const byte* b, size_t 
 	// scary dialog about "skulls" would be a lie, and the real problem is elsewhere.
 	auto readable = [available](size_t offset, size_t size) { return offset + size <= available; };
 
-	// The RAW string, deliberately, rather than a reimplementation of sub_180382100. That canonicaliser has two
+	// The RAW string, deliberately, rather than a reimplementation of sub_180382110. That canonicaliser has two
 	// branches - it strips the directory prefix when the input contains a particular marker substring, and copies
 	// the string verbatim when it does not - so a leaf-name comparison would be LOOSER than the engine on the
 	// verbatim branch, and "looser than the engine" is precisely the failure that loses a run. A raw compare is at
@@ -538,7 +538,7 @@ bool HCECheckpointBlob::compareGameOptions(const byte* a, const byte* b, size_t 
 		return false;
 	}
 
-	// sub_1802096E0 only reaches the sub-block for types 1, 2 and 3; everything else is accepted at this point.
+	// sub_1802096F0 only reaches the sub-block for types 1, 2 and 3; everything else is accepted at this point.
 	if (type < 1 || type > 3) return true;
 
 	if (!readable(kSubBlock, 4)) return true;

@@ -447,7 +447,7 @@ private:
 				if (!userConfirms("Injection: wrong level!", body)) { PLOG_DEBUG << "User cancelled at the level warning"; return; }
 			}
 
-			// GAME OPTIONS. sub_1802096E0 - see HCECheckpointBlob::compareGameOptions.
+			// GAME OPTIONS. sub_1802096F0 - see HCECheckpointBlob::compareGameOptions.
 			//
 			// ⚠ THIS IS NOT "DIFFICULTY/SKULLS", despite what this dialog said for a long time. The engine's
 			// difficulty test is a DIFFERENT, single byte (options + 0x1D4 = blob 0x304), compared a few lines

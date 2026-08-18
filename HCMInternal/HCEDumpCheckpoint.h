@@ -56,7 +56,7 @@
 //
 // ⚠ THE DIGEST IS RE-SIGNED ON THE PROVIDER PATH. What the hand-off carries - and so what the shadow holds - is
 // the LIVE GAME STATE, whose header digest field still holds whatever the last revert left there; the engine only
-// signs the copy the provider is given, via the sub_1803274C0 callback, on bytes HCM does not own. So the dump is
+// signs the copy the provider is given, via the sub_1803274D0 callback, on bytes HCM does not own. So the dump is
 // run through HCECheckpointBlob::applySHA1 to make the FILE self-consistent. That is deterministic and covers the
 // whole blob, so the result is a checkpoint the engine's own verifier accepts.
 //
