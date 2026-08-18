@@ -1,4 +1,5 @@
 #pragma once
+#include "HCEAnchors.h"
 #include "IOptionalCheat.h"
 #include "GameState.h"
 #include "DIContainer.h"
@@ -39,6 +40,17 @@ private:
 
 			// read the flag
 			byte currentFlag = 1;
+			// Cross-checked against an independent byte signature - see HCEAnchors.h. HaloCER cannot report
+			// its build, so this is the only thing standing between a game update and a write to a stale
+			// address. Throws only if the two derivations disagree.
+			if (mGame.operator GameState::Value() == GameState::Value::HaloCER)
+			{
+				uintptr_t doubleRevertAddress = 0;
+				if (!doubleRevertFlag->resolve(&doubleRevertAddress) || !doubleRevertAddress)
+					throw HCMRuntimeException(std::format("Could not resolve the HaloCER double-revert flag: {}", MultilevelPointer::GetLastError()));
+				HCEAnchors::crossCheck(HCEAnchors::Anchor::DoubleRevertFlag, doubleRevertAddress, "Force Double Revert");
+			}
+
 			if (!doubleRevertFlag->readData(&currentFlag)) throw HCMRuntimeException(std::format("Failed to read doubleRevertFlag {}", MultilevelPointer::GetLastError()));
 
 			// flip the value;

@@ -1,4 +1,5 @@
 #pragma once
+#include "HCEAnchors.h"
 #include "pch.h"
 #include "IOptionalCheat.h"
 #include "GameState.h"
@@ -67,6 +68,15 @@ private:
 				// HaloCER-only check). HaloSimulation_tag_release.dll has no version resource, so if the game
 				// updates, this silently writes 4 bytes to whatever now lives at +0x135706A. Re-derive the
 				// address from HCM_Evolved's addresses.json when bumping HCE support.
+				// ⚠ CROSS-CHECKED SINCE 2026-08-18 - see HCEAnchors.h. The "RESIDUAL RISK" paragraph above is
+				// now closed: HCEAnchors carries an independent byte signature for this address, and
+				// crossCheck throws if the two derivations disagree, so a game update that moves it produces
+				// a named refusal instead of a 4-byte write into whatever now lives there.
+				uintptr_t revertAddress = 0;
+				if (!forceRevertFlag->resolve(&revertAddress) || !revertAddress)
+					throw HCMRuntimeException(std::format("Could not resolve the HaloCER revert flag: {}", MultilevelPointer::GetLastError()));
+				HCEAnchors::crossCheck(HCEAnchors::Anchor::ForceRevertFlag, revertAddress, "Force Revert");
+
 				int32_t enableFlag = 1;
 				if (!forceRevertFlag->writeData(&enableFlag)) throw HCMRuntimeException(std::format("Failed to write Revert flag {}", MultilevelPointer::GetLastError()));
 				messagesGUI->addMessage("Revert forced.");

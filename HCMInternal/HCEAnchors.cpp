@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "HCEAnchors.h"
 #include "HCESignatureScan.h"
+#include "CustomExceptions.h"
+#include "ModuleCache.h"
 #include <array>
 
 // See HCEAnchors.h for why this exists and what the contract is.
@@ -251,5 +253,47 @@ namespace HCEAnchors
 				"The affected features refuse to run rather than read a wrong address; everything else is "
 				"unaffected.";
 		return out;
+	}
+
+	// See the contract in HCEAnchors.h - the three outcomes are deliberately asymmetric.
+	void crossCheck(Anchor anchor, uintptr_t addressFromPointerData, const char* featureName)
+	{
+		// Resolve lazily rather than relying on somebody having called resolveAll() first. This is called
+		// from feature constructors, whose order is decided by the DI container, so depending on ordering
+		// would make the check silently absent for whichever feature happened to construct first.
+		// resolveAll() is idempotent and keyed on the module base, so this is a no-op after the first call.
+		if (const auto sim = ModuleCache::getModuleHandle(L"HaloSimulation_tag_release.dll"); sim.has_value())
+			resolveAll((uintptr_t)sim.value());
+
+		const uintptr_t fromSignature = get(anchor);
+
+		// UNRESOLVED: say so, once, and continue. A signature that stopped matching means the code AROUND
+		// the anchor changed - which is worth knowing, but is not evidence that the address is wrong.
+		if (!fromSignature)
+		{
+			static std::array<std::atomic_bool, (size_t)Anchor::Count> reported{};
+			if (!reported[(size_t)anchor].exchange(true))
+				PLOG_WARNING << "HCEAnchors: could not cross-check " << name(anchor) << " for " << featureName
+					<< " - its byte signature no longer matches this build, so the pointer-data address "
+					<< std::format("0x{:X}", addressFromPointerData) << " is being used unverified. "
+					"This is a warning, not a failure: the signature proves nothing when it does not match.";
+			return;
+		}
+
+		if (fromSignature == addressFromPointerData) return;   // the overwhelmingly common case
+
+		// DISAGREEMENT. Two independent derivations contradict each other, so one is wrong and we cannot tell
+		// which - the signature could be matching the wrong place just as easily as the XML could be stale.
+		// Refusing is the only honest answer, and it is the whole reason this file exists.
+		PLOG_ERROR << "HCEAnchors: " << name(anchor) << " MISMATCH - pointer data says "
+			<< std::format("0x{:X}", addressFromPointerData) << ", the byte signature finds "
+			<< std::format("0x{:X}", fromSignature) << ". " << featureName << " refuses to run.";
+
+		throw HCMRuntimeException(std::format(
+			"{} is disabled: HCM's stored address for {} (0x{:X}) disagrees with the one found by scanning "
+			"this build of Halo Campaign Evolved (0x{:X}). The game has almost certainly updated. HCM refuses "
+			"to use either address rather than risk writing to the wrong place - please report this, quoting "
+			"both numbers.",
+			featureName, name(anchor), addressFromPointerData, fromSignature));
 	}
 }

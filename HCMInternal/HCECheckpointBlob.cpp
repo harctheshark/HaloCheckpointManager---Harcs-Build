@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "HCECheckpointBlob.h"
+#include "HCEAnchors.h"
 #include "PointerDataStore.h"
 #include "HCEGetPlayerState.h"
 #include <chrono>
@@ -32,12 +33,42 @@ namespace
 	};
 }
 
+// Maps a pointer-data entry name to the byte-signature anchor that independently derives the same address.
+// Every checkpoint address funnels through resolveOrThrow, so putting the cross-check here covers all of them
+// - including any added later - rather than relying on each call site to remember.
+static const HCEAnchors::Anchor* anchorFor(const char* what)
+{
+	struct Pair { const char* name; HCEAnchors::Anchor anchor; };
+	static constexpr Pair kPairs[]
+	{
+		{ "hceCheckpointControlBlock",  HCEAnchors::Anchor::CheckpointControlBlock },
+		{ "hceCheckpointSlotTable",     HCEAnchors::Anchor::CheckpointSlotTable    },
+		{ "hceCheckpointStateLength",   HCEAnchors::Anchor::CheckpointStateLength  },
+		{ "hceCheckpointSaveInFlight",  HCEAnchors::Anchor::CheckpointSaveInFlight },
+		{ "hceCheckpointShell",         HCEAnchors::Anchor::CheckpointShell        },
+		{ "hceCheckpointStateBlock",    HCEAnchors::Anchor::CheckpointStateBlock   },
+	};
+	for (const Pair& p : kPairs)
+		if (std::strcmp(p.name, what) == 0) return &p.anchor;
+	return nullptr;   // not every entry has an anchor, and that is fine
+}
+
 uintptr_t HCECheckpointBlob::resolveOrThrow(const std::shared_ptr<MultilevelPointer>& mlp, const char* what)
 {
 	if (!mlp) throw HCMRuntimeException(std::format("No HaloCER pointer data for {}", what));
 	uintptr_t address = 0;
 	if (!mlp->resolve(&address) || address == 0)
 		throw HCMRuntimeException(std::format("Could not resolve HaloCER {}: {}", what, MultilevelPointer::GetLastError()));
+
+	// ⚠ THE ADDRESS IS NOW CROSS-CHECKED AGAINST AN INDEPENDENT BYTE SIGNATURE. HaloCER reports version
+	// 0.0.0.0 on every build it has ever shipped, so the Version= key in the pointer data cannot detect a game
+	// update - the 2026-08-17 one moved eight addresses and shipped a reliable crash to users with nothing
+	// reporting a problem. These addresses are written to, so a stale one corrupts save state rather than
+	// merely reading a wrong number. crossCheck throws only when the two derivations DISAGREE; an anchor that
+	// no longer matches warns and permits, because a signature proves nothing when it does not match.
+	if (const HCEAnchors::Anchor* anchor = anchorFor(what))
+		HCEAnchors::crossCheck(*anchor, address, "Halo Campaign Evolved save management");
+
 	return address;
 }
 

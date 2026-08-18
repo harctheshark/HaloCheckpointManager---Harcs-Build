@@ -72,4 +72,29 @@ namespace HCEAnchors
 	// One line per anchor, resolved or not. Written to the log after resolution, and worth quoting to a user
 	// who reports "feature X stopped working after the game updated".
 	std::string healthReport();
+
+	// ================================================================================================
+	// THE CROSS-CHECK. This is what gives HCM update detection on a title that cannot report its version.
+	//
+	// HaloCER's sim dll reports 0.0.0.0 for every build it has ever shipped, so the Version= key in
+	// InternalPointerData.xml cannot distinguish builds and HCM applies whatever addresses it has. For a
+	// feature that READS, a stale address is a wrong number; for one that PATCHES or WRITES, it is a write
+	// into the middle of a live instruction. The 2026-08-17 update moved eight addresses and shipped a
+	// reliable crash-on-pause to users, with nothing anywhere reporting that anything was wrong.
+	//
+	// So: resolve from pointer data exactly as before, then ask the signature whether it agrees.
+	//
+	// ⚠ THE THREE OUTCOMES ARE NOT SYMMETRIC, AND THAT ASYMMETRY IS THE DESIGN:
+	//   agree            -> proceed. The overwhelmingly common case; costs one comparison.
+	//   DISAGREE         -> THROW. Two independent derivations of the same address contradict each other,
+	//                       so one of them is wrong and we cannot tell which. Refusing turns a silent
+	//                       corruption into a named, reportable failure.
+	//   anchor UNRESOLVED-> proceed, but log loudly. Absence of evidence is not evidence: a signature that
+	//                       no longer matches tells us the code around it changed, NOT that the address is
+	//                       wrong. Refusing here would disable working features every time an unrelated
+	//                       function nearby is recompiled, which would train users to ignore the warning.
+	//
+	// Throws HCMRuntimeException on disagreement. Never throws for an unresolved anchor.
+	// `featureName` appears in the message, so the user is told which feature refused and why.
+	void crossCheck(Anchor anchor, uintptr_t addressFromPointerData, const char* featureName);
 }
