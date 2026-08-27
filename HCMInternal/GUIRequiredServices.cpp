@@ -552,6 +552,86 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 {OptionalCheatEnum::RevertEventHook,}
 	},
 
+			{ GUIElementEnum::competitionModeToggle,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeSettings,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeScale,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeBackgroundColour,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeTextColour,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeShowKD,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeShowKDRatio,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeShowColumnHeaders,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeOutlineText,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeForceBothPanels,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeLeftSettings,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeLeftOffset,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeLeftPanelWidth,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeLeftFontSize,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeLeftColour,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeRightSettings,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeRightOffset,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeRightPanelWidth,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeRightFontSize,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
+			{ GUIElementEnum::competitionModeRightColour,
+{OptionalCheatEnum::CompetitionMode}
+	},
+
 			{ GUIElementEnum::abilityMeterOverlayToggle,
 {OptionalCheatEnum::AbilityMeterOverlay}
 	},

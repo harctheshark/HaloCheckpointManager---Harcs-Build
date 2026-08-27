@@ -580,6 +580,26 @@
 			((hceInjectCheckpointLevelCheck, (HALOCER_ONLY)))\
 			((hceInjectCheckpointDifficultyCheck, (HALOCER_ONLY)))\
 			((hceInjectCheckpointVersionCheck, (HALOCER_ONLY)))\
+	((competitionModeToggle, (Halo2)))\
+	((competitionModeSettings, (Halo2)))\
+	((competitionModeScale, (Halo2)))\
+	((competitionModeBackgroundColour, (Halo2)))\
+	((competitionModeTextColour, (Halo2)))\
+	((competitionModeShowKD, (Halo2)))\
+	((competitionModeShowKDRatio, (Halo2)))\
+	((competitionModeShowColumnHeaders, (Halo2)))\
+	((competitionModeOutlineText, (Halo2)))\
+	((competitionModeForceBothPanels, (Halo2)))\
+	((competitionModeLeftSettings, (Halo2)))\
+	((competitionModeLeftOffset, (Halo2)))\
+	((competitionModeLeftPanelWidth, (Halo2)))\
+	((competitionModeLeftFontSize, (Halo2)))\
+	((competitionModeLeftColour, (Halo2)))\
+	((competitionModeRightSettings, (Halo2)))\
+	((competitionModeRightOffset, (Halo2)))\
+	((competitionModeRightPanelWidth, (Halo2)))\
+	((competitionModeRightFontSize, (Halo2)))\
+	((competitionModeRightColour, (Halo2)))\
 			((hceInjectCheckpointRewriteIdentity, (HALOCER_ONLY)))
 
 

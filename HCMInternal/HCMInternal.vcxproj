@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -568,6 +568,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HCEAnchors.h" />
     <ClInclude Include="HCEBspOverlay.h" />
     <ClInclude Include="HCESoftCeilingOverlay.h" />
+    <ClInclude Include="CompetitionMode.h" />
+    <ClInclude Include="H2CompetitionData.h" />
     <ClInclude Include="HCECheckpointIdentity.h" />
     <ClInclude Include="HCETriggerNameFilterDialog.h" />
     <ClInclude Include="HCESignatureScan.h" />
@@ -892,6 +894,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="HCEAnchors.cpp" />
     <ClCompile Include="HCEBspOverlay.cpp" />
     <ClCompile Include="HCESoftCeilingOverlay.cpp" />
+    <ClCompile Include="CompetitionMode.cpp" />
     <ClCompile Include="HCETriggerActivity.cpp" />
     <ClCompile Include="HCEInvulnerability.cpp" />
     <ClCompile Include="HCEDisableBarriers.cpp" />

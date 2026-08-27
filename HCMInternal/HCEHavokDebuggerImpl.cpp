@@ -340,6 +340,7 @@ template <class T> static bool rd(uintptr_t a, T& o)
 static uint64_t rdQ(uintptr_t a) { uint64_t v = 0; return rd(a, v) ? v : 0; }
 static uint32_t rdD(uintptr_t a) { uint32_t v = 0; return rd(a, v) ? v : 0; }
 static float    rdF(uintptr_t a) { float v = 0;    return rd(a, v) ? v : 0.f; }
+static uint16_t rdW(uintptr_t a) { uint16_t v = 0; return rd(a, v) ? v : 0; }   // surface flags are u16
 static inline bool okPtr(uint64_t p) { return p >= 0x10000ull && p < 0x7FFFFFFFFFFFull && (p & 7) == 0; }
 
 // ---- bounded string building -------------------------------------------------------------------
@@ -600,6 +601,117 @@ static hkGeometry* g_ltvOnGeo  = HK_NULL;
 static hkGeometry* g_ltvOffGeo = HK_NULL;
 static long g_liveGeoGen = -1;
 static hkGeometry* g_target = HK_NULL;   // gather destination
+
+// ============ OBJECT BULLET COLLISION =============================================================
+// The World "Bullet Collision" view filters BSP surfaces by surface_flags. Objects are a different
+// question and needed their own RE, because a projectile trace reaches an object through TWO
+// independent gates and either one can silently swallow it:
+//
+//   GATE A - Havok's group filter.  hkpWorld::m_collisionFilter lives at world+0xD0 and holds a
+//     32x32 layer matrix at filter+0x4C (`mov eax,[rcx+rax*4+4Ch]` in sub_1806DDD30). Each body
+//     carries m_collisionFilterInfo at body+0x4C (== hkpCollidable+0x2C, collidable embedded at
+//     +0x20); the low 5 bits are its layer. Bit L of row 7 (projectile) answers "can a projectile
+//     touch layer L". The matrix is symmetric - proven from the ctor filling 0xFFFFFFFF and
+//     sub_1806DE250 clearing [a][b] and [b][a] together - so reading ONE row is sufficient and we
+//     never have to guess which side of the pair to index.
+//     sub_1806DDD30 has a systemGroup short-circuit that skips the matrix, but it cannot fire here:
+//     Blam stamps every object filterInfo = layer | ((objectIndex+1) << 16) (sub_180249D80), so two
+//     different objects ALWAYS differ in the high 16 bits and the matrix branch is always taken.
+//
+//   GATE B - Blam's own surface mask, the SAME one the BSP walk uses. This refuted the assumption
+//     this feature started from. The object walk sub_1802BD770 calls sub_1802E9D10 at 0x1802BDA9A -
+//     byte for byte the function the BSP walk calls at 0x1802C4BA4. Object collision models carry
+//     surface_flags too, and are filtered by the same per-query mask, so `invisible` and
+//     `pathfinding only` remove object surfaces exactly as they remove world ones.
+//
+// Both gates are applied below. What is deliberately NOT modelled is sub_1802C3400's per-object-TYPE
+// mask, which Havok never sees and which lives on the projectile definition rather than the target -
+// so a body drawn here can still be missed by a specific weapon.
+static const uint16_t BULLET_REJECT_FLAGS = 0x0102;   // invisible | pathfinding only
+static const int      PROJECTILE_LAYER    = 7;
+
+static const hkUlong OBJBUL_GEOM_ID = 0x11CE0200ull;   // .. +BK_COUNT-1, clear of OBJ_GEOM_ID
+static hkGeometry* g_objBulBucket[BK_COUNT] = { HK_NULL, HK_NULL, HK_NULL };
+static hkGeometry* g_bulTarget = HK_NULL;      // mirror of g_target; null = don't mirror this shape
+static volatile long g_wantObjBullet = 0;      // set when the viewer is first opened
+static uint32_t g_bulRow      = 0;             // row 7 of the layer matrix, read live each gather
+static bool     g_bulRowValid = false;
+static bool     g_bulFilterIsBlam = false;     // the Blam subclass is installed (diagnostic only)
+static uint32_t g_bodyLayer   = 0;             // layer of the body currently being emitted
+static bool     g_bodyBulOK   = false;         // body-level verdict (phantom + body exists)
+static bool     g_objBulletOK = false;         // verdict for the shape currently being emitted
+static int      g_bulPassBodies = 0, g_bulPhantomBodies = 0, g_bulLayerRejBodies = 0;
+
+// hkpWorldObject broadphase type byte. Blam's own sweep (sub_1802CBE50) does
+// `if (*(_BYTE*)(v10+40) == 1)` on the collidable, i.e. it accepts BROAD_PHASE_ENTITY only, so a
+// PHANTOM is not hit by anything - it is a trigger volume. That makes phantoms the prime suspect for
+// "a box that looks solid in the collision viewer but bullets go straight through".
+static bool bodyIsEntity(uintptr_t body)
+{
+    uint8_t bp = 0;
+    return rd(body + 0x48, bp) && bp == 1;
+}
+
+// Layer for a body: filterInfo's low 5 bits, unless an hkpWorldObject PROPERTY with key 0x2005
+// overrides it (array at obj+0xB0, count at +0xB8, 16-byte entries, stored value = layer + 1).
+static uint32_t bodyBulletLayer(uintptr_t body)
+{
+    uint32_t layer = rdD(body + 0x4C) & 0x1F;
+    const uint64_t props = rdQ(body + 0xB0);
+    const uint32_t n     = rdD(body + 0xB8);
+    if (okPtr(props) && n && n < 4096)
+        for (uint32_t i = 0; i < n; ++i)
+            if (rdD((uintptr_t)props + 16ull * i) == 0x2005u) {
+                const uint64_t v = rdQ((uintptr_t)props + 16ull * i + 8);
+                if (v) layer = (uint32_t)(v - 1) & 0x1F;
+                break;
+            }
+    return layer;
+}
+
+// Per-shape layer substitution (sub_1803D54C0 -> sub_1802D03A0). A shape can carry a Blam material
+// immediately BEFORE it in memory: unwrap the transform/scale wrappers first, then require the word
+// at shape+0x10 to look like a real size rather than the 'prop' / 0xFFFF00AB sentinels, and the
+// override byte is material+0x1F, i.e. the byte at shape-1. -1 means "no override".
+static bool shapeLayerOverride(uintptr_t shape, uint32_t& out)
+{
+    uintptr_t sp = shape;
+    for (int guard = 0; guard < 4; ++guard) {
+        const uint32_t t = rdD(sp + SHAPE_TYPE);
+        uint64_t child = 0;
+        if (t == 11 || t == 12)      child = rdQ(sp + 0x30);
+        else if (t == 15 || t == 18) child = rdQ(sp + 0x28);
+        else break;
+        if (!okPtr(child)) return false;
+        sp = (uintptr_t)child;
+    }
+    const uint64_t sig = rdQ(sp + 0x10);
+    if (sig <= 0x10ull || sig == 0x70726F70ull || sig == 0xFFFF00ABull) return false;
+    int8_t ov = 0;
+    if (!rd(sp - 1, ov) || ov < 0) return false;
+    out = (uint32_t)ov & 0x1F;
+    return true;
+}
+
+// The whole predicate for one shape. Called per shape, not per body, because the material override
+// above can move a single shape onto a different layer than the body it hangs off.
+static void objBulletVerdict(uintptr_t shape, uint16_t surfFlags)
+{
+    if (!g_bodyBulOK || !g_bulRowValid) { g_objBulletOK = false; return; }
+    if (surfFlags & BULLET_REJECT_FLAGS) { g_objBulletOK = false; return; }   // GATE B
+    uint32_t layer;
+    if (!shapeLayerOverride(shape, layer)) layer = g_bodyLayer;
+    g_objBulletOK = ((g_bulRow >> layer) & 1u) != 0;                          // GATE A
+}
+
+// Set g_target and, in step, the bullet mirror. Kept as one call so a future emitter cannot set the
+// primary bucket and silently forget the mirror - which would drop geometry from the bullet view
+// only, the hardest kind of bug to notice.
+static inline void setObjTarget(int bucket)
+{
+    g_target    = g_objBucket[bucket];
+    g_bulTarget = (g_wantObjBullet && g_objBulletOK) ? g_objBulBucket[bucket] : HK_NULL;
+}
 // The world gather runs on the ENGINE thread (getChildShape needs Blam's TLS), but hkGeometry's
 // hkArray allocates through Havok thread-memory that only exists on the VDB thread. So the engine
 // thread fills this plain buffer and the VDB thread converts it into hkGeometry.
@@ -609,6 +721,20 @@ static hkGeometry* g_target = HK_NULL;   // gather destination
 // a small map pays only for what it touches. The proper fix remains addGeometryInstance().
 static const int MAX_WORLD_TRIS = 25000000;
 static const size_t WM_TRI_BYTES = 9 * sizeof(float);
+
+// ---- per-triangle SURFACE FLAGS, for the Bullet Collision viewer ------------------------------
+// A type-31 "level-mesh SURFACE" shape carries its collision_surface flags verbatim at shape+0x32
+// (the engine's own constructor sub_1803CC690 copies them there from surface+0x0A on the small
+// record format, surface+0x0E on the large one). So the filter needs no BSP lookup - we simply
+// record, per emitted triangle, the flags of the surface it came from.
+//
+// Two bytes per triangle rather than a second copy of the geometry: a filtered viewer is then just
+// a predicate over this array, so adding further per-flag viewers (Invisible, Breakable, Climbable
+// ...) costs no extra memory at all. Duplicating the mesh per viewer would not scale that way.
+static const size_t WM_FLAG_BYTES = sizeof(uint16_t);
+static uint16_t* g_wmFlags = nullptr;      // parallel to g_wmTri, same index
+static size_t    g_wmFlagsCommitted = 0;
+static uint16_t  g_curSurfFlags = 0;       // flags of the surface currently being emitted
 static const size_t WM_CHUNK = 64u << 20;
 static float (*g_wmTri)[9] = nullptr;
 static size_t g_wmCommitted = 0;   // bytes actually committed out of the reservation
@@ -617,6 +743,28 @@ static bool   g_wmOom = false;
 // Commit lazily so a small level does not pay for a huge reservation.
 static bool wmEnsure(long triIndex)
 {
+    // ⚠⚠ THE FLAGS COMMIT MUST RUN BEFORE THE TRI EARLY-RETURN, AND MUST NOT BE GATED ON IT.
+    // The two arrays hold DIFFERENT BYTES PER TRIANGLE - 36 for g_wmTri, 2 for g_wmFlags - and
+    // WM_CHUNK is 64 MB, so ONE tri commit covers ~1,864,135 triangles while one flags commit covers
+    // 524,288. Growing the flags only when the tri buffer happens to grow leaves it far short, and
+    // the write in addTri then runs off the end of the committed pages.
+    // MEASURED: the world gather died at exactly 524288 triangles (= 1 MB / 2 bytes, the first flags
+    // commit) and the world mesh came out empty - which presented as "World Collision broke" rather
+    // than as an out-of-bounds write, because the fault was swallowed by the gather's SEH guard.
+    if (g_wmFlags) {
+        const size_t fneed = (size_t)(triIndex + 1) * WM_FLAG_BYTES;
+        if (fneed > g_wmFlagsCommitted) {
+            size_t fwant = ((fneed + 0xFFFFF) & ~(size_t)0xFFFFF);   // 1 MB granularity
+            const size_t fcap = (size_t)MAX_WORLD_TRIS * WM_FLAG_BYTES;
+            if (fwant > fcap) fwant = fcap;
+            if (VirtualAlloc((char*)g_wmFlags + g_wmFlagsCommitted, fwant - g_wmFlagsCommitted,
+                             MEM_COMMIT, PAGE_READWRITE))
+                g_wmFlagsCommitted = fwant;
+            else
+                g_wmFlags = nullptr;   // lose the filter, keep the world mesh working
+        }
+    }
+
     const size_t need = (size_t)(triIndex + 1) * WM_TRI_BYTES;
     if (need <= g_wmCommitted) return true;
     if (!g_wmTri) return false;
@@ -664,6 +812,7 @@ static void addTri(float ax, float ay, float az, float bx, float by, float bz, f
         if (!g_wmTri || i >= MAX_WORLD_TRIS || !wmEnsure(i)) { g_triCapped = true; ++g_capWorld; return; }
         float* t = g_wmTri[i];
         t[0]=ax; t[1]=ay; t[2]=az; t[3]=bx; t[4]=by; t[5]=bz; t[6]=cx; t[7]=cy; t[8]=cz;
+        if (g_wmFlags) g_wmFlags[i] = g_curSurfFlags;
         g_wmTriCount = i + 1;
         ++g_triCount;
         return;
@@ -677,6 +826,18 @@ static void addTri(float ax, float ay, float az, float bx, float by, float bz, f
     v.set(cx, cy, cz); g_target->m_vertices.pushBack(v);
     hkGeometry::Triangle t; t.set(base, base + 1, base + 2);
     g_target->m_triangles.pushBack(t);
+    // Mirror into the object-bullet mesh. Dual-writing here rather than running a second emit pass
+    // keeps the object gather at one traversal: the walk is the expensive part, the extra pushBack
+    // is not, and a second pass could disagree with the first if any emitter is stateful.
+    if (g_bulTarget) {
+        int bb = g_bulTarget->m_vertices.getSize();
+        hkVector4 w;
+        w.set(ax, ay, az); g_bulTarget->m_vertices.pushBack(w);
+        w.set(bx, by, bz); g_bulTarget->m_vertices.pushBack(w);
+        w.set(cx, cy, cz); g_bulTarget->m_vertices.pushBack(w);
+        hkGeometry::Triangle bt; bt.set(bb, bb + 1, bb + 2);
+        g_bulTarget->m_triangles.pushBack(bt);
+    }
     ++g_triCount;
 }
 // Emit ONE triangle, wound so its normal points away from a reference point (the shape centre).
@@ -1256,6 +1417,20 @@ static void emitShape(uintptr_t shape, const Xform& X, int depth)
     if (!isHkObj(shape)) return;
     uint32_t type = rdD(shape + SHAPE_TYPE);
 
+    // Surface flags travel with the shape, so latch them here - every triangle emitted below belongs
+    // to THIS shape. Non-surface leaves (instanced meshes, convex hulls, boxes) have no flags word;
+    // 0 is the correct answer for them because it passes every filter, i.e. they are ordinary
+    // collision that bullets and characters both hit.
+    // Bit 15 marks "this triangle came from a type-31 collision SURFACE, so its flags are real".
+    // Without it, a surface whose flags are legitimately 0 is indistinguishable from a leaf that has
+    // no flags word at all (boxes, hulls, instanced meshes - types 1/3/4/5/6/15 all reach here). That
+    // distinction matters: the bullet rule is PROVEN for surfaces and merely ASSUMED for everything
+    // else, and conflating them hides which geometry we actually have data for.
+    g_curSurfFlags = (type == 31) ? (uint16_t)(0x8000u | (rdW(shape + 0x32) & 0x01FFu)) : (uint16_t)0;
+
+    // Re-decide per shape: a material override can put one shape of a body on a different layer.
+    if (g_wantObjBullet && !g_wantWorldMesh) objBulletVerdict(shape, g_curSurfFlags);
+
     // leaf filtering: skip leaves that belong to the other pass
     const bool isWorldMesh = (type == 7);
     const bool isLeaf = (type == 1 || type == 3 || type == 4 || type == 5 || type == 6 ||
@@ -1269,20 +1444,20 @@ static void emitShape(uintptr_t shape, const Xform& X, int depth)
 
     switch (type) {
     case ST_SPHERE: {
-        if (!g_wantWorldMesh) g_target = g_objBucket[BK_ROUND];
+        if (!g_wantWorldMesh) setObjTarget(BK_ROUND);
         float c[3] = { 0,0,0 };
         emitSphere(X, c, rdF(shape + CVX_RADIUS));
         return;
     }
     case ST_CAPSULE: {
-        if (!g_wantWorldMesh) g_target = g_objBucket[BK_ROUND];
+        if (!g_wantWorldMesh) setObjTarget(BK_ROUND);
         float A[3] = { rdF(shape+CAP_VERTA), rdF(shape+CAP_VERTA+4), rdF(shape+CAP_VERTA+8) };
         float B[3] = { rdF(shape+CAP_VERTB), rdF(shape+CAP_VERTB+4), rdF(shape+CAP_VERTB+8) };
         emitCapsule(X, A, B, rdF(shape + CVX_RADIUS));
         return;
     }
     case ST_BOX: {
-        if (!g_wantWorldMesh) g_target = g_objBucket[BK_BOX];
+        if (!g_wantWorldMesh) setObjTarget(BK_BOX);
         emitBox(X, rdF(shape+CVX_AABB_HE), rdF(shape+CVX_AABB_HE+4), rdF(shape+CVX_AABB_HE+8));
         return;
     }
@@ -1387,7 +1562,7 @@ static void emitShape(uintptr_t shape, const Xform& X, int depth)
         emitWorldMesh(shape, X, depth);
         return;
     case ST_CONVEX_VERTICES:
-        if (!g_wantWorldMesh) g_target = g_objBucket[BK_CONVEX];
+        if (!g_wantWorldMesh) setObjTarget(BK_CONVEX);
         emitConvexVertices(shape, X);
         return;
     case ST_CONVEX_TRANSLATE: {
@@ -1612,6 +1787,23 @@ static void collectBodies()
     }
 }
 
+// Read hkpWorld's live collision filter and cache the projectile row. Done once per gather rather
+// than per body: the filter is a tag-loaded table that does not change during a level, but reading it
+// live means a level whose tag differs is still answered correctly, with no baked-in assumption.
+static void resolveBulletFilter()
+{
+    g_bulRow = 0; g_bulRowValid = false; g_bulFilterIsBlam = false;
+    if (!g_world) return;
+    const uint64_t gf = rdQ(g_world + 0xD0);
+    if (!okPtr(gf)) { LOG("!! object bullet: no collision filter at world+0xD0"); return; }
+    // sub_180363E80 overwrites four sub-interface vtables with Blam subclasses; gf+0x28 is the
+    // hkpRayCollidableFilter subobject. If it is NOT the Blam one, the game has swapped the filter
+    // for something we did not RE and the row we read may not be the row projectiles use.
+    g_bulFilterIsBlam = (rdQ((uintptr_t)gf + 0x28) == (uint64_t)RV(0x18088F1B8ull));
+    g_bulRow      = rdD((uintptr_t)gf + 0x4C + 4u * PROJECTILE_LAYER);
+    g_bulRowValid = true;
+}
+
 static void emitAll(hkGeometry* dst, bool worldPass, int& bodiesOut)
 {
     g_target = dst;
@@ -1621,9 +1813,15 @@ static void emitAll(hkGeometry* dst, bool worldPass, int& bodiesOut)
     g_capMesh = g_capWorld = g_capGeom = 0;
     bodiesOut = 0;
     if (dst) { dst->m_vertices.clear(); dst->m_triangles.clear(); }
-    if (!worldPass)
+    g_bulTarget = HK_NULL;
+    if (!worldPass) {
         for (int b = 0; b < BK_COUNT; ++b)
             if (g_objBucket[b]) { g_objBucket[b]->m_vertices.clear(); g_objBucket[b]->m_triangles.clear(); }
+        for (int b = 0; b < BK_COUNT; ++b)
+            if (g_objBulBucket[b]) { g_objBulBucket[b]->m_vertices.clear(); g_objBulBucket[b]->m_triangles.clear(); }
+        g_bulPassBodies = g_bulPhantomBodies = g_bulLayerRejBodies = 0;
+        if (g_wantObjBullet) resolveBulletFilter();
+    }
     for (int i = 0; i < g_allN; ++i) {
         uintptr_t body = g_allBodies[i];
         Xform X;
@@ -1632,6 +1830,18 @@ static void emitAll(hkGeometry* dst, bool worldPass, int& bodiesOut)
             X = IDENT;
         }
         ++bodiesOut;
+        // Body-level half of the bullet predicate, latched before the walk. The per-shape half runs
+        // inside emitShape, because a material override can move one shape to another layer.
+        g_bodyBulOK = false; g_bodyLayer = 0; g_objBulletOK = false;
+        if (g_wantObjBullet && !worldPass) {
+            if (!bodyIsEntity(body)) { ++g_bulPhantomBodies; }
+            else {
+                g_bodyLayer = bodyBulletLayer(body);
+                g_bodyBulOK = true;
+                if (g_bulRowValid && !((g_bulRow >> g_bodyLayer) & 1u)) ++g_bulLayerRejBodies;
+                else ++g_bulPassBodies;
+            }
+        }
         emitShape((uintptr_t)rdQ(body + OFF_SHAPE), X, 0);
     }
 }
@@ -2495,14 +2705,71 @@ static void uninstallTickHook()
 
 
 // ===================== viewer processes =====================
+// CAT_FILT0 .. CAT_FILT0+FILT_COUNT-1 are the filtered world views, in g_view order.
 enum { CAT_OBJECTS, CAT_WORLD, CAT_COM, CAT_ISLANDS, CAT_TRIGVOL, CAT_SOFTCEIL,
-       CAT_LIVETRIG, CAT_COUNT };
+       CAT_LIVETRIG, CAT_OBJBULLET, CAT_FILT0, CAT_COUNT = CAT_FILT0 + 9 };
 static int s_tag[CAT_COUNT];
 // Distinct ranges: OBJ occupies OBJ_GEOM_ID .. +BK_COUNT-1, so it must not reach WORLD_GEOM_ID.
 static const hkUlong OBJ_GEOM_ID   = 0x11CE0100ull;
 static const hkUlong WORLD_GEOM_ID   = 0x11CE1000ull;   // .. +2048 (chunks)
 static const hkUlong TRIGVOL_GEOM_ID = 0x11CE2000ull;
 static const hkUlong SOFTCEIL_GEOM_ID= 0x11CE2001ull;
+// ---- FILTERED WORLD VIEWS -----------------------------------------------------------------------
+// Every one of these draws the SAME triangles as World Collision, filtered by the surface_flags word
+// recorded per triangle in g_wmFlags. They are table-driven rather than one set of globals each so
+// that adding a view costs a row, not a subsystem - and, crucially, so they all share one flags array
+// instead of each duplicating the mesh. A duplicated mesh per view would not fit the triangle budget.
+//
+// surface_flags (definition record 0x1809D6078, 9 options):
+//   bit0 0x001 two sided   bit1 0x002 invisible      bit2 0x004 climbable
+//   bit3 0x008 breakable   bit4 0x010 invalid        bit5 0x020 conveyor
+//   bit6 0x040 slip        bit7 0x080 plane negated  bit8 0x100 pathfinding only
+//
+// BULLET COLLISION is the one compound rule. This engine has NO separate bullet geometry - the
+// bullet/character difference is a per-query surface acceptance mask, and for the projectile mask
+// (0x09, from `mov ecx,24809h` in the projectile update chain) sub_1802E9D10 rejects exactly two
+// flags: invisible and pathfinding-only. BREAKABLE is NOT rejected - its clause is gated on mask bit
+// 0x10, which bullets do not set - so glass and destructible panels stop rounds. The character
+// movement mask (0x41) collapses to "accept everything", so those two flags ARE the whole difference.
+// `invalid` and `plane negated` get no view: they are authoring/debug state, not something to look at.
+static const hkUlong FILT_GEOM_BASE = 0x11CE3000ull;   // each view gets its own 0x1000 id range
+static const int     FILT_GEOM_STRIDE = 0x1000;        // > WM_MAX_CHUNKS, so ranges cannot overlap
+
+struct FilteredView
+{
+    const char* name;
+    uint16_t    requireSet;     // every one of these bits must be SET   (0 = no requirement)
+    uint16_t    requireClear;   // every one of these bits must be CLEAR (0 = no requirement)
+    hkUlong     colour;
+    int         chunkCount;
+    long        gen;
+    volatile long wanted;       // set when the viewer is first opened; unopened views cost nothing
+    hkGeometry* chunk[WM_MAX_CHUNKS];
+};
+
+static FilteredView g_view[] = {
+    { "Bullet Collision", 0x0000, 0x0102, 0xFF0000FF, 0, -1, 0, { HK_NULL } },  // blue, as Bungie's own tools use
+    { "Two-Sided",        0x0001, 0x0000, 0xFF00FFFF, 0, -1, 0, { HK_NULL } },  // cyan
+    { "Invisible",        0x0002, 0x0000, 0xFFFF00FF, 0, -1, 0, { HK_NULL } },  // magenta
+    { "Climbable",        0x0004, 0x0000, 0xFF00FF00, 0, -1, 0, { HK_NULL } },  // green
+    { "Breakable",        0x0008, 0x0000, 0xFFFF8000, 0, -1, 0, { HK_NULL } },  // orange
+    { "Conveyor",         0x0020, 0x0000, 0xFFFFFF00, 0, -1, 0, { HK_NULL } },  // yellow
+    { "Slip",             0x0040, 0x0000, 0xFFC0C0FF, 0, -1, 0, { HK_NULL } },  // pale blue
+    { "Pathfinding Only", 0x0100, 0x0000, 0xFF800000, 0, -1, 0, { HK_NULL } },  // dark red
+    // DIAGNOSTIC, not a game concept: world leaves that are NOT type-31 surfaces and therefore carry
+    // no surface_flags - boxes, convex hulls, instanced meshes. Bullet Collision currently INCLUDES
+    // these on the assumption that ordinary collision stops rounds, which is true for most of them but
+    // is an assumption, not a proven rule. If something visibly lets bullets through, look for it here
+    // first: if it shows up in this view, the bullet filter has no data on it rather than a wrong bit.
+    { "No Flag Data",     0x0000, 0x8000, 0xFF00C0C0, 0, -1, 0, { HK_NULL } },  // teal
+};
+static const int FILT_COUNT = (int)(sizeof(g_view) / sizeof(g_view[0]));
+
+static bool viewAccepts(const FilteredView& v, uint16_t f)
+{
+    return (v.requireSet == 0 || (f & v.requireSet) == v.requireSet)
+        && ((f & v.requireClear) == 0);
+}
 static const hkUlong LIVETRIG_ON_ID   = 0x11CE2002ull;   // active volumes   (green)
 static const hkUlong LIVETRIG_OFF_ID  = 0x11CE2003ull;   // inactive volumes (red)
 
@@ -2526,7 +2793,18 @@ public:
     int  m_worldChunks;          // highest world chunk id this client has been sent
     int  m_worldSent;            // how many chunks have been pushed so far (paced)
     long m_scenGen;              // scenario generation this client's volumes reflect
-    CatProcess(int c) : hkProcess(true), m_cat(c), m_added(false), m_objGen(-1), m_worldGen(-1), m_worldChunks(0), m_worldSent(0), m_scenGen(-1) {}
+    CatProcess(int c) : hkProcess(true), m_cat(c), m_added(false), m_objGen(-1), m_worldGen(-1), m_worldChunks(0), m_worldSent(0), m_scenGen(-1)
+    {
+        // Opting in here means a view that is never opened is never built, so unused filters cost
+        // nothing. -1 forces a build on the next gather.
+        if (c >= CAT_FILT0 && c < CAT_FILT0 + FILT_COUNT) {
+            g_view[c - CAT_FILT0].wanted = 1;
+            g_view[c - CAT_FILT0].gen    = -1;
+        }
+        // Same idea for the object bullet mirror: unopened, addTri never mirrors and the extra
+        // buckets stay empty, so the object gather costs exactly what it did before.
+        if (c == CAT_OBJBULLET) { g_wantObjBullet = 1; m_objGen = -1; }
+    }
 
     // Unticking a viewer in the HVDB client DESTROYS the process - so geometry we added must be
     // removed here, otherwise the mesh stays on screen forever and the toggle appears to do
@@ -2540,8 +2818,14 @@ public:
         }
         else if (m_cat == CAT_TRIGVOL)  removeGeomGuarded(m_displayHandler, TRIGVOL_GEOM_ID, s_tag[m_cat]);
         else if (m_cat == CAT_SOFTCEIL) removeGeomGuarded(m_displayHandler, SOFTCEIL_GEOM_ID, s_tag[m_cat]);
+        else if (m_cat >= CAT_FILT0 && m_cat < CAT_FILT0 + FILT_COUNT) {
+            const hkUlong base = FILT_GEOM_BASE + (hkUlong)(m_cat - CAT_FILT0) * FILT_GEOM_STRIDE;
+            for (int c = 0; c < m_worldChunks; ++c) removeGeomGuarded(m_displayHandler, base + c, s_tag[m_cat]);
+        }
         else if (m_cat == CAT_WORLD) { for (int c = 0; c < m_worldChunks; ++c)
                  removeGeomGuarded(m_displayHandler, WORLD_GEOM_ID + c, s_tag[m_cat]); }
+        else if (m_cat == CAT_OBJBULLET) { for (int b = 0; b < BK_COUNT; ++b)
+                 removeGeomGuarded(m_displayHandler, OBJBUL_GEOM_ID + b, s_tag[m_cat]); }
         else for (int b = 0; b < BK_COUNT; ++b)
                  removeGeomGuarded(m_displayHandler, OBJ_GEOM_ID + b, s_tag[m_cat]);
         m_added = false;
@@ -2584,7 +2868,39 @@ public:
         m_added = any;
     }
 
-    void stepWorld(HDH* H, int tag)
+    // Object Bullet Collision: the subset of object geometry a projectile trace can actually reach.
+    // Separate viewer rather than folding into World "Bullet Collision" because the object mesh is
+    // rebuilt EVERY frame while the world mesh is built once per level - merging them would re-filter
+    // ~2.5M static world triangles per frame to keep a few thousand object triangles current.
+    void stepObjBullet(HDH* H, int tag)
+    {
+        if (!g_ready) return;
+        if (m_added && m_objGen == g_objGen) return;
+        m_objGen = g_objGen;
+        if (m_added) {
+            for (int b = 0; b < BK_COUNT; ++b) H->removeGeometry(OBJBUL_GEOM_ID + b, tag, 0);
+            m_added = false;
+        }
+        bool any = false;
+        for (int b = 0; b < BK_COUNT; ++b) {
+            if (!g_objBulBucket[b] || g_objBulBucket[b]->m_triangles.getSize() == 0) continue;
+            hkArray<hkDisplayGeometry*> geoms;
+            hkDisplayConvex dc(g_objBulBucket[b]);
+            geoms.pushBack(&dc);
+            hkTransform tr; tr.setIdentity();
+            H->addGeometry(geoms, tr, OBJBUL_GEOM_ID + b, tag, 0);
+            H->setGeometryColor(0xFF00A0FF, OBJBUL_GEOM_ID + b, tag);   // azure - bullet family, but
+            dc.m_geometry = HK_NULL;                                    // distinct from world blue
+            any = true;
+        }
+        m_added = any;
+    }
+
+    // Shared by World Collision and Bullet Collision - same geometry source shape, same paced upload,
+    // different array / id range / colour. Parameterised rather than duplicated so the pacing fix and
+    // the generation handling can never drift between the two viewers.
+    void stepWorld(HDH* H, int tag, hkGeometry** chunks, int chunkCount, long gen,
+                   hkUlong geomId, hkUlong colour)
     {
         if (!g_ready) return;
         // PACE THE SEND. Pushing all ~400 chunks inside one vdb->step() dumps hundreds of MB of
@@ -2592,34 +2908,34 @@ public:
         // buffer cannot take is silently lost, which is what produced scattered holes. Even the
         // base-BSP-only case was ~40 MB in one step. Object collision (<1 MB) never had holes.
         // The level is static, so spreading the upload over a few seconds costs nothing.
-        if (m_worldGen != g_worldGeoGen) {          // new build of the world mesh -> restart upload
-            for (int c = 0; c < m_worldChunks; ++c) H->removeGeometry(WORLD_GEOM_ID + c, tag, 0);
-            m_worldGen = g_worldGeoGen;
+        if (m_worldGen != gen) {          // new build of the world mesh -> restart upload
+            for (int c = 0; c < m_worldChunks; ++c) H->removeGeometry(geomId + c, tag, 0);
+            m_worldGen = gen;
             m_worldChunks = 0;
             m_worldSent = 0;
             m_added = false;
         }
-        if (m_worldSent >= g_worldChunkCount) return;   // fully uploaded, nothing to do
+        if (m_worldSent >= chunkCount) return;   // fully uploaded, nothing to do
 
         // Send the whole mesh in one step. Pacing was added to test a per-step-burst theory for the
         // holes; that theory was wrong (the holes were an N-gon decode bug), so pacing only cost
         // ~10 s of latency. The upload is a one-off per level, so a single frame's work is fine.
-        while (m_worldSent < g_worldChunkCount) {
+        while (m_worldSent < chunkCount) {
             const int c = m_worldSent++;
-            hkGeometry* g = g_worldChunk[c];
+            hkGeometry* g = chunks[c];
             if (!g || g->m_triangles.getSize() == 0) continue;
             hkArray<hkDisplayGeometry*> geoms;
             hkDisplayConvex dc(g);
             geoms.pushBack(&dc);
             hkTransform tr; tr.setIdentity();
-            H->addGeometry(geoms, tr, WORLD_GEOM_ID + c, tag, 0);
-            H->setGeometryColor(0xFF909090, WORLD_GEOM_ID + c, tag);   // grey = static world
+            H->addGeometry(geoms, tr, geomId + c, tag, 0);
+            H->setGeometryColor(colour, geomId + c, tag);
             dc.m_geometry = HK_NULL;
             if (c + 1 > m_worldChunks) m_worldChunks = c + 1;
             m_added = true;
         }
-        if (m_worldSent >= g_worldChunkCount)
-            LOG("world upload complete: %d/%d chunks pushed", m_worldSent, g_worldChunkCount);
+        if (m_worldSent >= chunkCount)
+            LOG("world upload complete: %d/%d chunks pushed", m_worldSent, chunkCount);
     }
 
     // Trigger volumes: translucent skin as persistent geometry (only re-sent when the scenario
@@ -2718,19 +3034,34 @@ public:
         __try {
             switch (m_cat) {
             case CAT_OBJECTS:  stepObjects(H, tag);  break;
-            case CAT_WORLD:    stepWorld(H, tag);    break;
+            case CAT_OBJBULLET: stepObjBullet(H, tag); break;
+            case CAT_WORLD:    stepWorld(H, tag, g_worldChunk, g_worldChunkCount, g_worldGeoGen,
+                                         WORLD_GEOM_ID, 0xFF909090); break;   // grey = static world
             case CAT_COM:      drawCoM(H, tag);      break;
             case CAT_ISLANDS:  drawIslands(H, tag);  break;
             case CAT_TRIGVOL:  stepTrigVol(H, tag);  break;
             case CAT_SOFTCEIL: stepSoftCeil(H, tag); break;
             case CAT_LIVETRIG: stepLiveTrig(H, tag); break;
+            default:
+                // Filtered world views share stepWorld; the row supplies array, id range and colour.
+                if (m_cat >= CAT_FILT0 && m_cat < CAT_FILT0 + FILT_COUNT) {
+                    FilteredView& v = g_view[m_cat - CAT_FILT0];
+                    stepWorld(H, tag, v.chunk, v.chunkCount, v.gen,
+                              FILT_GEOM_BASE + (hkUlong)(m_cat - CAT_FILT0) * FILT_GEOM_STRIDE, v.colour);
+                }
+                break;
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
     }
 };
 
 static hkProcess* HK_CALL crObjects(const hkArray<hkProcessContext*>&) { return new CatProcess(CAT_OBJECTS); }
+static hkProcess* HK_CALL crObjBullet(const hkArray<hkProcessContext*>&) { return new CatProcess(CAT_OBJBULLET); }
 static hkProcess* HK_CALL crWorld  (const hkArray<hkProcessContext*>&) { return new CatProcess(CAT_WORLD); }
+// One creator per filtered view. hkProcessFactory takes a plain function pointer with no user data,
+// so the view index has to come from the function's identity - hence the explicit table rather than a
+// loop. Keep this in step with g_view.
+template <int I> static hkProcess* HK_CALL crFilt(const hkArray<hkProcessContext*>&) { return new CatProcess(CAT_FILT0 + I); }
 static hkProcess* HK_CALL crTrigVol(const hkArray<hkProcessContext*>&) { return new CatProcess(CAT_TRIGVOL); }
 static hkProcess* HK_CALL crSoftCeil(const hkArray<hkProcessContext*>&){ return new CatProcess(CAT_SOFTCEIL); }
 static hkProcess* HK_CALL crLiveTrig(const hkArray<hkProcessContext*>&){ return new CatProcess(CAT_LIVETRIG); }
@@ -2810,11 +3141,17 @@ static DWORD WINAPI vdbThread(LPVOID)
 
     g_objGeo = new hkGeometry();
     for (int b = 0; b < BK_COUNT; ++b) g_objBucket[b] = new hkGeometry();
+    for (int b = 0; b < BK_COUNT; ++b) g_objBulBucket[b] = new hkGeometry();
 
     // RESERVE, commit on demand. The standalone committed 91 MB of scratch on load and never freed it;
     // inside HCM that is charged to the game process on the very first toggle, for buffers a small
     // level never touches. g_wmTri already worked this way (wmEnsure); the rest now match.
     g_wmTri     = (float(*)[9])VirtualAlloc(nullptr, (size_t)MAX_WORLD_TRIS * WM_TRI_BYTES, MEM_RESERVE, PAGE_READWRITE);
+    // Parallel per-triangle surface flags. RESERVE only - wmEnsure commits it in step with g_wmTri.
+    // A failure here is not fatal: g_wmFlags stays null, the world mesh is unaffected, and the
+    // Bullet viewer simply has nothing to filter on (it reports that rather than drawing a lie).
+    g_wmFlags   = (uint16_t*)VirtualAlloc(nullptr, (size_t)MAX_WORLD_TRIS * WM_FLAG_BYTES, MEM_RESERVE, PAGE_READWRITE);
+    g_wmFlagsCommitted = 0;
     g_tvTri     = (float(*)[9])VirtualAlloc(nullptr, (size_t)MAX_SCEN_TRIS * 9 * sizeof(float), MEM_RESERVE, PAGE_READWRITE);
     g_scTri     = (float(*)[9])VirtualAlloc(nullptr, (size_t)MAX_SCEN_TRIS * 9 * sizeof(float), MEM_RESERVE, PAGE_READWRITE);
     g_tvEdge    = (float(*)[6])VirtualAlloc(nullptr, (size_t)MAX_SCEN_EDGES * 6 * sizeof(float), MEM_RESERVE, PAGE_READWRITE);
@@ -2843,7 +3180,18 @@ static DWORD WINAPI vdbThread(LPVOID)
 
     hkProcessFactory& f = hkProcessFactory::getInstance();
     s_tag[CAT_OBJECTS] = f.registerProcess("Object Collision", crObjects);
+    s_tag[CAT_OBJBULLET] = f.registerProcess("Object Bullet Collision", crObjBullet);
     s_tag[CAT_WORLD]   = f.registerProcess("World Collision",  crWorld);
+    // Filtered world views. crFilt<I> is instantiated per index so each viewer knows which row it is.
+    s_tag[CAT_FILT0 + 0] = f.registerProcess(g_view[0].name, crFilt<0>);
+    s_tag[CAT_FILT0 + 1] = f.registerProcess(g_view[1].name, crFilt<1>);
+    s_tag[CAT_FILT0 + 2] = f.registerProcess(g_view[2].name, crFilt<2>);
+    s_tag[CAT_FILT0 + 3] = f.registerProcess(g_view[3].name, crFilt<3>);
+    s_tag[CAT_FILT0 + 4] = f.registerProcess(g_view[4].name, crFilt<4>);
+    s_tag[CAT_FILT0 + 5] = f.registerProcess(g_view[5].name, crFilt<5>);
+    s_tag[CAT_FILT0 + 6] = f.registerProcess(g_view[6].name, crFilt<6>);
+    s_tag[CAT_FILT0 + 7] = f.registerProcess(g_view[7].name, crFilt<7>);
+    s_tag[CAT_FILT0 + 8] = f.registerProcess(g_view[8].name, crFilt<8>);
     s_tag[CAT_COM]     = f.registerProcess("Center of Mass",   crCoM);
     s_tag[CAT_ISLANDS] = f.registerProcess("Havok Islands",    crIslands);
     s_tag[CAT_TRIGVOL] = f.registerProcess("Trigger Volumes",  crTrigVol);
@@ -2940,6 +3288,64 @@ static DWORD WINAPI vdbThread(LPVOID)
                 LOG("world geometry rebuilt: %ld tris in %d chunks | AABB (%.1f %.1f %.1f)..(%.1f %.1f %.1f)",
                     n, g_worldChunkCount, g_wmMin[0], g_wmMin[1], g_wmMin[2], g_wmMax[0], g_wmMax[1], g_wmMax[2]);
             }
+
+            // ---- Filtered world views: the same triangles, minus the ones each filter excludes.
+            // Built only for views that have been opened, and rebuilt whenever the world mesh
+            // regenerates. Compacted per chunk rather than index-mapped, so a chunk can never exceed
+            // the 65535-vertex ceiling the world path already respects.
+            for (int vi = 0; vi < FILT_COUNT; ++vi) {
+                FilteredView& v = g_view[vi];
+                if (!v.wanted || v.gen == g_worldGeoGen) continue;
+                v.gen = g_worldGeoGen;
+                if (!g_wmFlags) {
+                    v.chunkCount = 0;
+                    LOG("!! '%s' unavailable: per-triangle surface flags were not allocated", v.name);
+                    continue;
+                }
+                const long n = g_wmTriCount;
+                int c = 0, inChunk = 0; long kept = 0;
+                hkGeometry* g = HK_NULL;
+                for (long i = 0; i < n && c < WM_MAX_CHUNKS; ++i) {
+                    if (!viewAccepts(v, g_wmFlags[i])) continue;
+                    if (!g || inChunk >= WM_TRIS_PER_CHUNK) {
+                        if (g) ++c;
+                        if (c >= WM_MAX_CHUNKS) break;
+                        if (!v.chunk[c]) v.chunk[c] = new hkGeometry();
+                        g = v.chunk[c];
+                        g->m_vertices.clear();
+                        g->m_triangles.clear();
+                        inChunk = 0;
+                    }
+                    const float* t = g_wmTri[i];
+                    int b = g->m_vertices.getSize();
+                    hkVector4 hv;
+                    hv.set(t[0],t[1],t[2]); g->m_vertices.pushBack(hv);
+                    hv.set(t[3],t[4],t[5]); g->m_vertices.pushBack(hv);
+                    hv.set(t[6],t[7],t[8]); g->m_vertices.pushBack(hv);
+                    hkGeometry::Triangle tr; tr.set(b, b+1, b+2);
+                    g->m_triangles.pushBack(tr);
+                    ++inChunk; ++kept;
+                }
+                v.chunkCount = g ? (c + 1) : 0;
+                // Clear chunks left over from a larger previous build, so a viewer indexing past the
+                // new count cannot upload stale geometry.
+                for (int k = v.chunkCount; k < WM_MAX_CHUNKS && v.chunk[k]; ++k) {
+                    v.chunk[k]->m_vertices.clear();
+                    v.chunk[k]->m_triangles.clear();
+                }
+                // The kept count is the correctness check: a view that keeps 0 of a non-empty world
+                // means either the level genuinely has no such surface or the flags read is wrong.
+                if (vi == 0) {   // count once per rebuild pass, on the first view
+                    long surf = 0, flagged = 0; uint16_t seen = 0;
+                    for (long i = 0; i < n; ++i) {
+                        const uint16_t f = g_wmFlags[i];
+                        if (f & 0x8000) { ++surf; if (f & 0x01FF) { ++flagged; seen |= (uint16_t)(f & 0x01FF); } }
+                    }
+                    LOG("surface flags: %ld of %ld tris are type-31 surfaces, %ld of those carry flags "
+                        "(union 0x%03X); %ld tris have NO flag data", surf, n, flagged, seen, n - surf);
+                }
+                LOG("'%s' rebuilt: %ld of %ld tris kept in %d chunks", v.name, kept, n, v.chunkCount);
+            }
         }
 
         vdb->step(16.0f);
@@ -2950,6 +3356,15 @@ static DWORD WINAPI vdbThread(LPVOID)
             char un[256]; int o = 0; un[0] = 0;
             for (int t = 0; t < 64; ++t)
                 if (g_unhandled[t]) appendf(un, sizeof(un), o, "type%d(x%d) ", t, g_unhandled[t]);
+            if (g_wantObjBullet)
+                LOG("obj bullet: %d bodies reachable, %d rejected by layer, %d phantoms | "
+                    "projectile row 7 = 0x%08X%s | mirrored tris=%d",
+                    g_bulPassBodies, g_bulLayerRejBodies, g_bulPhantomBodies, g_bulRow,
+                    g_bulRowValid ? (g_bulFilterIsBlam ? "" : " (NOT the Blam filter subclass!)")
+                                  : " (FILTER UNREADABLE)",
+                    (g_objBulBucket[0] ? g_objBulBucket[0]->m_triangles.getSize() : 0) +
+                    (g_objBulBucket[1] ? g_objBulBucket[1]->m_triangles.getSize() : 0) +
+                    (g_objBulBucket[2] ? g_objBulBucket[2]->m_triangles.getSize() : 0));
             LOG("obj: bodies=%d tris=%d%s | world: bodies=%d tris=%d%s | ticks=%ld | unhandled=[%s]",
                 g_bodyCount,
                 (g_objBucket[0] ? g_objBucket[0]->m_triangles.getSize() : 0) +

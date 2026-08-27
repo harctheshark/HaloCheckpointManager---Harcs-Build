@@ -169,7 +169,8 @@ HCEFieldOfView,\
 HCEDisableFadeFromBlack,\
 HCEDumpCheckpoint,\
 HCEInjectCheckpoint,\
-HCESoftCeilingOverlay
+HCESoftCeilingOverlay,\
+CompetitionMode
 
 
 enum class OptionalCheatEnum {

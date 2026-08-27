@@ -262,6 +262,10 @@ namespace
 	{
 		std::thread mThread;
 		std::atomic_bool mRunning{ false };
+		// Set when we refuse a source rather than decode it at native size (see decodeLoop). Read and
+		// cleared once by the render thread so the user gets exactly one message per rejected file.
+		std::atomic_bool mRejected{ false };
+		std::atomic<UINT> mRejW{ 0 }, mRejH{ 0 };
 		std::wstring mPath;
 
 		// D3D (AddRef'd in start, released in stop). mDevMgr non-null => try the hardware/GPU decode path.
@@ -360,7 +364,21 @@ namespace
 					}
 					return ok;
 				};
-				if (!setOutput(outW, outH)) setOutput(0, 0); // fall back to native RGB32 if the resize isn't accepted
+				// ⚠⚠ DO NOT fall back to native resolution here. A decoder that refuses the downscale would leave us
+				// decoding at full source size - a 4K frame is ~33 MB and every frame becomes a full texture, which is
+				// an unbounded allocation that can take the game down. Refuse the file and report it: a broadcast
+				// machine failing loudly at setup beats crashing mid-tournament.
+				if (!setOutput(outW, outH))
+				{
+					PLOG_ERROR << "Emblem video: decoder refused the " << outW << "x" << outH
+						<< " downscale (source " << natW << "x" << natH << "); refusing rather than decoding at native size.";
+					mRejW.store(natW, std::memory_order_relaxed);
+					mRejH.store(natH, std::memory_order_relaxed);
+					mRejected.store(true, std::memory_order_release);
+					reader->Release();
+					MFShutdown();
+					return;
+				}
 
 				// fw/fh = frame size; apX/apY/apW/apH = the actual visible region (geometric aperture) within it.
 				// Hardware decoders can report a padded coded FRAME_SIZE with the real picture inset in the aperture,
@@ -491,6 +509,14 @@ namespace
 			return true;
 		}
 
+		// One-shot: true exactly once after a source was refused, so the caller can report it and move on.
+		bool takeRejection(UINT& w, UINT& h)
+		{
+			if (!mRejected.exchange(false, std::memory_order_acq_rel)) return false;
+			w = mRejW.load(std::memory_order_relaxed);
+			h = mRejH.load(std::memory_order_relaxed);
+			return true;
+		}
 		bool isGpu() const { return mGpu.load(std::memory_order_acquire); }
 		ID3D11ShaderResourceView* gpuSRV() const { return mGpuSRV.load(std::memory_order_acquire); }
 
@@ -904,6 +930,12 @@ private:
 				videoSRV = mVideoPlayer.gpuSRV();
 			else
 			{
+				UINT rw = 0, rh = 0;
+				if (mVideoPlayer.takeRejection(rw, rh))
+					if (auto m = messagesWeak.lock())
+						m->addMessage("Custom emblem: that video is too large (" + std::to_string(rw) + "x"
+							+ std::to_string(rh) + ") - the decoder would not downscale it. Try a smaller file.");
+
 				UINT vw = 0, vh = 0;
 				if (device && ctx && mVideoPlayer.fetch(mVideoFrameBuf, vw, vh))
 					uploadVideoFrame(device, ctx, vw, vh, mVideoFrameBuf.data());

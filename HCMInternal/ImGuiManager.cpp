@@ -31,6 +31,22 @@ LRESULT __stdcall ImGuiManager::mNewWndProc(const HWND hWnd, UINT uMsg, WPARAM w
 		return mOldWndProc ? CallWindowProc(mOldWndProc, hWnd, uMsg, wParam, lParam)
 		                   : DefWindowProcW(hWnd, uMsg, wParam, lParam);
 
+	// ⚠⚠ MEASURED CRASH, NOT A PRECAUTION. ImGui::GetIO() is `return GImGui->IO;` guarded only by an
+	// IM_ASSERT, which COMPILES OUT IN RELEASE. Because it returns a REFERENCE, a null context does not
+	// fault here - taking &GImGui->IO on a null GImGui is just offset arithmetic. It faults at the FIRST
+	// USE of io, which is `io.WantCaptureMouse` below, reading null+0xB8.
+	//
+	// That is exactly the crash in the 2026-08-25 dump: HCMInternal.dll!ImGuiManager::mNewWndProc+0x119,
+	// ACCESS_VIOLATION reading 0x00000000000000B8, symbolised to this file. It reproduces when RivaTuner
+	// is CLOSED while HCM is live - RTSS hooks this same window procedure, and unloading it re-enters the
+	// chain at a moment when our ImGui context does not exist. GlobalKill covers our own shutdown; it does
+	// NOT cover "a message arrived before the context was created, or after someone else's teardown".
+	//
+	// Any message that reaches us without a context belongs to the game, so hand it straight on.
+	if (ImGui::GetCurrentContext() == nullptr)
+		return mOldWndProc ? CallWindowProc(mOldWndProc, hWnd, uMsg, wParam, lParam)
+		                   : DefWindowProcW(hWnd, uMsg, wParam, lParam);
+
 	//https://www.unknowncheats.me/forum/2488829-post5.html
 	ImGuiIO& io = ImGui::GetIO();
 	LRESULT res = ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);

@@ -2724,6 +2724,136 @@ public:
 			nameof(abilityMeterCooldownHighlightColor)
 		);
 
+	// ============================ Competition Mode (Halo 2 Classic broadcast scoreboard) ============================
+	// Two independently configurable panels. Left and right each carry their own placement, width, font
+	// size and accent colour, so an operator can match an existing broadcast layout on either side.
+
+	std::shared_ptr<BinarySetting<bool>> competitionModeToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(competitionModeToggle)
+		);
+
+	// Scales BOTH panels at once, on top of each side's own font size and width.
+	std::shared_ptr<BinarySetting<float>> competitionModeScale = std::make_shared<BinarySetting<float>>
+		(
+			1.5f,
+			[](float in) { return in >= 0.25f && in <= 4.0f; },
+			nameof(competitionModeScale)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> competitionModeBackgroundColour = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{0.0f, 0.0f, 0.0f, 0.72f},
+			[](SimpleMath::Vector4 in) { return in.x >= 0 && in.y >= 0 && in.z >= 0 && in.w >= 0 && in.x <= 1 && in.y <= 1 && in.z <= 1 && in.w <= 1; },
+			nameof(competitionModeBackgroundColour)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> competitionModeTextColour = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{1.0f, 1.0f, 1.0f, 1.f},
+			[](SimpleMath::Vector4 in) { return in.x >= 0 && in.y >= 0 && in.z >= 0 && in.w >= 0 && in.x <= 1 && in.y <= 1 && in.z <= 1 && in.w <= 1; },
+			nameof(competitionModeTextColour)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> competitionModeShowKD = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(competitionModeShowKD)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> competitionModeShowKDRatio = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(competitionModeShowKDRatio)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> competitionModeShowColumnHeaders = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(competitionModeShowColumnHeaders)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> competitionModeOutlineText = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(competitionModeOutlineText)
+		);
+
+	// Draws the second panel even when the match has no second team. Purely a layout aid - it lets an
+	// operator position and colour both sides before a match fills up.
+	std::shared_ptr<BinarySetting<bool>> competitionModeForceBothPanels = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(competitionModeForceBothPanels)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector2>> competitionModeLeftOffset = std::make_shared<BinarySetting<SimpleMath::Vector2>>
+		(
+			SimpleMath::Vector2{64, 256},
+			[](SimpleMath::Vector2 in) { return in.x >= 0 && in.y >= 0; },
+			nameof(competitionModeLeftOffset)
+		);
+
+	std::shared_ptr<BinarySetting<float>> competitionModeLeftPanelWidth = std::make_shared<BinarySetting<float>>
+		(
+			720.f,
+			[](float in) { return in >= 120.f && in <= 1600.f; },
+			nameof(competitionModeLeftPanelWidth)
+		);
+
+	std::shared_ptr<BinarySetting<float>> competitionModeLeftFontSize = std::make_shared<BinarySetting<float>>
+		(
+			15.f,
+			[](float in) { return in >= 6.f && in <= 96.f; },
+			nameof(competitionModeLeftFontSize)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> competitionModeLeftColour = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{0.87f, 0.19f, 0.20f, 1.f},
+			[](SimpleMath::Vector4 in) { return in.x >= 0 && in.y >= 0 && in.z >= 0 && in.w >= 0 && in.x <= 1 && in.y <= 1 && in.z <= 1 && in.w <= 1; },
+			nameof(competitionModeLeftColour)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector2>> competitionModeRightOffset = std::make_shared<BinarySetting<SimpleMath::Vector2>>
+		(
+			SimpleMath::Vector2{64, 256},
+			[](SimpleMath::Vector2 in) { return in.x >= 0 && in.y >= 0; },
+			nameof(competitionModeRightOffset)
+		);
+
+	std::shared_ptr<BinarySetting<float>> competitionModeRightPanelWidth = std::make_shared<BinarySetting<float>>
+		(
+			720.f,
+			[](float in) { return in >= 120.f && in <= 1600.f; },
+			nameof(competitionModeRightPanelWidth)
+		);
+
+	std::shared_ptr<BinarySetting<float>> competitionModeRightFontSize = std::make_shared<BinarySetting<float>>
+		(
+			15.f,
+			[](float in) { return in >= 6.f && in <= 96.f; },
+			nameof(competitionModeRightFontSize)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> competitionModeRightColour = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{0.23f, 0.51f, 0.96f, 1.f},
+			[](SimpleMath::Vector4 in) { return in.x >= 0 && in.y >= 0 && in.z >= 0 && in.w >= 0 && in.x <= 1 && in.y <= 1 && in.z <= 1 && in.w <= 1; },
+			nameof(competitionModeRightColour)
+		);
+
+
+
+
+
 
 
 	std::shared_ptr<BinarySetting<float>> soundClassGainDialog = std::make_shared<BinarySetting<float>>
@@ -2943,6 +3073,25 @@ public:
 			abilityMeterCooldownBackgroundColor,
 			abilityMeterCooldownForegroundColor,
 			abilityMeterCooldownHighlightColor,
+
+			competitionModeToggle,
+			competitionModeScale,
+			competitionModeBackgroundColour,
+			competitionModeTextColour,
+			competitionModeShowKD,
+			competitionModeShowKDRatio,
+			competitionModeShowColumnHeaders,
+			competitionModeOutlineText,
+			competitionModeForceBothPanels,
+			competitionModeLeftOffset,
+			competitionModeLeftPanelWidth,
+			competitionModeLeftFontSize,
+			competitionModeLeftColour,
+			competitionModeRightOffset,
+			competitionModeRightPanelWidth,
+			competitionModeRightFontSize,
+			competitionModeRightColour,
+
 		renderDistance3D,
 		messagesFontSize,
 			messagesFontColor,

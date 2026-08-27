@@ -140,6 +140,7 @@
 #include "FreeCameraFOVOverride.h"
 #include "GetAbilityData.h"
 #include "AbilityMeterOverlay.h"
+#include "CompetitionMode.h"
 #include "GetTagAddressPresenter.h"
 #include "SoundClassGain.h"
 #include "ChangeOOBBackground.h"

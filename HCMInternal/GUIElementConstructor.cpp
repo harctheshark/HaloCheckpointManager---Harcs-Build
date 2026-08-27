@@ -1292,6 +1292,8 @@ private:
 							createNestedElement(GUIElementEnum::abilityMeterOverlaySettings),
 							createNestedElement(GUIElementEnum::sensDriftOverlayToggle),
 							createNestedElement(GUIElementEnum::sensDriftOverlaySettings),
+							createNestedElement(GUIElementEnum::competitionModeToggle),
+							createNestedElement(GUIElementEnum::competitionModeSettings),
 						}));
 
 
@@ -1974,6 +1976,110 @@ private:
 			case GUIElementEnum::shieldInputPrinterToggle:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 					(game, ToolTipCollection("Locks onto nearest deployable shield; when shield disabled, prints which tick you pressed movement inputs"), RebindableHotkeyEnum::shieldInputPrinterToggleHotkey, "Shield Input Printer", settings->shieldInputPrinterToggle));
+
+			case GUIElementEnum::competitionModeToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Broadcast scoreboard for tournament observers. Two independently placed panels, left and right, with team totals and a per-player breakdown. Gametype aware. Halo 2 Classic only."), std::nullopt, "Competition Mode", settings->competitionModeToggle));
+
+			case GUIElementEnum::competitionModeSettings:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+					(game, ToolTipCollection("Appearance and layout of the Competition Mode scoreboard"), "Competition Mode Settings", headerChildElements
+						{
+							createNestedElement(GUIElementEnum::competitionModeScale),
+							createNestedElement(GUIElementEnum::competitionModeBackgroundColour),
+							createNestedElement(GUIElementEnum::competitionModeTextColour),
+							createNestedElement(GUIElementEnum::competitionModeShowKD),
+							createNestedElement(GUIElementEnum::competitionModeShowKDRatio),
+							createNestedElement(GUIElementEnum::competitionModeShowColumnHeaders),
+							createNestedElement(GUIElementEnum::competitionModeOutlineText),
+							createNestedElement(GUIElementEnum::competitionModeForceBothPanels),
+							createNestedElement(GUIElementEnum::competitionModeLeftSettings),
+							createNestedElement(GUIElementEnum::competitionModeRightSettings),
+						}));
+
+				case GUIElementEnum::competitionModeScale:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.25f, 4.f)>>
+						(game, ToolTipCollection("Scales both panels at once. Set this for the capture resolution, then fine tune each side below."), "Overall Scale", settings->competitionModeScale));
+
+				case GUIElementEnum::competitionModeBackgroundColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
+						(game, ToolTipCollection("Panel background. Drop the alpha for a lighter look, raise it for readability over busy maps."), "Panel Background##competitionMode", settings->competitionModeBackgroundColour));
+
+				case GUIElementEnum::competitionModeTextColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
+						(game, ToolTipCollection(""), "Text Colour##competitionMode", settings->competitionModeTextColour));
+
+				case GUIElementEnum::competitionModeShowKD:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Show kills and deaths beside each player's score"), std::nullopt, "Show K/D", settings->competitionModeShowKD));
+
+				case GUIElementEnum::competitionModeShowKDRatio:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Show the kill/death ratio as its own column. Independent of Show K/D - either can be on without the other."), std::nullopt, "Show K/D Ratio", settings->competitionModeShowKDRatio));
+
+				case GUIElementEnum::competitionModeShowColumnHeaders:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Adds a header row labelling the columns, so viewers can tell K/D apart from game points"), std::nullopt, "Show Column Headers", settings->competitionModeShowColumnHeaders));
+
+				case GUIElementEnum::competitionModeForceBothPanels:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Draws the second panel even when the match has no second team. A layout aid for positioning both sides before a match fills up - both panels will list the same players."), std::nullopt, "Force Both Panels", settings->competitionModeForceBothPanels));
+
+				case GUIElementEnum::competitionModeOutlineText:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Outlines the text so it stays readable over bright map geometry. Worth leaving on for broadcast."), std::nullopt, "Outline Text", settings->competitionModeOutlineText));
+
+			case GUIElementEnum::competitionModeLeftSettings:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+					(game, ToolTipCollection("Placement, size and colour for the left panel"), "Left Panel Settings", headerChildElements
+						{
+							createNestedElement(GUIElementEnum::competitionModeLeftOffset),
+							createNestedElement(GUIElementEnum::competitionModeLeftPanelWidth),
+							createNestedElement(GUIElementEnum::competitionModeLeftFontSize),
+							createNestedElement(GUIElementEnum::competitionModeLeftColour),
+						}));
+
+				case GUIElementEnum::competitionModeLeftOffset:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec2 < false, false, 0, SliderParam<SimpleMath::Vector2>({ 0.f, 0.f }, { 1600.f, 1000.f }, ImGuiSliderFlags_None) >>
+						(game, ToolTipCollection("Distance in from this panel's screen edge"), "Edge Margin##competitionModeLeft", settings->competitionModeLeftOffset, "Horizontal", "Vertical"));
+
+				case GUIElementEnum::competitionModeLeftPanelWidth:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(120.f, 1600.f)>>
+						(game, ToolTipCollection("Panel width in pixels, before Overall Scale. Widen it if long gamertags collide with the score column."), "Panel Width##competitionModeLeft", settings->competitionModeLeftPanelWidth));
+
+				case GUIElementEnum::competitionModeLeftFontSize:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(6.f, 96.f)>>
+						(game, ToolTipCollection("Player row font size in pts, before Overall Scale"), "Font Size##competitionModeLeft", settings->competitionModeLeftFontSize));
+
+				case GUIElementEnum::competitionModeLeftColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
+						(game, ToolTipCollection("Accent and team colour for this panel"), "Accent Colour##competitionModeLeft", settings->competitionModeLeftColour));
+
+			case GUIElementEnum::competitionModeRightSettings:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+					(game, ToolTipCollection("Placement, size and colour for the right panel"), "Right Panel Settings", headerChildElements
+						{
+							createNestedElement(GUIElementEnum::competitionModeRightOffset),
+							createNestedElement(GUIElementEnum::competitionModeRightPanelWidth),
+							createNestedElement(GUIElementEnum::competitionModeRightFontSize),
+							createNestedElement(GUIElementEnum::competitionModeRightColour),
+						}));
+
+				case GUIElementEnum::competitionModeRightOffset:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec2 < false, false, 0, SliderParam<SimpleMath::Vector2>({ 0.f, 0.f }, { 1600.f, 1000.f }, ImGuiSliderFlags_None) >>
+						(game, ToolTipCollection("Distance in from this panel's screen edge"), "Edge Margin##competitionModeRight", settings->competitionModeRightOffset, "Horizontal", "Vertical"));
+
+				case GUIElementEnum::competitionModeRightPanelWidth:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(120.f, 1600.f)>>
+						(game, ToolTipCollection("Panel width in pixels, before Overall Scale. Widen it if long gamertags collide with the score column."), "Panel Width##competitionModeRight", settings->competitionModeRightPanelWidth));
+
+				case GUIElementEnum::competitionModeRightFontSize:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(6.f, 96.f)>>
+						(game, ToolTipCollection("Player row font size in pts, before Overall Scale"), "Font Size##competitionModeRight", settings->competitionModeRightFontSize));
+
+				case GUIElementEnum::competitionModeRightColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
+						(game, ToolTipCollection("Accent and team colour for this panel"), "Accent Colour##competitionModeRight", settings->competitionModeRightColour));
 
 			case GUIElementEnum::abilityMeterOverlayToggle:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
