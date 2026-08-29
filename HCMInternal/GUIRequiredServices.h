@@ -10,7 +10,8 @@
 ((overlaysHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 ((cameraHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 ((theaterHeadingGUI,(Halo3,Halo3ODST,HaloReach,Halo4)))\
-((debugHeadingGUI, (ALL_SUPPORTED_GAMES)))
+((debugHeadingGUI, (ALL_SUPPORTED_GAMES)))\
+((hceScriptHeadingGUI, (HALOCER_ONLY)))
 
 #define TOPGUIELEMENTS_DEBUG \
 ((HCMDebugHeadingGUI, (ALL_SUPPORTED_GAMES)))

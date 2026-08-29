@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "OptionalCheatManager.h"
 #include "OptionalCheatEnum.h"
 #include "IOptionalCheat.h"
@@ -33,6 +33,11 @@
 #include "HCEDumpCheckpoint.h"
 #include "HCEInjectCheckpoint.h"
 #include "HCESoftCeilingOverlay.h"
+#include "HCEGameSpeed.h"
+#include "HCEGameThreadPump.h"
+#include "HCEConsole.h"
+#include "HCEFreecamKeepPosition.h"
+#include "HCEFreecamDrift.h"
 
 #include "InjectCheckpoint.h"
 #include "InjectCore.h"

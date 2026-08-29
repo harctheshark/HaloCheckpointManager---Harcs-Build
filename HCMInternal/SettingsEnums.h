@@ -19,7 +19,12 @@ namespace SettingsEnums
 	enum class FreeCameraInterpolationTypesEnum
 	{
 		None,
-		Linear
+		Linear,
+		// Carries a velocity between frames - see MomentumSmoother.h. Eases in from rest and coasts to a
+		// stop instead of parking the instant input ends, which is what makes camera moves read as
+		// cinematic rather than stiff. Appended, never inserted: the value is serialised by NUMBER, so
+		// putting it before Linear would silently reinterpret every saved config.
+		Momentum
 	};
 
 	enum class TriggerInteriorStyle { Normal, Patterned, DontRender };

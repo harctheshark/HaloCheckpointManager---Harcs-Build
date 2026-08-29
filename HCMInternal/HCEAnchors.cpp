@@ -160,6 +160,39 @@ namespace
 		  "function, which validates all eight against one resolved address and cannot drift out of sync with "
 		  "them. Unique at 28 of these 46 bytes." },
 
+		// ================================ ZONE SETS ================================
+		// The first two share ONE signature and differ only in which operand they extract, which is why they
+		// are listed as a pair rather than merged: one match, two addresses, no second scan.
+
+		{ Anchor::LoadedBspZoneFlags, "LoadedBspZoneFlags",
+		  "40 57 48 83 EC 20 48 63 F9 3B 3D ?? ?? ?? ?? 0F 85 ?? ?? ?? ?? 48 89 5C 24 30 8B 1D ?? ?? ?? ??",
+		  Extract::RipRelative, 26, 2, 6,
+		  "zone_set_is_fully_active (rva 0x198D30). It compares its argument against the current-zone-set "
+		  "global and then loads the resident-BSP mask - `(wanted & loaded) == wanted` IS the predicate "
+		  "HaloScript's current_zone_set_fully_active returns. Independently corroborated: the zone-set "
+		  "trigger driver iterates this mask's set bits and passes each as a BSP INDEX to sub_180198570." },
+
+		{ Anchor::CurrentZoneSetCrossCheck, "CurrentZoneSetCrossCheck",
+		  "40 57 48 83 EC 20 48 63 F9 3B 3D ?? ?? ?? ?? 0F 85 ?? ?? ?? ?? 48 89 5C 24 30 8B 1D ?? ?? ?? ??",
+		  Extract::RipRelative, 9, 2, 6,
+		  "Same match as LoadedBspZoneFlags, different operand. A SECOND derivation of the global that "
+		  "hceCurrentBSP already carries (0x9A14E0) - Anchor::CurrentBSP derives it from the WRITER "
+		  "(sub_180198DF0), this one from a READER, so the two agreeing is real evidence." },
+
+		{ Anchor::ScenarioDataPointer, "ScenarioDataPointer",
+		  "48 8B 05 ?? ?? ?? ?? 3B 88 78 02 00 00",
+		  Extract::RipRelative, 0, 3, 7,
+		  "The engine's own trigger-volume access: load the scenario pointer, compare against the trigger "
+		  "volume count at +0x278. The '78 02' inside the pattern IS that compare. Already proven unique "
+		  "across two builds by HCETriggerOverlay and HCEBspOverlay, which both scan for this exact string." },
+
+		{ Anchor::TagAddressTable, "TagAddressTable",
+		  "48 8B D9 4C 8D 05 ?? ?? ?? ?? 8B 09 8B 53 08 8B C2 48 C1 E8 1C 49 8B 04 C0 3B 4C 90 10 7D",
+		  Extract::RipRelative, 3, 3, 7,
+		  "tag_block_get_element: shr by 0x1C to pick the region, index the 16-entry base table, bounds-check "
+		  "against the block count. ⚠ This global MOVED between two observed builds (0x2C2DCC0 -> 0x2C2CCC0), "
+		  "which is precisely why it is never hard-coded. Same pattern the two overlays already scan for." },
+
 	};
 
 	static_assert(std::size(kAnchors) == (size_t)Anchor::Count, "every Anchor needs exactly one definition");

@@ -693,9 +693,9 @@ public:
 		mDisableScreenEffectsToggleCallback(dicon.Resolve< SettingsStateAndEvents>().lock()->freeCameraDisableScreenEffects->valueChangedEvent, [this](bool& n) { onDisableScreenEffectsChange(n); }),
 		mBlockPlayerCharacterInputToggleCallback(dicon.Resolve< SettingsStateAndEvents>().lock()->freeCameraGameInputDisable->valueChangedEvent, [this](bool& n) { onBlockPlayerCharacterInputChange(n); }),
 		MCCStateChangedCallback(dicon.Resolve<IMCCStateHook>().lock()->getMCCStateChangedEvent(), [this](const MCCState& state) { onGameStateChange(state); }),
-		userControlledPosition(userCameraInputReaderWeak.lock(), settingsWeak.lock()->freeCameraUserInputCameraTranslationInterpolator, settingsWeak.lock()->freeCameraUserInputCameraTranslationInterpolatorLinearFactor),
-		userControlledRotation(userCameraInputReaderWeak.lock(), settingsWeak.lock()->freeCameraUserInputCameraRotationInterpolator, settingsWeak.lock()->freeCameraUserInputCameraRotationInterpolatorLinearFactor),
-		userControlledFOV(userCameraInputReaderWeak.lock(), settingsWeak.lock()->freeCameraUserInputCameraFOVInterpolator, settingsWeak.lock()->freeCameraUserInputCameraFOVInterpolatorLinearFactor),
+		userControlledPosition(userCameraInputReaderWeak.lock(), settingsWeak.lock()->freeCameraUserInputCameraTranslationInterpolator, settingsWeak.lock()->freeCameraUserInputCameraTranslationInterpolatorLinearFactor, settingsWeak.lock()->freeCameraUserInputCameraTranslationInterpolatorDrift),
+		userControlledRotation(userCameraInputReaderWeak.lock(), settingsWeak.lock()->freeCameraUserInputCameraRotationInterpolator, settingsWeak.lock()->freeCameraUserInputCameraRotationInterpolatorLinearFactor, settingsWeak.lock()->freeCameraUserInputCameraRotationInterpolatorDrift),
+		userControlledFOV(userCameraInputReaderWeak.lock(), settingsWeak.lock()->freeCameraUserInputCameraFOVInterpolator, settingsWeak.lock()->freeCameraUserInputCameraFOVInterpolatorLinearFactor, settingsWeak.lock()->freeCameraUserInputCameraFOVInterpolatorDrift),
 
 		freeCameraUserInputCameraSetPositionCallback(dicon.Resolve< SettingsStateAndEvents>().lock()->freeCameraUserInputCameraSetPosition, [this]() { onFreeCameraUserInputCameraSetPosition(); }),
 		freeCameraUserInputCameraSetPositionFillCurrentCallback(dicon.Resolve< SettingsStateAndEvents>().lock()->freeCameraUserInputCameraSetPositionFillCurrent, [this]() { onFreeCameraUserInputCameraSetPositionFillCurrent(); }),

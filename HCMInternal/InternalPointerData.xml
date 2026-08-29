@@ -3903,6 +3903,124 @@
 		</Version>
 	</VersionedEntry>
 
+	<!--The other two index fields of the SAME 8-byte element documented above. HCM used to read only the
+	    trigger-volume index at +0x04 and collapse both kinds into one "ZoneSet" category; these two split it.
+
+	        +0x02 begin zone set   to prepare_to_switch_to_zone_set (sub_1801B0310)
+	        +0x06 commit zone set  to switch_zone_set               (sub_1801B0060)
+
+	    The struct definition record is at 0x1809BE550 and the field walk CLOSES EXACTLY at the declared 8
+	    bytes: word_flags 'flags' +0x00, short_block_index 'begin zone set' +0x02, 'trigger volume' +0x04,
+	    'commit zone set' +0x06.
+
+	    WARNING: 0xFFFF is a LIVE sentinel on all three index fields; read them as int16_t and test != -1.
+	    Without that a -1 index reads element -1 of the zone sets block.
+
+	    BEGIN IS PURELY SUBTRACTIVE, and this is arithmetic rather than a reading of the field names. Both
+	    paths call sub_180199160(idx, oldMask, newMask), which unloads (old AND NOT new) and loads
+	    (new AND NOT old). COMMIT passes newMask = zoneSet[idx]+0x114; BEGIN passes
+	    newMask = old AND zoneSet[idx]+0x114, so its load set is identically zero and its unload set is
+	    old AND NOT wanted. "Prep objects" is therefore a RETIREMENT that frees budget, never a spawn.
+
+	    ONE EDGE CASE: if (old AND wanted) == 0 the engine skips the begin (0x1801875B5 test ebx,edx / je) and
+	    the pending pump performs a FULL switch instead (0x1801ADF20). That is runtime state, so HCM must not
+	    categorise on it - it belongs in the on-entry report only.
+
+	    Real shipped data, all 13 levels: 116 entries, 57 begin-only, 59 commit-only, 0 with both, and no
+	    trigger-volume index used twice in a level. "Both" is still handled in code because the struct allows
+	    it.-->
+	<VersionedEntry Name="hceZoneSetSwitchBeginZoneSetOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x2</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceZoneSetSwitchCommitZoneSetOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x6</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceZoneSetSwitchFlagsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x0</Data>
+		</Version>
+	</VersionedEntry>
+
+	<!--The scenario's 'zone sets' block: what a begin/commit index points AT, and the source of the info
+	    overlay's "Current Zone Set" row.
+
+	        count           int32   at scenario + 0x00D0
+	        encoded address uint32  at scenario + 0x00D4      (decode exactly like every other block:
+	                                                           base = tagAddressTable[enc>>28] + 4*enc)
+	        element         304 bytes (0x130), MAX 64 (k_maximum_scenario_zone_set_count)
+
+	    Element layout (rec 0x1809B97A0, declared 304, field walk CLOSES EXACTLY at 304):
+	        +0x000 string_id  'name'
+	        +0x004 char[256]  'name string'            LITERAL ASCII, populated in all 13 shipped levels
+	        +0x104 long index 'pvs index'
+	        +0x108 long_flags 'flags' {0x1 begin loading next level, 0x2 debug only, 0x4 internal zone set}
+	        +0x10C long_block_flags 'bsp zone flags'             (authored; bit i = structure bsps element i)
+	        +0x110 long_block_flags 'structure design zone flags'
+	        +0x114 long_block_flags 'runtime bsp zone flags'     WHAT THE ENGINE ACTUALLY USES (17 read sites)
+	        +0x118 long_block_flags 'runtime structure design zone flags'
+	        +0x11C long_block_flags 'required designer zones'
+	        +0x120 long_block_flags 'forbidden designer zones'
+	        +0x124 long_block_flags 'cinematic zones'
+	        +0x128 long index 'hint previous zone set'
+	        +0x12C long index 'audibility index'
+
+	    Pinned by real instructions, not only by the walk: every zone-set access in the module is
+	    imul rcx, i, 0x4C with a *4 address scale (= 304 bytes) off scenario+0xD4 - e.g. 0x180198E9B,
+	    0x180198D77, 0x180199018, 0x1801ADE10, 0x180307B29. A sweep of every imul-by-0x4C site shows the only
+	    displacements used are 0x000, 0x104, 0x108, 0x10C, 0x110, 0x114, 0x118, 0x11C, 0x120, 0x124, 0x12C,
+	    exactly the derived boundaries, with NOTHING inside 0x004..0x100, which is the 256-byte name string.
+	    scenario+0xD0 is the count: switch_zone_set (0x1801B0091) and prepare_to_switch (0x1801B0341) both do
+	    cmp ebx, [rax+0xD0]; jge fail before acting.
+
+	    WARNING: every level ships exactly one INTERNAL zone set: empty name, string_id 0, flags 0x4, all
+	    authored masks 0, runtime bsp mask = every BSP. An empty name is therefore NOT a read failure - render
+	    it as "(internal)". Zone-set counts per level (including it): a15 5, a30 4, a50 7, b30 7, b40 6,
+	    c10 5, c20 10, c45 10, d20 6, d40 5, e10 5, e20 4, e30 8. A count of 0, or all-empty names, means the
+	    block pointer is wrong.
+
+	    WARNING: READ +0x114, NOT +0x10C, for "what does this zone set want loaded". +0x10C is the authored
+	    value and is 0 for the internal zone set. The load-time postprocess (0x2BAE85..0x2BAEE1) computes
+	    zs[0x114] = zs[0x10C] AND (0xFFFFFFFF >> (32 - scenario[0x60])).-->
+	<VersionedEntry Name="hceScenarioZoneSetBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0xD0</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceZoneSetStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x130</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceZoneSetNameStringIdOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x0</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceZoneSetNameStringOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x4</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceZoneSetFlagsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x108</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceZoneSetBspZoneFlagsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x10C</Data>
+		</Version>
+	</VersionedEntry>
+	<VersionedEntry Name="hceZoneSetRuntimeBspZoneFlagsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x114</Data>
+		</Version>
+	</VersionedEntry>
+
 	<!--Kill volumes and safe zones. Same shape as the zone-set switch block above: a scenario block that
 	    references trigger volumes BY INDEX, in the same index space as everything else here.
 
@@ -4912,6 +5030,13 @@
 			</Offsets>
 		</Version>
 	</VersionedEntry>
+	<!--MISNAMED, KEPT FOR COMPATIBILITY. hceCurrentBSP is the CURRENT ZONE SET INDEX, not a BSP index.
+	    0x9A14E0 is literally what HaloScript's current_zone_set returns (impl 0x1801E2B50 is
+	    mov ecx,edx ; mov edx,[rip to 0x1809A14E0] ; jmp hs_return_long), and it is written by exactly ONE
+	    instruction in the image - 0x180198E33, inside the zone-set commit sub_180198DF0 - plus six = -1
+	    resets. Nothing BSP-shaped ever touches it. The real "which BSPs are resident" datum is the u32 bitmask
+	    at 0x2C2EEBC (see HCEAnchors::Anchor::LoadedBspZoneFlags). On a single-BSP zone set the two move
+	    together, which is why the mislabel survived. Sentinel is -1; bound it against scenario+0xD0.-->
 	<VersionedEntry Name="hceCurrentBSP" Type="MultilevelPointer::ModuleOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>

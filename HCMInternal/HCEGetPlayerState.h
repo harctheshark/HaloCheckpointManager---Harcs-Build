@@ -43,6 +43,12 @@ public:
 	// camera detached when freecam goes off - see the derivation in HCEFreecam::applyFreecam.
 	uintptr_t getFreecamToggleAddress();
 	uintptr_t getActiveCameraEntry();   // first non-null of (*(tls + 0x148) + slot*0x1AC), slot 0..3
+	// *(tls + 0x4E8) + *(int32*)(cameraEntry + 0x180) * 0x410. The freecam's real pose lives here:
+	// position +0x154, forward +0x17C, up +0x188 (nine floats). Re-resolve after a revert, never cache.
+	uintptr_t getActiveObserver();
+	// *(tls + 0xA8) + 0x05 - the engine's own cinematic-in-progress flag. Covers scripted cutscenes AND
+	// prerendered video. Never throws; false when unavailable.
+	bool isCinematicPlaying() noexcept;
 	uintptr_t getPlayerControlEntry();  // *(tls + 0xB8) + 0x80 + 0x198*localPlayer. s_player_control.
 
 	uint32_t  getPlayerDatum();         // *(uint32*)(*(tls + 0x30) + 0x98). low word 0xFFFF == dead.
@@ -90,7 +96,17 @@ public:
 	// ---- module-relative game info (no TLS). All throw HCMRuntimeException. ----
 
 	std::string getCurrentLevelName();  // simBase + 0xCA2F00 is a NUL-terminated ASCII STRING, not an index
-	int32_t getCurrentBSP();            // simBase + 0x9A14E0 is an int32 read DIRECTLY (no deref)
+	// ⚠ MISNAMED: simBase + 0x9A14E0 is the current ZONE SET index, not a BSP index - it is what HaloScript's
+	// current_zone_set returns. Read DIRECTLY (no deref). The name is kept because settings and hotkeys
+	// serialise by name; getCurrentZoneSetName() below is the honest accessor.
+	int32_t getCurrentBSP();
+	// The current zone set's printable name, resolved through the scenario's 'zone sets' block (+0xD0,
+	// 304-byte elements, literal char[256] at +0x04). Throws when no scenario is loaded, when the index is -1,
+	// or when the block cannot be reached. Never returns an empty string.
+	std::string getCurrentZoneSetName();
+	// True when the switch this index names has actually COMPLETED: the index is published before the BSPs
+	// finish loading, so it means "switching to", not "finished". Never throws; false when it cannot tell.
+	bool isCurrentZoneSetFullyLoaded() noexcept;
 	int32_t getTickCounter();           // simBase + 0x12944C8 is a POINTER to the int32
 
 	// ---- guarded raw memory helpers, shared by every HCE cheat ----

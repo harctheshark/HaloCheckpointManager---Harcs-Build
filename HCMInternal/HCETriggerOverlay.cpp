@@ -24,7 +24,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <unordered_map>
 #include <unordered_set>
+#include "HCEAnchors.h"
 
 // ================================================================================================================
 // Halo Campaign Evolved trigger volume overlay.
@@ -330,7 +332,22 @@ namespace
 	{
 		// Classified ONCE at tag-refresh time, not per frame: both are string work, and the name cannot change
 		// without a refresh anyway.
+		//
+		// TWO zone-set categories, because the tag carries two independent fields on ONE 8-byte element:
+		//   'begin zone set'  (+0x02) -> prepare_to_switch_to_zone_set. PURELY SUBTRACTIVE: it unloads the BSPs
+		//                                the target zone set does not want and loads NOTHING. Proven by
+		//                                arithmetic, not by the field name - see InternalPointerData.xml.
+		//   'commit zone set' (+0x06) -> switch_zone_set. This is the one that brings new BSP geometry in.
+		// Either may be -1. Shipped data across all 13 levels has no volume with both, but the struct allows it,
+		// so both bools can be set and COMMIT wins for colour and filtering.
+		bool isBeginZoneSet = false;
+		bool isCommitZoneSet = false;
+		// INVARIANT: isBspSwitch == (isBeginZoneSet || isCommitZoneSet) after classification. Kept so every
+		// existing call site still compiles and behaves.
 		bool isBspSwitch = false;    // from the scenario's zone-set switch block (name heuristic as fallback)
+		int16_t beginZoneSet = -1;      // index into the scenario 'zone sets' block, -1 = none
+		int16_t commitZoneSet = -1;
+		uint16_t zoneSetSwitchFlags = 0;   // bit0 = "teleport vehicles" - a MODIFIER, never a category
 		bool isKill = false;         // scenario kill trigger block (name heuristic as fallback)
 		// ⚠ OPPOSITE MEANING to isKill: a kill volume is "stay out", a safe zone is "stay in" - the engine kills
 		// you when you are inside NO safe zone. Same toggle, deliberately different colour.
@@ -338,7 +355,16 @@ namespace
 		bool isSpeedrun = false;     // on the community completion-requirement list
 
 		std::string name;
+		// SHAPE, not a category. Selects the containment test in pointIsInside(); it no longer affects colour
+		// or filtering (sectors are Regular volumes that happen to be prisms).
 		bool isSector = false;
+
+		// ---- containment, for the zone-set entry report. Filled by buildBox / buildSectorPrism.
+		SimpleMath::Vector3 boxOrigin{}, boxForward{}, boxLeft{}, boxUp{}, boxExtents{};
+		std::vector<SimpleMath::Vector2> sectorPolygon;   // XY footprint, sectors only
+		float sectorZ0 = 0.f, sectorZ1 = 0.f;
+		bool playerWasInside = false;                     // edge state for reportZoneSetEntries
+		std::string zoneSetReportPrefix;                  // preformatted at refresh time
 		SimpleMath::Vector3 center{};
 		float radius = 0.f;                                   // bounding radius about center, for the distance cull
 		std::vector<SimpleMath::Vector3> vertices;
@@ -527,6 +553,45 @@ namespace
 		volume.radius = std::sqrt(maxDistanceSquared);
 	}
 
+	// Point-in-volume, matching the engine's own convention: trigger_volume_test_point accepts
+	// 0 <= local <= extents along (forward, left, up) FROM position - the box is NOT centred on position,
+	// which is exactly what buildBox draws. Sectors are point-in-polygon on XY plus a z-range test.
+	//
+	// ⚠ APPROXIMATE ON PURPOSE. The engine tests a point the unit supplies; we use the player object origin,
+	// the same point the Show Trigger Vertex sphere is drawn at. Entry can therefore be reported a fraction
+	// before or after the engine acts. That is acceptable for a message; do not build anything that must agree
+	// with the engine tick-for-tick on top of it.
+	bool pointIsInside(const HceTriggerVolume& volume, const SimpleMath::Vector3& p)
+	{
+		// Cheap reject first - every zone-set volume is tested every frame.
+		if ((p - volume.center).LengthSquared() > volume.radius * volume.radius) return false;
+
+		if (volume.isSector && volume.sectorPolygon.size() >= 3)
+		{
+			if (p.z < volume.sectorZ0 || p.z > volume.sectorZ1) return false;
+			bool inside = false;
+			const size_t n = volume.sectorPolygon.size();
+			for (size_t i = 0, j = n - 1; i < n; j = i++)
+			{
+				const SimpleMath::Vector2& a = volume.sectorPolygon[i];
+				const SimpleMath::Vector2& b = volume.sectorPolygon[j];
+				if ((a.y > p.y) != (b.y > p.y)
+					&& p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)
+					inside = !inside;
+			}
+			return inside;
+		}
+
+		if (volume.boxExtents == SimpleMath::Vector3::Zero) return false;
+		const SimpleMath::Vector3 d = p - volume.boxOrigin;
+		const float lf = d.Dot(volume.boxForward);
+		const float ll = d.Dot(volume.boxLeft);
+		const float lu = d.Dot(volume.boxUp);
+		return lf >= 0.f && lf <= volume.boxExtents.x
+			&& ll >= 0.f && ll <= volume.boxExtents.y
+			&& lu >= 0.f && lu <= volume.boxExtents.z;
+	}
+
 	// Oriented box. The engine's own point test accepts 0 <= local <= extents, so the box spans [0, extents]
 	// FROM position along (forward, left, up) - it is not centred on position. The second axis is up X forward,
 	// which is the exact cross product the engine's basis builder writes; in Blam that is LEFT, and extents.y
@@ -542,6 +607,12 @@ namespace
 		SimpleMath::Vector3 left = up.Cross(forward);
 		if (left.LengthSquared() < 1e-12f) return;
 		left.Normalize();
+
+		// Kept for pointIsInside(): the same basis the engine's own point test uses, so containment agrees with
+		// what is drawn rather than with a re-derived approximation.
+		volume.boxOrigin = position; volume.boxForward = forward;
+		volume.boxLeft = left;       volume.boxUp = up;
+		volume.boxExtents = extents;
 
 		volume.vertices.resize(8);
 		for (int i = 0; i < 8; ++i)
@@ -569,6 +640,12 @@ namespace
 	{
 		const size_t n = points.size();
 		if (n < 3) return;
+
+		// Kept for pointIsInside(): point-in-polygon on the XY footprint plus a z-range test.
+		volume.sectorPolygon = points;
+		volume.sectorZ0 = std::min(z0, z1);
+		volume.sectorZ1 = std::max(z0, z1);
+
 		volume.vertices.reserve(n * 2);
 		for (const auto& p : points) volume.vertices.emplace_back(p.x, p.y, z0);
 		for (const auto& p : points) volume.vertices.emplace_back(p.x, p.y, z1);
@@ -625,6 +702,19 @@ private:
 	int64_t mScenarioZoneSetSwitchBlock = 0x29C;
 	int64_t mZoneSetSwitchStride = 0x8;
 	int64_t mZoneSetSwitchTriggerVolumeIndexOffset = 0x4;
+	// The other two index fields of the SAME element. ⚠ All three are int16 with a LIVE -1 sentinel.
+	int64_t mZoneSetSwitchBeginZoneSetOffset = 0x2;
+	int64_t mZoneSetSwitchCommitZoneSetOffset = 0x6;
+	int64_t mZoneSetSwitchFlagsOffset = 0x0;
+
+	// The scenario's 'zone sets' block - what a begin/commit index points at. See InternalPointerData.xml.
+	int64_t mScenarioZoneSetBlock = 0xD0;
+	int64_t mZoneSetStride = 0x130;
+	int64_t mZoneSetNameStringIdOffset = 0x0;
+	int64_t mZoneSetNameStringOffset = 0x4;
+	int64_t mZoneSetFlagsOffset = 0x108;
+	int64_t mZoneSetBspZoneFlagsOffset = 0x10C;
+	int64_t mZoneSetRuntimeBspZoneFlagsOffset = 0x114;
 
 	// Kill volumes and safe zones - same shape, opposite meaning. See InternalPointerData.xml.
 	uint32_t mLoggedEmptySpeedrunFor = 0;   // encoded block address we last warned about, see refreshVolumes
@@ -661,6 +751,9 @@ private:
 	uintptr_t mTagAddressTable = 0;     // 16-entry table of tag block region bases
 	FnStringIdText mStringIdText = nullptr;
 	uintptr_t mStringIdTableSlot = 0;   // the global mStringIdText loads; null while a level is loading
+	// The resident-BSP bitmask, bit i = scenario 'structure bsps' element i. OPTIONAL: without it the zone-set
+	// entry report still names the zone set, it just cannot say which BSPs change.
+	uintptr_t mLoadedBspMaskSlot = 0;
 	std::string mAnchorFailure;
 
 	// ---- cached geometry ----
@@ -780,7 +873,12 @@ private:
 	struct TypeFilter
 	{
 		bool speedrunOnly = false;
-		bool showRegular = true, showSector = true, showKill = true, showZoneSet = true;
+		// ⚠ There is deliberately NO sector toggle. "Sector" is a SHAPE - an XY polygon extruded between two
+		// heights, rather than a box - not a kind of trigger, and the engine gives it no different meaning. It
+		// used to have its own category, toggle and colour, which split the plain-trigger list in two along a
+		// line the user never cares about. Sectors are now regular triggers that happen to be prisms; the prism
+		// GEOMETRY is still built and drawn exactly as before (see buildSectorPrism).
+		bool showRegular = true, showKill = true, showZoneSet = true, showBeginZoneSet = true;
 
 		// NAME FILTER. Shares MCC's triggerOverlayFilterString / FilterToggle / FilterExactMatch settings, so a
 		// preset made on either side means the same thing - the two can never run in one process.
@@ -799,9 +897,9 @@ private:
 		TypeFilter f;
 		f.speedrunOnly = settings->hceTriggerOverlaySpeedrunOnly->GetValue();
 		f.showRegular = settings->hceTriggerOverlayShowRegular->GetValue();
-		f.showSector = settings->hceTriggerOverlayShowSector->GetValue();
 		f.showKill = settings->hceTriggerOverlayShowKill->GetValue();
 		f.showZoneSet = settings->hceTriggerOverlayShowZoneSet->GetValue();
+		f.showBeginZoneSet = settings->hceTriggerOverlayShowBeginZoneSet->GetValue();
 
 		if (settings->triggerOverlayFilterToggle->GetValue())
 		{
@@ -836,10 +934,10 @@ private:
 	}
 
 	// ONE definition of "is this volume drawn", shared by the 3D and ImGui paths so they cannot drift apart.
-	// Categories are tested in the SAME priority the colours use - zone-set switch, then kill, then sector, then
-	// regular - so a volume that is both a zone-set switch and a sector is governed by the zone-set toggle and
-	// drawn in the zone-set colour. Anything else would let a volume be hidden by one toggle while wearing the
-	// colour of another.
+	// Categories are tested in the SAME priority the colours use - zone-set switch, then kill, then regular - so
+	// a volume that is both a zone-set switch and a kill volume is governed by the zone-set toggle and drawn in
+	// the zone-set colour. Anything else would let a volume be hidden by one toggle while wearing the colour of
+	// another. Sector-shaped volumes are regular triggers here; shape is not a category.
 	static bool shouldDrawVolume(const HceTriggerVolume& volume, const TypeFilter& filter)
 	{
 		if (filter.speedrunOnly && !volume.isSpeedrun) return false;
@@ -865,10 +963,12 @@ private:
 			}
 		}
 
-		if (volume.isBspSwitch)              return filter.showZoneSet;
+		// COMMIT outranks BEGIN for the same reason the engine picks it when both fire on one tick: it is the
+		// more consequential event. Shipped data has no volume with both, but the struct allows it.
+		if (volume.isCommitZoneSet)             return filter.showZoneSet;
+		if (volume.isBeginZoneSet)              return filter.showBeginZoneSet;
 		if (volume.isKill || volume.isSafeZone) return filter.showKill;   // one toggle, two colours
-		if (volume.isSector)                 return filter.showSector;
-		return filter.showRegular;
+		return filter.showRegular;                                        // sectors included - shape, not category
 	}
 
 	bool isVolumeActive(uint32_t volumeIndex) const
@@ -921,6 +1021,76 @@ private:
 			if (tick == 0) continue;   // cleared, not hit
 
 			messagesGUI->addMessage(std::format("Trigger hit: {}", mVolumes[i].name));
+		}
+	}
+
+	// Re-seeded WITHOUT reporting on any rebuild, or a level change would announce every volume you happen to
+	// be standing in. Same trap, same fix, as reportNewHits.
+	bool mZoneSetInsideSeeded = false;
+
+	// "You just entered a zone-set volume; here is what it does."
+	//
+	// ⚠ GEOMETRIC, not an engine event, and that is forced rather than chosen: HCETriggerActivity patches only
+	// the EIGHT HaloScript call sites of trigger_volume_test_point, and the zone-set evaluator sub_18018F870
+	// is on the deliberately-NOT-patched list - so a zone-set volume can never produce a script "hit" and
+	// reportNewHits can never fire for one.
+	//
+	// CALLER MUST HOLD mVolumesMutex.
+	void reportZoneSetEntries(const std::shared_ptr<IMessagesGUI>& messagesGUI,
+		const SimpleMath::Vector3& playerPoint)
+	{
+		const bool seeding = !mZoneSetInsideSeeded;
+		mZoneSetInsideSeeded = true;
+
+		// Live state, read ONCE per frame: one dword. Everything else is cached tag data.
+		uint32_t loadedBsps = 0;
+		bool haveLoaded = false;
+		if (mLoadedBspMaskSlot)
+			haveLoaded = HCEGetPlayerState::tryReadRaw(mLoadedBspMaskSlot, &loadedBsps, sizeof(loadedBsps));
+
+		for (HceTriggerVolume& volume : mVolumes)
+		{
+			if (!volume.isBspSwitch) continue;
+
+			const bool inside = pointIsInside(volume, playerPoint);
+			const bool wasInside = volume.playerWasInside;
+			volume.playerWasInside = inside;
+			if (seeding || !inside || wasInside) continue;   // report only the false -> true edge
+
+			std::string line = std::format("{}  [{}]", volume.zoneSetReportPrefix, volume.name);
+
+			// The consequence, from tag data plus the one live mask. Both sides are bitmasks over the SAME
+			// index space (scenario 'structure bsps'), which is what makes the diff meaningful.
+			const int16_t target = volume.isCommitZoneSet ? volume.commitZoneSet : volume.beginZoneSet;
+			if (haveLoaded && target >= 0 && (size_t)target < mZoneSetWantedBsps.size())
+			{
+				const uint32_t wanted = mZoneSetWantedBsps[(size_t)target];
+				if (volume.isCommitZoneSet)
+				{
+					// COMMIT passes the full target mask, so load = wanted & ~loaded.
+					const std::string load = bitList(wanted & ~loadedBsps, mStructureBspCount);
+					const std::string drop = bitList(loadedBsps & ~wanted, mStructureBspCount);
+					line += std::format("\n  loads BSP: {}   unloads BSP: {}",
+						load.empty() ? "none" : load, drop.empty() ? "none" : drop);
+				}
+				else
+				{
+					// BEGIN passes (loaded & wanted), so its load set is identically zero - purely subtractive.
+					const std::string drop = bitList(loadedBsps & ~wanted, mStructureBspCount);
+					line += std::format("\n  loads BSP: none (prepare only)   unloads BSP: {}",
+						drop.empty() ? "none" : drop);
+					// The engine gate: no shared BSP means it skips the prepare and full-switches instead.
+					if ((loadedBsps & wanted) == 0)
+						line += "\n  (no overlap with what is resident - the engine will full-switch instead)";
+				}
+				line += std::format("\n  resident now: {}", bitList(loadedBsps, mStructureBspCount));
+			}
+			else if (target >= 0)
+			{
+				line += "\n  (resident-BSP mask unavailable on this build - see the log)";
+			}
+
+			messagesGUI->addMessage(line);
 		}
 	}
 
@@ -985,7 +1155,125 @@ private:
 			}
 		}
 
+		// OPTIONAL, and deliberately never a reason to disable the overlay: it only enriches the zone-set entry
+		// report with which BSPs load and unload.
+		mLoadedBspMaskSlot = HCEAnchors::get(HCEAnchors::Anchor::LoadedBspZoneFlags);
+		if (!mLoadedBspMaskSlot)
+			PLOG_WARNING << "HCETriggerOverlay: the resident-BSP mask anchor did not resolve; zone-set entry "
+				"reports will name the zone set but omit the BSP load/unload lines.";
+
 		mAnchorsGood = true;
+	}
+
+	std::vector<std::string> mZoneSetNames;     // indexed by zone-set block index; rebuilt with mVolumes
+	std::vector<uint32_t> mZoneSetWantedBsps;   // parallel: element +0x114, falling back to +0x10C
+	int32_t mStructureBspCount = 0;             // scenario+0x60, caps the bit loop
+
+	// Reads the scenario 'zone sets' block once per refresh, so the entry report allocates nothing later.
+	// Called from refreshVolumes AFTER the trigger-volume block has validated - never on its own.
+	void refreshZoneSets(uintptr_t scenario)
+	{
+		mZoneSetNames.clear();
+		mZoneSetWantedBsps.clear();
+		mStructureBspCount = 0;
+
+		const int32_t bspCount = readI32(scenario + 0x60);   // 'structure bsps' count; caps the bit loop
+		if (bspCount > 0 && bspCount <= 32) mStructureBspCount = bspCount;
+
+		const int32_t count = readI32(scenario + mScenarioZoneSetBlock);
+		const uint32_t encoded = readU32(scenario + mScenarioZoneSetBlock + 4);
+		// 64 is the declared k_maximum_scenario_zone_set_count. A count of 0 means the block pointer is wrong -
+		// every shipped level has at least 4, and always at least one INTERNAL zone set.
+		if (count <= 0 || count > 64 || encoded == 0 || encoded == 0xFFFFFFFFu) return;
+
+		const uintptr_t base = resolveTagBlock(encoded);
+		if (!plausiblePointer(base)) return;
+
+		mZoneSetNames.resize((size_t)count);
+		mZoneSetWantedBsps.assign((size_t)count, 0u);
+
+		char zoneNameBuffer[257]{};
+		for (int32_t i = 0; i < count; ++i)
+		{
+			const uintptr_t element = base + (uintptr_t)mZoneSetStride * i;
+
+			// PRIMARY: the literal char[256] at +0x04. No call into the game, no thread considerations, no
+			// null-table gate - and it was read out of the shipped tag data of ALL 13 levels, so it is known
+			// populated (a50 = set_landing / set_lift_approach / ...; c20 = set_floor_1..4; etc).
+			std::memset(zoneNameBuffer, 0, sizeof(zoneNameBuffer));
+			HCEGetPlayerState::tryReadRaw(element + mZoneSetNameStringOffset, zoneNameBuffer, 256);
+			zoneNameBuffer[256] = '\0';
+			std::string name;
+			for (int c = 0; c < 256; ++c)
+			{
+				const char ch = zoneNameBuffer[c];
+				if (ch == '\0') break;
+				if (ch < 0x20 || ch > 0x7E) break;   // stop at the first non-printable rather than show garbage
+				name.push_back(ch);
+			}
+
+			// FALLBACK: the string_id at +0x00, through the same SEH-wrapped, table-gated call the volume names
+			// already use. The engine itself names zone sets this way.
+			if (name.empty() && mStringIdText && readPtr(mStringIdTableSlot) != 0)
+			{
+				char sidBuffer[64]{};
+				if (callStringIdText(mStringIdText, readU32(element + mZoneSetNameStringIdOffset),
+					sidBuffer, sizeof(sidBuffer)))
+					name = sidBuffer;
+			}
+
+			// LAST RESORT: every level ships exactly one unnamed zone set with flags bit2 ("internal zone set")
+			// whose runtime BSP mask is every BSP. An empty name is NOT a read failure there.
+			if (name.empty())
+				name = (readU32(element + mZoneSetFlagsOffset) & 0x4u)
+					? std::format("(internal zone set {})", i)
+					: std::format("zone set {}", i);
+
+			mZoneSetNames[(size_t)i] = std::move(name);
+
+			// +0x114 is what every engine read uses. It is a runtime field, so fall back to the authored +0x10C
+			// if it reads zero while +0x10C does not.
+			uint32_t wanted = readU32(element + mZoneSetRuntimeBspZoneFlagsOffset);
+			if (wanted == 0) wanted = readU32(element + mZoneSetBspZoneFlagsOffset);
+			mZoneSetWantedBsps[(size_t)i] = wanted;
+		}
+	}
+
+	std::string zoneSetName(int16_t index) const
+	{
+		if (index < 0) return "(none)";
+		if ((size_t)index >= mZoneSetNames.size()) return std::format("zone set {} (out of range)", index);
+		return mZoneSetNames[(size_t)index];
+	}
+
+	// The part of the report that cannot change between refreshes.
+	std::string makeZoneSetPrefix(const HceTriggerVolume& volume) const
+	{
+		if (!volume.isBspSwitch) return {};
+		std::string out;
+		if (volume.isCommitZoneSet)
+			out += std::format("Zone Set -> {}", zoneSetName(volume.commitZoneSet));
+		if (volume.isBeginZoneSet)
+		{
+			if (!out.empty()) out += " + ";
+			out += std::format("Begin Zone Set -> {}", zoneSetName(volume.beginZoneSet));
+		}
+		if (out.empty()) out = "Zone Set volume (target unknown - matched by name only)";
+		if (volume.zoneSetSwitchFlags & 0x1u) out += " [teleport vehicles]";
+		return out;
+	}
+
+	static std::string bitList(uint32_t mask, int32_t cap)
+	{
+		std::string out;
+		const int32_t limit = (cap > 0 && cap <= 32) ? cap : 32;
+		for (int32_t b = 0; b < limit; ++b)
+		{
+			if (!(mask & (1u << b))) continue;
+			if (!out.empty()) out += ',';
+			out += std::to_string(b);
+		}
+		return out;
 	}
 
 	// Rebuilds mVolumes from the scenario tag. Returns false when there is nothing to draw (no level loaded,
@@ -1014,6 +1302,10 @@ private:
 
 		const uintptr_t base = resolveTagBlock(encoded);
 		if (!plausiblePointer(base)) { mVolumes.clear(); return false; }
+
+		// Zone-set names and BSP masks, BEFORE the switch-block walk, so makeZoneSetPrefix has names to use
+		// when classification runs below.
+		refreshZoneSets(scenario);
 
 		// Which volumes actually switch zone set / BSP. Read from the scenario's own block, so this is tag
 		// truth rather than the name heuristic - a volume that switches the world without "bsp" in its name is
@@ -1044,8 +1336,40 @@ private:
 				return indices;
 			};
 
-		const std::unordered_set<uint32_t> zoneSetSwitchVolumes =
-			collectVolumeIndices(mScenarioZoneSetSwitchBlock, mZoneSetSwitchStride, mZoneSetSwitchTriggerVolumeIndexOffset);
+		// The zone-set switch block needs more than a set of indices: each element carries TWO zone-set indices,
+		// and which one is set is the whole category. Same walk, same gates, richer result.
+		struct ZoneSetSwitchTargets { int16_t begin = -1; int16_t commit = -1; uint16_t flags = 0; };
+		std::unordered_map<uint32_t, ZoneSetSwitchTargets> zoneSetSwitchVolumes;
+		{
+			const int32_t blockCount = readI32(scenario + mScenarioZoneSetSwitchBlock);
+			const uint32_t blockEncoded = readU32(scenario + mScenarioZoneSetSwitchBlock + 4);
+			// 8192 stays as the loose "is this even a scenario" gate, matching collectVolumeIndices.
+			if (blockCount > 0 && blockCount <= 8192 && blockEncoded != 0 && blockEncoded != 0xFFFFFFFFu)
+			{
+				const uintptr_t blockBase = resolveTagBlock(blockEncoded);
+				if (plausiblePointer(blockBase))
+				{
+					for (int32_t e = 0; e < blockCount; ++e)
+					{
+						const uintptr_t element = blockBase + (uintptr_t)mZoneSetSwitchStride * e;
+						const int16_t volumeIndex = (int16_t)readU16(element + mZoneSetSwitchTriggerVolumeIndexOffset);
+						if (volumeIndex < 0) continue;             // the engine skips these outright
+						const int16_t begin = (int16_t)readU16(element + mZoneSetSwitchBeginZoneSetOffset);
+						const int16_t commit = (int16_t)readU16(element + mZoneSetSwitchCommitZoneSetOffset);
+						const uint16_t flags = readU16(element + mZoneSetSwitchFlagsOffset);
+
+						// Accumulate rather than assign: one trigger volume MAY appear in more than one element
+						// (shipped data never does, but the format allows it), and losing a begin because a later
+						// element only set a commit would silently drop a category.
+						auto& slot = zoneSetSwitchVolumes[(uint32_t)volumeIndex];
+						if (slot.begin < 0) slot.begin = begin;
+						if (slot.commit < 0) slot.commit = commit;
+						slot.flags |= flags;
+					}
+				}
+			}
+		}
+
 		const std::unordered_set<uint32_t> killVolumes =
 			collectVolumeIndices(mScenarioKillTriggerBlock, mKillTriggerStride, mKillTriggerVolumeIndexOffset);
 		const std::unordered_set<uint32_t> safeZoneVolumes =
@@ -1113,19 +1437,44 @@ private:
 				volume.name = std::format("trigger_{}", i);
 
 			// Classify once, here - never per frame. Tag data first, name heuristic only as a fallback.
-			volume.isBspSwitch = zoneSetSwitchVolumes.contains(volume.index)
-				|| HCESpeedrunTriggerNames::isBspOrZoneSetTrigger(volume.name);
+			//
+			// ⚠ ORDER IS LOAD-BEARING. isBspOrZoneSetTrigger uses a SUBSTRING test on "zone_set", and
+			// "begin_zone_set:hangar" contains "zone_set" - testing the plain one first would put every begin
+			// volume in the commit bucket. Begin is tested first; do not reorder.
+			if (auto it = zoneSetSwitchVolumes.find(volume.index); it != zoneSetSwitchVolumes.end())
+			{
+				volume.beginZoneSet = it->second.begin;
+				volume.commitZoneSet = it->second.commit;
+				volume.zoneSetSwitchFlags = it->second.flags;
+				volume.isBeginZoneSet = (it->second.begin >= 0);
+				volume.isCommitZoneSet = (it->second.commit >= 0);
+			}
+			else if (HCESpeedrunTriggerNames::isBeginZoneSetTrigger(volume.name))
+			{
+				// Name heuristic, fallback only (the block is authoritative). The authoring prefixes ship in the
+				// binary as literals with ZERO code xrefs, so the convention is tool-side - it can only ever be a
+				// fallback for a volume the block does not cover. We know nothing about the TARGET here, so the
+				// indices stay -1 and the entry report degrades to the name alone.
+				volume.isBeginZoneSet = true;
+			}
+			else if (HCESpeedrunTriggerNames::isBspOrZoneSetTrigger(volume.name))
+			{
+				volume.isCommitZoneSet = true;
+			}
+			volume.isBspSwitch = volume.isBeginZoneSet || volume.isCommitZoneSet;
 			// Tag truth. The name heuristic is only a fallback for kill volumes, and safe zones have no name
 			// convention at all - they can ONLY be found by walking the block.
 			volume.isKill = killVolumes.contains(volume.index)
 				|| HCESpeedrunTriggerNames::isKillTrigger(volume.name);
 			volume.isSafeZone = safeZoneVolumes.contains(volume.index);
 			volume.isSpeedrun = HCESpeedrunTriggerNames::isSpeedrunTrigger(volume.name);
+			volume.zoneSetReportPrefix = makeZoneSetPrefix(volume);
 
 			built.push_back(std::move(volume));
 		}
 
 		mVolumes = std::move(built);
+		mZoneSetInsideSeeded = false;   // re-seed without reporting; see reportZoneSetEntries
 
 		// If the speedrun filter would hide EVERYTHING, say so and dump what the level actually calls its
 		// volumes. The filter is a fixed name list transcribed from the community completion-requirement docs,
@@ -1351,6 +1700,30 @@ private:
 			}
 			if (mVolumes.empty()) return;
 
+			// Same two reports as the 3D path. The two paths are mutually exclusive (onRenderEvent returns
+			// early when threeDPathIsLive()), so nothing is announced twice. ⚠ reportNewHits used to be called
+			// ONLY from the 3D path; including it here fixes that asymmetry. playerState is already locked
+			// above on this path, so it is reused rather than re-locked.
+			if (settings->triggerOverlayMessageOnCheckHit->GetValue()
+				|| settings->hceTriggerOverlayZoneSetReport->GetValue())
+			{
+				if (auto messagesGUI = messagesGUIWeak.lock())
+				{
+					if (settings->triggerOverlayMessageOnCheckHit->GetValue())
+						reportNewHits(messagesGUI);
+					if (settings->hceTriggerOverlayZoneSetReport->GetValue())
+					{
+						try
+						{
+							SimpleMath::Vector3 playerPoint, unusedVelocity;
+							playerState->getPlayerPositionAndVelocity(playerPoint, unusedVelocity);
+							reportZoneSetEntries(messagesGUI, playerPoint);
+						}
+						catch (HCMRuntimeException) {}   // dead or mid-load; skip the frame
+					}
+				}
+			}
+
 			// The UE camera is authoritative - it is what the frame is actually rendered from. The sim's
 			// player-aim camera is only a fallback for the frames before DoUpdateCamera has run, or if the POV
 			// read ever stops being plausible; it tracks the player rather than the render camera, so the
@@ -1391,7 +1764,9 @@ private:
 			const SimpleMath::Vector4 activeColour = settings->hceTriggerOverlayActiveColor->GetValue();
 
 			const SimpleMath::Vector4 normalColour = settings->triggerOverlayNormalColor->GetValue();
-			const SimpleMath::Vector4 sectorBase = settings->triggerOverlaySectorColor->GetValue();
+			// ⚠ triggerOverlaySectorColor is deliberately NOT read any more - sectors are regular triggers now.
+			// The SETTING must stay: it is SHARED with the MCC trigger overlay (TriggerOverlay.cpp, Halo 3 ODST /
+			// Reach / Halo 4), which still has a real sector distinction. Deleting it would break those games.
 			const float wireAlpha = std::clamp(settings->triggerOverlayWireframeAlpha->GetValue(), 0.f, 1.f);
 			const float solidAlpha = std::clamp(settings->triggerOverlayAlpha->GetValue(), 0.f, 1.f);
 
@@ -1406,10 +1781,12 @@ private:
 			const ImU32 labelPacked = pack(labelColour, 1.f);
 
 			const ImU32 boxWire = pack(normalColour, wireAlpha);
-			const ImU32 sectorWire = pack(sectorBase, wireAlpha);
 			const ImU32 activeWire = pack(activeColour, wireAlpha);
 			const ImU32 bspWire = pack(bspBase, wireAlpha);
 			const ImU32 bspFill = pack(bspBase, solidAlpha);
+			const SimpleMath::Vector4 beginBase = settings->hceTriggerOverlayBeginZoneSetColor->GetValue();
+			const ImU32 beginWire = pack(beginBase, wireAlpha);
+			const ImU32 beginFill = pack(beginBase, solidAlpha);
 			const SimpleMath::Vector4 killBase = settings->hceTriggerOverlayKillColor->GetValue();
 			const SimpleMath::Vector4 safeBase = settings->hceTriggerOverlaySafeZoneColor->GetValue();
 			const ImU32 killWire = pack(killBase, wireAlpha);
@@ -1417,7 +1794,6 @@ private:
 			const ImU32 safeWire = pack(safeBase, wireAlpha);
 			const ImU32 safeFill = pack(safeBase, solidAlpha);
 			const ImU32 boxFill = pack(normalColour, solidAlpha);
-			const ImU32 sectorFill = pack(sectorBase, solidAlpha);
 			const ImU32 activeFill = pack(activeColour, solidAlpha);
 
 			ImDrawList* drawList = ImGui::GetBackgroundDrawList();
@@ -1438,18 +1814,21 @@ private:
 				if (!shouldDrawVolume(volume, typeFilter)) continue;
 
 				// Colour priority: ACTIVE beats everything (it is transient and the most urgent thing to see),
-				// then BSP/zone-set (crossing one reloads the world), then sector, then plain.
+				// then BSP/zone-set (crossing one reloads the world), then kill, then plain. Sector-shaped
+				// volumes take the plain colour - shape is not a category.
 				const bool isLive = highlightActive && isVolumeActive(volume.index);
 				const ImU32 colour = isLive ? activeWire
-					: volume.isBspSwitch ? bspWire
+					: volume.isCommitZoneSet ? bspWire
+					: volume.isBeginZoneSet ? beginWire
 					: volume.isKill ? killWire
 					: volume.isSafeZone ? safeWire
-					: (volume.isSector ? sectorWire : boxWire);
+					: boxWire;
 				const ImU32 fill = isLive ? activeFill
-					: volume.isBspSwitch ? bspFill
+					: volume.isCommitZoneSet ? bspFill
+					: volume.isBeginZoneSet ? beginFill
 					: volume.isKill ? killFill
 					: volume.isSafeZone ? safeFill
-					: (volume.isSector ? sectorFill : boxFill);
+					: boxFill;
 
 				// SOLID. There is no depth buffer on this D3D12 path, so faces are sorted back-to-front by
 				// centroid depth (painter's algorithm) to look right against EACH OTHER. They are still not
@@ -1606,12 +1985,27 @@ private:
 			}
 			if (mVolumes.empty()) return;
 
-			// Announce anything hit since the last frame. Done here, under the same lock that owns mVolumes,
-			// so the name and the index can never disagree.
-			if (settings->triggerOverlayMessageOnCheckHit->GetValue())
+			// Announce anything hit since the last frame, and anything entered. Done here, under the same lock
+			// that owns mVolumes, so the name and the index can never disagree.
+			if (settings->triggerOverlayMessageOnCheckHit->GetValue()
+				|| settings->hceTriggerOverlayZoneSetReport->GetValue())
 			{
 				if (auto messagesGUI = messagesGUIWeak.lock())
-					reportNewHits(messagesGUI);
+				{
+					if (settings->triggerOverlayMessageOnCheckHit->GetValue())
+						reportNewHits(messagesGUI);
+					if (settings->hceTriggerOverlayZoneSetReport->GetValue())
+					{
+						try
+						{
+							lockOrThrow(playerStateWeak, playerState);
+							SimpleMath::Vector3 playerPoint, unusedVelocity;
+							playerState->getPlayerPositionAndVelocity(playerPoint, unusedVelocity);
+							reportZoneSetEntries(messagesGUI, playerPoint);
+						}
+						catch (HCMRuntimeException) {}   // dead or mid-load; skip the frame, never abort the draw
+					}
+				}
 			}
 
 			const SettingsEnums::TriggerRenderStyle renderStyle = settings->triggerOverlayRenderStyle->GetValue();
@@ -1642,7 +2036,9 @@ private:
 			const bool messageOnHit = settings->triggerOverlayMessageOnCheckHit->GetValue();
 
 			const SimpleMath::Vector4 normalColour = settings->triggerOverlayNormalColor->GetValue();
-			const SimpleMath::Vector4 sectorBase = settings->triggerOverlaySectorColor->GetValue();
+			// ⚠ triggerOverlaySectorColor is deliberately NOT read any more - sectors are regular triggers now.
+			// The SETTING must stay: it is SHARED with the MCC trigger overlay (TriggerOverlay.cpp, Halo 3 ODST /
+			// Reach / Halo 4), which still has a real sector distinction. Deleting it would break those games.
 			const float wireAlpha = std::clamp(settings->triggerOverlayWireframeAlpha->GetValue(), 0.f, 1.f);
 			const float solidAlpha = std::clamp(settings->triggerOverlayAlpha->GetValue(), 0.f, 1.f);
 
@@ -1659,10 +2055,8 @@ private:
 			const SimpleMath::Vector4 hitWire = withAlpha(hitBase, wireAlpha);
 			const SimpleMath::Vector4 hitFill = withAlpha(hitBase, solidAlpha);
 			const SimpleMath::Vector4 boxWire = withAlpha(normalColour, wireAlpha);
-			const SimpleMath::Vector4 sectorWire = withAlpha(sectorBase, wireAlpha);
 			const SimpleMath::Vector4 activeWire = withAlpha(activeColour, wireAlpha);
 			const SimpleMath::Vector4 boxFill = withAlpha(normalColour, solidAlpha);
-			const SimpleMath::Vector4 sectorFill = withAlpha(sectorBase, solidAlpha);
 			const SimpleMath::Vector4 activeFill = withAlpha(activeColour, solidAlpha);
 
 			// Kept in lockstep with the ImGui path above - same settings, same priority, same filter.
@@ -1670,6 +2064,9 @@ private:
 			const SimpleMath::Vector4 bspBase = settings->hceTriggerOverlayBspColor->GetValue();
 			const SimpleMath::Vector4 bspWire = withAlpha(bspBase, wireAlpha);
 			const SimpleMath::Vector4 bspFill = withAlpha(bspBase, solidAlpha);
+			const SimpleMath::Vector4 beginBase = settings->hceTriggerOverlayBeginZoneSetColor->GetValue();
+			const SimpleMath::Vector4 beginWire = withAlpha(beginBase, wireAlpha);
+			const SimpleMath::Vector4 beginFill = withAlpha(beginBase, solidAlpha);
 			const SimpleMath::Vector4 killBase = settings->hceTriggerOverlayKillColor->GetValue();
 			const SimpleMath::Vector4 safeBase = settings->hceTriggerOverlaySafeZoneColor->GetValue();
 			const SimpleMath::Vector4 killWire = withAlpha(killBase, wireAlpha);
@@ -1720,15 +2117,17 @@ private:
 				}
 
 				const SimpleMath::Vector4& wireColour = isLive ? activeWire
-					: volume.isBspSwitch ? bspWire
+					: volume.isCommitZoneSet ? bspWire
+					: volume.isBeginZoneSet ? beginWire
 					: volume.isKill ? killWire
 					: volume.isSafeZone ? safeWire
-					: (volume.isSector ? sectorWire : boxWire);
+					: boxWire;                                    // sectors included - shape is not a category
 				const SimpleMath::Vector4& fillColour = isLive ? activeFill
-					: volume.isBspSwitch ? bspFill
+					: volume.isCommitZoneSet ? bspFill
+					: volume.isBeginZoneSet ? beginFill
 					: volume.isKill ? killFill
 					: volume.isSafeZone ? safeFill
-					: (volume.isSector ? sectorFill : boxFill);
+					: boxFill;
 
 				const HceTriggerVolumeModel model(volume);
 
@@ -1921,6 +2320,7 @@ private:
 				mCachedCount = -1;
 				mCachedEncodedAddress = 0;
 				mVolumes.clear();
+				mZoneSetInsideSeeded = false;   // re-seed without reporting; see reportZoneSetEntries
 				mLastRefresh = {};
 				refreshVolumes();
 				volumeCount = mVolumes.size();
@@ -1952,6 +2352,7 @@ private:
 				mCachedCount = -1;
 				mCachedEncodedAddress = 0;
 				mVolumes.clear();
+				mZoneSetInsideSeeded = false;   // re-seed without reporting; see reportZoneSetEntries
 				mLastRefresh = {};
 			}
 
@@ -2035,11 +2436,11 @@ private:
 					e.speedrun = v.isSpeedrun;
 					// SAME priority order the colours and shouldDrawVolume use, so a volume is listed under the
 					// category it actually behaves as.
-					e.category = v.isBspSwitch ? HCETriggerNameFilterDialog::Category::ZoneSet
+					e.category = v.isCommitZoneSet ? HCETriggerNameFilterDialog::Category::ZoneSet
+						: v.isBeginZoneSet ? HCETriggerNameFilterDialog::Category::BeginZoneSet
 						: v.isKill ? HCETriggerNameFilterDialog::Category::Kill
 						: v.isSafeZone ? HCETriggerNameFilterDialog::Category::SafeZone
-						: v.isSector ? HCETriggerNameFilterDialog::Category::Sector
-						: HCETriggerNameFilterDialog::Category::Regular;
+						: HCETriggerNameFilterDialog::Category::Regular;   // sectors included
 					entries.push_back(std::move(e));
 				}
 			}
@@ -2106,6 +2507,16 @@ public:
 		hceOffset(mScenarioZoneSetSwitchBlock, hceScenarioZoneSetSwitchTriggerVolumeBlock);
 		hceOffset(mZoneSetSwitchStride, hceZoneSetSwitchStride);
 		hceOffset(mZoneSetSwitchTriggerVolumeIndexOffset, hceZoneSetSwitchTriggerVolumeIndexOffset);
+		hceOffset(mZoneSetSwitchBeginZoneSetOffset, hceZoneSetSwitchBeginZoneSetOffset);
+		hceOffset(mZoneSetSwitchCommitZoneSetOffset, hceZoneSetSwitchCommitZoneSetOffset);
+		hceOffset(mZoneSetSwitchFlagsOffset, hceZoneSetSwitchFlagsOffset);
+		hceOffset(mScenarioZoneSetBlock, hceScenarioZoneSetBlock);
+		hceOffset(mZoneSetStride, hceZoneSetStride);
+		hceOffset(mZoneSetNameStringIdOffset, hceZoneSetNameStringIdOffset);
+		hceOffset(mZoneSetNameStringOffset, hceZoneSetNameStringOffset);
+		hceOffset(mZoneSetFlagsOffset, hceZoneSetFlagsOffset);
+		hceOffset(mZoneSetBspZoneFlagsOffset, hceZoneSetBspZoneFlagsOffset);
+		hceOffset(mZoneSetRuntimeBspZoneFlagsOffset, hceZoneSetRuntimeBspZoneFlagsOffset);
 		hceOffset(mScenarioKillTriggerBlock, hceScenarioKillTriggerBlock);
 		hceOffset(mScenarioSafeZoneTriggerBlock, hceScenarioSafeZoneTriggerBlock);
 		hceOffset(mKillTriggerStride, hceKillTriggerStride);

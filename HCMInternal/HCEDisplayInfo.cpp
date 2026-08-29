@@ -134,6 +134,21 @@ private:
 			catch (HCMRuntimeException) { appendRow(out, "Current Level", "None"); }
 		}
 
+		if (settings->hceDisplayInfoShowZoneSet->GetValue())
+		{
+			try
+			{
+				std::string name = playerState->getCurrentZoneSetName();
+				// The index global is written BEFORE the BSPs finish loading (it is the 4th instruction of the
+				// commit), so it means "switching to", not "finished". Say which.
+				if (!playerState->isCurrentZoneSetFullyLoaded()) name += " (loading)";
+				appendRow(out, "Current Zone Set", name);
+			}
+			catch (HCMRuntimeException) { appendRow(out, "Current Zone Set", "None"); }
+		}
+
+		// ⚠ The row below is misnamed at the source: this global is the current ZONE SET index, not a BSP
+		// index. The name is kept for compatibility; the row above shows the same value as a readable name.
 		if (settings->hceDisplayInfoShowBSP->GetValue())
 		{
 			try { appendRow(out, "Current BSP", std::to_string(playerState->getCurrentBSP())); }

@@ -170,6 +170,11 @@ HCEDisableFadeFromBlack,\
 HCEDumpCheckpoint,\
 HCEInjectCheckpoint,\
 HCESoftCeilingOverlay,\
+HCEGameSpeed,\
+HCEFreecamKeepPosition,\
+HCEFreecamDrift,\
+HCEGameThreadPumpHost,\
+HCEConsole,\
 CompetitionMode
 
 

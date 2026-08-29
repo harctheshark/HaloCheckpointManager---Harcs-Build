@@ -129,6 +129,19 @@ namespace
 	std::atomic<uintptr_t> gValidatedDestination{ 0 };
 	uint32_t gLastValidationTick = 0;   // hook thread only
 
+	// ---- LATCH LIVENESS ---------------------------------------------------------------------------
+	// The last tick on which the LATCHED destination was actually written. A retired camera stops being
+	// written entirely, and that silence - not a failed probe - is what proves it is gone.
+	//
+	// Probing the latched pointer instead would be weaker: after a level transition the memory is freed and
+	// can be reallocated, and `destinationIsCameraManagerPov` only asks for a vtable inside the exe image and
+	// a float in (20,170) at +0x2F0. Reused memory can satisfy both by coincidence, and the latch would then
+	// never release. Silence cannot be spoofed that way.
+	uint32_t gLastValidatedWriteTick = 0;      // hook thread only
+	constexpr uint32_t kLatchDeadMs = 1000;    // == kStaleSnapshotMs, so recovery fires exactly when the
+	                                           // existing "SNAPSHOT IS STALE" warning would have fired
+	std::atomic<uint32_t> gLatchTimeouts{ 0 }; // published for the consumer-side report, never logged here
+
 	// Same test HCEFieldOfView uses before it writes: a real APlayerCameraManager has a vtable inside the exe
 	// image and a sane DefaultFOV. A stray FMinimalViewInfo offset back by 0x14B0 satisfies neither except by
 	// coincidence. Reads go through tryReadRaw, so a bad candidate cannot fault us.
@@ -175,6 +188,14 @@ namespace
 		const uint32_t now = GetTickCount();
 		const uintptr_t destination = ctx.rcx;
 
+		// Stamp liveness FIRST, ahead of the value gates below. A frame those gates reject - an origin or
+		// non-finite POV during a load - is still proof that this camera is alive and being written, and
+		// treating it as silence would retire a latch that is merely mid-load.
+		{
+			const uintptr_t latchedNow = gValidatedDestination.load(std::memory_order_acquire);
+			if (latchedNow != 0 && destination == latchedNow) gLastValidatedWriteTick = now;
+		}
+
 		// ⚠ VALIDATE BEFORE TALLYING. The candidate must earn its place in the election, not just show up.
 		//
 		// Observed in game: a foreign view info sitting at EXACTLY the world origin (FOV 90) is written often
@@ -194,6 +215,38 @@ namespace
 		if (candidate.location[0] == 0.0 && candidate.location[1] == 0.0 && candidate.location[2] == 0.0) return;
 
 		// ---- validation path: adopt the destination that IS a camera manager POV, and ignore the rest --------
+		//
+		// ⚠⚠ THE LATCH MUST BE RELEASABLE BY LIVENESS, NOT ONLY BY BEING TOUCHED.
+		//
+		// The release below lives inside `destination == validated`, so it can only run on a frame that writes
+		// the LATCHED destination. A level transition retires the APlayerCameraManager and the next level
+		// builds a new one elsewhere, so that destination is never written again: the release became
+		// unreachable, every write for the REAL camera fell to the terminal `else` and returned before the
+		// tally, the election and the seqlock publish, and nothing was ever published again.
+		//
+		// MEASURED: getUeCamera() kept returning TRUE with the last frame of the previous level - it reads
+		// gPovSnapshot, not the pointer, and has no freshness gate - so every HaloCER overlay (Trigger, BSP,
+		// Soft Ceiling, on both the D3D12 and ImGui paths) drew from where the camera used to be, for the rest
+		// of the session. Toggling an overlay off and on could not help: these are file-scope statics and a
+		// detach/reattach leaves them bit-for-bit intact, so only restarting the game cleared it.
+		//
+		// The same frozen pointer reaches HCEFieldOfView, whose first-write plausibility gate is skipped
+		// precisely because the address has not changed - leaving one weak check between a 250 ms poll and a
+		// four-byte write into reallocated memory. Retracting the election below closes that too.
+		if (gValidatedDestination.load(std::memory_order_acquire) != 0
+			&& gLastValidatedWriteTick != 0
+			&& (now - gLastValidatedWriteTick) >= kLatchDeadMs)
+		{
+			gLatchTimeouts.fetch_add(1, std::memory_order_relaxed);
+			const uintptr_t dead = gValidatedDestination.exchange(0, std::memory_order_acq_rel);
+			// Retract the election through adoptPreferredDestination rather than storing directly, so the
+			// file's invariant that every change to gPreferredDestination is counted still holds.
+			adoptPreferredDestination(0);
+			gLastValidatedWriteTick = 0;
+			PLOG_DEBUG << "HCEGetCameraData: latched camera destination 0x" << std::hex << dead << std::dec
+				<< " stopped being written for " << kLatchDeadMs << " ms; releasing and re-resolving";
+		}
+
 		const uintptr_t validated = gValidatedDestination.load(std::memory_order_acquire);
 
 		if (validated != 0 && destination == validated)
@@ -219,6 +272,7 @@ namespace
 			{
 				gValidatedDestination.store(destination, std::memory_order_release);
 				gLastValidationTick = now;
+				gLastValidatedWriteTick = now;   // arm liveness at the moment of adoption
 				adoptPreferredDestination(destination);
 				PLOG_DEBUG << "HCEGetCameraData: adopted validated camera destination 0x" << std::hex
 					<< destination << std::dec << " (manager 0x" << std::hex

@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "GUIRequiredServices.h"
 
 
@@ -62,6 +62,24 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	},
 	{GUIElementEnum::hceDisableFadeFromBlackGUI,
 			{OptionalCheatEnum::HCEDisableFadeFromBlack}
+	},
+	{GUIElementEnum::hceGameSpeedGUI,
+			{OptionalCheatEnum::HCEGameSpeed}
+	},
+	{GUIElementEnum::hceFreecamKeepPositionGUI,
+			{OptionalCheatEnum::HCEFreecamKeepPosition}
+	},
+	{GUIElementEnum::hceFreecamDriftGUI,
+			{OptionalCheatEnum::HCEFreecamDrift}
+	},
+	{GUIElementEnum::hceFreecamDriftAmountGUI,
+			{OptionalCheatEnum::HCEFreecamDrift}
+	},
+	{GUIElementEnum::hceConsoleGUI,
+			{OptionalCheatEnum::HCEConsole}
+	},
+	{GUIElementEnum::hceScriptHeadingGUI,
+			{OptionalCheatEnum::HCEConsole}
 	},
 	{GUIElementEnum::hceSkyFixGUI,
 			{OptionalCheatEnum::HCESkyFix}

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <atomic>
 #include "UnarySetting.h"
 #include "BinarySetting.h"
@@ -37,13 +37,13 @@ public:
 		// subscriber runs, with nothing else to keep in sync. Done here rather than in the array's initialiser
 		// because a default member initialiser cannot rely on members declared after it, and these four are.
 		// ⚠ INDICES ARE POSITIONS IN HCE_HOTKEYS (HotkeysEnum.h). They are the last block of that macro.
-		hceHotkeyEvents[45] = forceTeleportAbsoluteFillCurrent;
-		hceHotkeyEvents[46] = forceTeleportAbsoluteCopy;
-		hceHotkeyEvents[47] = forceTeleportAbsolutePaste;
-		hceHotkeyEvents[48] = hceTriggerOverlayEditNameFilterEvent;
-		hceHotkeyEvents[49] = hceCameraRollResetEvent;
-		hceHotkeyEvents[50] = hceFieldOfViewResetEvent;
-		hceHotkeyEvents[51] = hceCameraMoveSpeedResetEvent;
+		hceHotkeyEvents[51] = forceTeleportAbsoluteFillCurrent;
+		hceHotkeyEvents[52] = forceTeleportAbsoluteCopy;
+		hceHotkeyEvents[53] = forceTeleportAbsolutePaste;
+		hceHotkeyEvents[54] = hceTriggerOverlayEditNameFilterEvent;
+		hceHotkeyEvents[55] = hceCameraRollResetEvent;
+		hceHotkeyEvents[56] = hceFieldOfViewResetEvent;
+		hceHotkeyEvents[57] = hceCameraMoveSpeedResetEvent;
 	}
 	~SettingsStateAndEvents() {
 		PLOG_DEBUG << "~SettingsStateAndEvents()";
@@ -256,7 +256,7 @@ public:
 	//
 	// The last four elements are REPLACED IN THE CONSTRUCTOR with events that already exist (see below), so
 	// those hotkeys fire the very same event object the equivalent button does. Everything before them is new.
-	static constexpr inline int kHCEHotkeyCount = 52;
+	static constexpr inline int kHCEHotkeyCount = 58;
 	std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> hceHotkeyEvents = []()
 		{
 			std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> events;
@@ -1252,6 +1252,17 @@ public:
 			nameof(hceDisplayInfoShowBSP)
 		);
 
+	// ⚠ The row above is MISNAMED at the source: hceCurrentBSP (simBase + 0x9A14E0) is the current ZONE SET
+	// index, not a BSP index - it is literally what HaloScript's current_zone_set returns. Its name is kept
+	// for compatibility (settings and hotkeys serialise BY NAME, so renaming would churn every user's config);
+	// this row shows the same thing as a readable name instead of a number.
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowZoneSet = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowZoneSet)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowTick = std::make_shared<BinarySetting<bool>>
 		(
 			true,
@@ -1309,6 +1320,87 @@ public:
 			false,
 			[](bool in) { return true; },
 			nameof(hceDisableFadeFromBlackToggle)
+		);
+
+	// Scales the SIMULATION by writing s_game_time_globals.speed - see HCEGameSpeed.h. Replaces the
+	// Speedhack on HaloCER, which is why speedhackGUI is no longer offered for that game.
+	// Momentum for HaloCER's engine-driven free camera - see HCEFreecamDrift.h. Amount is how much of the
+	// camera's velocity survives each frame; capped below 1 because at 1 it never settles.
+	std::shared_ptr<BinarySetting<bool>> hceFreecamDriftToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceFreecamDriftToggle)
+		);
+
+	// Seconds of coast after you stop moving; the filter's time constant is a third of this (see
+	// HCEFreecamDrift.h). 0 disables smoothing. It is a two-stage exponential, so no value here can overshoot.
+	std::shared_ptr<BinarySetting<float>> hceFreecamDriftAmount = std::make_shared<BinarySetting<float>>
+		(
+			0.75f,
+			[](float in) { return in >= 0.f && in <= 2.f; },
+			nameof(hceFreecamDriftAmount)
+		);
+
+	// Not a control - the console row is always visible in the HaloCER section. It exists because the HCE
+	// hotkey tables are POSITIONAL: every entry in HCE_HOTKEYS needs a toggle at the matching index in
+	// hceToggleTargets, or a hotkey silently drives the setting next to the one it is named after. Flipping
+	// this does nothing.
+	std::shared_ptr<BinarySetting<bool>> hceConsoleOpenToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceConsoleOpenToggle)
+		);
+
+	// Keeps the freecam where it is across a checkpoint revert instead of letting the restored game state
+	// put it back where the camera stood when the checkpoint was taken. See HCEFreecamKeepPosition.h.
+	std::shared_ptr<BinarySetting<bool>> hceFreecamKeepPositionToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceFreecamKeepPositionToggle)
+		);
+
+	// How much of the camera's velocity survives each frame when the interpolator is set to Momentum.
+	// 0 behaves like Linear; 0.95 is a long, heavy glide. Capped below 1 because at 1 the velocity never
+	// decays and the camera would oscillate around its target forever instead of arriving.
+	std::shared_ptr<BinarySetting<float>> freeCameraUserInputCameraTranslationInterpolatorDrift = std::make_shared<BinarySetting<float>>
+		(
+			0.75f,
+			[](float in) { return in >= 0.f && in <= 0.95f; },
+			nameof(freeCameraUserInputCameraTranslationInterpolatorDrift)
+		);
+
+	std::shared_ptr<BinarySetting<float>> freeCameraUserInputCameraRotationInterpolatorDrift = std::make_shared<BinarySetting<float>>
+		(
+			0.75f,
+			[](float in) { return in >= 0.f && in <= 0.95f; },
+			nameof(freeCameraUserInputCameraRotationInterpolatorDrift)
+		);
+
+	std::shared_ptr<BinarySetting<float>> freeCameraUserInputCameraFOVInterpolatorDrift = std::make_shared<BinarySetting<float>>
+		(
+			0.75f,
+			[](float in) { return in >= 0.f && in <= 0.95f; },
+			nameof(freeCameraUserInputCameraFOVInterpolatorDrift)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> hceGameSpeedToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceGameSpeedToggle)
+		);
+
+	std::shared_ptr<BinarySetting<double>> hceGameSpeedSetting = std::make_shared<BinarySetting<double>>
+		(
+			1.0,
+			// The engine stops keeping up past roughly 5x (its catch-up budget is
+			// min(rate*5, 4*clamp(speed,1,5))), and zero or negative would stall or reverse the
+			// accumulator. Clamp rather than reject so a typo cannot wedge the simulation.
+			[](double in) { return in > 0.0 && in <= 100.0; },
+			nameof(hceGameSpeedSetting)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> hceSkyFixToggle = std::make_shared<BinarySetting<bool>>
@@ -1430,6 +1522,16 @@ public:
 			SimpleMath::Vector4(1.f, 0.35f, 0.9f, 1.f),
 			[](SimpleMath::Vector4 in) { return true; },
 			nameof(hceTriggerOverlayBspColor)
+		);
+
+	// BEGIN zone-set volumes. HCE-OWNED - deliberately NOT triggerOverlaySectorColor or any other shared
+	// setting: those belong to the MCC overlay (Halo 3 ODST / Reach / Halo 4), and reusing one would tie two
+	// unrelated features together. Cooler than the commit colour on purpose: begin only takes geometry AWAY.
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceTriggerOverlayBeginZoneSetColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(0.35f, 0.85f, 0.8f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceTriggerOverlayBeginZoneSetColor)
 		);
 
 	// Kill volumes ("stay OUT") and safe zones ("stay IN") are the same feature family and share one toggle, but
@@ -1688,12 +1790,9 @@ public:
 			nameof(hceTriggerOverlayShowRegular)
 		);
 
-	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowSector = std::make_shared<BinarySetting<bool>>
-		(
-			true,
-			[](bool in) { return true; },
-			nameof(hceTriggerOverlayShowSector)
-		);
+	// (There is no hceTriggerOverlayShowSector: "sector" is a trigger SHAPE, not a kind of trigger, so those
+	// volumes are drawn and filtered as regular ones. triggerOverlaySectorColor still exists and is still used
+	// by the MCC trigger overlay, which does have a real sector distinction.)
 
 	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowKill = std::make_shared<BinarySetting<bool>>
 		(
@@ -1707,6 +1806,28 @@ public:
 			true,
 			[](bool in) { return true; },
 			nameof(hceTriggerOverlayShowZoneSet)
+		);
+
+	// The SECOND zone-set category. 'begin zone set' (+0x02 of the switch element) runs
+	// prepare_to_switch_to_zone_set, which is purely SUBTRACTIVE - it unloads the BSPs the incoming zone set
+	// does not want and loads nothing. 'commit zone set' (+0x06) runs switch_zone_set, which is what brings
+	// new BSP geometry in. Separate toggle because they are separate fields with separate consequences.
+	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowBeginZoneSet = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceTriggerOverlayShowBeginZoneSet)
+		);
+
+	// Print the zone-set consequence to the message feed when the player enters a zone-set volume. This is a
+	// GEOMETRIC test done by HCM, not an engine hit: HCETriggerActivity deliberately patches only the eight
+	// HaloScript call sites of trigger_volume_test_point, and the zone-set evaluator sub_18018F870 is on the
+	// NOT-patched list, so these volumes can never produce a script "hit".
+	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayZoneSetReport = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceTriggerOverlayZoneSetReport)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> hideHUDToggle = std::make_shared<BinarySetting<bool>>
@@ -3220,8 +3341,18 @@ public:
 		hceTriggerOverlayRenderDistance,
 		hceTriggerOverlayShowLabels,
 		hceFieldOfViewDegrees,
-		// ⚠ FOUR HaloCER SETTINGS ARE DELIBERATELY ABSENT FROM THIS LIST:
-		//       hceSkyFixToggle, hceDisableFadeFromBlackToggle, hceFieldOfViewToggle, hceCameraRollDegrees
+		hceGameSpeedSetting,
+		hceFreecamDriftAmount,
+		freeCameraUserInputCameraTranslationInterpolatorDrift,
+		freeCameraUserInputCameraRotationInterpolatorDrift,
+		freeCameraUserInputCameraFOVInterpolatorDrift,
+		// ⚠ FIVE HaloCER SETTINGS ARE DELIBERATELY ABSENT FROM THIS LIST:
+		//       hceSkyFixToggle, hceDisableFadeFromBlackToggle, hceFieldOfViewToggle, hceCameraRollDegrees,
+		//       hceGameSpeedToggle
+		//
+		// hceGameSpeedToggle for the same reason as the first two: a simulation still running at 3x on next
+		// launch reads as the GAME being broken, not as an HCM setting still being on. hceGameSpeedSetting IS
+		// listed below, because the multiplier on its own does nothing until the toggle is turned on by hand.
 		//
 		// The last two for the same reason as the first two, restated for their own case: an FOV that re-locks
 		// itself at launch, or a camera that comes back tilted, both read as the GAME being broken rather than as
@@ -3253,9 +3384,12 @@ public:
 		hceTriggerOverlaySafeZoneColor,
 		hceTriggerOverlaySpeedrunOnly,
 		hceTriggerOverlayShowRegular,
-		hceTriggerOverlayShowSector,
 		hceTriggerOverlayShowKill,
 		hceTriggerOverlayShowZoneSet,
+		hceTriggerOverlayShowBeginZoneSet,
+		hceTriggerOverlayZoneSetReport,
+		hceTriggerOverlayBeginZoneSetColor,
+		hceDisplayInfoShowZoneSet,
 		// ⚠ hceBspOverlayToggle is DELIBERATELY ABSENT from this list. Everything here is written to
 		// HCMInternalConfig.xml and read back at startup, so listing the toggle would make the overlay
 		// re-arm itself every launch just because it was on when HCM last closed. A visualiser that turns

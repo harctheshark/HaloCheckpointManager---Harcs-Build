@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -463,6 +463,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="Conduit_ITCFont.h" />
     <ClInclude Include="ControlServiceContainer.h" />
     <ClInclude Include="LinearSmoother.h" />
+    <ClInclude Include="MomentumSmoother.h" />
     <ClInclude Include="DifficultyEnum.h" />
     <ClInclude Include="DirPathContainer.h" />
     <ClInclude Include="DisplayPlayerInfo.h" />
@@ -584,6 +585,14 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HookGraveyard.h" />
     <ClInclude Include="ImageResidencyShim.h" />
     <ClInclude Include="HCEDisableFadeFromBlack.h" />
+    <ClInclude Include="HCEGameSpeed.h" />
+    <ClInclude Include="HCEGameThreadPump.h" />
+    <ClInclude Include="HCEConsole.h" />
+    <ClInclude Include="GUIHCEConsole.h" />
+    <ClInclude Include="HCEFreecamKeepPosition.h" />
+    <ClInclude Include="HCEFreecamDrift.h" />
+    <ClInclude Include="HCEScriptRegistry.h" />
+    <ClInclude Include="GUIGameSpeed.h" />
     <ClInclude Include="HCECheckpointBlob.h" />
     <ClInclude Include="HCEDumpCheckpoint.h" />
     <ClInclude Include="HCEInjectCheckpoint.h" />
@@ -904,6 +913,12 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="HCEFieldOfView.cpp" />
     <ClCompile Include="ImageResidencyShim.cpp" />
     <ClCompile Include="HCEDisableFadeFromBlack.cpp" />
+    <ClCompile Include="HCEGameSpeed.cpp" />
+    <ClCompile Include="HCEGameThreadPump.cpp" />
+    <ClCompile Include="HCEConsole.cpp" />
+    <ClCompile Include="HCEFreecamKeepPosition.cpp" />
+    <ClCompile Include="HCEFreecamDrift.cpp" />
+    <ClCompile Include="HCEScriptRegistry.cpp" />
     <ClCompile Include="HCECheckpointBlob.cpp" />
     <ClCompile Include="HCEDumpCheckpoint.cpp" />
     <ClCompile Include="HCEInjectCheckpoint.cpp" />

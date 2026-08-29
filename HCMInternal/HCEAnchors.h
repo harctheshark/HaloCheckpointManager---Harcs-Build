@@ -60,6 +60,14 @@ namespace HCEAnchors
 		TriggerVolumeTestPoint,   // the stubbed function; its EIGHT call sites need no anchor of their own,
 		                          // because HCETriggerActivity already proves each is an E8 whose target
 		                          // equals this address - a structural check stronger than a signature.
+		// ---- ZONE SETS. LoadedBspZoneFlags and CurrentZoneSetCrossCheck come from ONE match, so they are two
+		// entries sharing one signature with different extractions.
+		LoadedBspZoneFlags,       // u32 bitmask, bit i = scenario 'structure bsps' element i is resident.
+		                          // ⚠ THIS is "which BSPs are loaded" - NOT Anchor::CurrentBSP, which despite
+		                          // its name holds the current ZONE SET index (see the note in the XML).
+		CurrentZoneSetCrossCheck, // the same global hceCurrentBSP resolves - a second, independent derivation
+		ScenarioDataPointer,      // module slot holding the scenario tag-data pointer
+		TagAddressTable,          // 16-entry table of tag-block region bases
 		Count
 	};
 

@@ -168,6 +168,14 @@ private:
 	int64_t mPlayerControlYawOffset = 0x14;
 	int64_t mPlayerControlPitchOffset = 0x18;
 
+	// The scenario's 'zone sets' block, for getCurrentZoneSetName. See InternalPointerData.xml.
+	int64_t mScenarioZoneSetBlock = 0xD0;
+	int64_t mZoneSetStride = 0x130;
+	int64_t mZoneSetNameStringOffset = 0x4;
+	int64_t mZoneSetFlagsOffset = 0x108;
+	int64_t mZoneSetBspZoneFlagsOffset = 0x10C;
+	int64_t mZoneSetRuntimeBspZoneFlagsOffset = 0x114;
+
 	std::mutex mCacheMutex;
 	uintptr_t mCachedTeb = 0;
 	std::chrono::steady_clock::time_point mLastFailedWalk{};
@@ -288,6 +296,12 @@ public:
 		hceOffset(mPlayerControlUnitDatumOffset, hcePlayerControlUnitDatumOffset);
 		hceOffset(mPlayerControlYawOffset, hcePlayerControlYawOffset);
 		hceOffset(mPlayerControlPitchOffset, hcePlayerControlPitchOffset);
+		hceOffset(mScenarioZoneSetBlock, hceScenarioZoneSetBlock);
+		hceOffset(mZoneSetStride, hceZoneSetStride);
+		hceOffset(mZoneSetNameStringOffset, hceZoneSetNameStringOffset);
+		hceOffset(mZoneSetFlagsOffset, hceZoneSetFlagsOffset);
+		hceOffset(mZoneSetBspZoneFlagsOffset, hceZoneSetBspZoneFlagsOffset);
+		hceOffset(mZoneSetRuntimeBspZoneFlagsOffset, hceZoneSetRuntimeBspZoneFlagsOffset);
 #undef hceOffset
 	}
 
@@ -406,6 +420,59 @@ public:
 	}
 
 	uintptr_t getActiveCameraEntry() { return activeCameraEntryOf(getTlsBase()); }
+
+	// The observer that the ACTIVE camera is looking through. This is where the freecam's real pose lives -
+	// the nine floats at +0x154 (position), +0x17C (forward) and +0x188 (up) - and it is the same walk
+	// getCameraView performs, factored out so the offsets stay in one place.
+	//
+	// ⚠ The index comes from the CAMERA ENTRY (+0x180) and the entry itself is re-resolved every call,
+	// because a checkpoint revert restores the director globals along with everything else in game-state
+	// arena 4 and the active slot can come back different. Nothing here may be cached across a revert.
+	uintptr_t activeObserverOf(uintptr_t tls) // throws
+	{
+		const uintptr_t cameraEntry = activeCameraEntryOf(tls);
+
+		int32_t observerIndex = 0;
+		if (!HCEGetPlayerState::tryReadRaw(cameraEntry + mCameraObserverIndexOffset, &observerIndex, sizeof(observerIndex)))
+			throw HCMRuntimeException("Could not read the HaloCER observer index");
+		if (observerIndex < 0 || observerIndex > 3)
+			throw HCMRuntimeException(std::format("Implausible HaloCER observer index: {}", observerIndex));
+
+		const uintptr_t observers = readSlotOf(tls, mObserverGlobalsTlsOffset, "observer globals");
+		return observers + (uintptr_t)observerIndex * mObserverStride;
+	}
+
+	uintptr_t getActiveObserver() { return activeObserverOf(getTlsBase()); }
+
+	// TRUE while a cinematic is playing - scripted in-engine cutscenes AND the prerendered videos alike.
+	//
+	// `*(tls + 0xA8)` is the "cinematic globals" block and byte +0x05 is the engine's own in-progress flag.
+	// This is not inferred: the HaloScript function `cinematic_in_progress` IS exactly this read (its impl is
+	// sim 0x1E42B0), `cinematic_start` writes 1 to it (0x2118E6), `cinematic_stop` writes 0 (0x211B41), and
+	// around fifteen other sites gate on it. The same byte is what the sim publishes to the UE5 layer, which
+	// is what drives the subsystem that plays the prerendered videos - so ONE signal covers both kinds and
+	// they do not need to be told apart.
+	//
+	// ⚠ The slot is null-checked before the deref because every engine reader does the same (e.g. 0x1E42DB):
+	// the block does not exist until a level is up, and reading through it unguarded would be a fault rather
+	// than a false.
+	//
+	// Never throws - a caller polling this every frame wants "no" when the answer is unavailable, not an
+	// exception to swallow.
+	bool isCinematicPlaying() noexcept
+	{
+		try
+		{
+			uintptr_t block = 0;
+			if (!HCEGetPlayerState::tryReadRaw(getTlsBase() + 0xA8, &block, sizeof(block)) || !block)
+				return false;
+			uint8_t flag = 0;
+			if (!HCEGetPlayerState::tryReadRaw(block + 0x05, &flag, sizeof(flag)))
+				return false;
+			return flag != 0;
+		}
+		catch (...) { return false; }
+	}
 
 	// s_player_control for the local player. Campaign is always index 0, but the array is scanned for the slot
 	// whose unit datum matches the player's so a co-op/observer setup cannot silently give us slot 0's angles.
@@ -742,13 +809,117 @@ public:
 		return out;
 	}
 
+	// ⚠ MISNAMED, KEPT FOR COMPATIBILITY: this is the current ZONE SET index, not a BSP index. It is literally
+	// what HaloScript's current_zone_set returns, and it is written by exactly one instruction in the image
+	// (inside the zone-set commit) plus six = -1 resets. Nothing BSP-shaped ever touches it. The real "which
+	// BSPs are resident" datum is the bitmask at Anchor::LoadedBspZoneFlags. On a single-BSP zone set the two
+	// move together, which is why the mislabel survived. The name stays because settings and hotkeys serialise
+	// BY NAME and renaming would churn every user's config; getCurrentZoneSetName() below is the honest one.
 	int32_t getCurrentBSP() // throws
 	{
 		const uintptr_t address = resolveOrThrow(mCurrentBSP, nameof(hceCurrentBSP));
+		// Two independent derivations of the same global: the XML (from the WRITER) versus the reader inside
+		// zone_set_is_fully_active. Disagreement means one is stale and we cannot tell which, so refuse loudly.
+		HCEAnchors::crossCheck(HCEAnchors::Anchor::CurrentZoneSetCrossCheck, address, "Current Zone Set");
 		int32_t value = 0;
 		if (!HCEGetPlayerState::tryReadRaw(address, &value, sizeof(value)))
 			throw HCMRuntimeException("Could not read the HaloCER current BSP");
 		return value;
+	}
+
+	// The scenario 'zone sets' element for `index`, or 0. Shared by the two methods below so the walk exists
+	// once. All addresses come from HCEAnchors (byte signatures), never a hard-coded RVA - HaloCER ships no
+	// version resource, so a stale address would resolve to whatever now occupies it rather than failing.
+	uintptr_t zoneSetElement(int32_t index)
+	{
+		if (index < 0) return 0;
+		const uintptr_t scenarioSlot = HCEAnchors::get(HCEAnchors::Anchor::ScenarioDataPointer);
+		const uintptr_t tagTable = HCEAnchors::get(HCEAnchors::Anchor::TagAddressTable);
+		if (!scenarioSlot || !tagTable) return 0;
+
+		uintptr_t scenario = 0;
+		if (!HCEGetPlayerState::tryReadRaw(scenarioSlot, &scenario, sizeof(scenario))
+			|| scenario < 0x10000ull || scenario >= 0x7FFFFFFFFFFFull)
+			return 0;
+
+		// The engine's OWN bound: switch_zone_set and prepare_to_switch both do `cmp idx,[scenario+0xD0]; jge
+		// fail` before acting. 64 is the declared maximum.
+		int32_t count = 0;
+		uint32_t encoded = 0;
+		HCEGetPlayerState::tryReadRaw(scenario + mScenarioZoneSetBlock, &count, sizeof(count));
+		HCEGetPlayerState::tryReadRaw(scenario + mScenarioZoneSetBlock + 4, &encoded, sizeof(encoded));
+		if (count <= 0 || count > 64 || index >= count || encoded == 0 || encoded == 0xFFFFFFFFu) return 0;
+
+		// enc -> real address. The high nibble picks one of 16 region bases AND stays part of the offset, so
+		// this is not expressible as a flat magic offset. Identical to the engine's own arithmetic.
+		uintptr_t regionBase = 0;
+		if (!HCEGetPlayerState::tryReadRaw(tagTable + 8ull * (encoded >> 28), &regionBase, sizeof(regionBase))
+			|| regionBase < 0x10000ull || regionBase >= 0x7FFFFFFFFFFFull)
+			return 0;
+		return regionBase + 4ull * encoded + (uintptr_t)mZoneSetStride * index;
+	}
+
+	std::string getCurrentZoneSetName() // throws
+	{
+		const uintptr_t simBase = getSimModuleBase();   // also arms HCEAnchors::resolveAll
+
+		// GUARD 1, cheapest and most decisive: the scenario tag index, set to -1 by scenario_dispose before
+		// anything else, in the same block that nulls the scenario pointer.
+		int32_t scenarioTag = 0;
+		if (!HCEGetPlayerState::tryReadRaw(simBase + 0x9A14E4, &scenarioTag, sizeof(scenarioTag))
+			|| scenarioTag == -1)
+			throw HCMRuntimeException("No HaloCER scenario is loaded");
+
+		const int32_t index = getCurrentBSP();   // the current ZONE SET index; -1 is the engine's own sentinel
+		if (index < 0) throw HCMRuntimeException("No HaloCER zone set is active");
+
+		const uintptr_t element = zoneSetElement(index);
+		if (!element)
+			throw HCMRuntimeException(std::format("The HaloCER zone set block is not resolvable (index {})", index));
+
+		// PRIMARY: the literal char[256] at +0x04, verified populated in the shipped tag data of all 13 levels.
+		// No call into the game, no thread considerations, no null-table gate.
+		char buffer[257]{};
+		HCEGetPlayerState::tryReadRaw(element + mZoneSetNameStringOffset, buffer, 256);
+		buffer[256] = '\0';
+		std::string out;
+		for (int i = 0; i < 256; ++i)
+		{
+			const char c = buffer[i];
+			if (c == '\0') break;
+			if (c < 0x20 || c > 0x7E) break;
+			out.push_back(c);
+		}
+
+		// Every level ships exactly one unnamed zone set with flags bit2 ("internal zone set") whose runtime
+		// mask is every BSP. An empty name there is correct data, not a failed read.
+		if (out.empty())
+		{
+			uint32_t flags = 0;
+			HCEGetPlayerState::tryReadRaw(element + mZoneSetFlagsOffset, &flags, sizeof(flags));
+			out = (flags & 0x4u) ? std::format("(internal) [{}]", index) : std::format("zone set {}", index);
+		}
+		return out;
+	}
+
+	// Replicates zone_set_is_fully_active's BSP half. Never throws; false when it cannot tell.
+	bool isCurrentZoneSetFullyLoaded() noexcept
+	{
+		try
+		{
+			const uintptr_t maskSlot = HCEAnchors::get(HCEAnchors::Anchor::LoadedBspZoneFlags);
+			if (!maskSlot) return false;
+			const uintptr_t element = zoneSetElement(getCurrentBSP());
+			if (!element) return false;
+
+			uint32_t wanted = 0, resident = 0;
+			HCEGetPlayerState::tryReadRaw(element + mZoneSetRuntimeBspZoneFlagsOffset, &wanted, sizeof(wanted));
+			if (wanted == 0)
+				HCEGetPlayerState::tryReadRaw(element + mZoneSetBspZoneFlagsOffset, &wanted, sizeof(wanted));
+			if (!HCEGetPlayerState::tryReadRaw(maskSlot, &resident, sizeof(resident))) return false;
+			return (wanted & resident) == wanted;
+		}
+		catch (...) { return false; }
 	}
 
 	int32_t getTickCounter() // throws
@@ -968,6 +1139,8 @@ uintptr_t HCEGetPlayerState::getAiEnabledAddress() { return pimpl->getAiEnabledA
 uintptr_t HCEGetPlayerState::getSkullFlagsAddress() { return pimpl->getSkullFlagsAddress(); }
 uintptr_t HCEGetPlayerState::getFreecamToggleAddress() { return pimpl->getFreecamToggleAddress(); }
 uintptr_t HCEGetPlayerState::getActiveCameraEntry() { return pimpl->getActiveCameraEntry(); }
+uintptr_t HCEGetPlayerState::getActiveObserver() { return pimpl->getActiveObserver(); }
+bool HCEGetPlayerState::isCinematicPlaying() noexcept { return pimpl->isCinematicPlaying(); }
 uintptr_t HCEGetPlayerState::getPlayerControlEntry() { return pimpl->getPlayerControlEntry(); }
 SimpleMath::Vector2 HCEGetPlayerState::getPlayerViewAngle() { return pimpl->getPlayerViewAngle(); }
 void HCEGetPlayerState::getCameraView(SimpleMath::Vector3& outCameraPosition, SimpleMath::Vector2& outViewAngle) { pimpl->getCameraView(outCameraPosition, outViewAngle); }
@@ -983,5 +1156,7 @@ SimpleMath::Vector3 HCEGetPlayerState::teleportPlayerBy(SimpleMath::Vector3 offs
 SimpleMath::Vector3 HCEGetPlayerState::addPlayerVelocity(SimpleMath::Vector3 delta) { return pimpl->addPlayerVelocity(delta); }
 std::string HCEGetPlayerState::getCurrentLevelName() { return pimpl->getCurrentLevelName(); }
 int32_t HCEGetPlayerState::getCurrentBSP() { return pimpl->getCurrentBSP(); }
+std::string HCEGetPlayerState::getCurrentZoneSetName() { return pimpl->getCurrentZoneSetName(); }
+bool HCEGetPlayerState::isCurrentZoneSetFullyLoaded() noexcept { return pimpl->isCurrentZoneSetFullyLoaded(); }
 int32_t HCEGetPlayerState::getTickCounter() { return pimpl->getTickCounter(); }
 void HCEGetPlayerState::invalidateCache() { pimpl->invalidateCache(); }

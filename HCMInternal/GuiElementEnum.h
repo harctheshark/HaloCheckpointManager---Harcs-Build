@@ -135,7 +135,7 @@
 		((replayPlayGUI, (Halo2)))\
 		((replayStopPlaybackGUI, (Halo2)))\
 ((cheatsHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
-	((speedhackGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
+	((speedhackGUI, (ALL_SUPPORTED_GAMES)))\
 	((invulnGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((invulnerabilitySettingsSubheading, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((invulnNPCGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
@@ -477,6 +477,7 @@
 			((hceDisplayInfoShowVelocityXYZ, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowLevel, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowBSP, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowZoneSet, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowTick, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowPlayerDatum, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowTEB, (HALOCER_ONLY)))\
@@ -506,6 +507,14 @@
 	((hceFieldOfViewSpeedGUI, (HALOCER_ONLY)))\
 	((hceFieldOfViewResetGUI, (HALOCER_ONLY)))\
 	((hceDisableFadeFromBlackGUI, (HALOCER_ONLY)))\
+	((hceGameSpeedGUI, (HALOCER_ONLY)))\
+	((hceFreecamKeepPositionGUI, (HALOCER_ONLY)))\
+	((hceFreecamDriftGUI, (HALOCER_ONLY)))\
+	((hceFreecamDriftAmountGUI, (HALOCER_ONLY)))\
+	((hceConsoleGUI, (HALOCER_ONLY)))\
+	((freeCameraUserInputCameraTranslationInterpolatorDrift, (FREE_CAMERA_SUPPORT)))\
+	((freeCameraUserInputCameraRotationInterpolatorDrift, (FREE_CAMERA_SUPPORT)))\
+	((freeCameraUserInputCameraFOVInterpolatorDrift, (FREE_CAMERA_SUPPORT)))\
 	((hceTriggerOverlayToggleGUI, (HALOCER_ONLY)))\
 	((hceTriggerOverlaySettingsSubheading, (HALOCER_ONLY)))\
 			((hceTriggerOverlayRenderStyle, (HALOCER_ONLY)))\
@@ -525,18 +534,19 @@
 			((hceTriggerOverlayNameFilterExactMatch, (HALOCER_ONLY)))\
 			((hceTriggerOverlayTypesShownSubheading, (HALOCER_ONLY)))\
 			((hceTriggerOverlayShowRegular, (HALOCER_ONLY)))\
-			((hceTriggerOverlayShowSector, (HALOCER_ONLY)))\
 			((hceTriggerOverlayShowKill, (HALOCER_ONLY)))\
 			((hceTriggerOverlayShowZoneSet, (HALOCER_ONLY)))\
+			((hceTriggerOverlayShowBeginZoneSet, (HALOCER_ONLY)))\
 			((hceTriggerOverlayLabelColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlayBspColour, (HALOCER_ONLY)))\
+			((hceTriggerOverlayBeginZoneSetColour, (HALOCER_ONLY)))\
+			((hceTriggerOverlayZoneSetReport, (HALOCER_ONLY)))\
 			((hceTriggerOverlayKillColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlaySafeZoneColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlayAlpha, (HALOCER_ONLY)))\
 			((hceTriggerOverlayShowLabels, (HALOCER_ONLY)))\
 			((hceTriggerOverlayLabelScale, (HALOCER_ONLY)))\
 			((hceTriggerOverlayBoxColour, (HALOCER_ONLY)))\
-			((hceTriggerOverlaySectorColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlayWireframeAlpha, (HALOCER_ONLY)))\
 	((hceBspOverlayToggleGUI, (HALOCER_ONLY)))\
 	((hceBspOverlaySettingsSubheading, (HALOCER_ONLY)))\
@@ -600,6 +610,7 @@
 	((competitionModeRightPanelWidth, (Halo2)))\
 	((competitionModeRightFontSize, (Halo2)))\
 	((competitionModeRightColour, (Halo2)))\
+	((hceScriptHeadingGUI, (HALOCER_ONLY)))\
 			((hceInjectCheckpointRewriteIdentity, (HALOCER_ONLY)))
 
 

@@ -155,16 +155,72 @@ private:
 		return speedHackULL.getCurrentTime(getTickCount64Hook.stdcall<ULONGLONG>());
 	}
 
+	// ================================================================================================
+	// ⚠⚠ THE HOOKS ARE INSTALLED LAZILY, ON FIRST USE - AND ARE NEVER REMOVED AGAIN.
+	//
+	// WHY LAZY. These four functions are the cheapest calls in Windows. GetTickCount is
+	// `mov ecx,7FFE0320h / mov rcx,[rcx] / mov eax,[7FFE0004h]` and GetTickCount64 is a single read of
+	// KUSER_SHARED_DATA - no syscall at all - and QueryPerformanceCounter is barely more. Hooking them
+	// replaces a handful of nanoseconds with a trampoline, a call through to the original, a seqlock read
+	// with two fences and a double multiply, FOR EVERY CALLER IN THE PROCESS: the game, the graphics
+	// driver, the frame-generation pacer, the Steam overlay, everything.
+	//
+	// MEASURED on Halo Campaign Evolved (UE5), which hits these clocks far harder than the titles this
+	// code was written for: the game sat at 15.6 cores with 73% of that in KERNEL time and 633,000
+	// context switches per second, while HCM's own threads used 0.01 cores. Installing these
+	// unconditionally in the constructor meant every user paid that tax whether or not they had ever
+	// touched the speedhack - which is almost all of them.
+	//
+	// WHY NEVER REMOVED. Uninstalling is NOT the mirror image of installing. The timeHackers carry an
+	// accumulated offset, so once time has been scaled the hooked clock is ahead of the real one;
+	// dropping the hook makes the process clock jump BACKWARDS by that offset, which is exactly the
+	// failure the seqlock comment at the top of this file describes. So the trade is: pay nothing until
+	// the speedhack is actually used, then pay for the rest of the session.
+	// ================================================================================================
+	static inline std::atomic<bool> hooksInstalled{ false };
+
+	// The real clock, whichever side of installation we are on. Once hooked, the trampoline IS the
+	// original; before that, the export itself is untouched.
+	static DWORD     realGetTickCount()   { return hooksInstalled.load(std::memory_order_acquire) ? getTickCountHook.stdcall<DWORD>()       : GetTickCount(); }
+	static ULONGLONG realGetTickCount64() { return hooksInstalled.load(std::memory_order_acquire) ? getTickCount64Hook.stdcall<ULONGLONG>() : GetTickCount64(); }
+	static LONGLONG  realQpc()
+	{
+		LARGE_INTEGER c{};
+		if (hooksInstalled.load(std::memory_order_acquire))
+			queryPerformanceCounterHook.stdcall<BOOL, _LARGE_INTEGER*>(&c);
+		else
+			QueryPerformanceCounter(&c);
+		return c.QuadPart;
+	}
+
+	static void ensureHooksInstalled()
+	{
+		if (hooksInstalled.load(std::memory_order_acquire)) return;
+
+		std::scoped_lock<std::mutex> lock(hookMutex);
+		if (hooksInstalled.load(std::memory_order_relaxed)) return;   // lost the race; someone else did it
+
+		// Re-seed from the REAL clock immediately before going live, so the first hooked reading
+		// continues from now rather than from whenever this object was constructed.
+		speedHackLL.reset(realQpc(), 1.0);
+		speedHack.reset(realGetTickCount(), 1.0);
+		speedHackULL.reset(realGetTickCount64(), 1.0);
+
+		queryPerformanceCounterHook = safetyhook::create_inline(GetProcAddress(GetModuleHandleA("Kernel32.dll"), "QueryPerformanceCounter"), queryPerformanceCounterHookFunction);
+		getTickCountHook = safetyhook::create_inline(GetProcAddress(GetModuleHandleA("Kernel32.dll"), "GetTickCount"), getTickCountHookFunction);
+		getTickCount64Hook = safetyhook::create_inline(GetProcAddress(GetModuleHandleA("Kernel32.dll"), "GetTickCount64"), getTickCount64HookFunction);
+		timeGetTimeHook = safetyhook::create_inline(GetProcAddress(GetModuleHandleA("Winmm.dll"), "timeGetTime"), getTickCountHookFunction);
+
+		hooksInstalled.store(true, std::memory_order_release);
+	}
+
 	static void setAllTimeHackerSpeeds(double speedInput) {
 		//std::scoped_lock<std::mutex> lock(hookMutex);
-		speedHack.setSpeed(getTickCountHook.stdcall<DWORD>(), speedInput);
+		speedHack.setSpeed(realGetTickCount(), speedInput);
 
-		speedHackULL.setSpeed(getTickCount64Hook.stdcall<ULONGLONG>(), speedInput);
+		speedHackULL.setSpeed(realGetTickCount64(), speedInput);
 
-		LARGE_INTEGER performanceCounter;
-		queryPerformanceCounterHook.stdcall<BOOL, _LARGE_INTEGER*>(&performanceCounter);
-
-		speedHackLL.setSpeed(performanceCounter.QuadPart, speedInput);
+		speedHackLL.setSpeed(realQpc(), speedInput);
 	}
 
 public:
@@ -172,24 +228,24 @@ public:
 
 	SpeedhackImpl()
 	{
-
-		// init speedHackLL timehacker 
+		// Deliberately does NOT hook. Nothing is installed until setSpeed asks for a speed other than
+		// 1.0 - see ensureHooksInstalled. Constructing this object must cost the process nothing.
 		LARGE_INTEGER performanceCounter;
 		QueryPerformanceCounter((_LARGE_INTEGER*)&performanceCounter);
 		speedHackLL.reset(performanceCounter.QuadPart, 1.0);
-
-		// create hooks
-		queryPerformanceCounterHook = safetyhook::create_inline(GetProcAddress(GetModuleHandleA("Kernel32.dll"), "QueryPerformanceCounter"), queryPerformanceCounterHookFunction);
-		getTickCountHook = safetyhook::create_inline(GetProcAddress(GetModuleHandleA("Kernel32.dll"), "GetTickCount"), getTickCountHookFunction);
-		getTickCount64Hook = safetyhook::create_inline(GetProcAddress(GetModuleHandleA("Kernel32.dll"), "GetTickCount64"), getTickCount64HookFunction);
-		timeGetTimeHook = safetyhook::create_inline(GetProcAddress(GetModuleHandleA("Winmm.dll"), "timeGetTime"), getTickCountHookFunction);
-
 	}
 
 	~SpeedhackImpl() = default;
 
 	virtual void setSpeed(double in) override
 	{
+		// 1.0 while nothing is installed is the default state of the process - there is nothing to do,
+		// and doing nothing is the entire point of the lazy install. Once installed we always follow
+		// through, because the timeHackers still own an offset that has to keep advancing.
+		if (in == 1.0 && !hooksInstalled.load(std::memory_order_acquire))
+			return;
+
+		ensureHooksInstalled();
 		setAllTimeHackerSpeeds(in);
 	}
 };

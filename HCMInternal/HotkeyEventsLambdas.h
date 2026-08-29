@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "SettingsStateAndEvents.h"
 
 
@@ -75,13 +75,13 @@ public:
 		// hotkey silently drives the setting next to the one it is named after. Nothing catches that: the
 		// counts still add up and it compiles.
 
-		constexpr size_t hceToggleCount = 41; // [0..40]  flip a bool
-		constexpr size_t hceRadioCount = 4;  // [41..44] set a radio option
-		constexpr size_t hceAliasCount = 7;  // [45..51] fire an event that already has its own subscriber
+		constexpr size_t hceToggleCount = 47; // [0..46]  flip a bool
+		constexpr size_t hceRadioCount = 4;  // [47..50] set a radio option
+		constexpr size_t hceAliasCount = 7;  // [51..57] fire an event that already has its own subscriber
 		static_assert(hceToggleCount + hceRadioCount + hceAliasCount == SettingsStateAndEvents::kHCEHotkeyCount,
 			"The tables below no longer cover every HCE_HOTKEYS entry - a hotkey has been added without being wired up");
 
-		// [0..40] plain toggles: flip the bool. Same order as the first block of HCE_HOTKEYS.
+		// [0..46] plain toggles: flip the bool. Same order as the first block of HCE_HOTKEYS.
 		const std::array<std::shared_ptr<BinarySetting<bool>>, hceToggleCount> hceToggleTargets
 		{
 			settings->hceShadowCheckpoints,
@@ -99,6 +99,7 @@ public:
 			settings->hceDisplayInfoShowVelocityXYZ,
 			settings->hceDisplayInfoShowLevel,
 			settings->hceDisplayInfoShowBSP,
+			settings->hceDisplayInfoShowZoneSet,
 			settings->hceDisplayInfoShowTick,
 			settings->hceDisplayInfoShowPlayerDatum,
 			settings->hceDisplayInfoShowTEB,
@@ -115,16 +116,21 @@ public:
 			settings->hceTriggerOverlayHighlightActive,
 			settings->triggerOverlayCheckHitToggle,
 			settings->triggerOverlayMessageOnCheckHit,
+			settings->hceTriggerOverlayZoneSetReport,
 			settings->hceTriggerOverlayShowRegular,
-			settings->hceTriggerOverlayShowSector,
 			settings->hceTriggerOverlayShowKill,
 			settings->hceTriggerOverlayShowZoneSet,
+			settings->hceTriggerOverlayShowBeginZoneSet,
 			settings->hceTriggerOverlaySpeedrunOnly,
 			settings->hceTriggerOverlayShowVertex,
 			settings->hceTriggerOverlayShowLabels,
 			settings->triggerOverlayFilterToggle,
 			settings->triggerOverlayFilterExactMatch,
 			settings->hceFieldOfViewToggle,
+			settings->hceGameSpeedToggle,
+			settings->hceFreecamKeepPositionToggle,
+			settings->hceConsoleOpenToggle,
+			settings->hceFreecamDriftToggle,
 		};
 
 		for (size_t i = 0; i < hceToggleTargets.size(); i++)
@@ -132,7 +138,7 @@ public:
 				settings->hceHotkeyEvents[i],
 				[boolsetting = hceToggleTargets[i]]() { boolsetting->flipBoolSetting(); }));
 
-		// [41..44] radio options: {the one to switch ON, the sibling to switch OFF}.
+		// [47..50] radio options: {the one to switch ON, the sibling to switch OFF}.
 		// A radio must SET, never flip - flipping one of an exclusive pair leaves both on or both off, which is
 		// precisely the broken state GUIRadioGroup exists to repair, and the repair picks the FIRST option, not
 		// the one you pressed. Both settings are written the same way the group's own click handler writes them.
@@ -155,7 +161,7 @@ public:
 					optionOff->UpdateValueWithInput();
 				}));
 
-		// [45..48] are aliases of events that already exist and already have a subscriber (see the end of the
+		// [51..57] are aliases of events that already exist and already have a subscriber (see the end of the
 		// SettingsStateAndEvents constructor). They need nothing here - binding one more callback would run the
 		// action twice.
 	}

@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "GUIElementConstructor.h"
 #include "SettingsStateAndEvents.h"
 #include "HotkeysEnum.h"
@@ -9,6 +9,8 @@
 #include "GUIButtonWithCopyableResult.h"
 #include "GUISimpleToggle.h"
 #include "GUISpeedhack.h"
+#include "GUIGameSpeed.h"
+#include "GUIHCEConsole.h"
 #include "GUIInvulnerability.h"
 #include "GUIHeading.h"
 #include "GUISubHeading.h"
@@ -582,6 +584,7 @@ private:
 					(game, ToolTipCollection("Stuff like invulnerabiltiy, speedhack, teleport, ai disable etc"), "Useful Cheats", headerChildElements
 						{
 							createNestedElement(GUIElementEnum::speedhackGUI),
+							createNestedElement(GUIElementEnum::hceGameSpeedGUI),
 							// Havok Debugger sits between speedhack and invulnerability by request - it is a
 							// HaloCER-facing tool and belongs near the top rather than buried among the MCC
 							// rendering fixes below.
@@ -1545,6 +1548,7 @@ private:
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowVelocityXYZ),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowLevel),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowBSP),
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowZoneSet),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowTick),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowPlayerDatum),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowTEB),
@@ -1572,7 +1576,11 @@ private:
 
 					case GUIElementEnum::hceDisplayInfoShowBSP:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-							(game, ToolTipCollection("Show the current BSP index"), RebindableHotkeyEnum::hceDisplayInfoShowBSPHotkey, "Show Current BSP", settings->hceDisplayInfoShowBSP));
+							(game, ToolTipCollection("Show the current BSP index.\n\nNote: the underlying global is actually the current ZONE SET index, not a BSP index - it is what HaloScript's current_zone_set returns. The row name is kept for compatibility; 'Show Current Zone Set' below shows the same value as a readable name."), RebindableHotkeyEnum::hceDisplayInfoShowBSPHotkey, "Show Current BSP", settings->hceDisplayInfoShowBSP));
+
+				case GUIElementEnum::hceDisplayInfoShowZoneSet:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Show the current zone set's name. A zone set is the set of structure BSPs and designer zones the engine currently has resident; it is what zone-set trigger volumes switch between.\n\nShows '(loading)' while the switch is still bringing BSPs in - the index is published before the load finishes."), RebindableHotkeyEnum::hceDisplayInfoShowZoneSetHotkey, "Show Current Zone Set", settings->hceDisplayInfoShowZoneSet));
 
 					case GUIElementEnum::hceDisplayInfoShowTick:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -2261,6 +2269,14 @@ private:
 
 
 
+			case GUIElementEnum::hceScriptHeadingGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
+					(game, ToolTipCollection("Run HaloScript directly. This is the game's own script language - the same one the campaign missions are written in."), "HaloScript", headerChildElements
+						{
+							createNestedElement(GUIElementEnum::hceConsoleGUI),
+						}
+					));
+
 			case GUIElementEnum::cameraHeadingGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
 					(game, ToolTipCollection("Tools to manipulate the camera"), "Camera", headerChildElements
@@ -2272,6 +2288,8 @@ private:
 							createNestedElement(GUIElementEnum::hceFreecamTeleportToCamera),
 							createNestedElement(GUIElementEnum::hceFreecamNoclipGUI),
 							createNestedElement(GUIElementEnum::hceFreecamGimbalBypassGUI),
+							createNestedElement(GUIElementEnum::hceFreecamKeepPositionGUI),
+							createNestedElement(GUIElementEnum::hceFreecamDriftGUI),
 							createNestedElement(GUIElementEnum::hceCameraRollGUI),
 							createNestedElement(GUIElementEnum::hceCameraRollLeftBindingGUI),
 							createNestedElement(GUIElementEnum::hceCameraRollRightBindingGUI),
@@ -2448,6 +2466,8 @@ private:
 								createNestedElement(GUIElementEnum::hceTriggerOverlayHitFalloff),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayMessageOnHit),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayBspColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayBeginZoneSetColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayZoneSetReport),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayKillColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlaySafeZoneColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayLabelColour),
@@ -2458,7 +2478,6 @@ private:
 								createNestedElement(GUIElementEnum::hceTriggerOverlayShowLabels),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayLabelScale),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayBoxColour),
-								createNestedElement(GUIElementEnum::hceTriggerOverlaySectorColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayWireframeAlpha),
 							}));
 
@@ -2629,6 +2648,29 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Removes the fade-in from black after a checkpoint revert, so you get your view back instantly. Only affects the fade the restore path starts - script and cinematic fades are untouched. Level loads and mission restarts come back instantly too, since they share that path."), RebindableHotkeyEnum::hceDisableFadeFromBlackHotkey, "Disable Fade From Black", settings->hceDisableFadeFromBlackToggle));
 
+				case GUIElementEnum::hceConsoleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHCEConsole>
+						(game, ToolTipCollection("Run HaloScript commands, with autocomplete over every name the game knows. Type a bare command - the game wraps it for you, so \"game_revert\" and \"cheat_medusa 1\" both work without brackets. Greyed-out suggestions exist in the table but are wired to a do-nothing stub, so they will not do anything. Commands run on the simulation thread on the next frame; a level has to be loaded."), RebindableHotkeyEnum::hceConsoleHotkey, settings));
+
+				case GUIElementEnum::hceFreecamDriftGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIToggleWithChildren<GUIToggleWithChildrenParameters::ShowWhenTrue, true>>
+						(game, ToolTipCollection("Gives the free camera weight: it eases into motion and coasts to a stop instead of starting and stopping dead. Useful for cinematic shots. The camera still moves at full speed with unmodified input - only what you SEE trails it, by the coast time below."), RebindableHotkeyEnum::hceFreecamDriftHotkey, "Camera Drift", settings->hceFreecamDriftToggle, headerChildElements
+							{
+							createNestedElement(GUIElementEnum::hceFreecamDriftAmountGUI),
+							}));
+
+				case GUIElementEnum::hceFreecamDriftAmountGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.f, 2.f, ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoRoundToFormat)>>
+						(game, ToolTipCollection("Seconds of glide after you stop moving. 0.75 means the camera keeps coasting for about three quarters of a second after you release, and runs about a quarter of a second behind your input while you fly. 0 turns drift off. The camera cannot overshoot or wobble at any setting - it only ever slows down. Measured in game time, so it stretches out under slow motion and Game Speed."), "Coast Time (s)##hceFreecam", settings->hceFreecamDriftAmount));
+
+				case GUIElementEnum::hceFreecamKeepPositionGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Reverting normally snaps the free camera back to wherever it was when the checkpoint was taken, because the camera's pose is part of the saved game state. With this on, HCM puts your current camera position and orientation back after the revert, so you can line up a shot once and keep re-running the attempt into it. Does not touch the camera election, so it carries none of that crash risk."), RebindableHotkeyEnum::hceFreecamKeepPositionHotkey, "Keep Freecam Position On Revert", settings->hceFreecamKeepPositionToggle));
+
+				case GUIElementEnum::hceGameSpeedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIGameSpeed>
+						(game, ToolTipCollection("Multiply the speed of the SIMULATION (1 = normal). Unlike the Speedhack this does not touch the process clock - it writes the engine's own game-time speed, so rendering, audio and the frame pacer keep running at real time and nothing outside the game is affected. The engine stops keeping up past roughly 5x. Note that a scripted slow-motion effect is suppressed while this is on."), RebindableHotkeyEnum::hceGameSpeedHotkey, settings));
+
 				case GUIElementEnum::hceFreecamGimbalBypassGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Removes the camera's pitch clamp so you can look past vertical without the view flipping. Patches four clamp sites plus a wrap-around routine on the camera update; every site is byte-checked first, so a game update disables this rather than corrupting code."), RebindableHotkeyEnum::hceFreecamGimbalBypassHotkey, "Gimbal Lock Bypass", settings->hceFreecamGimbalBypassToggle));
@@ -2740,26 +2782,26 @@ private:
 						(game, ToolTipCollection("Which kinds of trigger volume to draw"), "Types Shown##hce", headerChildElements
 							{
 								createNestedElement(GUIElementEnum::hceTriggerOverlayShowRegular),
-								createNestedElement(GUIElementEnum::hceTriggerOverlayShowSector),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayShowKill),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayShowZoneSet),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayShowBeginZoneSet),
 							}));
 
 				case GUIElementEnum::hceTriggerOverlayShowRegular:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Ordinary box trigger volumes - anything that is not a sector, a kill volume or a zone-set switch."), RebindableHotkeyEnum::hceTriggerOverlayShowRegularHotkey, "Regular Triggers", settings->hceTriggerOverlayShowRegular));
-
-				case GUIElementEnum::hceTriggerOverlayShowSector:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Sector volumes - an XY polygon extruded between two heights, rather than a box."), RebindableHotkeyEnum::hceTriggerOverlayShowSectorHotkey, "Sector Triggers", settings->hceTriggerOverlayShowSector));
+						(game, ToolTipCollection("Ordinary trigger volumes - anything that is not a kill volume or a zone-set switch. Includes sector volumes, whose footprint is a polygon rather than a box; that is a shape, not a different kind of trigger."), RebindableHotkeyEnum::hceTriggerOverlayShowRegularHotkey, "Regular Triggers", settings->hceTriggerOverlayShowRegular));
 
 				case GUIElementEnum::hceTriggerOverlayShowKill:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Kill volumes - the ones that kill you for leaving the intended play space."), RebindableHotkeyEnum::hceTriggerOverlayShowKillHotkey, "Kill Triggers", settings->hceTriggerOverlayShowKill));
 
+				case GUIElementEnum::hceTriggerOverlayShowBeginZoneSet:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("BEGIN zone-set volumes. Crossing one runs prepare_to_switch_to_zone_set, which is purely SUBTRACTIVE: it unloads the BSPs the incoming zone set does not want and loads nothing new. It also retires the designer zones that zone set forbids, which is what frees the object budget - it does not spawn anything.\n\nOne exception: if the target zone set shares NO currently-loaded BSP, the engine skips the prepare and performs a full switch instead."), RebindableHotkeyEnum::hceTriggerOverlayShowBeginZoneSetHotkey, "Begin Zoneset Triggers", settings->hceTriggerOverlayShowBeginZoneSet));
+
 				case GUIElementEnum::hceTriggerOverlayShowZoneSet:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("BSP / zone-set switch volumes - crossing one loads and unloads whole areas."), RebindableHotkeyEnum::hceTriggerOverlayShowZoneSetHotkey, "Zoneset Triggers", settings->hceTriggerOverlayShowZoneSet));
+						(game, ToolTipCollection("COMMIT zone-set volumes. Crossing one runs switch_zone_set - this is the one that actually brings new BSP geometry in, and drops what the new zone set does not want. Read from the scenario's zone-set switch block, not guessed from names."), RebindableHotkeyEnum::hceTriggerOverlayShowZoneSetHotkey, "Zoneset Triggers", settings->hceTriggerOverlayShowZoneSet));
 
 				// Halo Campaign Evolved name filter. Drives the SAME triggerOverlayFilterString / FilterToggle /
 				// FilterExactMatch settings as MCC's version, so presets carry across; only the picker differs.
@@ -2781,7 +2823,15 @@ private:
 
 				case GUIElementEnum::hceTriggerOverlayBspColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
-						(game, ToolTipCollection("Colour of BSP / zone-set switching volumes - the ones that load and unload whole areas. Identified by NAME (anything containing bsp or zoneset), because Halo's scenario format has no flag for it, so this can miss an oddly-named one."), "BSP / Zone-set Color", settings->hceTriggerOverlayBspColor));
+						(game, ToolTipCollection("Colour of COMMIT zone-set volumes - the ones that actually load new BSP geometry in. Read from the scenario's zone-set switch block ('commit zone set', element +0x06), not guessed from names."), "Zone-set Color", settings->hceTriggerOverlayBspColor));
+
+				case GUIElementEnum::hceTriggerOverlayBeginZoneSetColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of BEGIN zone-set volumes - the ones that only UNLOAD geometry and free the object budget ahead of a switch. Read from the scenario's zone-set switch block ('begin zone set', element +0x02), not guessed from names."), "Begin Zone-set Color", settings->hceTriggerOverlayBeginZoneSetColor));
+
+				case GUIElementEnum::hceTriggerOverlayZoneSetReport:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("When you enter a zone-set volume, print what it does to the message feed: the target zone set's name, and which structure BSPs it loads and unloads.\n\nThis is HCM's own containment test against the volume's geometry, not an engine event - the engine's zone-set evaluator is deliberately not hooked - so it can fire a fraction before or after the engine acts."), RebindableHotkeyEnum::hceTriggerOverlayZoneSetReportHotkey, "Print Zoneset Loads on Entry", settings->hceTriggerOverlayZoneSetReport));
 
 				case GUIElementEnum::hceTriggerOverlayKillColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -2824,11 +2874,7 @@ private:
 
 				case GUIElementEnum::hceTriggerOverlayBoxColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
-						(game, ToolTipCollection("Colour for box trigger volumes"), "Trigger Box Colour##hce", settings->triggerOverlayNormalColor));
-
-				case GUIElementEnum::hceTriggerOverlaySectorColour:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
-						(game, ToolTipCollection("Colour for sector trigger volumes (the ones whose footprint is a polygon rather than a box)"), "Trigger Sector Colour##hce", settings->triggerOverlaySectorColor));
+						(game, ToolTipCollection("Colour for ordinary trigger volumes, boxes and sector prisms alike"), "Trigger Colour##hce", settings->triggerOverlayNormalColor));
 
 				case GUIElementEnum::hceTriggerOverlayWireframeAlpha:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
@@ -2987,7 +3033,9 @@ private:
 									vectorOfHeaderChildElements
 							{
 								headerChildElements{},
-								headerChildElements{ createNestedElement(GUIElementEnum::freeCameraUserInputCameraTranslationInterpolatorLinearFactor) }
+								headerChildElements{ createNestedElement(GUIElementEnum::freeCameraUserInputCameraTranslationInterpolatorLinearFactor) },
+								headerChildElements{ createNestedElement(GUIElementEnum::freeCameraUserInputCameraTranslationInterpolatorLinearFactor),
+													 createNestedElement(GUIElementEnum::freeCameraUserInputCameraTranslationInterpolatorDrift) }
 							}
 							));
 
@@ -2996,6 +3044,18 @@ private:
 								(game, ToolTipCollection("0 to 1 value controlling smoothness of the input. Low values make the camera sluggish, high values make it fast and snappy."),  "Snap Factor##UserInputCameraTranslation", settings->freeCameraUserInputCameraTranslationInterpolatorLinearFactor));
 
 
+
+						case GUIElementEnum::freeCameraUserInputCameraTranslationInterpolatorDrift:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.f, 0.95f, ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoRoundToFormat)>>
+								(game, ToolTipCollection("How long the camera keeps gliding after you stop giving input. 0 stops it dead (same as Linear); high values give a long, heavy coast. Snap Factor above still controls how hard it accelerates."), "Drift##UserInputCameraTranslation", settings->freeCameraUserInputCameraTranslationInterpolatorDrift));
+
+						case GUIElementEnum::freeCameraUserInputCameraRotationInterpolatorDrift:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.f, 0.95f, ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoRoundToFormat)>>
+								(game, ToolTipCollection("How long the camera keeps gliding after you stop giving input. 0 stops it dead (same as Linear); high values give a long, heavy coast. Snap Factor above still controls how hard it accelerates."), "Drift##UserInputCameraRotation", settings->freeCameraUserInputCameraRotationInterpolatorDrift));
+
+						case GUIElementEnum::freeCameraUserInputCameraFOVInterpolatorDrift:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.f, 0.95f, ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoRoundToFormat)>>
+								(game, ToolTipCollection("How long the camera keeps gliding after you stop giving input. 0 stops it dead (same as Linear); high values give a long, heavy coast. Snap Factor above still controls how hard it accelerates."), "Drift##UserInputCameraFOV", settings->freeCameraUserInputCameraFOVInterpolatorDrift));
 
 						case GUIElementEnum::freeCameraUserInputCameraRotationSpeed:
 							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
@@ -3007,7 +3067,9 @@ private:
 									vectorOfHeaderChildElements
 									{
 										headerChildElements{},
-										headerChildElements{ createNestedElement(GUIElementEnum::freeCameraUserInputCameraRotationInterpolatorLinearFactor) }
+										headerChildElements{ createNestedElement(GUIElementEnum::freeCameraUserInputCameraRotationInterpolatorLinearFactor) },
+										headerChildElements{ createNestedElement(GUIElementEnum::freeCameraUserInputCameraRotationInterpolatorLinearFactor),
+															 createNestedElement(GUIElementEnum::freeCameraUserInputCameraRotationInterpolatorDrift) }
 									}
 							));
 
@@ -3033,7 +3095,9 @@ private:
 									vectorOfHeaderChildElements
 									{
 										headerChildElements{},
-										headerChildElements{ createNestedElement(GUIElementEnum::freeCameraUserInputCameraFOVInterpolatorLinearFactor) }
+										headerChildElements{ createNestedElement(GUIElementEnum::freeCameraUserInputCameraFOVInterpolatorLinearFactor) },
+										headerChildElements{ createNestedElement(GUIElementEnum::freeCameraUserInputCameraFOVInterpolatorLinearFactor),
+															 createNestedElement(GUIElementEnum::freeCameraUserInputCameraFOVInterpolatorDrift) }
 									}
 							));
 

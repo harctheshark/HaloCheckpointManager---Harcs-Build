@@ -195,6 +195,22 @@ namespace HCESpeedrunTriggerNames
 			|| lower.find("death") != std::string::npos;
 	}
 
+	// ⚠ MUST BE TESTED BEFORE isBspOrZoneSetTrigger, which is a SUBSTRING test on "zone_set" and therefore
+	// also matches "begin_zone_set:...". Testing the plain one first puts every begin volume in the commit
+	// bucket. The engine ships both authoring prefixes as literals ("zone_set:" @0x1808506D8,
+	// "begin_zone_set:" @0x180850750) with ZERO code references, so the naming convention is real but
+	// TOOL-side only - the scenario's +0x29C switch block is the authority, and this is only a fallback for
+	// volumes that block does not cover.
+	inline bool isBeginZoneSetTrigger(const std::string& volumeName)
+	{
+		std::string lower;
+		lower.reserve(volumeName.size());
+		for (unsigned char c : volumeName) lower.push_back((char)(c >= 'A' && c <= 'Z' ? c + 32 : c));
+
+		return lower.find("begin_zone_set") != std::string::npos
+			|| lower.find("beginzoneset") != std::string::npos;
+	}
+
 	inline bool isBspOrZoneSetTrigger(const std::string& volumeName)
 	{
 		std::string lower;

@@ -29,7 +29,10 @@ class HCETriggerNameFilterDialog : public IModalDialogReturner<std::string>
 public:
 	// Mirrors HCETriggerOverlay's own classification, in the SAME priority order it colours by, so a volume is
 	// listed under exactly the category whose colour it wears.
-	enum class Category { ZoneSet, Kill, SafeZone, Sector, Regular };
+	// ⚠ There is no Sector category: "sector" is a SHAPE (a polygon prism rather than a box), not a kind of
+	// trigger, so those volumes are listed as Regular. Their prism geometry is still drawn as a prism.
+	// ⚠ ENUM ORDER IS DISPLAY ORDER - the sort comparator sorts on (int)category.
+	enum class Category { ZoneSet, BeginZoneSet, Kill, SafeZone, Regular };
 
 	struct Entry
 	{
@@ -86,10 +89,10 @@ private:
 	{
 		switch (c)
 		{
-		case Category::ZoneSet:  return "Zone-set / BSP switch";
+		case Category::ZoneSet:  return "Zone-set (loads new BSPs)";
+		case Category::BeginZoneSet: return "Begin zone-set (unload / prep)";
 		case Category::Kill:     return "Kill volumes";
 		case Category::SafeZone: return "Safe zones";
-		case Category::Sector:   return "Sector volumes";
 		default:                 return "Regular volumes";
 		}
 	}
