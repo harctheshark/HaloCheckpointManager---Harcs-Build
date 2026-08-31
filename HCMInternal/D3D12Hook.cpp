@@ -211,7 +211,7 @@ static constexpr DWORD kFenceWaitTimeoutMs = 1000;
 static constexpr DWORD kGpuFlushTimeoutMs = 2000;
 // Diagnostic only - how long we are willing to wait for the GAME'S captured queue to retire one fence at
 // startup. See the queue probe in initializeD3Ddevice.
-static constexpr DWORD kQueueProbeTimeoutMs = 250;
+// (The old kQueueProbeTimeoutMs lived here. Removed with the blocking probe - see the render gate.)
 
 // How often a swapchain we already rejected is re-tested. The rejection cache is a raw pointer
 // compare, and a foreign swapchain that gets destroyed can have its address reused by the game's
@@ -953,6 +953,12 @@ bool D3D12Hook::tryAdoptSwapChain(IDXGISwapChain* pSwapChain)
 	mDevice = candidateDevice;         // takes ownership of the GetDevice ref
 	mWindowHandle = swapDesc.OutputWindow;
 	isD3DdeviceInitialized = false;
+	// A new swapchain has to re-earn the right to draw: its presenting queue may be a different object
+	// entirely, so the previous verdict says nothing about it.
+	mRenderGate.store(RenderGate::Discovering, std::memory_order_release);
+	mLiveQueueRaw.store(nullptr, std::memory_order_relaxed);
+	mPresentIntervalsObserved.store(0, std::memory_order_relaxed);
+	mQueueSearchActive.store(true, std::memory_order_relaxed);
 
 	PLOG_INFO << "Adopted the game's D3D12 swapchain: 0x" << std::hex << (uintptr_t)pSwapChain
 		<< ", device: 0x" << (uintptr_t)mDevice
@@ -980,39 +986,354 @@ bool D3D12Hook::tryAdoptSwapChain(IDXGISwapChain* pSwapChain)
 // equality) before trusting it.
 bool D3D12Hook::tryCaptureCommandQueue()
 {
-	if (mCommandQueue)
+	// ⚠ SUPERSEDED BY THE RENDER GATE, kept only so nothing calls a missing symbol. The old body took
+	// whatever DIRECT queue happened to be in a single global slot, checked only that it was on the
+	// game's device, and latched it for the session. With RTSS + Steam + OBS + Streamline/DLSS-G there
+	// are four to six such queues and all of them pass that check - a 1 ms coin flip that hung the GPU
+	// in 3 of 8 measured sessions. Selection now goes through updateRenderGate(), which PROVES a queue
+	// drains before anything is submitted on it.
+	return mCommandQueue != nullptr;
+}
+
+
+// ================================================================================================
+// THE RENDER GATE
+//
+// The invariant, and the only one that matters: HCM never submits a command list to an
+// ID3D12CommandQueue that has not, on this device, retired a fence WE signalled on it - and it proves
+// that without ever blocking a present thread.
+// ================================================================================================
+
+const char* D3D12Hook::renderGateName(RenderGate g)
+{
+	switch (g)
+	{
+	case RenderGate::Discovering: return "Discovering";
+	case RenderGate::Verifying:   return "Verifying";
+	case RenderGate::Live:        return "Live";
+	case RenderGate::Degraded:    return "Degraded";
+	case RenderGate::Refused:     return "Refused";
+	}
+	return "?";
+}
+
+void D3D12Hook::setRenderGate(RenderGate to, const char* why)
+{
+	const RenderGate from = mRenderGate.exchange(to, std::memory_order_acq_rel);
+	if (from == to) return;
+	PLOG_INFO << "HCM render gate: " << renderGateName(from) << " -> " << renderGateName(to) << " (" << why << ")";
+}
+
+void D3D12Hook::refuseToDraw(const char* why)
+{
+	setRenderGate(RenderGate::Refused, why);
+	mLiveQueueRaw.store(nullptr, std::memory_order_relaxed);
+	PLOG_ERROR << "HCM will NOT draw its overlay this session: " << why
+		<< ". The game is unaffected and every frame is passed through untouched - this is deliberate, "
+		"because submitting on a queue we cannot verify is what wedges the GPU. Reattach HCM to try again.";
+}
+
+// static. Runs on arbitrary game threads. Keeps ONE owned reference per distinct DIRECT queue.
+//
+// ⚠ WHY AN OWNED REFERENCE: the consumer runs on a present thread one or more frames later. Without
+// the AddRef a transient DIRECT queue that submits once and is then released leaves that consumer
+// calling a vtable on freed memory - a hard crash in the GAME, not in HCM.
+void D3D12Hook::recordQueueSubmission(ID3D12CommandQueue* q)
+{
+	std::scoped_lock lock(mQueueTableMutex);
+
+	for (uint32_t i = 0; i < mQueueTableCount; ++i)
+	{
+		if (mQueueTable[i].queue == q)
+		{
+			++mQueueTable[i].totalSubmissions;
+			++mQueueTable[i].submissionsThisInterval;
+			return;
+		}
+	}
+
+	if (mQueueTableCount >= kMaxQueueCandidates)
+	{
+		static std::atomic_bool warned = false;
+		if (!warned.exchange(true, std::memory_order_relaxed))
+			PLOG_WARNING << "More than " << kMaxQueueCandidates
+				<< " DIRECT command queues in this process; not tracking further candidates";
+		return;
+	}
+
+	q->AddRef();
+	QueueCandidate& c = mQueueTable[mQueueTableCount++];
+	c = QueueCandidate{};
+	c.queue = q;
+	c.totalSubmissions = 1;
+	c.submissionsThisInterval = 1;
+}
+
+void D3D12Hook::logQueueTable(const char* when)
+{
+	std::scoped_lock lock(mQueueTableMutex);
+	const uint32_t intervals = mPresentIntervalsObserved.load(std::memory_order_relaxed);
+	PLOG_INFO << "Command queue candidates (" << when << ", after " << intervals << " presents): "
+		<< mQueueTableCount << " DIRECT queues on this process";
+	for (uint32_t i = 0; i < mQueueTableCount; ++i)
+	{
+		const QueueCandidate& c = mQueueTable[i];
+		PLOG_INFO << "   0x" << std::hex << (uintptr_t)c.queue << std::dec
+			<< "  submissions " << c.totalSubmissions
+			<< "  seen in " << c.intervalsSeenIn << "/" << intervals << " intervals"
+			<< (c.verified ? "  [VERIFIED]" : "")
+			<< (c.rejected ? std::string("  [REJECTED: ") + (c.rejectReason ? c.rejectReason : "?") + "]" : "");
+	}
+}
+
+void D3D12Hook::rejectQueue(ID3D12CommandQueue* q, const char* why)
+{
+	std::scoped_lock lock(mQueueTableMutex);
+	for (uint32_t i = 0; i < mQueueTableCount; ++i)
+	{
+		if (mQueueTable[i].queue == q)
+		{
+			mQueueTable[i].rejected = true;
+			mQueueTable[i].verified = false;
+			mQueueTable[i].rejectReason = why;
+			PLOG_ERROR << "Rejected command queue 0x" << std::hex << (uintptr_t)q << std::dec
+				<< ": " << why << ". HCM will NOT submit on it.";
+			return;
+		}
+	}
+}
+
+bool D3D12Hook::queueIsRejected(ID3D12CommandQueue* q)
+{
+	std::scoped_lock lock(mQueueTableMutex);
+	for (uint32_t i = 0; i < mQueueTableCount; ++i)
+		if (mQueueTable[i].queue == q) return mQueueTable[i].rejected;
+	return false;
+}
+
+void D3D12Hook::beginProof(ID3D12CommandQueue* q, const char* how, bool isRevalidation)
+{
+	if (!mProofFence)
+	{
+		if (FAILED(mDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&mProofFence))) || !mProofFence)
+		{
+			refuseToDraw("the queue-verification fence could not be created");
+			return;
+		}
+	}
+
+	mProofQueue = q;
+	mProofValue = ++mProofNextValue;
+	mProofPresentsWaited = 0;
+	mProofHow = how;
+	mProofIsRevalidation = isRevalidation;
+
+	if (FAILED(q->Signal(mProofFence, mProofValue)))
+	{
+		rejectQueue(q, "Signal() failed on it");
+		mProofQueue = nullptr;
+		return;
+	}
+
+	if (!isRevalidation)
+		setRenderGate(RenderGate::Verifying, how);
+}
+
+// Ranks candidates and starts a NON-BLOCKING proof on the best one. Ranking preference:
+//   1. must be on the swapchain's device (COM identity) - anything else is removed outright
+//   2. must not already have failed a proof
+//   3. prefer a queue that submitted in EVERY observed present interval. UE5's 3D queue does; an OSD
+//      renderer, an 11on12 flush or an encoder running on its own cadence does not.
+//   4. then the highest total submission count - UE submits many lists per frame, an overlay submits one.
+bool D3D12Hook::beginQueueVerification()
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+	if (!mDevice) return false;
+
+	ID3D12CommandQueue* best = nullptr;
+	uint64_t bestSubs = 0;
+	uint32_t bestIntervals = 0;
+	const uint32_t intervals = mPresentIntervalsObserved.load(std::memory_order_relaxed);
+
+	{
+		std::scoped_lock lock(mQueueTableMutex);
+		for (uint32_t i = 0; i < mQueueTableCount; ++i)
+		{
+			QueueCandidate& c = mQueueTable[i];
+			if (c.rejected) continue;
+			if (!queueMatchesDevice(c.queue, mDevice))
+			{
+				c.rejected = true;
+				c.rejectReason = "belongs to a different D3D12 device";
+				continue;
+			}
+			const bool everyInterval = (c.intervalsSeenIn >= intervals);
+			const bool bestEveryInterval = (best && bestIntervals >= intervals);
+			if (best && bestEveryInterval && !everyInterval) continue;
+			if (!best || (everyInterval && !bestEveryInterval) || c.totalSubmissions > bestSubs)
+			{
+				best = c.queue; bestSubs = c.totalSubmissions; bestIntervals = c.intervalsSeenIn;
+			}
+		}
+	}
+
+	logQueueTable("ranking");
+
+	if (!best)
+	{
+		// Be patient before giving up: a level load or an alt-tab legitimately produces no submissions.
+		if (intervals > kQueueObserveIntervals * 40)
+			refuseToDraw("no DIRECT command queue on the game's D3D12 device could be verified");
+		return false;
+	}
+
+	beginProof(best, "submission ranking", false);
+	return false;
+}
+
+// THE NON-BLOCKING PROOF.
+//
+// ⚠ A Signal on an IDLE queue retires IMMEDIATELY. So a queue that has not retired after the GAME has
+// presented eight more times is, by definition, not keeping pace with presentation - whatever it
+// belongs to. That is the correct test, and it is why this works WITH RTSS rather than around it: the
+// old test was 250 ms of WALL CLOCK, and RTSS's limiter deliberately holds presentation, so wall clock
+// is not a meaningful unit in this configuration. Presents are.
+bool D3D12Hook::pollQueueVerification()
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+
+	if (!mProofQueue || !mProofFence)
+	{
+		beginQueueVerification();
+		return false;
+	}
+
+	if (mProofFence->GetCompletedValue() >= mProofValue)
+	{
+		adoptVerifiedQueue(mProofQueue);
+		mProofQueue = nullptr;
 		return true;
-
-	if (!mDevice)
-		return false;
-
-	// EXCHANGE, not load: the detour publishes an OWNED reference and releases whatever it
-	// displaces, so taking ownership atomically is the only way to read the candidate without
-	// racing that release. (Reading it raw and dereferencing it a frame later on another thread was
-	// a use-after-free, and a hard crash in the game.)
-	ID3D12CommandQueue* candidate = mCandidateDirectQueue.exchange(nullptr, std::memory_order_acq_rel);
-	if (!candidate)
-	{
-		LOG_ONCE(PLOG_DEBUG << "No direct command queue seen yet; overlay is waiting for ExecuteCommandLists");
-		return false;
 	}
 
-	if (!queueMatchesDevice(candidate, mDevice))
+	if (++mProofPresentsWaited < kQueueProofPresents)
+		return false;   // still waiting. NOT an error, and NOT a blocking wait.
+
+	rejectQueue(mProofQueue, "did not retire a fence within 8 of the game's own presents");
+	mProofQueue = nullptr;
+	beginQueueVerification();   // straight on to the next-best candidate
+	return false;
+}
+
+void D3D12Hook::adoptVerifiedQueue(ID3D12CommandQueue* q)
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+
+	if (mCommandQueue != q)
 	{
-		// Some other component in the process (an overlay, a video encoder) owns this queue.
-		// Leave the search active so a later frame gives us a different candidate.
-		LOG_ONCE(PLOG_DEBUG << "Candidate direct queue belongs to a different device; still searching");
-		candidate->Release();
-		return false;
+		safe_release(mCommandQueue);
+		q->AddRef();
+		mCommandQueue = q;
+	}
+	mLiveQueueRaw.store(q, std::memory_order_relaxed);
+
+	{
+		std::scoped_lock lock(mQueueTableMutex);
+		for (uint32_t i = 0; i < mQueueTableCount; ++i)
+			if (mQueueTable[i].queue == q) mQueueTable[i].verified = true;
 	}
 
-	mCommandQueue = candidate; // takes the reference the detour published
-	// The queue is found. Stop doing per-submission work in the ECL detour - from here it is one
-	// relaxed atomic load and a tail call.
-	mQueueSearchActive.store(false, std::memory_order_relaxed);
+	PLOG_INFO << "VERIFIED the presenting command queue: 0x" << std::hex << (uintptr_t)q << std::dec
+		<< " - chosen by " << mProofHow << ", retired our fence within " << mProofPresentsWaited
+		<< " of the game's presents. The overlay will submit on this queue and no other.";
 
-	PLOG_INFO << "Captured the game's direct command queue: 0x" << std::hex << (uintptr_t)mCommandQueue;
-	return true;
+	setRenderGate(RenderGate::Live, "queue verified");
+}
+
+// Keeps proving the live queue. One that was fine at attach can stop draining later: the user toggles
+// frame generation, OBS starts or stops Game Capture, RTSS recreates its OSD renderer, the game does a
+// device-lost recovery. Cheap, non-blocking, roughly once every 10 s.
+void D3D12Hook::pollLiveQueueHealth()
+{
+	std::scoped_lock resourceLock(mResourceMutex);
+
+	if (mProofIsRevalidation && mProofQueue && mProofFence)
+	{
+		if (mProofFence->GetCompletedValue() >= mProofValue)
+		{
+			mProofQueue = nullptr;
+			mProofIsRevalidation = false;
+			return;
+		}
+		if (++mProofPresentsWaited < kQueueProofPresents) return;
+
+		PLOG_ERROR << "The verified presenting queue stopped retiring fences. Standing the overlay down "
+			"rather than piling more work onto a queue that is not draining - that is exactly how the "
+			"GPU ends up wedged.";
+		rejectQueue(mCommandQueue, "stopped retiring while live");
+		mProofQueue = nullptr;
+		mProofIsRevalidation = false;
+		mLiveQueueRaw.store(nullptr, std::memory_order_relaxed);
+		mQueueSearchActive.store(true, std::memory_order_relaxed);   // re-arm discovery
+		setRenderGate(RenderGate::Degraded, "the live queue stopped draining");
+		return;
+	}
+
+	if (mCommandQueue && (mPresentIntervalsObserved.load(std::memory_order_relaxed) % kQueueRecheckPresents) == 0)
+		beginProof(mCommandQueue, "periodic re-verification", true);
+}
+
+// static. Called ONCE per present on the adopted swapchain, before anything is recorded. Returns true
+// only when it is safe to draw. It NEVER blocks: the state machine is driven entirely by the game's own
+// presents, the only clock guaranteed to be running and the only one that stays correct under an RTSS
+// framerate cap or a DLSS-G pacer.
+bool D3D12Hook::updateRenderGate()
+{
+	D3D12Hook* d3d = instance;
+	if (!d3d) return false;
+
+	const uint32_t interval = mPresentIntervalsObserved.fetch_add(1, std::memory_order_relaxed) + 1;
+
+	// Close the observation interval.
+	{
+		std::scoped_lock lock(mQueueTableMutex);
+		for (uint32_t i = 0; i < mQueueTableCount; ++i)
+		{
+			if (mQueueTable[i].submissionsThisInterval > 0) ++mQueueTable[i].intervalsSeenIn;
+			mQueueTable[i].submissionsThisInterval = 0;
+		}
+	}
+
+	switch (mRenderGate.load(std::memory_order_relaxed))
+	{
+	case RenderGate::Discovering:
+		// ⚠ SETTLE FIRST. The old code sampled its single global slot in the 1 ms window right after our
+		// hooks went in - while the dummy device/window/swapchain used to harvest addresses were still
+		// being torn down, and while every other overlay in the process was reacting to a new module
+		// load. That window IS a large part of the defect. Watch eight of the game's own presents first.
+		if (interval < kQueueObserveIntervals) return false;
+		d3d->beginQueueVerification();
+		return false;
+
+	case RenderGate::Verifying:
+	case RenderGate::Degraded:
+		return d3d->pollQueueVerification();
+
+	case RenderGate::Live:
+		d3d->pollLiveQueueHealth();
+		return mRenderGate.load(std::memory_order_relaxed) == RenderGate::Live;
+
+	case RenderGate::Refused:
+	default:
+		return false;
+	}
+}
+
+void D3D12Hook::releaseQueueTable()
+{
+	std::scoped_lock lock(mQueueTableMutex);
+	for (uint32_t i = 0; i < mQueueTableCount; ++i)
+		safe_release(mQueueTable[i].queue);
+	mQueueTableCount = 0;
 }
 
 #pragma endregion adoption
@@ -1218,6 +1539,14 @@ void D3D12Hook::releaseSwapChainResources(bool gpuIsIdle)
 	mBufferCount = 0;
 	mRtvDescriptorSize = 0;
 	isD3DdeviceInitialized = false;
+	// ⚠ The proof belongs to the queue we just let go of. Clearing it means a later re-adoption has to
+	// earn the right to draw again rather than inheriting a verdict about a different queue.
+	mRenderGate.store(RenderGate::Discovering, std::memory_order_release);
+	mLiveQueueRaw.store(nullptr, std::memory_order_relaxed);
+	mProofQueue = nullptr;
+	mProofIsRevalidation = false;
+	safe_release(mProofFence);
+	releaseQueueTable();
 }
 
 // Everything above PLUS the fence and the command queue.
@@ -1425,34 +1754,11 @@ void D3D12Hook::initializeD3Ddevice(IDXGISwapChain* pSwapChain)
 			throw HCMInitException(std::format("CreateEventW for the fence event failed, error: {}", GetLastError()));
 	}
 
-	// DIAGNOSTIC, BOUNDED. Signal our own fence on THE GAME'S captured queue and wait with a timeout. If that
-	// queue cannot retire at the moment we go live, this says so in 250 ms instead of hanging forever - which
-	// is exactly what imgui's INFINITE font-upload wait used to do from inside Present. A timeout logged here
-	// on a session that nonetheless comes up IS the proof that the private-queue fix did its job.
-	{
-		const UINT64 probeValue = mNextFenceValue++;
-		ResetEvent(mFenceEvent);
-		if (SUCCEEDED(mCommandQueue->Signal(mFence, probeValue))
-			&& SUCCEEDED(mFence->SetEventOnCompletion(probeValue, mFenceEvent)))
-		{
-			const auto probeStart = std::chrono::steady_clock::now();
-			const DWORD waitResult = WaitForSingleObject(mFenceEvent, kQueueProbeTimeoutMs);
-			const auto probeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-				std::chrono::steady_clock::now() - probeStart).count();
-			if (waitResult == WAIT_OBJECT_0)
-			{
-				PLOG_INFO << "Queue probe: the captured direct queue retired a fence in " << probeMs << " ms";
-			}
-			else
-			{
-				PLOG_ERROR << "QUEUE PROBE FAILED: the captured direct queue 0x" << std::hex
-					<< (uintptr_t)mCommandQueue << std::dec << " did not retire a fence in "
-					<< kQueueProbeTimeoutMs << " ms. THIS IS THE CONDITION THAT USED TO FREEZE THE GAME inside "
-					"imgui's font upload. The overlay should still come up (that upload now uses a private "
-					"queue), but this queue is not draining - it may not be the swapchain's presenting queue.";
-			}
-		}
-	}
+	// ⚠ The old blocking 250 ms queue probe lived here and has been REMOVED, not weakened. Two reasons:
+	// it blocked a present thread, and wall-clock milliseconds are the wrong unit when RTSS is holding
+	// presentation and DLSS-G is pacing. Its job is now done by the render gate in renderOverlayFrame,
+	// which proves the same property non-blockingly, clocked on the game's own presents, BEFORE anything
+	// is submitted rather than after the renderer is already built.
 
 	PLOG_INFO << "D3D12 renderer initialized: " << mBufferCount << " back buffers, "
 		<< mFramesInFlight << " frames in flight, format " << (int)mRtvFormat;
@@ -1505,6 +1811,7 @@ void D3D12Hook::renderOverlayFrame(IDXGISwapChain* pSwapChain, UINT presentFlags
 	// touching D3D12 and HCM state immediately.
 	if (shuttingDown.load(std::memory_order_acquire))
 		return;
+
 
 	// Once shutdown has begun, stop invoking HCM's render/overlay callbacks. The services they
 	// call into are being destroyed on the shutdown thread; firing render events here races with
@@ -1568,9 +1875,23 @@ void D3D12Hook::renderOverlayFrame(IDXGISwapChain* pSwapChain, UINT presentFlags
 		mRejectedSwapChainSkips.store(0, std::memory_order_relaxed);
 	}
 
-	// No queue yet means ExecuteCommandLists hasn't handed us a validated one. Silent pass-through
-	// (NOT an exception) - this is a normal state for the first frame or two.
-	if (!d3d->mCommandQueue && !d3d->tryCaptureCommandQueue())
+	// ⚠⚠ THE RENDER GATE. Nothing below this line runs until a DIRECT queue on this swapchain's device
+	// has PROVEN it drains, by retiring a fence we signalled on it within eight of the game's own
+	// presents. It never blocks, and it is clocked on PRESENTS rather than wall time - which is what
+	// makes it correct while RTSS is capping the framerate and DLSS-G is pacing.
+	//
+	// ⚠ POSITION IS LOAD-BEARING, and getting it wrong is easy:
+	//   * it must be AFTER the adopted-swapchain filter above, or foreign swapchains (RTSS's and OBS's
+	//     own, Streamline's) would tick the present clock and corrupt the interval counts this ranks on;
+	//   * it must be AFTER the GlobalKill block, or an early return here would skip the one-shot
+	//     back-buffer release, and ResizeBuffers fails while any back-buffer reference is outstanding;
+	//   * it must be BEFORE initializeD3Ddevice, because the whole point is to not build or submit
+	//     anything on a queue we have not proven.
+	//
+	// Measured: submitting on an unverified queue hung the GPU in 3 of 8 sessions. Returning here
+	// forwards the frame to the game untouched - the overlay appears a few frames later once a queue is
+	// proven, or never, if none can be. Losing the overlay is recoverable; losing the GPU is not.
+	if (!updateRenderGate())
 		return;
 
 	if (!d3d->isD3DdeviceInitialized)
@@ -2171,36 +2492,35 @@ void __stdcall D3D12Hook::newDX12ExecuteCommandLists(ID3D12CommandQueue* pComman
 {
 	std::shared_lock<std::shared_mutex> guard(executeCommandListsGuard);
 
-	if (mQueueSearchActive.load(std::memory_order_relaxed)
-		&& pCommandQueue != nullptr
+	if (pCommandQueue != nullptr
 		&& !shuttingDown.load(std::memory_order_relaxed)
 		&& !GlobalKill::isKillSet())
 	{
-		// THE COMMAND QUEUE CAPTURE. See D3D12Hook::tryCaptureCommandQueue for the full rationale:
-		// under late injection this is the only way to learn which ID3D12CommandQueue the game
-		// renders and presents with, and we need that exact queue so our overlay submission is
-		// ordered after the game's frame work.
-		// Only DIRECT queues can execute the graphics command list we build; COMPUTE and COPY
-		// queues (async compute, texture streaming) are filtered out here.
-		const D3D12_COMMAND_QUEUE_DESC queueDesc = pCommandQueue->GetDesc();
-		if (queueDesc.Type == D3D12_COMMAND_LIST_TYPE_DIRECT)
+		if (mQueueSearchActive.load(std::memory_order_relaxed))
 		{
-			// Publish an OWNED reference. The consumer runs on the render thread one or more frames
-			// later; without this AddRef a transient DIRECT queue (an overlay, an encoder, one of
-			// UE5's own upload queues, RTSS) that submits once and is then released would leave that
-			// consumer calling a vtable on freed memory - a hard crash in the GAME.
-			// The exchange keeps the refcount balanced: we own the one we publish, and we release
-			// the one we displace (which nobody else can be holding, because the consumer also
-			// takes it by exchange).
-			pCommandQueue->AddRef();
-			if (ID3D12CommandQueue* previous = mCandidateDirectQueue.exchange(pCommandQueue, std::memory_order_acq_rel))
-				previous->Release();
-
-			// NOT LOG_ONCE: pch.h's once() checks and writes an unsynchronised `static bool` and
-			// this is a genuinely multi-threaded hot path.
-			static std::atomic_bool loggedCandidate = false;
-			if (!loggedCandidate.exchange(true, std::memory_order_relaxed))
-				PLOG_DEBUG << "Recorded a candidate direct command queue";
+			// FULL PATH - only while discovering or re-verifying. Every DIRECT queue that submits gets
+			// its own row in the candidate table, with a count of how many PRESENT INTERVALS it appeared
+			// in. That interval count is what separates UE5's 3D queue (submits every frame) from an OSD
+			// renderer, an 11on12 flush or an encoder running on its own cadence.
+			// ⚠ The old code kept only the LAST submitter in one global slot and the first present took
+			// whatever was there - a 1 ms race between four to six indistinguishable queues.
+			// COMPUTE and COPY queues cannot execute the graphics list we build, so they are filtered.
+			const D3D12_COMMAND_QUEUE_DESC queueDesc = pCommandQueue->GetDesc();
+			if (queueDesc.Type == D3D12_COMMAND_LIST_TYPE_DIRECT)
+				recordQueueSubmission(pCommandQueue);
+		}
+		else if (pCommandQueue == mLiveQueueRaw.load(std::memory_order_relaxed))
+		{
+			// HOT PATH once Live: one relaxed load and a pointer compare, no virtual GetDesc(). Keeps
+			// the health check fed without taxing every submission in the process for the whole session.
+			std::scoped_lock lock(mQueueTableMutex);
+			for (uint32_t i = 0; i < mQueueTableCount; ++i)
+				if (mQueueTable[i].queue == pCommandQueue)
+				{
+					++mQueueTable[i].totalSubmissions;
+					++mQueueTable[i].submissionsThisInterval;
+					break;
+				}
 		}
 	}
 

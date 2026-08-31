@@ -302,6 +302,34 @@ private:
 	// mSrvHeap, NOT in releaseD3Dresources.
 	ID3D12CommandQueue* mFontUploadQueue = nullptr; // ours exclusively
 
+	// ================================================================================================
+	// THE RENDER GATE. ⚠⚠ THIS IS WHAT STOPS HCM HANGING THE GPU.
+	//
+	// MEASURED across 8 instrumented sessions on this title: "QUEUE PROBE FAILED" predicted a GPU hang
+	// 3 times out of 3, and its absence predicted a clean session 4 times out of 4. Zero exceptions.
+	// The probe was ALREADY detecting the fatal condition - and then the code submitted on that queue
+	// anyway. This flag makes the probe AUTHORITATIVE instead of advisory.
+	//
+	// WHY A FAILED PROBE IS FATAL RATHER THAN COSMETIC. A Signal on an IDLE D3D12 queue retires
+	// immediately, so "did not retire a fence in 250 ms" does NOT mean "foreign and quiet" - it means
+	// BUSY OR BLOCKED: there is work ahead of our signal that is not completing. HCM's overlay command
+	// list carries back-buffer state transitions (PRESENT->RENDER_TARGET, draw, RENDER_TARGET->PRESENT).
+	// Submitting those on a queue that is not ordered against the queue the frame was actually built on
+	// leaves two unsynchronised timelines transitioning the SAME back-buffer subresource. That is
+	// undefined in D3D12, and on NVIDIA it presents as the graphics queue ceasing to retire - which is
+	// exactly the captured breadcrumb: every named UE pass finished, then the frame-tail submission of
+	// frame 125027 never completed, and UE synthesised GPUCrash 0x00008000 with no CPU fault.
+	//
+	// ⚠ WHY THE WRONG QUEUE GETS PICKED AT ALL: the candidate is whatever DIRECT queue submitted last
+	// inside a ~1 ms window at attach, and the only filter is "is it on the game's device". With RTSS,
+	// the Steam overlay, OBS (which brings d3d11on12) and Streamline/DLSS-G all resident, there are
+	// four to six DIRECT queues on that device and every one of them passes. It is a coin flip, which
+	// is precisely why the hang is intermittent.
+	//
+	// FAILING SAFE IS THE POINT: a session with no overlay is recoverable - the logs show every failed
+	// attach was followed by a relaunch that worked - whereas a hung GPU costs the whole session.
+	// The state machine that enforces this is the RenderGate / candidate table declared below.
+
 	ID3D12GraphicsCommandList* mCommandList = nullptr;
 	ID3D12DescriptorHeap* mRtvHeap = nullptr;
 	ID3D12DescriptorHeap* mSrvHeap = nullptr; // shader-visible; imgui's font SRV lives here
@@ -342,6 +370,78 @@ private:
 	// validated queue AND whenever the overlay is disabled, so the detour cannot keep doing a virtual
 	// GetDesc() on every submission on every queue in the process for the rest of the session.
 	static inline std::atomic_bool mQueueSearchActive = true;
+
+	// ================================================================================================
+	// THE CANDIDATE TABLE. Replaces the single mCandidateDirectQueue slot above for SELECTION - that
+	// slot held whatever DIRECT queue submitted last inside a ~1 ms window at attach, and the only
+	// filter was "is it on the game's device". With RTSS, the Steam overlay, OBS (which brings
+	// d3d11on12) and Streamline/DLSS-G all resident there are FOUR TO SIX DIRECT queues on that device
+	// and every one of them passes. Measured: the window between "recorded a candidate" and "captured"
+	// was 1 ms. That coin flip is why the hang was intermittent - 3 of 8 sessions.
+	//
+	// ⚠⚠ THE RANKING BELOW IS A HEURISTIC AND IS NEVER TRUSTED. It decides only the ORDER in which
+	// candidates are PROVEN. Nothing is ever drawn on a queue that has not retired a fence we signalled
+	// on it. That is what makes this deterministic instead of a better guess, and vendor-agnostic: a
+	// bad candidate is handled identically whether it belongs to Streamline, RTSS, OBS, or is the
+	// game's own queue momentarily wedged behind frame-generation pacing.
+	static constexpr uint32_t kMaxQueueCandidates    = 16;
+	static constexpr uint32_t kQueueObserveIntervals = 8;   // presents to watch before ranking anything
+	static constexpr uint32_t kQueueProofPresents    = 8;   // presents a candidate gets to retire the proof
+	static constexpr uint32_t kQueueRecheckPresents  = 600; // ~10 s at 60 fps: re-prove the live queue
+
+	struct QueueCandidate
+	{
+		ID3D12CommandQueue* queue = nullptr;   // OWNED reference, held until releaseQueueTable()
+		uint64_t totalSubmissions = 0;
+		uint32_t intervalsSeenIn = 0;          // present intervals it submitted in at least once
+		uint32_t submissionsThisInterval = 0;
+		bool rejected = false;
+		const char* rejectReason = nullptr;
+		bool verified = false;
+	};
+	static inline std::mutex mQueueTableMutex{};
+	static inline QueueCandidate mQueueTable[kMaxQueueCandidates]{};
+	static inline uint32_t mQueueTableCount = 0;
+	static inline std::atomic_uint32_t mPresentIntervalsObserved{ 0 };
+	// Once live, the ECL detour drops to one relaxed load and a pointer compare instead of a mutex and
+	// a virtual GetDesc() on every submission in the process.
+	static inline std::atomic<ID3D12CommandQueue*> mLiveQueueRaw{ nullptr };
+
+	// THE RENDER GATE. See the measurement note above the candidate table.
+	enum class RenderGate : uint32_t
+	{
+		Discovering = 0, // watching presents and submissions; NOT drawing
+		Verifying,       // a candidate is chosen, its liveness proof is in flight; NOT drawing
+		Live,            // proven; drawing
+		Degraded,        // was live, stopped retiring; NOT drawing, re-verifying
+		Refused          // no safe position could be established; will never draw this session
+	};
+	static inline std::atomic<RenderGate> mRenderGate{ RenderGate::Discovering };
+
+	// Liveness proof. mProofFence is OURS and separate from mFence, so a proof can run against a queue
+	// we have not adopted and can never be confused with an overlay submission.
+	ID3D12Fence* mProofFence = nullptr;
+	ID3D12CommandQueue* mProofQueue = nullptr;   // NOT owned - the table owns the reference
+	UINT64 mProofValue = 0;
+	UINT64 mProofNextValue = 0;
+	uint32_t mProofPresentsWaited = 0;
+	const char* mProofHow = "";
+	bool mProofIsRevalidation = false;
+
+	static const char* renderGateName(RenderGate g);
+	void setRenderGate(RenderGate to, const char* why);
+	void refuseToDraw(const char* why);
+	static void recordQueueSubmission(ID3D12CommandQueue* q);
+	static bool updateRenderGate();   // once per present on the adopted swapchain. NEVER blocks.
+	bool beginQueueVerification();
+	bool pollQueueVerification();
+	void pollLiveQueueHealth();
+	void beginProof(ID3D12CommandQueue* q, const char* how, bool isRevalidation);
+	void adoptVerifiedQueue(ID3D12CommandQueue* q);
+	void rejectQueue(ID3D12CommandQueue* q, const char* why);
+	bool queueIsRejected(ID3D12CommandQueue* q);
+	void logQueueTable(const char* when);
+	void releaseQueueTable();
 
 	// Single-entry negative cache for the swapchain filter. Our Present detours are inline hooks on
 	// dxgi's shared implementation, so without this every foreign swapchain in the process pays the
