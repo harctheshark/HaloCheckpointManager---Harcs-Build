@@ -478,6 +478,7 @@
 			((hceDisplayInfoShowLevel, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowBSP, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowZoneSet, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowCameraDiag, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowTick, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowPlayerDatum, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowTEB, (HALOCER_ONLY)))\
@@ -537,9 +538,11 @@
 			((hceTriggerOverlayShowKill, (HALOCER_ONLY)))\
 			((hceTriggerOverlayShowZoneSet, (HALOCER_ONLY)))\
 			((hceTriggerOverlayShowBeginZoneSet, (HALOCER_ONLY)))\
+			((hceTriggerOverlayShowCheckpointGrant, (HALOCER_ONLY)))\
 			((hceTriggerOverlayLabelColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlayBspColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlayBeginZoneSetColour, (HALOCER_ONLY)))\
+			((hceTriggerOverlayCheckpointGrantColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlayZoneSetReport, (HALOCER_ONLY)))\
 			((hceTriggerOverlayKillColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlaySafeZoneColour, (HALOCER_ONLY)))\

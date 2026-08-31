@@ -37,13 +37,13 @@ public:
 		// subscriber runs, with nothing else to keep in sync. Done here rather than in the array's initialiser
 		// because a default member initialiser cannot rely on members declared after it, and these four are.
 		// ⚠ INDICES ARE POSITIONS IN HCE_HOTKEYS (HotkeysEnum.h). They are the last block of that macro.
-		hceHotkeyEvents[51] = forceTeleportAbsoluteFillCurrent;
-		hceHotkeyEvents[52] = forceTeleportAbsoluteCopy;
-		hceHotkeyEvents[53] = forceTeleportAbsolutePaste;
-		hceHotkeyEvents[54] = hceTriggerOverlayEditNameFilterEvent;
-		hceHotkeyEvents[55] = hceCameraRollResetEvent;
-		hceHotkeyEvents[56] = hceFieldOfViewResetEvent;
-		hceHotkeyEvents[57] = hceCameraMoveSpeedResetEvent;
+		hceHotkeyEvents[53] = forceTeleportAbsoluteFillCurrent;
+		hceHotkeyEvents[54] = forceTeleportAbsoluteCopy;
+		hceHotkeyEvents[55] = forceTeleportAbsolutePaste;
+		hceHotkeyEvents[56] = hceTriggerOverlayEditNameFilterEvent;
+		hceHotkeyEvents[57] = hceCameraRollResetEvent;
+		hceHotkeyEvents[58] = hceFieldOfViewResetEvent;
+		hceHotkeyEvents[59] = hceCameraMoveSpeedResetEvent;
 	}
 	~SettingsStateAndEvents() {
 		PLOG_DEBUG << "~SettingsStateAndEvents()";
@@ -256,7 +256,7 @@ public:
 	//
 	// The last four elements are REPLACED IN THE CONSTRUCTOR with events that already exist (see below), so
 	// those hotkeys fire the very same event object the equivalent button does. Everything before them is new.
-	static constexpr inline int kHCEHotkeyCount = 58;
+	static constexpr inline int kHCEHotkeyCount = 60;
 	std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> hceHotkeyEvents = []()
 		{
 			std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> events;
@@ -1263,6 +1263,15 @@ public:
 			nameof(hceDisplayInfoShowZoneSet)
 		);
 
+	// ⚠ A DIAGNOSTIC ROW, not a feature. It exists because HCM writes no log file under Linux/Proton, so the
+	// camera election is otherwise invisible on the exact platform where it is currently broken. Off by default.
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowCameraDiag = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowCameraDiag)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowTick = std::make_shared<BinarySetting<bool>>
 		(
 			true,
@@ -1337,8 +1346,8 @@ public:
 	// HCEFreecamDrift.h). 0 disables smoothing. It is a two-stage exponential, so no value here can overshoot.
 	std::shared_ptr<BinarySetting<float>> hceFreecamDriftAmount = std::make_shared<BinarySetting<float>>
 		(
-			0.75f,
-			[](float in) { return in >= 0.f && in <= 2.f; },
+			2.0f,
+			[](float in) { return in >= 0.f && in <= 10.f; },
 			nameof(hceFreecamDriftAmount)
 		);
 
@@ -1532,6 +1541,14 @@ public:
 			SimpleMath::Vector4(0.35f, 0.85f, 0.8f, 1.f),
 			[](SimpleMath::Vector4 in) { return true; },
 			nameof(hceTriggerOverlayBeginZoneSetColor)
+		);
+
+	// Checkpoint-granting volumes. Green on purpose - it is the one category that is unambiguously GOOD news.
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceTriggerOverlayCheckpointGrantColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(0.3f, 1.f, 0.4f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceTriggerOverlayCheckpointGrantColor)
 		);
 
 	// Kill volumes ("stay OUT") and safe zones ("stay IN") are the same feature family and share one toggle, but
@@ -1823,6 +1840,17 @@ public:
 	// GEOMETRIC test done by HCM, not an engine hit: HCETriggerActivity deliberately patches only the eight
 	// HaloScript call sites of trigger_volume_test_point, and the zone-set evaluator sub_18018F870 is on the
 	// NOT-patched list, so these volumes can never produce a script "hit".
+	// CHECKPOINT GRANTS. ⚠ The only trigger category that is NOT scenario-tag data: whether a volume grants a
+	// checkpoint is a HaloScript fact with no tag-side flag, so it comes from a curated list swept from the
+	// level scripts of all 13 levels (HCECheckpointGrantTriggers.h). This toggle also gates the on-entry note
+	// for the CONDITIONAL ones - if you are not showing the category, it does not narrate it either.
+	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayShowCheckpointGrant = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceTriggerOverlayShowCheckpointGrant)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlayZoneSetReport = std::make_shared<BinarySetting<bool>>
 		(
 			true,
@@ -3387,9 +3415,12 @@ public:
 		hceTriggerOverlayShowKill,
 		hceTriggerOverlayShowZoneSet,
 		hceTriggerOverlayShowBeginZoneSet,
+		hceTriggerOverlayShowCheckpointGrant,
+		hceTriggerOverlayCheckpointGrantColor,
 		hceTriggerOverlayZoneSetReport,
 		hceTriggerOverlayBeginZoneSetColor,
 		hceDisplayInfoShowZoneSet,
+		hceDisplayInfoShowCameraDiag,
 		// ⚠ hceBspOverlayToggle is DELIBERATELY ABSENT from this list. Everything here is written to
 		// HCMInternalConfig.xml and read back at startup, so listing the toggle would make the overlay
 		// re-arm itself every launch just because it was on when HCM last closed. A visualiser that turns

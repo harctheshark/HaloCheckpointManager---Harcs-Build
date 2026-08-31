@@ -142,28 +142,84 @@ namespace
 	                                           // existing "SNAPSHOT IS STALE" warning would have fired
 	std::atomic<uint32_t> gLatchTimeouts{ 0 }; // published for the consumer-side report, never logged here
 
+	// ---- ELIGIBILITY TELEMETRY -------------------------------------------------------------------------------
+	// ⚠ THESE EXIST BECAUSE HCM WRITES NO LOG ON LINUX/PROTON. The camera-frozen bug reported there is
+	// indistinguishable from outside between "eligibility never passes, so the dead latch is never replaced" and
+	// "eligibility passes for the WRONG destination, so an impostor holds the latch" - and the two want OPPOSITE
+	// fixes (loosen the test vs tighten it). Guessing would fix one and worsen the other, so the gate that
+	// actually rejected is counted and surfaced in the GUI, which does render there.
+	std::atomic<uint32_t> gEligPassed{ 0 };
+	std::atomic<uint32_t> gEligFailTooLow{ 0 };       // destination below the POV offset - not a manager at all
+	std::atomic<uint32_t> gEligFailVtableRead{ 0 };   // could not read the vtable slot, or it was null/tiny
+	std::atomic<uint32_t> gEligFailModuleInfo{ 0 };   // ⚠ THE PSAPI SUSPECT: GetModuleHandle/GetModuleInformation
+	std::atomic<uint32_t> gEligFailVtableRange{ 0 };  // vtable read fine but sits outside the exe image
+	std::atomic<uint32_t> gEligFailFovRead{ 0 };
+	std::atomic<uint32_t> gEligFailFovRange{ 0 };
+	std::atomic<uintptr_t> gExeBase{ 0 };             // what the range check actually used, for the readout
+	std::atomic<uint32_t> gExeSize{ 0 };
+	std::atomic<uintptr_t> gLastRejectedVtable{ 0 };  // most recent vtable that failed the RANGE test
+
 	// Same test HCEFieldOfView uses before it writes: a real APlayerCameraManager has a vtable inside the exe
 	// image and a sane DefaultFOV. A stray FMinimalViewInfo offset back by 0x14B0 satisfies neither except by
 	// coincidence. Reads go through tryReadRaw, so a bad candidate cannot fault us.
 	bool destinationIsCameraManagerPov(uintptr_t destination)
 	{
-		if (destination <= (uintptr_t)HCEGetCameraData::kPovInCameraManagerOffset) return false;
+		if (destination <= (uintptr_t)HCEGetCameraData::kPovInCameraManagerOffset)
+		{
+			gEligFailTooLow.fetch_add(1, std::memory_order_relaxed);
+			return false;
+		}
 		const uintptr_t manager = destination - (uintptr_t)HCEGetCameraData::kPovInCameraManagerOffset;
 
 		uintptr_t vtable = 0;
-		if (!HCEGetPlayerState::tryReadRaw(manager, &vtable, sizeof(vtable)) || vtable < 0x10000) return false;
+		if (!HCEGetPlayerState::tryReadRaw(manager, &vtable, sizeof(vtable)) || vtable < 0x10000)
+		{
+			gEligFailVtableRead.fetch_add(1, std::memory_order_relaxed);
+			return false;
+		}
 
-		const HMODULE exe = GetModuleHandleW(nullptr);
-		MODULEINFO mi{};
-		if (!exe || !GetModuleInformation(GetCurrentProcess(), exe, &mi, sizeof(mi))) return false;
-		const uintptr_t exeBase = (uintptr_t)mi.lpBaseOfDll;
-		if (vtable < exeBase || vtable >= exeBase + mi.SizeOfImage) return false;
+		// ⚠ The exe range is resolved ONCE and cached. It cannot change for the life of the process, and
+		// re-asking psapi on every frame of every candidate is both wasteful and - if this call is what behaves
+		// differently under Wine - a per-frame failure rather than a single recorded one.
+		uintptr_t exeBase = gExeBase.load(std::memory_order_acquire);
+		uint32_t exeSize = gExeSize.load(std::memory_order_acquire);
+		if (exeBase == 0 || exeSize == 0)
+		{
+			const HMODULE exe = GetModuleHandleW(nullptr);
+			MODULEINFO mi{};
+			if (!exe || !GetModuleInformation(GetCurrentProcess(), exe, &mi, sizeof(mi)))
+			{
+				gEligFailModuleInfo.fetch_add(1, std::memory_order_relaxed);
+				return false;
+			}
+			exeBase = (uintptr_t)mi.lpBaseOfDll;
+			exeSize = mi.SizeOfImage;
+			gExeBase.store(exeBase, std::memory_order_release);
+			gExeSize.store(exeSize, std::memory_order_release);
+		}
+
+		if (vtable < exeBase || vtable >= exeBase + exeSize)
+		{
+			gLastRejectedVtable.store(vtable, std::memory_order_relaxed);
+			gEligFailVtableRange.fetch_add(1, std::memory_order_relaxed);
+			return false;
+		}
 
 		float defaultFov = 0.f;
 		if (!HCEGetPlayerState::tryReadRaw(manager + kDefaultFovInCameraManager, &defaultFov, sizeof(defaultFov)))
+		{
+			gEligFailFovRead.fetch_add(1, std::memory_order_relaxed);
 			return false;
+		}
 
-		return std::isfinite(defaultFov) && defaultFov > 20.f && defaultFov < 170.f;
+		if (!(std::isfinite(defaultFov) && defaultFov > 20.f && defaultFov < 170.f))
+		{
+			gEligFailFovRange.fetch_add(1, std::memory_order_relaxed);
+			return false;
+		}
+
+		gEligPassed.fetch_add(1, std::memory_order_relaxed);
+		return true;
 	}
 
 	// Every write to gPreferredDestination goes through here, so a change can never be made without being
@@ -746,6 +802,57 @@ bool HCEGetCameraData::getUeCamera(UeCamera& out) const
 
 	pimpl->mLastGoodFov.store(raw.fov, std::memory_order_release);
 	return true;
+}
+
+
+// ================================================================================================================
+// THE LINUX WINDOW. HCM writes no log under Proton, so this is the only way to see the camera election from a
+// machine we cannot get a log off. Everything here is already-published atomics - no game reads, no locks, safe
+// to call from the render thread - and it is only formatted when the user turns the row on.
+//
+// HOW TO READ IT:
+//   fires=0                  the DoUpdateCamera midhook never fired - the hook itself is the problem.
+//   fires>0 but pub=0        the hook fires but nothing was ever published - eligibility never passed. The
+//                            elig= breakdown then names the exact gate that rejected.
+//   pub>0 and age is large   a snapshot WAS published and then stopped. Consumers keep being handed it, because
+//                            getUeCamera has no freshness gate - this is what "stuck at one orientation" is.
+//   drop= large              writes are arriving for a destination other than the latched one. Combined with a
+//                            large age this means an IMPOSTOR holds the latch and the real camera is refused.
+//   elig mod=                non-zero means GetModuleInformation failed - a Wine/psapi problem, not an address.
+//   elig rng= large          vtables are being read fine but land outside the exe image the range check used;
+//                            compare exe= against where the game actually is.
+// static
+std::string HCEGetCameraData::getElectionDiagnostics()
+{
+	const uint32_t now = GetTickCount();
+	const uint32_t lastPublish = gLastPublishTick.load(std::memory_order_acquire);
+	const uint32_t sequence = gPovSequence.load(std::memory_order_acquire);
+	const uintptr_t exeBase = gExeBase.load(std::memory_order_acquire);
+
+	std::string out;
+	out += std::format("fires={} pub={} age={}ms",
+		gCameraManagerHookFires.load(std::memory_order_relaxed),
+		sequence / 2,
+		sequence == 0 ? -1 : (int32_t)(now - lastPublish));
+	out += std::format("\n  latched=0x{:X} preferred=0x{:X} changes={} drop={} timeouts={} fast={}",
+		gValidatedDestination.load(std::memory_order_acquire),
+		gPreferredDestination.load(std::memory_order_acquire),
+		gPreferredChanges.load(std::memory_order_relaxed),
+		gDroppedForeignWrites.load(std::memory_order_relaxed),
+		gLatchTimeouts.load(std::memory_order_relaxed),
+		gImmediateAdoptions.load(std::memory_order_relaxed));
+	out += std::format("\n  elig ok={} low={} vt={} mod={} rng={} fovR={} fovV={}",
+		gEligPassed.load(std::memory_order_relaxed),
+		gEligFailTooLow.load(std::memory_order_relaxed),
+		gEligFailVtableRead.load(std::memory_order_relaxed),
+		gEligFailModuleInfo.load(std::memory_order_relaxed),
+		gEligFailVtableRange.load(std::memory_order_relaxed),
+		gEligFailFovRead.load(std::memory_order_relaxed),
+		gEligFailFovRange.load(std::memory_order_relaxed));
+	out += std::format("\n  exe=0x{:X}+0x{:X} lastBadVt=0x{:X}",
+		exeBase, gExeSize.load(std::memory_order_acquire),
+		gLastRejectedVtable.load(std::memory_order_relaxed));
+	return out;
 }
 
 

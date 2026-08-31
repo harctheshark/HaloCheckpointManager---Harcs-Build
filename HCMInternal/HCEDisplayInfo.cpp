@@ -6,6 +6,10 @@
 #include "RuntimeExceptionHandler.h"
 #include "IMakeOrGetCheat.h"
 #include "HCEGetPlayerState.h"
+#include "HCEGetCameraData.h"   // getElectionDiagnostics, for the Linux-visible camera readout
+#include <fstream>              // Z:\proc\self\limits, for the Wine handle readout
+#include <sstream>
+#include <psapi.h>              // GetProcessHandleCount
 #include "RenderTextHelper.h"
 #include "GlobalKill.h"
 
@@ -39,6 +43,87 @@ private:
 	bool mIsActive = false;
 	std::string mDataString;
 	std::chrono::steady_clock::time_point mLastUpdate{};
+
+	// ================================================================================================
+	// WINE / PROTON HANDLE PRESSURE READOUT.
+	//
+	// ⚠ THIS IS AN INSTRUMENT, NOT A FEATURE, and it exists because of one specific open bug: the game
+	// crashes on Linux with a null dereference inside UE's own pak reader
+	// (FPakFile::GetSharedReader returns the result of CreatePakReader WITHOUT null-checking it, and the
+	// check() in operator-> is compiled out in Shipping). The null comes from IPlatformFile::OpenRead
+	// FAILING on an already-mounted .pak - which essentially never happens on Windows, where handles are
+	// cheap, but is entirely possible under Wine, where EVERY Win32 handle costs a real Linux file
+	// descriptor and the process is bound by RLIMIT_NOFILE.
+	//
+	// The leading hypothesis is therefore descriptor exhaustion, and this is how to prove or kill it
+	// WITHOUT A LOG FILE: watch the number on screen while toggling the overlay that triggers the crash.
+	// Climbing toward the ceiling proves it. Flat at a few hundred against a ceiling in the hundreds of
+	// thousands kills it, and the answer is elsewhere.
+	//
+	// Proton maps Z: to the Linux root, so /proc/self is reachable as Z:\proc\self from inside the
+	// process. On real Windows that path does not exist, every probe fails, and the row says so.
+	// ⚠ Sampled once a SECOND, never per frame: counting a directory is a syscall per entry.
+	static std::string wineHandleDiagnostics()
+	{
+		static const bool underWine =
+			GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_version") != nullptr;
+
+		static std::string cached;
+		static ULONGLONG lastSampleTick = 0;
+		const ULONGLONG now = GetTickCount64();
+		if (!cached.empty() && (now - lastSampleTick) < 1000) return cached;
+		lastSampleTick = now;
+
+		DWORD handleCount = 0;
+		const bool haveHandles = GetProcessHandleCount(GetCurrentProcess(), &handleCount) != 0;
+
+		if (!underWine)
+		{
+			cached = haveHandles
+				? std::format("win32 handles {} (not running under Wine)", handleCount)
+				: "not running under Wine";
+			return cached;
+		}
+
+		// Count entries in Z:\proc\self\fd. Each is one open Linux descriptor.
+		int fdCount = -1;
+		{
+			WIN32_FIND_DATAA fd{};
+			HANDLE h = FindFirstFileA("Z:\\proc\\self\\fd\\*", &fd);
+			if (h != INVALID_HANDLE_VALUE)
+			{
+				fdCount = 0;
+				do
+				{
+					if (fd.cFileName[0] == '.') continue;   // . and ..
+					++fdCount;
+				} while (FindNextFileA(h, &fd));
+				FindClose(h);
+			}
+		}
+
+		// "Max open files" out of Z:\proc\self\limits - the ceiling the count is racing.
+		long long fdCeiling = -1;
+		{
+			std::ifstream limits("Z:\\proc\\self\\limits");
+			std::string line;
+			while (std::getline(limits, line))
+			{
+				if (line.rfind("Max open files", 0) != 0) continue;
+				// "Max open files   <soft>  <hard>  files"
+				std::istringstream parse(line.substr(std::string("Max open files").size()));
+				std::string soft;
+				if (parse >> soft) { try { fdCeiling = std::stoll(soft); } catch (...) {} }
+				break;
+			}
+		}
+
+		cached = std::format("WINE  fds {}{}  win32 handles {}",
+			fdCount < 0 ? std::string("?") : std::to_string(fdCount),
+			fdCeiling < 0 ? std::string("") : std::format(" / {}", fdCeiling),
+			haveHandles ? std::to_string(handleCount) : std::string("?"));
+		return cached;
+	}
 
 	// Appends "label: value\n". Every row degrades on its own - a failure gives the placeholder rather than
 	// killing the whole overlay, exactly like information.py's per-provider error handling.
@@ -145,6 +230,16 @@ private:
 				appendRow(out, "Current Zone Set", name);
 			}
 			catch (HCMRuntimeException) { appendRow(out, "Current Zone Set", "None"); }
+		}
+
+		// ⚠ DIAGNOSTIC, off by default. The only window onto the camera election on Linux/Proton, where HCM
+		// writes no log file at all - see HCEGetCameraData::getElectionDiagnostics for how to read it.
+		if (settings->hceDisplayInfoShowCameraDiag->GetValue())
+		{
+			try { appendRow(out, "Camera", HCEGetCameraData::getElectionDiagnostics()); }
+			catch (...) { appendRow(out, "Camera", "unavailable"); }
+			try { appendRow(out, "Process", wineHandleDiagnostics()); }
+			catch (...) { appendRow(out, "Process", "unavailable"); }
 		}
 
 		// ⚠ The row below is misnamed at the source: this global is the current ZONE SET index, not a BSP

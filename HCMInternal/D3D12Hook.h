@@ -287,6 +287,21 @@ private:
 	IDXGISwapChain3* mSwapChain3 = nullptr;  // we own a ref. Needed for GetCurrentBackBufferIndex.
 	ID3D12Device* mDevice = nullptr;         // we own a ref
 	ID3D12CommandQueue* mCommandQueue = nullptr; // we own a ref
+
+	// ⚠⚠ NEVER HAND mCommandQueue TO IMGUI. ImGui_ImplDX12_CreateFontsTexture submits its one-shot font upload
+	// to InitInfo.CommandQueue, signals a fence ON THAT QUEUE, then does WaitForSingleObject(event, INFINITE) -
+	// and it does all of that from inside our Present detour, BEFORE we forward Present. So if the game's queue
+	// cannot retire at that instant, the game's own presenting thread never returns: picture frozen, overlay
+	// never drawn, no exception, no crash dialog, and the window still reports Responding because a DIFFERENT
+	// thread owns the message pump. Measured 7 times across 242 D3D12 sessions, first seen 2026-08-07.
+	//
+	// This queue is ours alone, so nothing can be queued ahead of that upload and the wait is always
+	// satisfiable. imgui's own legacy Init overload creates exactly this (DIRECT, NodeMask 1) for the same
+	// reason. ⚠ imgui stores it RAW and never AddRefs it - bd->commandQueueOwned is only set by that legacy
+	// overload - so it must outlive ImGui_ImplDX12_Shutdown: released in releaseImGuiBoundResources next to
+	// mSrvHeap, NOT in releaseD3Dresources.
+	ID3D12CommandQueue* mFontUploadQueue = nullptr; // ours exclusively
+
 	ID3D12GraphicsCommandList* mCommandList = nullptr;
 	ID3D12DescriptorHeap* mRtvHeap = nullptr;
 	ID3D12DescriptorHeap* mSrvHeap = nullptr; // shader-visible; imgui's font SRV lives here

@@ -195,6 +195,23 @@ void ImGuiManager::initializeImGuiResourcesD3D12(IDXGISwapChain3* pSwapChain)
 	PLOG_DEBUG << "ImGui Initialized (D3D12)";
 
 	applyImGuiStyleAndFonts();
+
+	// ⚠ Build the root signature, PSO and FONT TEXTURE here, with timing in the log, instead of letting the
+	// first ImGui_ImplDX12_NewFrame() do it silently from inside the game's Present.
+	//   1. The font texture does a BLOCKING GPU round trip. When this hung, the log's last line was
+	//      "ImGui Initialized (D3D12)" and there was nothing to say which of ~6 candidate calls was stuck -
+	//      it cost a 242-session census to localise. Now it is one line either way.
+	//   2. NewFrame's lazy path is `if (!bd->pPipelineState) CreateDeviceObjects()`, so doing it once here
+	//      means the per-frame path never carries this cost or this risk again.
+	// applyImGuiStyleAndFonts must stay BEFORE this: it queues the fonts that CreateFontsTexture rasterises.
+	// Healthy baseline for the window this replaces: 7-25 ms, median 9 (measured over 235 sessions).
+	PLOG_DEBUG << "Creating the D3D12 ImGui device objects (root signature, PSO, font texture)";
+	const auto deviceObjectsStart = std::chrono::steady_clock::now();
+	if (!ImGui_ImplDX12_CreateDeviceObjects())
+		throw HCMInitException("ImGui_ImplDX12_CreateDeviceObjects failed");
+	PLOG_INFO << "D3D12 ImGui device objects created in "
+		<< std::chrono::duration_cast<std::chrono::milliseconds>(
+			   std::chrono::steady_clock::now() - deviceObjectsStart).count() << " ms";
 }
 
 

@@ -643,6 +643,11 @@ private:
 				finaliseBatchBounds(current);
 				mBatches.push_back(std::move(current));
 				current = BspBatch{};
+				// ⚠ These are declared ONCE for the whole rebuild, so without this they keep pointing into the
+				// batch we just moved away - and every span in the NEW batch would carry an edge slice from the
+				// old one. `current = BspBatch{}` empties edgeIndices but cannot know about these.
+				pendingEdgeFirst = 0;
+				pendingEdgeCount = 0;
 			};
 
 		for (int b = 0; b < bspCount; ++b)
@@ -1076,8 +1081,12 @@ private:
 							// strong. The facing/away distinction is still available - it picks the COLOUR
 							// above - it just no longer leaks into brightness.
 							const float ndl = std::clamp(std::abs(span.normal.Dot(kShadeLightDirection)), 0.f, 1.f);
-							int bin = (int)(ndl * (float)kShadeBins);
-							if (bin >= kShadeBins) bin = kShadeBins - 1;
+							// ⚠ THE CLAMP MUST BE TWO-SIDED, and std::clamp above does NOT make it so: a NaN
+							// survives std::clamp untouched (NaN < lo and hi < NaN are both false), cvttss2si
+							// then yields INT_MIN, and `INT_MIN >= kShadeBins` is FALSE - so the old one-sided
+							// guard let a NaN index mShadeBuckets ~48 GB below its base. Test NaN, clamp both.
+							int bin = (ndl == ndl) ? (int)(ndl * (float)kShadeBins) : 0;   // NaN -> 0
+							bin = std::clamp(bin, 0, kShadeBins - 1);
 
 							// Stable per-surface variation: a cheap integer hash of the surface ordinal, NOT
 							// anything derived from the camera, so a wall keeps the same tint as you move.
@@ -1088,6 +1097,10 @@ private:
 								h ^= h >> 15;
 								variation = (int)(h % (uint32_t)kVariationBins);
 							}
+
+							// ⚠ The span's slice is trusted from tag data that copyBlock read speculatively, so
+							// bound it against the buffer it indexes rather than assuming it is in range.
+							if ((size_t)span.firstIndex + span.indexCount > batch->triangleIndices.size()) continue;
 
 							const int index = (facing ? 0 : kBucketsPerSide) + bin * kVariationBins + variation;
 							IndexCollection& target = mShadeBuckets[index];
@@ -1220,6 +1233,8 @@ private:
 					{
 						if (span.edgeCount == 0) continue;
 						if ((span.centre - cameraPosition).Length() > renderDistance) continue;
+						// Same bound as the triangle path: never index past the buffer the slice refers to.
+						if ((size_t)span.firstEdge + span.edgeCount > batch->edgeIndices.size()) continue;
 						mFrontEdges.insert(mFrontEdges.end(),
 							batch->edgeIndices.begin() + span.firstEdge,
 							batch->edgeIndices.begin() + span.firstEdge + span.edgeCount);

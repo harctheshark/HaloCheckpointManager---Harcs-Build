@@ -212,6 +212,7 @@ hceDisplayInfoShowVelocityXYZHotkey, \
 hceDisplayInfoShowLevelHotkey, \
 hceDisplayInfoShowBSPHotkey, \
 hceDisplayInfoShowZoneSetHotkey, \
+hceDisplayInfoShowCameraDiagHotkey, \
 hceDisplayInfoShowTickHotkey, \
 hceDisplayInfoShowPlayerDatumHotkey, \
 hceDisplayInfoShowTEBHotkey, \
@@ -233,6 +234,7 @@ hceTriggerOverlayShowRegularHotkey, \
 hceTriggerOverlayShowKillHotkey, \
 hceTriggerOverlayShowZoneSetHotkey, \
 hceTriggerOverlayShowBeginZoneSetHotkey, \
+hceTriggerOverlayShowCheckpointGrantHotkey, \
 hceTriggerOverlaySpeedrunOnlyHotkey, \
 hceTriggerOverlayShowVertexHotkey, \
 hceTriggerOverlayShowLabelsHotkey, \

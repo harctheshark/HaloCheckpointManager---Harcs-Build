@@ -126,6 +126,14 @@ public:
 
 	// ---- pure maths, no game memory. Static so the two consumers cannot drift apart. ----
 
+	// ⚠ A MULTI-LINE SNAPSHOT OF THE CAMERA ELECTION, FOR MACHINES WE CANNOT GET A LOG OFF.
+	// HCM writes no log file under Linux/Proton, so a camera fault there is otherwise undiagnosable: "the hook
+	// never fired", "eligibility never passed", and "an impostor won the election and the real camera is being
+	// refused" all look identical from the outside (overlays frozen at one orientation) and want different
+	// fixes. This reports which one it is. Reads published atomics only - no game memory, no locks - so it is
+	// safe from the render thread and costs nothing unless the row is switched on.
+	static std::string getElectionDiagnostics();
+
 	// UE Pitch/Yaw/Roll (DEGREES) -> a Blam-frame orthonormal basis. Roll is applied about the forward axis
 	// (the external CER tool reads roll and then silently ignores it; that is a bug there, not here).
 	static void ueRotationToBlamBasis(float pitchDegrees, float yawDegrees, float rollDegrees,

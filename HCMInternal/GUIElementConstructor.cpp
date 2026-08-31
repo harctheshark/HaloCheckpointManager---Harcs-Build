@@ -1549,6 +1549,7 @@ private:
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowLevel),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowBSP),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowZoneSet),
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowCameraDiag),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowTick),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowPlayerDatum),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowTEB),
@@ -1581,6 +1582,10 @@ private:
 				case GUIElementEnum::hceDisplayInfoShowZoneSet:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Show the current zone set's name. A zone set is the set of structure BSPs and designer zones the engine currently has resident; it is what zone-set trigger volumes switch between.\n\nShows '(loading)' while the switch is still bringing BSPs in - the index is published before the load finishes."), RebindableHotkeyEnum::hceDisplayInfoShowZoneSetHotkey, "Show Current Zone Set", settings->hceDisplayInfoShowZoneSet));
+
+				case GUIElementEnum::hceDisplayInfoShowCameraDiag:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("DIAGNOSTIC. Shows the internal state of the render-camera election: how often the camera hook has fired, whether a camera was ever adopted, how long ago it last updated, and which check is rejecting candidates.\n\nThis exists because HCM writes no log file under Linux/Proton, so on that platform this row is the only way to see why the 3D overlays might be stuck. If the overlays follow the camera correctly, you do not need it.\n\nAlso shows, under Wine/Proton only, the process's open file-descriptor count against its ceiling. That is the instrument for the Linux crash whose null pointer comes from the GAME failing to open a .pak file - if the count climbs toward the ceiling while an overlay is on, descriptor exhaustion is confirmed."), RebindableHotkeyEnum::hceDisplayInfoShowCameraDiagHotkey, "Show Diagnostics", settings->hceDisplayInfoShowCameraDiag));
 
 					case GUIElementEnum::hceDisplayInfoShowTick:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -2467,6 +2472,7 @@ private:
 								createNestedElement(GUIElementEnum::hceTriggerOverlayMessageOnHit),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayBspColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayBeginZoneSetColour),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayCheckpointGrantColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayZoneSetReport),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayKillColour),
 								createNestedElement(GUIElementEnum::hceTriggerOverlaySafeZoneColour),
@@ -2660,8 +2666,8 @@ private:
 							}));
 
 				case GUIElementEnum::hceFreecamDriftAmountGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.f, 2.f, ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoRoundToFormat)>>
-						(game, ToolTipCollection("Seconds of glide after you stop moving. 0.75 means the camera keeps coasting for about three quarters of a second after you release, and runs about a quarter of a second behind your input while you fly. 0 turns drift off. The camera cannot overshoot or wobble at any setting - it only ever slows down. Measured in game time, so it stretches out under slow motion and Game Speed."), "Coast Time (s)##hceFreecam", settings->hceFreecamDriftAmount));
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.f, 10.f, ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoRoundToFormat)>>
+						(game, ToolTipCollection("Seconds of glide after you stop moving. The default of 2 means the camera keeps coasting for about two seconds after you release, and runs about two thirds of a second behind your input while you fly. 0 turns drift off. The camera cannot overshoot or wobble at ANY setting - it only ever slows down - so the high end is safe to use, just very heavy: at 10 the rendered camera trails your input by more than three seconds of travel, which at a high Camera Move Speed is a long way. Measured in game time, so it stretches out under slow motion and Game Speed."), "Coast Time (s)##hceFreecam", settings->hceFreecamDriftAmount));
 
 				case GUIElementEnum::hceFreecamKeepPositionGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -2785,6 +2791,7 @@ private:
 								createNestedElement(GUIElementEnum::hceTriggerOverlayShowKill),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayShowZoneSet),
 								createNestedElement(GUIElementEnum::hceTriggerOverlayShowBeginZoneSet),
+								createNestedElement(GUIElementEnum::hceTriggerOverlayShowCheckpointGrant),
 							}));
 
 				case GUIElementEnum::hceTriggerOverlayShowRegular:
@@ -2798,6 +2805,14 @@ private:
 				case GUIElementEnum::hceTriggerOverlayShowBeginZoneSet:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("BEGIN zone-set volumes. Crossing one runs prepare_to_switch_to_zone_set, which is purely SUBTRACTIVE: it unloads the BSPs the incoming zone set does not want and loads nothing new. It also retires the designer zones that zone set forbids, which is what frees the object budget - it does not spawn anything.\n\nOne exception: if the target zone set shares NO currently-loaded BSP, the engine skips the prepare and performs a full switch instead."), RebindableHotkeyEnum::hceTriggerOverlayShowBeginZoneSetHotkey, "Begin Zoneset Triggers", settings->hceTriggerOverlayShowBeginZoneSet));
+
+				case GUIElementEnum::hceTriggerOverlayShowCheckpointGrant:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Trigger volumes that GRANT A CHECKPOINT when you enter them. 373 of them across all 13 levels.\n\nUnlike every other category here this is not scenario data - whether a volume saves is decided by the level's HaloScript, so this is a curated list swept from the scripts. 285 grant unconditionally; the other 88 are gated on something, and for those the condition is printed on screen when you enter.\n\nOnly four are difficulty-gated in the whole game: two in a50 and one in d40 are LOWER-difficulty generosity saves that do not fire on Heroic or Legendary. No checkpoint anywhere is gated on co-op or player count."), RebindableHotkeyEnum::hceTriggerOverlayShowCheckpointGrantHotkey, "Checkpoint Grant Triggers", settings->hceTriggerOverlayShowCheckpointGrant));
+
+				case GUIElementEnum::hceTriggerOverlayCheckpointGrantColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of trigger volumes that grant a checkpoint on entry."), "Checkpoint Grant Color", settings->hceTriggerOverlayCheckpointGrantColor));
 
 				case GUIElementEnum::hceTriggerOverlayShowZoneSet:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>

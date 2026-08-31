@@ -101,7 +101,7 @@ namespace
 	// The slider is a COAST TIME in seconds. Settle-to-2% of a two-stage cascade is 5.83 stage time constants =
 	// 2.92*tau, so tau = coast/3 makes the slider read, to within ~10%, as "seconds until the camera has visibly
 	// stopped". The trail you see while flying is then coast/3 seconds of travel.
-	constexpr float kMaxCoastSeconds = 2.0f;
+	constexpr float kMaxCoastSeconds = 10.0f;
 	constexpr float kTauPerCoastSecond = 1.0f / 3.0f;
 
 	// An exponential never exactly arrives. Below this, park on the true pose so a stationary camera is bit-stable

@@ -32,7 +32,7 @@ public:
 	// ⚠ There is no Sector category: "sector" is a SHAPE (a polygon prism rather than a box), not a kind of
 	// trigger, so those volumes are listed as Regular. Their prism geometry is still drawn as a prism.
 	// ⚠ ENUM ORDER IS DISPLAY ORDER - the sort comparator sorts on (int)category.
-	enum class Category { ZoneSet, BeginZoneSet, Kill, SafeZone, Regular };
+	enum class Category { ZoneSet, BeginZoneSet, CheckpointGrant, Kill, SafeZone, Regular };
 
 	struct Entry
 	{
@@ -91,6 +91,7 @@ private:
 		{
 		case Category::ZoneSet:  return "Zone-set (loads new BSPs)";
 		case Category::BeginZoneSet: return "Begin zone-set (unload / prep)";
+		case Category::CheckpointGrant: return "Checkpoint grants";
 		case Category::Kill:     return "Kill volumes";
 		case Category::SafeZone: return "Safe zones";
 		default:                 return "Regular volumes";

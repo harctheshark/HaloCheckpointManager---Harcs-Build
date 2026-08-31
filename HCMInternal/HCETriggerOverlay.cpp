@@ -27,6 +27,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include "HCEAnchors.h"
+#include "HCECheckpointGrantTriggers.h"
 
 // ================================================================================================================
 // Halo Campaign Evolved trigger volume overlay.
@@ -348,6 +349,14 @@ namespace
 		int16_t beginZoneSet = -1;      // index into the scenario 'zone sets' block, -1 = none
 		int16_t commitZoneSet = -1;
 		uint16_t zoneSetSwitchFlags = 0;   // bit0 = "teleport vehicles" - a MODIFIER, never a category
+		// CHECKPOINT GRANTS. ⚠ Unlike every other category here, this one is NOT scenario-tag data - it comes
+		// from a sweep of the LEVEL SCRIPTS, because whether a volume grants a checkpoint is a HaloScript fact
+		// with no tag-side flag at all. See HCECheckpointGrantTriggers.h.
+		bool isCheckpointGrant = false;
+		// Empty for an UNCONDITIONAL grant. Non-empty means the grant is gated on something (difficulty, an
+		// objective, being in a vehicle), and this is the phrase shown on entry.
+		std::string_view checkpointNote;
+
 		bool isKill = false;         // scenario kill trigger block (name heuristic as fallback)
 		// ⚠ OPPOSITE MEANING to isKill: a kill volume is "stay out", a safe zone is "stay in" - the engine kills
 		// you when you are inside NO safe zone. Same toggle, deliberately different colour.
@@ -879,6 +888,7 @@ private:
 		// line the user never cares about. Sectors are now regular triggers that happen to be prisms; the prism
 		// GEOMETRY is still built and drawn exactly as before (see buildSectorPrism).
 		bool showRegular = true, showKill = true, showZoneSet = true, showBeginZoneSet = true;
+		bool showCheckpointGrant = true;
 
 		// NAME FILTER. Shares MCC's triggerOverlayFilterString / FilterToggle / FilterExactMatch settings, so a
 		// preset made on either side means the same thing - the two can never run in one process.
@@ -900,6 +910,7 @@ private:
 		f.showKill = settings->hceTriggerOverlayShowKill->GetValue();
 		f.showZoneSet = settings->hceTriggerOverlayShowZoneSet->GetValue();
 		f.showBeginZoneSet = settings->hceTriggerOverlayShowBeginZoneSet->GetValue();
+		f.showCheckpointGrant = settings->hceTriggerOverlayShowCheckpointGrant->GetValue();
 
 		if (settings->triggerOverlayFilterToggle->GetValue())
 		{
@@ -967,6 +978,9 @@ private:
 		// more consequential event. Shipped data has no volume with both, but the struct allows it.
 		if (volume.isCommitZoneSet)             return filter.showZoneSet;
 		if (volume.isBeginZoneSet)              return filter.showBeginZoneSet;
+		// Below the zone-set pair on purpose: crossing one of those reloads the world, which outranks
+		// "this also happens to save". Above kill, because a checkpoint is the thing a runner is looking for.
+		if (volume.isCheckpointGrant)           return filter.showCheckpointGrant;
 		if (volume.isKill || volume.isSafeZone) return filter.showKill;   // one toggle, two colours
 		return filter.showRegular;                                        // sectors included - shape, not category
 	}
@@ -1037,7 +1051,7 @@ private:
 	//
 	// CALLER MUST HOLD mVolumesMutex.
 	void reportZoneSetEntries(const std::shared_ptr<IMessagesGUI>& messagesGUI,
-		const SimpleMath::Vector3& playerPoint)
+		const SimpleMath::Vector3& playerPoint, bool reportZoneSets, bool reportCheckpointNotes)
 	{
 		const bool seeding = !mZoneSetInsideSeeded;
 		mZoneSetInsideSeeded = true;
@@ -1050,12 +1064,23 @@ private:
 
 		for (HceTriggerVolume& volume : mVolumes)
 		{
-			if (!volume.isBspSwitch) continue;
+			const bool wantZoneSet = reportZoneSets && volume.isBspSwitch;
+			// ⚠ ONLY volumes whose grant is CONDITIONAL get a note. An unconditional checkpoint needs no
+			// explanation - saying "this gives a checkpoint" on all 285 of them would be noise, and the user
+			// asked for a print only where there is a distinction to report.
+			const bool wantCheckpoint = reportCheckpointNotes
+				&& volume.isCheckpointGrant && !volume.checkpointNote.empty();
+			if (!wantZoneSet && !wantCheckpoint) continue;
 
 			const bool inside = pointIsInside(volume, playerPoint);
 			const bool wasInside = volume.playerWasInside;
 			volume.playerWasInside = inside;
 			if (seeding || !inside || wasInside) continue;   // report only the false -> true edge
+
+			if (wantCheckpoint)
+				messagesGUI->addMessage(std::format("Checkpoint: {}  [{}]", volume.checkpointNote, volume.name));
+
+			if (!wantZoneSet) continue;
 
 			std::string line = std::format("{}  [{}]", volume.zoneSetReportPrefix, volume.name);
 
@@ -1468,6 +1493,17 @@ private:
 				|| HCESpeedrunTriggerNames::isKillTrigger(volume.name);
 			volume.isSafeZone = safeZoneVolumes.contains(volume.index);
 			volume.isSpeedrun = HCESpeedrunTriggerNames::isSpeedrunTrigger(volume.name);
+
+			// ⚠ SCRIPT data, not tag data. Whether entering a volume grants a checkpoint is decided by the
+			// level's HaloScript, and the scenario format carries no flag for it - so unlike every other
+			// category this is a curated name list, swept from the scripts of all 13 levels.
+			// An empty note means the grant is unconditional; a non-empty one is shown when the player enters.
+			{
+				const auto grant = HCECheckpointGrantTriggers::lookup(volume.name);
+				volume.isCheckpointGrant = grant.isGrant;
+				volume.checkpointNote = grant.note;
+			}
+
 			volume.zoneSetReportPrefix = makeZoneSetPrefix(volume);
 
 			built.push_back(std::move(volume));
@@ -1705,19 +1741,23 @@ private:
 			// ONLY from the 3D path; including it here fixes that asymmetry. playerState is already locked
 			// above on this path, so it is reused rather than re-locked.
 			if (settings->triggerOverlayMessageOnCheckHit->GetValue()
-				|| settings->hceTriggerOverlayZoneSetReport->GetValue())
+				|| settings->hceTriggerOverlayZoneSetReport->GetValue()
+				|| settings->hceTriggerOverlayShowCheckpointGrant->GetValue())
 			{
 				if (auto messagesGUI = messagesGUIWeak.lock())
 				{
 					if (settings->triggerOverlayMessageOnCheckHit->GetValue())
 						reportNewHits(messagesGUI);
-					if (settings->hceTriggerOverlayZoneSetReport->GetValue())
+					if (settings->hceTriggerOverlayZoneSetReport->GetValue()
+						|| settings->hceTriggerOverlayShowCheckpointGrant->GetValue())
 					{
 						try
 						{
 							SimpleMath::Vector3 playerPoint, unusedVelocity;
 							playerState->getPlayerPositionAndVelocity(playerPoint, unusedVelocity);
-							reportZoneSetEntries(messagesGUI, playerPoint);
+							reportZoneSetEntries(messagesGUI, playerPoint,
+								settings->hceTriggerOverlayZoneSetReport->GetValue(),
+								settings->hceTriggerOverlayShowCheckpointGrant->GetValue());
 						}
 						catch (HCMRuntimeException) {}   // dead or mid-load; skip the frame
 					}
@@ -1787,6 +1827,9 @@ private:
 			const SimpleMath::Vector4 beginBase = settings->hceTriggerOverlayBeginZoneSetColor->GetValue();
 			const ImU32 beginWire = pack(beginBase, wireAlpha);
 			const ImU32 beginFill = pack(beginBase, solidAlpha);
+			const SimpleMath::Vector4 cpBase = settings->hceTriggerOverlayCheckpointGrantColor->GetValue();
+			const ImU32 cpWire = pack(cpBase, wireAlpha);
+			const ImU32 cpFill = pack(cpBase, solidAlpha);
 			const SimpleMath::Vector4 killBase = settings->hceTriggerOverlayKillColor->GetValue();
 			const SimpleMath::Vector4 safeBase = settings->hceTriggerOverlaySafeZoneColor->GetValue();
 			const ImU32 killWire = pack(killBase, wireAlpha);
@@ -1820,12 +1863,14 @@ private:
 				const ImU32 colour = isLive ? activeWire
 					: volume.isCommitZoneSet ? bspWire
 					: volume.isBeginZoneSet ? beginWire
+					: volume.isCheckpointGrant ? cpWire
 					: volume.isKill ? killWire
 					: volume.isSafeZone ? safeWire
 					: boxWire;
 				const ImU32 fill = isLive ? activeFill
 					: volume.isCommitZoneSet ? bspFill
 					: volume.isBeginZoneSet ? beginFill
+					: volume.isCheckpointGrant ? cpFill
 					: volume.isKill ? killFill
 					: volume.isSafeZone ? safeFill
 					: boxFill;
@@ -1988,20 +2033,24 @@ private:
 			// Announce anything hit since the last frame, and anything entered. Done here, under the same lock
 			// that owns mVolumes, so the name and the index can never disagree.
 			if (settings->triggerOverlayMessageOnCheckHit->GetValue()
-				|| settings->hceTriggerOverlayZoneSetReport->GetValue())
+				|| settings->hceTriggerOverlayZoneSetReport->GetValue()
+				|| settings->hceTriggerOverlayShowCheckpointGrant->GetValue())
 			{
 				if (auto messagesGUI = messagesGUIWeak.lock())
 				{
 					if (settings->triggerOverlayMessageOnCheckHit->GetValue())
 						reportNewHits(messagesGUI);
-					if (settings->hceTriggerOverlayZoneSetReport->GetValue())
+					if (settings->hceTriggerOverlayZoneSetReport->GetValue()
+						|| settings->hceTriggerOverlayShowCheckpointGrant->GetValue())
 					{
 						try
 						{
 							lockOrThrow(playerStateWeak, playerState);
 							SimpleMath::Vector3 playerPoint, unusedVelocity;
 							playerState->getPlayerPositionAndVelocity(playerPoint, unusedVelocity);
-							reportZoneSetEntries(messagesGUI, playerPoint);
+							reportZoneSetEntries(messagesGUI, playerPoint,
+								settings->hceTriggerOverlayZoneSetReport->GetValue(),
+								settings->hceTriggerOverlayShowCheckpointGrant->GetValue());
 						}
 						catch (HCMRuntimeException) {}   // dead or mid-load; skip the frame, never abort the draw
 					}
@@ -2067,6 +2116,9 @@ private:
 			const SimpleMath::Vector4 beginBase = settings->hceTriggerOverlayBeginZoneSetColor->GetValue();
 			const SimpleMath::Vector4 beginWire = withAlpha(beginBase, wireAlpha);
 			const SimpleMath::Vector4 beginFill = withAlpha(beginBase, solidAlpha);
+			const SimpleMath::Vector4 cpBase = settings->hceTriggerOverlayCheckpointGrantColor->GetValue();
+			const SimpleMath::Vector4 cpWire = withAlpha(cpBase, wireAlpha);
+			const SimpleMath::Vector4 cpFill = withAlpha(cpBase, solidAlpha);
 			const SimpleMath::Vector4 killBase = settings->hceTriggerOverlayKillColor->GetValue();
 			const SimpleMath::Vector4 safeBase = settings->hceTriggerOverlaySafeZoneColor->GetValue();
 			const SimpleMath::Vector4 killWire = withAlpha(killBase, wireAlpha);
@@ -2119,12 +2171,14 @@ private:
 				const SimpleMath::Vector4& wireColour = isLive ? activeWire
 					: volume.isCommitZoneSet ? bspWire
 					: volume.isBeginZoneSet ? beginWire
+					: volume.isCheckpointGrant ? cpWire
 					: volume.isKill ? killWire
 					: volume.isSafeZone ? safeWire
 					: boxWire;                                    // sectors included - shape is not a category
 				const SimpleMath::Vector4& fillColour = isLive ? activeFill
 					: volume.isCommitZoneSet ? bspFill
 					: volume.isBeginZoneSet ? beginFill
+					: volume.isCheckpointGrant ? cpFill
 					: volume.isKill ? killFill
 					: volume.isSafeZone ? safeFill
 					: boxFill;
@@ -2438,6 +2492,7 @@ private:
 					// category it actually behaves as.
 					e.category = v.isCommitZoneSet ? HCETriggerNameFilterDialog::Category::ZoneSet
 						: v.isBeginZoneSet ? HCETriggerNameFilterDialog::Category::BeginZoneSet
+						: v.isCheckpointGrant ? HCETriggerNameFilterDialog::Category::CheckpointGrant
 						: v.isKill ? HCETriggerNameFilterDialog::Category::Kill
 						: v.isSafeZone ? HCETriggerNameFilterDialog::Category::SafeZone
 						: HCETriggerNameFilterDialog::Category::Regular;   // sectors included

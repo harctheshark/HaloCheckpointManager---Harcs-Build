@@ -209,6 +209,9 @@ enum class ID3D12CommandQueueVMT
 // much worse outcome than a missing overlay frame.
 static constexpr DWORD kFenceWaitTimeoutMs = 1000;
 static constexpr DWORD kGpuFlushTimeoutMs = 2000;
+// Diagnostic only - how long we are willing to wait for the GAME'S captured queue to retire one fence at
+// startup. See the queue probe in initializeD3Ddevice.
+static constexpr DWORD kQueueProbeTimeoutMs = 250;
 
 // How often a swapchain we already rejected is re-tested. The rejection cache is a raw pointer
 // compare, and a foreign swapchain that gets destroyed can have its address reused by the game's
@@ -1273,6 +1276,9 @@ void D3D12Hook::releaseImGuiBoundResources(bool gpuIsIdle)
 	// stale InitInfo copy, so this flag is the only thing standing between them and a freed heap.
 	mSrvHeapLive.store(false, std::memory_order_release);
 	releaseOrAbandon(mSrvHeap, gpuIsIdle); // ours exclusively - the GPU may still be sampling it
+	// Ours exclusively too, and imgui held it RAW (never AddRef'd) until ImGui_ImplDX12_Shutdown - so it has to
+	// be released HERE rather than in releaseD3Dresources, for the same reason mSrvHeap is.
+	releaseOrAbandon(mFontUploadQueue, gpuIsIdle);
 	safe_release(mDevice);                 // the game holds its own references; ours destroys nothing
 
 	mWindowHandle = nullptr;
@@ -1390,6 +1396,22 @@ void D3D12Hook::initializeD3Ddevice(IDXGISwapChain* pSwapChain)
 	// Opens the gate for the static SRV callbacks (see resetSrvDescriptorAllocator).
 	mSrvHeapLive.store(true, std::memory_order_release);
 
+	// A queue of our own, used for exactly one thing: imgui's one-shot font-texture upload. See the long note
+	// on mFontUploadQueue in the header - handing imgui the GAME'S queue is what froze the game, because the
+	// backend waits on that upload with an INFINITE timeout from inside our Present detour.
+	if (!mFontUploadQueue)
+	{
+		D3D12_COMMAND_QUEUE_DESC queueDesc{};
+		// MUST be DIRECT: the backend records the copy on a DIRECT allocator and command list, and issues a
+		// COPY_DEST -> PIXEL_SHADER_RESOURCE barrier, which a COPY queue is not allowed to execute.
+		queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+		queueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+		queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+		queueDesc.NodeMask = 1;
+		if (FAILED(mDevice->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&mFontUploadQueue))) || !mFontUploadQueue)
+			throw HCMInitException("Failed to create the private font-upload command queue");
+	}
+
 	if (!mFence)
 	{
 		if (FAILED(mDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&mFence))) || !mFence)
@@ -1403,6 +1425,35 @@ void D3D12Hook::initializeD3Ddevice(IDXGISwapChain* pSwapChain)
 			throw HCMInitException(std::format("CreateEventW for the fence event failed, error: {}", GetLastError()));
 	}
 
+	// DIAGNOSTIC, BOUNDED. Signal our own fence on THE GAME'S captured queue and wait with a timeout. If that
+	// queue cannot retire at the moment we go live, this says so in 250 ms instead of hanging forever - which
+	// is exactly what imgui's INFINITE font-upload wait used to do from inside Present. A timeout logged here
+	// on a session that nonetheless comes up IS the proof that the private-queue fix did its job.
+	{
+		const UINT64 probeValue = mNextFenceValue++;
+		ResetEvent(mFenceEvent);
+		if (SUCCEEDED(mCommandQueue->Signal(mFence, probeValue))
+			&& SUCCEEDED(mFence->SetEventOnCompletion(probeValue, mFenceEvent)))
+		{
+			const auto probeStart = std::chrono::steady_clock::now();
+			const DWORD waitResult = WaitForSingleObject(mFenceEvent, kQueueProbeTimeoutMs);
+			const auto probeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+				std::chrono::steady_clock::now() - probeStart).count();
+			if (waitResult == WAIT_OBJECT_0)
+			{
+				PLOG_INFO << "Queue probe: the captured direct queue retired a fence in " << probeMs << " ms";
+			}
+			else
+			{
+				PLOG_ERROR << "QUEUE PROBE FAILED: the captured direct queue 0x" << std::hex
+					<< (uintptr_t)mCommandQueue << std::dec << " did not retire a fence in "
+					<< kQueueProbeTimeoutMs << " ms. THIS IS THE CONDITION THAT USED TO FREEZE THE GAME inside "
+					"imgui's font upload. The overlay should still come up (that upload now uses a private "
+					"queue), but this queue is not draining - it may not be the swapchain's presenting queue.";
+			}
+		}
+	}
+
 	PLOG_INFO << "D3D12 renderer initialized: " << mBufferCount << " back buffers, "
 		<< mFramesInFlight << " frames in flight, format " << (int)mRtvFormat;
 }
@@ -1412,7 +1463,7 @@ void D3D12Hook::initializeD3Ddevice(IDXGISwapChain* pSwapChain)
 
 bool D3D12Hook::getImGuiInitInfo(ImGui_ImplDX12_InitInfo& outInfo) const
 {
-	if (!isD3DdeviceInitialized || !mDevice || !mCommandQueue || !mSrvHeap || mFramesInFlight == 0)
+	if (!isD3DdeviceInitialized || !mDevice || !mCommandQueue || !mFontUploadQueue || !mSrvHeap || mFramesInFlight == 0)
 	{
 		PLOG_ERROR << "getImGuiInitInfo called before the D3D12 renderer was initialized";
 		return false;
@@ -1420,7 +1471,11 @@ bool D3D12Hook::getImGuiInitInfo(ImGui_ImplDX12_InitInfo& outInfo) const
 
 	outInfo = ImGui_ImplDX12_InitInfo{}; // its default ctor memsets, so every field is defined
 	outInfo.Device = mDevice;
-	outInfo.CommandQueue = mCommandQueue; // used by the backend for its font texture upload
+	// ⚠ OURS, NEVER THE GAME'S - see the note on mFontUploadQueue in the header. The backend uses this ONLY for
+	// the font-texture upload, which it waits on with an INFINITE timeout from inside our Present detour; giving
+	// it the game's queue is what froze the game. The overlay's actual draws still go to mCommandQueue in
+	// renderOverlayFrame, which is what keeps them composited on top of the scene.
+	outInfo.CommandQueue = mFontUploadQueue;
 	// Must match mRenderSlots.size() exactly - see the comment on RenderSlot.
 	outInfo.NumFramesInFlight = static_cast<int>(mFramesInFlight);
 	outInfo.RTVFormat = mRtvFormat;
