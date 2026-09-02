@@ -590,6 +590,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HCEConsole.h" />
     <ClInclude Include="GUIHCEConsole.h" />
     <ClInclude Include="HCEFreecamKeepPosition.h" />
+    <ClInclude Include="HCEAISquadOverlay.h" />
     <ClInclude Include="HCECheckpointGrantTriggers.h" />
     <ClInclude Include="HCEFreecamDrift.h" />
     <ClInclude Include="HCEScriptRegistry.h" />
@@ -902,6 +903,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="HCEFreecam.cpp" />
     <ClCompile Include="HCETriggerOverlay.cpp" />
     <ClCompile Include="HCEAnchors.cpp" />
+    <ClCompile Include="HCEAISquadOverlay.cpp" />
     <ClCompile Include="HCEBspOverlay.cpp" />
     <ClCompile Include="HCESoftCeilingOverlay.cpp" />
     <ClCompile Include="CompetitionMode.cpp" />

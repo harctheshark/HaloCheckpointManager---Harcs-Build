@@ -46,6 +46,12 @@ static std::atomic<DX12ResizeBuffers*> gOriginalResizeBuffers = nullptr;
 static std::atomic<DX12ResizeBuffers1*> gOriginalResizeBuffers1 = nullptr;
 static std::atomic<DX12ExecuteCommandLists*> gOriginalExecuteCommandLists = nullptr;
 
+using DXGICreateSwapChain = HRESULT __stdcall(IDXGIFactory*, IUnknown*, DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**);
+using DXGICreateSwapChainForHwnd = HRESULT __stdcall(IDXGIFactory2*, IUnknown*, HWND, const DXGI_SWAP_CHAIN_DESC1*,
+	const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*, IDXGIOutput*, IDXGISwapChain1**);
+static std::atomic<DXGICreateSwapChain*> gOriginalCreateSwapChain = nullptr;
+static std::atomic<DXGICreateSwapChainForHwnd*> gOriginalCreateSwapChainForHwnd = nullptr;
+
 // ---- OBS bypass: published trampolines and the retirement list -------------------------------------
 // Same idea as the gOriginal* pointers above. A thread can be inside a bypass thunk, blocked on the
 // shared lock, while teardownOBSBypass holds it exclusively; when it finally proceeds the hook object
@@ -128,6 +134,17 @@ namespace
 // IDXGISwapChain vtable layout (DXGI doesn't care which D3D version created the swapchain).
 // Extended through IDXGISwapChain1 (Present1) and IDXGISwapChain3 (ResizeBuffers1); every index
 // below was verified against the Windows SDK 10.0.26100 IDXGISwapChain3Vtbl struct.
+// IDXGIFactory2 vtable layout, verified against Windows SDK 10.0.26100 IDXGIFactory2Vtbl.
+// These are the creation calls whose FIRST PARAMETER is, for a D3D12 swapchain, the presenting
+// ID3D12CommandQueue. CreateSwapChainForCoreWindow (16) is UWP-only and deliberately not hooked.
+enum class IDXGIFactoryVMT
+{
+	// IUnknown 0-2, IDXGIObject 3-6, IDXGIFactory 7-11, IDXGIFactory1 12-13, IDXGIFactory2 14+
+	CreateSwapChain = 10,
+	CreateSwapChainForHwnd = 15,
+	CreateSwapChainForComposition = 24,
+};
+
 enum class IDXGISwapChainVMT
 {
 	QueryInterface,
@@ -455,6 +472,8 @@ D3D12Hook::D3D12Hook(std::weak_ptr<PointerDataStore> pointerDataStore)
 	mRejectedSwapChain.store(nullptr, std::memory_order_relaxed);
 	mRejectedSwapChainSkips.store(0, std::memory_order_relaxed);
 	mSrvHeapLive.store(false, std::memory_order_release);
+	sHarvesting.store(false, std::memory_order_relaxed);
+	clearAuthoritativeQueue();   // static inline, so it survives a previous D3D12Hook - and holds a ref
 
 	// NOTE: deliberately no hooking here. Same two-phase pattern as D3D11Hook - the constructor
 	// runs before most of HCM's services exist, so a detour firing now would call into a
@@ -511,6 +530,16 @@ D3D12Hook::HookAddresses D3D12Hook::harvestHookAddresses()
 {
 	HookAddresses addresses{};
 	std::vector<std::string> errorCodes;
+
+	// ⚠ Everything below creates THROWAWAY D3D12 objects, including a swapchain. On the rehook path the
+	// swapchain-creation detours are already live, so they must be told to ignore what we are about to
+	// make. RAII so an exception or an early return cannot leave the flag stuck on, which would silently
+	// disable ground-truth capture for the rest of the session.
+	struct HarvestScope
+	{
+		HarvestScope() { sHarvesting.store(true, std::memory_order_release); }
+		~HarvestScope() { sHarvesting.store(false, std::memory_order_release); }
+	} harvestScope;
 
 	// NOTE: a lambda, not a macro. The previous macro expanded its argument twice, so every
 	// std::format() in a call site was executed twice.
@@ -586,6 +615,26 @@ D3D12Hook::HookAddresses D3D12Hook::harvestHookAddresses()
 		void** queueVtable = *reinterpret_cast<void***>(dummyQueue);
 		addresses.executeCommandLists = queueVtable[(size_t)ID3D12CommandQueueVMT::ExecuteCommandLists];
 		PLOG_DEBUG << "ID3D12CommandQueue::ExecuteCommandLists @ 0x" << std::hex << (uintptr_t)addresses.executeCommandLists;
+	}
+
+	if (factory)
+	{
+		// GROUND TRUTH. Every one of these is optional - a failure here costs us the upgrade path, not
+		// the overlay.
+		//
+		// ⚠ WHY THIS CATCHES STREAMLINE AND FIDELITYFX, since the reason is NOT the obvious one.
+		// This factory came from CreateDXGIFactory1, which HCM imports statically from dxgi.dll, so it
+		// is always the REAL DXGI factory and never an SL/FFX proxy (those are only obtained through
+		// sl.interposer's own exports or slUpgradeInterface, neither of which HCM calls). We therefore
+		// do NOT patch the proxy's CreateSwapChainForHwnd - we patch dxgi's BODY, which every proxy must
+		// eventually forward into to get a real swapchain at all. That is the better capture point:
+		// sl.dlss_g has a before-hook that can SUBSTITUTE the presenting queue, and patching the
+		// innermost body means we observe the substituted queue rather than the one the game passed in.
+		void** factoryVtable = *reinterpret_cast<void***>(factory);
+		addresses.createSwapChain = factoryVtable[(size_t)IDXGIFactoryVMT::CreateSwapChain];
+		addresses.createSwapChainForHwnd = factoryVtable[(size_t)IDXGIFactoryVMT::CreateSwapChainForHwnd];
+		PLOG_DEBUG << "IDXGIFactory::CreateSwapChain @ 0x" << std::hex << (uintptr_t)addresses.createSwapChain;
+		PLOG_DEBUG << "IDXGIFactory2::CreateSwapChainForHwnd @ 0x" << std::hex << (uintptr_t)addresses.createSwapChainForHwnd;
 	}
 
 	if (factory && dummyQueue)
@@ -714,6 +763,32 @@ void D3D12Hook::beginHook()
 		// ExecuteCommandLists first: it is the ONLY source of the game's command queue under late
 		// injection, and Present refuses to render until it has produced one. Installing it before
 		// Present just means we're more likely to already have a candidate on the first frame.
+		// GROUND TRUTH, installed before anything that could race it. All three are OPTIONAL: none of
+		// them fires on a late attach, and their whole purpose is to upgrade the statistic to a fact
+		// the next time the game recreates its swapchain - i.e. on any render-mode or FG change.
+		if (addresses.createSwapChainForHwnd)
+		{
+			createSwapChainForHwndHook = safetyhook::create_inline(addresses.createSwapChainForHwnd, &newCreateSwapChainForHwnd, safetyhook::InlineHook::StartDisabled);
+			if (createSwapChainForHwndHook)
+			{
+				gOriginalCreateSwapChainForHwnd.store(createSwapChainForHwndHook.original<DXGICreateSwapChainForHwnd*>(), std::memory_order_release);
+				createSwapChainForHwndHook.enable();
+			}
+			else PLOG_WARNING << "Could not hook CreateSwapChainForHwnd; the presenting queue will stay inferred";
+		}
+		// ⚠ Only hook slot 10 when it is genuinely a DIFFERENT function. Same reasoning as the
+		// present1 != present guard below: dxgi's CreateSwapChain reaches the ForHwnd body internally on
+		// some builds, and hooking one address twice corrupts the trampoline.
+		if (addresses.createSwapChain && addresses.createSwapChain != addresses.createSwapChainForHwnd)
+		{
+			createSwapChainHook = safetyhook::create_inline(addresses.createSwapChain, &newCreateSwapChain, safetyhook::InlineHook::StartDisabled);
+			if (createSwapChainHook)
+			{
+				gOriginalCreateSwapChain.store(createSwapChainHook.original<DXGICreateSwapChain*>(), std::memory_order_release);
+				createSwapChainHook.enable();
+			}
+		}
+
 		executeCommandListsHook = safetyhook::create_inline(addresses.executeCommandLists, &newDX12ExecuteCommandLists, safetyhook::InlineHook::StartDisabled);
 		if (!executeCommandListsHook)
 			throw HCMInitException("Failed to hook ID3D12CommandQueue::ExecuteCommandLists");
@@ -818,7 +893,8 @@ void D3D12Hook::snapshotHookSites()
 {
 	struct Site { safetyhook::InlineHook* hook; };
 	safetyhook::InlineHook* hooks[kHookSiteCount] = {
-		&presentHook, &present1Hook, &resizeBuffersHook, &resizeBuffers1Hook, &executeCommandListsHook };
+		&presentHook, &present1Hook, &resizeBuffersHook, &resizeBuffers1Hook, &executeCommandListsHook,
+		&createSwapChainHook, &createSwapChainForHwndHook };
 
 	for (int i = 0; i < kHookSiteCount; i++)
 	{
@@ -1150,10 +1226,64 @@ bool D3D12Hook::beginQueueVerification()
 	std::scoped_lock resourceLock(mResourceMutex);
 	if (!mDevice) return false;
 
-	ID3D12CommandQueue* best = nullptr;
-	uint64_t bestSubs = 0;
-	uint32_t bestIntervals = 0;
+	// ============================================================================================
+	// ⚠⚠⚠ THE PRESENTING QUEUE IS THE QUIET ONE. This ranking used to prefer the queue with the MOST
+	// submissions, and that single clause caused every frame-generation GPU hang we have on record.
+	//
+	// A PRESENTING queue does O(1) work per present. A RENDERING queue does O(many) per RENDERED frame.
+	// With DLSS-G those are different clocks - presents outnumber rendered frames - so the render queue
+	// cannot appear in every present interval while the presenting one always does. Measured over 11
+	// logged sessions on this machine there are exactly two DIRECT queues with stable signatures:
+	//     presentation-clocked : ~2.2-2.8 submissions per present, seen in 8/8 intervals in 11 of 11
+	//     render-clocked       : 6-19 submissions per present, seen in 3/8 to 8/8
+	// In the 3 sessions where the render queue happened to ALIAS to full coverage over the short window,
+	// the old totalSubmissions tiebreak chose it - and the GPU hung all 3 times. It never hung in the 8
+	// sessions where the quiet queue was chosen. 3/3 versus 0/8.
+	//
+	// The mechanism: HCM transitions the swapchain back buffer PRESENT->RENDER_TARGET->PRESENT and has NO
+	// cross-queue synchronisation anywhere (there is not one ID3D12CommandQueue::Wait in this codebase).
+	// Its only ordering against the buffer's other user is "same queue is ordered". Submit on any other
+	// queue and two engines are transitioning one back buffer with no fence between them, which is
+	// undefined in D3D12 and on NVIDIA stops the graphics engine retiring - exactly the observed
+	// breadcrumb: two FRDGBuilder::Execute finished, the third ACTIVE forever, no CPU fault.
+	//
+	// ⚠ The fence proof CANNOT rescue a bad choice here. It establishes only that the queue DRAINS - and
+	// a Signal on an idle queue retires instantly, so every live queue passes it. The ranking is
+	// therefore DECISIVE, not advisory, and it must fail closed.
+	// ============================================================================================
+	// ★ GROUND TRUTH FIRST. If DXGI has told us which queue this swapchain was created with, that IS
+	// the presenting queue and no statistic can improve on it. Skips the ranking and the proof entirely.
+	{
+		ID3D12CommandQueue* authoritative = nullptr;
+		{
+			std::scoped_lock lock(mAuthoritativeMutex);
+			// ⚠ STRICT IDENTITY. Only ever consume a record that names the swapchain we are actually
+			// drawing into. A record for a foreign chain (an FG proxy's internal one, RTSS's OSD,
+			// d3d11on12) names a queue that orders a DIFFERENT back buffer - adopting it is the exact
+			// hazard this whole change exists to prevent.
+			if (mAuthoritativeQueue && mAuthoritativeFor && mAuthoritativeFor == mAdoptedSwapChain)
+				authoritative = mAuthoritativeQueue;
+		}
+
+		// The device check deferred from record time, where mDevice may not have existed yet.
+		if (authoritative && queueMatchesDevice(authoritative, mDevice))
+		{
+			PLOG_INFO << "Using the AUTHORITATIVE presenting queue 0x" << std::hex << (uintptr_t)authoritative
+				<< " (from DXGI swapchain creation) - no submission ranking needed";
+			beginProof(authoritative, "DXGI swapchain creation (ground truth)", false);
+			return false;
+		}
+		if (authoritative)
+			PLOG_WARNING << "The recorded presenting queue is on a different D3D12 device; falling back to "
+				"the submission statistic";
+	}
+
 	const uint32_t intervals = mPresentIntervalsObserved.load(std::memory_order_relaxed);
+	const double denom = (double)(intervals ? intervals : 1u);
+
+	ID3D12CommandQueue* best = nullptr;
+	double lowestRate = -1.0, secondRate = -1.0;
+	uint32_t eligible = 0;
 
 	{
 		std::scoped_lock lock(mQueueTableMutex);
@@ -1167,13 +1297,20 @@ bool D3D12Hook::beginQueueVerification()
 				c.rejectReason = "belongs to a different D3D12 device";
 				continue;
 			}
-			const bool everyInterval = (c.intervalsSeenIn >= intervals);
-			const bool bestEveryInterval = (best && bestIntervals >= intervals);
-			if (best && bestEveryInterval && !everyInterval) continue;
-			if (!best || (everyInterval && !bestEveryInterval) || c.totalSubmissions > bestSubs)
+
+			// Full coverage is a STRICT eligibility gate, not a preference. A queue that missed even one
+			// present interval cannot be the one presenting. ⚠ NOT a permanent rejection: a queue can
+			// still catch up as the window grows, so do not set c.rejected here.
+			if (c.intervalsSeenIn < intervals)
 			{
-				best = c.queue; bestSubs = c.totalSubmissions; bestIntervals = c.intervalsSeenIn;
+				c.rejectReason = "did not submit in every observed present interval";
+				continue;
 			}
+
+			++eligible;
+			const double rate = (double)c.totalSubmissions / denom;
+			if (lowestRate < 0.0 || rate < lowestRate) { secondRate = lowestRate; lowestRate = rate; best = c.queue; }
+			else if (secondRate < 0.0 || rate < secondRate) { secondRate = rate; }
 		}
 	}
 
@@ -1187,7 +1324,18 @@ bool D3D12Hook::beginQueueVerification()
 		return false;
 	}
 
-	beginProof(best, "submission ranking", false);
+	// ⚠ AMBIGUITY IS A REFUSAL, NOT A GUESS. Two full-coverage queues with similar submission rates are
+	// not separable by this statistic, and guessing wrong is a GPU hang rather than a missing overlay.
+	// On the 11 measured sessions the two rates differ by 3.5x-8x, so this never fires there - it exists
+	// for the configuration we have not seen, e.g. an OSD that creates its own once-per-present queue.
+	if (eligible > 1 && secondRate >= 0.0 && secondRate < lowestRate * 2.0)
+	{
+		refuseToDraw("more than one DIRECT queue submitted in every present interval at a similar rate, "
+			"so the presenting queue cannot be identified - drawing would risk a GPU hang");
+		return false;
+	}
+
+	beginProof(best, "lowest submission rate per present", false);
 	return false;
 }
 
@@ -2436,6 +2584,151 @@ void D3D12Hook::finishResize(HRESULT originalResult)
 }
 
 
+// ================================================================================================
+// GROUND TRUTH: the presenting queue, taken from DXGI rather than inferred from submission counts.
+//
+// For a D3D12 swapchain the first parameter of every creation call IS the presenting command queue.
+// That is not a heuristic - it is the object the runtime orders presents against, and therefore the
+// only queue HCM may submit its back-buffer transitions on.
+//
+// ⚠ WHY THIS IS AN UPGRADE AND NOT A REPLACEMENT. On a normal late attach the swapchain already
+// exists and none of these ever fire, so the submission statistic still makes the first decision.
+// These fire on the next swapchain RECREATION - which is exactly what changing the render mode does
+// (DLSS / FSR / XeSS / TSR / Native), and what every frame-generation toggle does, because FG
+// changes the swapchain provider itself. From that moment on we stop guessing.
+// ================================================================================================
+
+// static
+void D3D12Hook::recordAuthoritativeQueue(IUnknown* device, IDXGISwapChain* swapChain, const char* source)
+{
+	if (shuttingDown.load(std::memory_order_acquire) || !instance || !device || !swapChain) return;
+
+	// ⚠⚠⚠ IGNORE OUR OWN DUMMY SWAPCHAIN. harvestHookAddresses creates a throwaway 100x100 swapchain on
+	// a throwaway queue purely to read vtable slots. On the FIRST hook that happens before these hooks
+	// exist, but the REHOOK path harvests again with them already live - and recording that would adopt
+	// a dead dummy queue as "ground truth", which is strictly worse than the statistic it replaces.
+	if (sHarvesting.load(std::memory_order_acquire)) return;
+
+	// ⚠ FILTER, do not assume. This same call creates D3D11 swapchains (OBS's d3d11on12 does exactly
+	// that in this process), where the first parameter is an ID3D11Device and not a queue at all.
+	ID3D12CommandQueue* queue = nullptr;
+	if (FAILED(device->QueryInterface(IID_PPV_ARGS(&queue))) || !queue) return;
+
+	// ⚠⚠⚠ WE KEEP THE REFERENCE FROM QueryInterface. Do NOT "borrow" it: the swapchain that owns the
+	// queue is destroyed on exactly the events this feature exists to catch (a render-mode change, an FG
+	// toggle), and this file already documents that the game reuses a destroyed swapchain's ADDRESS
+	// (see mRejectedSwapChain). A borrowed raw pointer plus address reuse means beginProof calls
+	// Signal() on a freed ID3D12CommandQueue, inside the game. Holding a ref makes that impossible.
+	//
+	// ⚠ NO DEVICE CHECK HERE. mDevice is only assigned once a Present detour has run, so on an early
+	// attach - the one case where the game's single swapchain creation is the ONLY ground truth we will
+	// ever see - the check would discard it and log a falsehood. The check is done at CONSUMPTION
+	// instead, where mDevice is guaranteed non-null.
+	{
+		std::scoped_lock lock(mAuthoritativeMutex);
+
+		// Never let a foreign swapchain (RTSS's OSD, an FG proxy's internal chain, d3d11on12) overwrite a
+		// record we already hold for the chain we are actually drawing into.
+		IDXGISwapChain* const adoptedChain = instance->mAdoptedSwapChain;
+		if (mAuthoritativeQueue && adoptedChain && mAuthoritativeFor == adoptedChain && swapChain != adoptedChain)
+		{
+			PLOG_DEBUG << source << ": keeping the existing record for the adopted swapchain";
+			queue->Release();
+			return;
+		}
+
+		if (mAuthoritativeQueue) mAuthoritativeQueue->Release();
+		mAuthoritativeQueue = queue;      // ownership transferred, released in clearAuthoritativeQueue
+		mAuthoritativeFor = swapChain;
+	}
+
+	ID3D12CommandQueue* const adopted = mLiveQueueRaw.load(std::memory_order_acquire);
+
+	// ⚠ ONLY compare against the adopted queue when this is the SAME swapchain we are drawing into.
+	// Without that guard any unrelated D3D12 swapchain creation in the process demotes a healthy gate and
+	// costs kQueueObserveIntervals presents of missing overlay, repeatably.
+	if (swapChain != instance->mAdoptedSwapChain)
+	{
+		PLOG_INFO << source << ": recorded presenting queue 0x" << std::hex << (uintptr_t)queue
+			<< " for swapchain 0x" << (uintptr_t)swapChain << " (not the adopted one yet)";
+	}
+	else if (!adopted)
+	{
+		PLOG_INFO << source << ": DXGI says the presenting queue is 0x" << std::hex << (uintptr_t)queue
+			<< ". This is ground truth and outranks the submission statistic.";
+	}
+	else if (adopted != queue)
+	{
+		// ⚠ THIS IS THE IMPORTANT LOG LINE. If it ever appears, the statistic picked the wrong queue and
+		// we were one frame away from the transition hazard that hangs the GPU.
+		PLOG_ERROR << source << ": THE ADOPTED QUEUE IS WRONG. We are submitting on 0x" << std::hex
+			<< (uintptr_t)adopted << " but DXGI created this swapchain with 0x" << (uintptr_t)queue
+			<< ". Re-adopting the authoritative queue.";
+
+		// STOP SUBMITTING IMMEDIATELY, then let the gate re-run. One frame of missing overlay is free;
+		// one frame on the wrong queue is a GPU hang.
+		instance->mLiveQueueRaw.store(nullptr, std::memory_order_release);
+		instance->setRenderGate(RenderGate::Discovering, "DXGI disagreed with the inferred queue");
+	}
+	else
+	{
+		PLOG_INFO << source << ": ground truth CONFIRMS the adopted queue 0x" << std::hex << (uintptr_t)queue;
+	}
+}
+
+// static
+void D3D12Hook::clearAuthoritativeQueue()
+{
+	std::scoped_lock lock(mAuthoritativeMutex);
+	if (mAuthoritativeQueue) mAuthoritativeQueue->Release();
+	mAuthoritativeQueue = nullptr;
+	mAuthoritativeFor = nullptr;
+}
+
+// static
+HRESULT __stdcall D3D12Hook::newCreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice,
+	DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain)
+{
+	// ⚠ The instance can vanish under us: ~D3D12Hook nulls `instance` and then spends up to 2 s draining
+	// the GPU and releasing resources while these hooks are STILL ENABLED. Capture it once and forward
+	// blind if it has gone, exactly like every other detour in this file.
+	D3D12Hook* const d3d = instance;
+	if (shuttingDown.load(std::memory_order_acquire) || !d3d)
+	{
+		auto* original = gOriginalCreateSwapChain.load(std::memory_order_acquire);
+		return original ? original(pFactory, pDevice, pDesc, ppSwapChain) : E_FAIL;
+	}
+
+	DetourEntryGuard entry(swapChainHookGuard);
+
+	const HRESULT hr = d3d->createSwapChainHook.stdcall<HRESULT>(pFactory, pDevice, pDesc, ppSwapChain);
+	if (SUCCEEDED(hr) && ppSwapChain && *ppSwapChain)
+		recordAuthoritativeQueue(pDevice, *ppSwapChain, "CreateSwapChain");
+	return hr;
+}
+
+// static
+HRESULT __stdcall D3D12Hook::newCreateSwapChainForHwnd(IDXGIFactory2* pFactory, IUnknown* pDevice, HWND hWnd,
+	const DXGI_SWAP_CHAIN_DESC1* pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc,
+	IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain)
+{
+	D3D12Hook* const d3d = instance;
+	if (shuttingDown.load(std::memory_order_acquire) || !d3d)
+	{
+		auto* original = gOriginalCreateSwapChainForHwnd.load(std::memory_order_acquire);
+		return original ? original(pFactory, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain) : E_FAIL;
+	}
+
+	DetourEntryGuard entry(swapChainHookGuard);
+
+	const HRESULT hr = d3d->createSwapChainForHwndHook.stdcall<HRESULT>(
+		pFactory, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
+	if (SUCCEEDED(hr) && ppSwapChain && *ppSwapChain)
+		recordAuthoritativeQueue(pDevice, *ppSwapChain, "CreateSwapChainForHwnd");
+	return hr;
+}
+
+
 // static
 HRESULT __stdcall D3D12Hook::newDX12ResizeBuffers(IDXGISwapChain* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags)
 {
@@ -2471,6 +2764,12 @@ HRESULT __stdcall D3D12Hook::newDX12ResizeBuffers1(IDXGISwapChain3* pSwapChain, 
 
 	if (!shuttingDown.load(std::memory_order_acquire) && instance && asSwapChain == instance->mAdoptedSwapChain)
 		PLOG_INFO << "newDX12ResizeBuffers1: " << Width << "x" << Height << ", buffers: " << BufferCount << ", format: " << (int)Format;
+
+	// ResizeBuffers1's ppPresentQueue is the SAME ground truth, one queue per node. Free to take, since
+	// this is already hooked. In practice it has never fired for the adopted swapchain on this engine,
+	// so it is a bonus source rather than the plan.
+	if (ppPresentQueue && ppPresentQueue[0])
+		recordAuthoritativeQueue(ppPresentQueue[0], pSwapChain, "ResizeBuffers1");
 
 	const bool rebuild = prepareForResize(asSwapChain);
 

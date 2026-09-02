@@ -1282,6 +1282,8 @@ private:
 							createNestedElement(GUIElementEnum::triggerOverlaySettings),
 							createNestedElement(GUIElementEnum::hceTriggerOverlayToggleGUI),
 							createNestedElement(GUIElementEnum::hceTriggerOverlaySettingsSubheading),
+							createNestedElement(GUIElementEnum::hceAISquadOverlayToggleGUI),
+							createNestedElement(GUIElementEnum::hceAISquadOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::hceBspOverlayToggleGUI),
 							createNestedElement(GUIElementEnum::hceBspOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::hceSoftCeilingOverlayToggleGUI),
@@ -2490,6 +2492,123 @@ private:
 				// Halo Campaign Evolved structure-BSP overlay. Separate from the trigger overlay in every way -
 				// its own cheat, its own settings, its own colour - because it answers a different question and
 				// you generally want one or the other on, not both at once.
+				// Halo Campaign Evolved AI squad overlay. Labels each live AI with the scenario squad and squad
+				// group it belongs to. Every name is read out of the scenario tag at runtime, so it works on
+				// every level without a shipped per-level table.
+				case GUIElementEnum::hceAISquadOverlayToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Prints the scenario squad (and squad group) above every live AI's head. Names are read out of the level's own scenario tag at runtime, so this works on every level. AI that have MIGRATED out of the squad they spawned in are drawn in a second colour, since those are the ones a squad-based script gate can behave unexpectedly around."), RebindableHotkeyEnum::hceAISquadOverlayToggleHotkey, "AI Squad Overlay", settings->hceAISquadOverlayToggle));
+
+				case GUIElementEnum::hceAISquadOverlaySettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Settings for the AI squad overlay"), "AI Squad Overlay Settings", headerChildElements
+							{
+								createNestedElement(GUIElementEnum::hceAISquadOverlayTeamsShownSubheading),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayTraitsShownSubheading),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayShowTeamGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayRenderDistanceGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayLabelScaleGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayLabelHeightGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayCreatureScaleGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayNeutralColourGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayRequiredColourGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayTimedColourGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayMigratedColourGUI),
+							}));
+
+				case GUIElementEnum::hceAISquadOverlayTeamsShownSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Which teams get labelled. Defaults to all of them. The team is read from the live object, not the squad's tag data, so an AI that has switched sides is bucketed by what it actually is now."), "Teams Shown", headerChildElements
+							{
+								createNestedElement(GUIElementEnum::hceAISquadOverlayShowPlayerGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayShowHumanGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayShowCovenantGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayShowFloodGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayShowSentinelGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayShowOtherGUI),
+							}));
+
+				case GUIElementEnum::hceAISquadOverlayShowPlayerGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Label AI on the PLAYER team - marines and other allies that share your team index."), std::nullopt, "Player", settings->hceAISquadOverlayShowPlayer));
+
+				case GUIElementEnum::hceAISquadOverlayShowHumanGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Label AI on the HUMAN team."), std::nullopt, "Human", settings->hceAISquadOverlayShowHuman));
+
+				case GUIElementEnum::hceAISquadOverlayShowCovenantGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Label AI on the COVENANT team."), std::nullopt, "Covenant", settings->hceAISquadOverlayShowCovenant));
+
+				case GUIElementEnum::hceAISquadOverlayShowFloodGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Label AI on the FLOOD team."), std::nullopt, "Flood", settings->hceAISquadOverlayShowFlood));
+
+				case GUIElementEnum::hceAISquadOverlayShowSentinelGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Label AI on the SENTINEL team."), std::nullopt, "Sentinel", settings->hceAISquadOverlayShowSentinel));
+
+				case GUIElementEnum::hceAISquadOverlayShowOtherGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Label AI whose team index is none of the named ones above. Turn this off to hide the odd scripted or neutral actor without hiding anything you care about."), std::nullopt, "Other", settings->hceAISquadOverlayShowOther));
+
+				case GUIElementEnum::hceAISquadOverlayTraitsShownSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Which classifications get their own colour. These do NOT hide anyone - an AI whose trait is switched off still gets a label, drawn in the neutral colour. Traits overlap, and the label takes the highest-priority one still enabled (Required, then Timed, then Migrated), so turning one off lets you see the trait underneath it."), "Traits Shown", headerChildElements
+							{
+								createNestedElement(GUIElementEnum::hceAISquadOverlayTraitRequiredGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayTraitTimedGUI),
+								createNestedElement(GUIElementEnum::hceAISquadOverlayTraitMigratedGUI),
+							}));
+
+				case GUIElementEnum::hceAISquadOverlayTraitRequiredGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Colour AI whose death is REQUIRED to progress right now - a script gate with no timeout."), std::nullopt, "Required", settings->hceAISquadOverlayTraitRequired));
+
+				case GUIElementEnum::hceAISquadOverlayTraitTimedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Colour AI behind a gate that gives up on its own after a timeout, and show the remaining seconds. Turning this off also hides the countdown."), std::nullopt, "Timed Gate", settings->hceAISquadOverlayTraitTimed));
+
+				case GUIElementEnum::hceAISquadOverlayTraitMigratedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Colour AI that have MIGRATED out of the squad they spawned in. This is the trait most likely to sit on top of another one, so it is the first to turn off when you only care about what has to die."), std::nullopt, "Migrated", settings->hceAISquadOverlayTraitMigrated));
+
+				case GUIElementEnum::hceAISquadOverlayShowTeamGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Add the team name to each label, on its own line. Useful when you have several teams shown at once and the squad names alone do not tell them apart."), std::nullopt, "Show Team On Label", settings->hceAISquadOverlayShowTeam));
+
+				case GUIElementEnum::hceAISquadOverlayRenderDistanceGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 2000.f)>>
+						(game, ToolTipCollection("How far away AI stop being labelled, in world units (1 unit = 10 feet). Labels are screen-space text, so a large distance in a big fight turns into unreadable overlap long before it costs you frames."), "Label Render Distance", settings->hceAISquadOverlayRenderDistance));
+
+				case GUIElementEnum::hceAISquadOverlayLabelScaleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(4.f, 64.f)>>
+						(game, ToolTipCollection("Base font size of the labels, in pixels. Distant labels are scaled down from this (to a floor of about a third) so a crowded fight stays readable instead of becoming a wall of overlapping text."), "Label Size", settings->hceAISquadOverlayLabelScale));
+
+				case GUIElementEnum::hceAISquadOverlayLabelHeightGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 10.f)>>
+						(game, ToolTipCollection("How far above the AI's origin the label sits, in world units. The origin is at the feet, so around 0.7 puts the text just over a standard biped's head."), "Label Height", settings->hceAISquadOverlayLabelHeight));
+
+				case GUIElementEnum::hceAISquadOverlayCreatureScaleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.1f, 1.f)>>
+						(game, ToolTipCollection("Label size for CREATURES - the Flood infection forms - as a fraction of the normal label size. They are physically tiny and spawn in clumps of dozens, so at the shared size their labels become a solid block of text with no model visible behind it. 0.25 is about right; 1.0 makes them the same as everything else."), "Creature Label Size", settings->hceAISquadOverlayCreatureScale));
+
+				case GUIElementEnum::hceAISquadOverlayNeutralColourGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of a normal label - an AI still in the squad it spawned in."), "Label Color", settings->hceAISquadOverlayNeutralColor));
+
+				case GUIElementEnum::hceAISquadOverlayRequiredColourGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of AI whose death is REQUIRED to progress right now - they sit behind a script gate with no timeout, so the level will not advance while they are alive. Only the CURRENTLY ACTIVE step of the level's gate chain is coloured: on 343 Guilty Spark's tower gauntlet the six waves run one at a time, so wave 3 stays neutral until waves 1 and 2 are done."), "Required Color", settings->hceAISquadOverlayRequiredColor));
+
+				case GUIElementEnum::hceAISquadOverlayTimedColourGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of AI behind a gate that gives up on its own after a timeout - killing them is faster, but waiting also works. The remaining seconds are shown next to the label when the overlay saw the gate start (if it was already running when you enabled the overlay, no countdown is shown rather than a wrong one)."), "Timed Gate Color", settings->hceAISquadOverlayTimedColor));
+
+				case GUIElementEnum::hceAISquadOverlayMigratedColourGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of an AI whose CURRENT squad is not the squad it spawned in. The engine migrates actors between squads as fights collapse, and a script that counts a squad's survivors sees the current one."), "Migrated Color", settings->hceAISquadOverlayMigratedColor));
+
 				case GUIElementEnum::hceBspOverlayToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Draws the level's INVISIBLE collision surfaces - the walls that block you but are never rendered. Read from a real per-surface flag in the tag, not guessed. Only TRUE structure BSP is drawn; instanced geometry is excluded, so on levels whose collision is mostly instanced this may show very little (the log records how many surfaces were found)."), RebindableHotkeyEnum::hceBspOverlayToggleHotkey, "BSP Overlay", settings->hceBspOverlayToggle));

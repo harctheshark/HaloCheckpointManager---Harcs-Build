@@ -551,6 +551,28 @@
 			((hceTriggerOverlayLabelScale, (HALOCER_ONLY)))\
 			((hceTriggerOverlayBoxColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlayWireframeAlpha, (HALOCER_ONLY)))\
+	((hceAISquadOverlayToggleGUI, (HALOCER_ONLY)))\
+	((hceAISquadOverlaySettingsSubheading, (HALOCER_ONLY)))\
+			((hceAISquadOverlayTeamsShownSubheading, (HALOCER_ONLY)))\
+			((hceAISquadOverlayShowPlayerGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayShowHumanGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayShowCovenantGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayShowFloodGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayShowSentinelGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayShowOtherGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayTraitsShownSubheading, (HALOCER_ONLY)))\
+			((hceAISquadOverlayTraitRequiredGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayTraitTimedGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayTraitMigratedGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayShowTeamGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayRenderDistanceGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayLabelScaleGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayLabelHeightGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayCreatureScaleGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayNeutralColourGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayRequiredColourGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayTimedColourGUI, (HALOCER_ONLY)))\
+			((hceAISquadOverlayMigratedColourGUI, (HALOCER_ONLY)))\
 	((hceBspOverlayToggleGUI, (HALOCER_ONLY)))\
 	((hceBspOverlaySettingsSubheading, (HALOCER_ONLY)))\
 			((hceBspOverlayInvisibleOnly, (HALOCER_ONLY)))\

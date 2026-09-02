@@ -37,13 +37,13 @@ public:
 		// subscriber runs, with nothing else to keep in sync. Done here rather than in the array's initialiser
 		// because a default member initialiser cannot rely on members declared after it, and these four are.
 		// ⚠ INDICES ARE POSITIONS IN HCE_HOTKEYS (HotkeysEnum.h). They are the last block of that macro.
-		hceHotkeyEvents[53] = forceTeleportAbsoluteFillCurrent;
-		hceHotkeyEvents[54] = forceTeleportAbsoluteCopy;
-		hceHotkeyEvents[55] = forceTeleportAbsolutePaste;
-		hceHotkeyEvents[56] = hceTriggerOverlayEditNameFilterEvent;
-		hceHotkeyEvents[57] = hceCameraRollResetEvent;
-		hceHotkeyEvents[58] = hceFieldOfViewResetEvent;
-		hceHotkeyEvents[59] = hceCameraMoveSpeedResetEvent;
+		hceHotkeyEvents[54] = forceTeleportAbsoluteFillCurrent;
+		hceHotkeyEvents[55] = forceTeleportAbsoluteCopy;
+		hceHotkeyEvents[56] = forceTeleportAbsolutePaste;
+		hceHotkeyEvents[57] = hceTriggerOverlayEditNameFilterEvent;
+		hceHotkeyEvents[58] = hceCameraRollResetEvent;
+		hceHotkeyEvents[59] = hceFieldOfViewResetEvent;
+		hceHotkeyEvents[60] = hceCameraMoveSpeedResetEvent;
 	}
 	~SettingsStateAndEvents() {
 		PLOG_DEBUG << "~SettingsStateAndEvents()";
@@ -256,7 +256,7 @@ public:
 	//
 	// The last four elements are REPLACED IN THE CONSTRUCTOR with events that already exist (see below), so
 	// those hotkeys fire the very same event object the equivalent button does. Everything before them is new.
-	static constexpr inline int kHCEHotkeyCount = 60;
+	static constexpr inline int kHCEHotkeyCount = 61;
 	std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> hceHotkeyEvents = []()
 		{
 			std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> events;
@@ -1840,6 +1840,79 @@ public:
 	// GEOMETRIC test done by HCM, not an engine hit: HCETriggerActivity deliberately patches only the eight
 	// HaloScript call sites of trigger_volume_test_point, and the zone-set evaluator sub_18018F870 is on the
 	// NOT-patched list, so these volumes can never produce a script "hit".
+	// ================================================================================================
+	// AI SQUAD OVERLAY. Labels every live AI with the squad it belongs to.
+	// ⚠ The team filter reads the LIVE UNIT's team (object+0x1BA), never the squad tag's authored team -
+	// that field is 'default' for 1506 of 2406 squads game-wide and for 197 of 197 on d20, so filtering on
+	// it would put every unit on that level into one bucket.
+	// ================================================================================================
+	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayToggle = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(hceAISquadOverlayToggle));
+
+	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayShowTeam = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(hceAISquadOverlayShowTeam));
+
+	// "Teams Shown" - all default ON, so the overlay starts by showing everything.
+	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayShowPlayer = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(hceAISquadOverlayShowPlayer));
+	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayShowHuman = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(hceAISquadOverlayShowHuman));
+	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayShowCovenant = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(hceAISquadOverlayShowCovenant));
+	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayShowFlood = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(hceAISquadOverlayShowFlood));
+	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayShowSentinel = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(hceAISquadOverlayShowSentinel));
+	// Everything not named above, INCLUDING team 'default' - a unit still reading 0 at runtime has not
+	// resolved a faction, which is itself worth being able to see.
+	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayShowOther = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(hceAISquadOverlayShowOther));
+
+	std::shared_ptr<BinarySetting<float>> hceAISquadOverlayRenderDistance = std::make_shared<BinarySetting<float>>
+		(60.f, [](float in) { return in >= 1.f && in <= 2000.f; }, nameof(hceAISquadOverlayRenderDistance));
+	std::shared_ptr<BinarySetting<float>> hceAISquadOverlayLabelScale = std::make_shared<BinarySetting<float>>
+		(16.f, [](float in) { return in >= 4.f && in <= 64.f; }, nameof(hceAISquadOverlayLabelScale));
+	// World units above the object ORIGIN, which sits at the unit's FEET. ~0.7 clears a biped's head.
+	// Infection forms are .creature tags, are physically tiny, and spawn in clumps of dozens - at the shared
+	// label size their text is a solid unreadable block. Scaled relative to every other label.
+	std::shared_ptr<BinarySetting<float>> hceAISquadOverlayCreatureScale = std::make_shared<BinarySetting<float>>
+		(0.25f, [](float in) { return in >= 0.1f && in <= 1.f; }, nameof(hceAISquadOverlayCreatureScale));
+
+	std::shared_ptr<BinarySetting<float>> hceAISquadOverlayLabelHeight = std::make_shared<BinarySetting<float>>
+		(0.7f, [](float in) { return in >= 0.f && in <= 10.f; }, nameof(hceAISquadOverlayLabelHeight));
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceAISquadOverlayNeutralColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(SimpleMath::Vector4(1.f, 1.f, 1.f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; }, nameof(hceAISquadOverlayNeutralColor));
+	// Amber. A unit whose CURRENT squad differs from its ORIGINATING one has been ai_migrate'd - on c10 that
+	// means it has crossed into the bloodgate volume and now counts against the level's only hard gate.
+	// ---- Traits Shown -----------------------------------------------------------------------------
+	// Which CLASSIFICATIONS get their own colour. ⚠ These do NOT hide anything: an AI whose trait is
+	// switched off still gets a label, drawn in the neutral colour. The traits overlap (a unit can be
+	// both migrated and required) and the renderer picks the highest-priority one that is still ENABLED,
+	// so switching Required off promotes the label to whatever else it qualifies for rather than
+	// deleting it. Priority: Required > Timed > Migrated > neutral.
+	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayTraitRequired = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(hceAISquadOverlayTraitRequired));
+	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayTraitTimed = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(hceAISquadOverlayTraitTimed));
+	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayTraitMigrated = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(hceAISquadOverlayTraitMigrated));
+
+	// REQUIRED: a hard progression gate with no timeout - the level will not advance while these live.
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceAISquadOverlayRequiredColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(SimpleMath::Vector4{ 1.f, 0.25f, 0.1f, 1.f },
+			[](SimpleMath::Vector4 in) { return true; }, nameof(hceAISquadOverlayRequiredColor));
+
+	// TIMED: a soft gate that gives up on its own after a timeout, shown with the remaining seconds.
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceAISquadOverlayTimedColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(SimpleMath::Vector4{ 1.f, 0.8f, 0.2f, 1.f },
+			[](SimpleMath::Vector4 in) { return true; }, nameof(hceAISquadOverlayTimedColor));
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceAISquadOverlayMigratedColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(SimpleMath::Vector4(1.f, 0.65f, 0.1f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; }, nameof(hceAISquadOverlayMigratedColor));
+
 	// CHECKPOINT GRANTS. ⚠ The only trigger category that is NOT scenario-tag data: whether a volume grants a
 	// checkpoint is a HaloScript fact with no tag-side flag, so it comes from a curated list swept from the
 	// level scripts of all 13 levels (HCECheckpointGrantTriggers.h). This toggle also gates the on-entry note
@@ -3414,6 +3487,25 @@ public:
 		hceTriggerOverlayShowRegular,
 		hceTriggerOverlayShowKill,
 		hceTriggerOverlayShowZoneSet,
+		hceAISquadOverlayToggle,
+		hceAISquadOverlayShowTeam,
+		hceAISquadOverlayShowPlayer,
+		hceAISquadOverlayShowHuman,
+		hceAISquadOverlayShowCovenant,
+		hceAISquadOverlayShowFlood,
+		hceAISquadOverlayShowSentinel,
+		hceAISquadOverlayShowOther,
+		hceAISquadOverlayRenderDistance,
+		hceAISquadOverlayLabelScale,
+		hceAISquadOverlayLabelHeight,
+		hceAISquadOverlayCreatureScale,
+		hceAISquadOverlayNeutralColor,
+		hceAISquadOverlayMigratedColor,
+		hceAISquadOverlayRequiredColor,
+		hceAISquadOverlayTimedColor,
+		hceAISquadOverlayTraitRequired,
+		hceAISquadOverlayTraitTimed,
+		hceAISquadOverlayTraitMigrated,
 		hceTriggerOverlayShowBeginZoneSet,
 		hceTriggerOverlayShowCheckpointGrant,
 		hceTriggerOverlayCheckpointGrantColor,

@@ -90,6 +90,41 @@ private:
 	static DX12ResizeBuffers1 newDX12ResizeBuffers1;
 	static DX12ExecuteCommandLists newDX12ExecuteCommandLists;
 
+	// ---- GROUND TRUTH: the presenting queue, by definition rather than by inference ---------------
+	// For a D3D12 swapchain the FIRST PARAMETER of every DXGI creation call IS the presenting
+	// ID3D12CommandQueue - that is what the runtime orders presents against, and it is exactly the
+	// thing the submission statistic can only guess at.
+	//
+	// ⚠ THIS DOES NOT FIRE ON A LATE ATTACH. HCM usually injects into a process whose swapchain was
+	// created long ago, so on attach there is nothing to observe and the statistic still decides.
+	// What makes it worth having anyway is that the game RECREATES the swapchain whenever the render
+	// mode changes - DLSS <-> FSR <-> XeSS <-> TSR <-> Native, and every frame-generation toggle,
+	// because FG swaps the whole swapchain provider (see SwapChainProvider in GameUserSettings.ini).
+	// So the first mode change after attach upgrades us from a guess to a fact, permanently.
+	static HRESULT __stdcall newCreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice,
+		DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain);
+	static HRESULT __stdcall newCreateSwapChainForHwnd(IDXGIFactory2* pFactory, IUnknown* pDevice, HWND hWnd,
+		const DXGI_SWAP_CHAIN_DESC1* pDesc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* pFullscreenDesc,
+		IDXGIOutput* pRestrictToOutput, IDXGISwapChain1** ppSwapChain);
+
+	// Records `queue` as the authoritative presenting queue for `swapChain`. Safe to call from any
+	// thread and with anything (a D3D11 device, null, a foreign-device queue) - it filters.
+	static void recordAuthoritativeQueue(IUnknown* device, IDXGISwapChain* swapChain, const char* source);
+	static void clearAuthoritativeQueue();
+
+	// Set only while harvestHookAddresses is creating its throwaway swapchain, so the creation detours
+	// can tell our own dummy apart from the game's real one. See recordAuthoritativeQueue.
+	static inline std::atomic_bool sHarvesting{ false };
+
+	// The queue DXGI itself associates with a swapchain, and which swapchain that was.
+	// ⚠ mAuthoritativeQueue holds a REFERENCE (AddRef'd via QueryInterface) - it is not borrowed. The
+	// owning swapchain dies on exactly the events this exists to catch, and swapchain addresses get
+	// REUSED, so a raw borrow would let us Signal() a freed queue. Both are guarded by the mutex rather
+	// than being atomics, because the pair has to move together.
+	static inline std::mutex mAuthoritativeMutex{};
+	static inline ID3D12CommandQueue* mAuthoritativeQueue = nullptr;
+	static inline IDXGISwapChain* mAuthoritativeFor = nullptr;
+
 	// ---- OBS bypass -----------------------------------------------------------------------------
 	// These do NOT hook dxgi. They hook the ADDRESS HELD BY OBS's RealPresent / RealPresent1 function
 	// pointers inside graphics-hook64.dll, i.e. the Detours trampolines that OBS's hook_present calls
@@ -180,6 +215,8 @@ private:
 	safetyhook::InlineHook resizeBuffersHook;
 	safetyhook::InlineHook resizeBuffers1Hook;
 	safetyhook::InlineHook executeCommandListsHook;
+	safetyhook::InlineHook createSwapChainHook;
+	safetyhook::InlineHook createSwapChainForHwndHook;
 
 	// Diagnostic for the E_ABORT Present crash: dumps the bytes actually sitting at each swapchain hook site,
 	// plus which overlay/injector DLLs are loaded. Called either side of the restore in ~D3D12Hook, so a
@@ -193,7 +230,10 @@ private:
 	//
 	// So we snapshot what we wrote and compare before restoring. Order of these five matches the park order in
 	// ~D3D12Hook; keep them in step.
-	static constexpr int kHookSiteCount = 5;
+	// 7 = the original five, plus the two swapchain-CREATION sites. ⚠ The creation sites MUST be in here:
+	// RTSS and the Steam overlay both patch CreateSwapChainForHwnd, and restoring our saved bytes over
+	// theirs at teardown is the measured "game dies on HCM close" failure. See hookSiteIsStillOurs.
+	static constexpr int kHookSiteCount = 7;
 	static constexpr int kHookSiteSnapshotBytes = 5;   // an E9 rel32 is the whole story
 
 	struct HookSiteSnapshot
@@ -248,6 +288,10 @@ private:
 		void* resizeBuffers = nullptr;
 		void* resizeBuffers1 = nullptr;   // optional
 		void* executeCommandLists = nullptr;
+		// ---- GROUND TRUTH. All optional; the statistic still runs if these cannot be harvested. ----
+		void* createSwapChain = nullptr;             // IDXGIFactory::CreateSwapChain
+		void* createSwapChainForHwnd = nullptr;      // IDXGIFactory2::CreateSwapChainForHwnd
+		void* createSwapChainForComposition = nullptr;
 	};
 	HookAddresses harvestHookAddresses(); // throws HCMInitException if it cannot get the required three
 	void** resolveLiveSwapChainVtable();  // optional PointerDataStore fast path; nullptr if unavailable
@@ -385,7 +429,12 @@ private:
 	// bad candidate is handled identically whether it belongs to Streamline, RTSS, OBS, or is the
 	// game's own queue momentarily wedged behind frame-generation pacing.
 	static constexpr uint32_t kMaxQueueCandidates    = 16;
-	static constexpr uint32_t kQueueObserveIntervals = 8;   // presents to watch before ranking anything
+	// ⚠ 8 WAS NOISE-LIMITED AND IT COST US THREE GPU HANGS. Interval coverage is the only signal here with
+	// a causal story - a queue that misses a present interval cannot be the one presenting - but over 8
+	// samples the render queue ALIASES to full coverage often enough to matter: across 11 logged sessions
+	// it hit 8/8 three times (and 7/8 once, one interval from the same outcome), and those three are
+	// exactly the three that hung. 32 buys resolution for ~0.1 s of extra attach latency.
+	static constexpr uint32_t kQueueObserveIntervals = 32;  // presents to watch before ranking anything
 	static constexpr uint32_t kQueueProofPresents    = 8;   // presents a candidate gets to retire the proof
 	static constexpr uint32_t kQueueRecheckPresents  = 600; // ~10 s at 60 fps: re-prove the live queue
 

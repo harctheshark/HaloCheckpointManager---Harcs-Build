@@ -160,6 +160,7 @@ HCEForceLaunch,\
 HCEFreecam,\
 HCETriggerOverlay,\
 HCEBspOverlay,\
+HCEAISquadOverlay,\
 HCETriggerActivity,\
 HCEDisableBarriers,\
 HCESkyFix,\

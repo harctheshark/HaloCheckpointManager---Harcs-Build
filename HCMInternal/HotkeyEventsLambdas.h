@@ -75,13 +75,13 @@ public:
 		// hotkey silently drives the setting next to the one it is named after. Nothing catches that: the
 		// counts still add up and it compiles.
 
-		constexpr size_t hceToggleCount = 49; // [0..48]  flip a bool
-		constexpr size_t hceRadioCount = 4;  // [49..52] set a radio option
-		constexpr size_t hceAliasCount = 7;  // [53..59] fire an event that already has its own subscriber
+		constexpr size_t hceToggleCount = 50; // [0..49]  flip a bool
+		constexpr size_t hceRadioCount = 4;  // [50..53] set a radio option
+		constexpr size_t hceAliasCount = 7;  // [54..60] fire an event that already has its own subscriber
 		static_assert(hceToggleCount + hceRadioCount + hceAliasCount == SettingsStateAndEvents::kHCEHotkeyCount,
 			"The tables below no longer cover every HCE_HOTKEYS entry - a hotkey has been added without being wired up");
 
-		// [0..48] plain toggles: flip the bool. Same order as the first block of HCE_HOTKEYS.
+		// [0..49] plain toggles: flip the bool. Same order as the first block of HCE_HOTKEYS.
 		const std::array<std::shared_ptr<BinarySetting<bool>>, hceToggleCount> hceToggleTargets
 		{
 			settings->hceShadowCheckpoints,
@@ -133,6 +133,7 @@ public:
 			settings->hceFreecamKeepPositionToggle,
 			settings->hceConsoleOpenToggle,
 			settings->hceFreecamDriftToggle,
+			settings->hceAISquadOverlayToggle,
 		};
 
 		for (size_t i = 0; i < hceToggleTargets.size(); i++)
@@ -163,7 +164,7 @@ public:
 					optionOff->UpdateValueWithInput();
 				}));
 
-		// [53..59] are aliases of events that already exist and already have a subscriber (see the end of the
+		// [54..60] are aliases of events that already exist and already have a subscriber (see the end of the
 		// SettingsStateAndEvents constructor). They need nothing here - binding one more callback would run the
 		// action twice.
 	}

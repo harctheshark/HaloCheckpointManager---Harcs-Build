@@ -245,6 +245,7 @@ hceGameSpeedHotkey, \
 hceFreecamKeepPositionHotkey, \
 hceConsoleHotkey, \
 hceFreecamDriftHotkey, \
+hceAISquadOverlayToggleHotkey, \
 hceForceTeleportForwardHotkey, \
 hceForceTeleportManualHotkey, \
 hceForceLaunchForwardHotkey, \

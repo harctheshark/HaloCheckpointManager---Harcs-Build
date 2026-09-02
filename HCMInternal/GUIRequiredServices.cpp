@@ -785,6 +785,15 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	// Structure-BSP overlay. Its own cheat rather than a mode of HCETriggerOverlay: it reads a completely
 	// different tag chain (the BSP's raw resource, not the scenario's trigger volume block) and carries its own
 	// pointer data, so folding it in would make the trigger overlay fail whenever the BSP path did.
+	// AI Squad Overlay. Its own cheat: it reads the LIVE object and actor tables plus the scenario's squad and
+	// squad-group blocks, none of which any other overlay touches, and it needs the simulation-thread pump.
+	{ GUIElementEnum::hceAISquadOverlayToggleGUI,
+{OptionalCheatEnum::HCEAISquadOverlay}
+	},
+	{ GUIElementEnum::hceAISquadOverlaySettingsSubheading,
+{OptionalCheatEnum::HCEAISquadOverlay}
+	},
+
 	{ GUIElementEnum::hceBspOverlayToggleGUI,
 {OptionalCheatEnum::HCEBspOverlay}
 	},
