@@ -34,6 +34,8 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ANCHORS_CPP = os.path.normpath(os.path.join(HERE, "..", "HCMInternal", "HCEAnchors.cpp"))
 SIM_DLL_RELATIVE = os.path.join("Meteorite", "Binaries", "Win64", "HaloSimulation_tag_release.dll")
+EXE_RELATIVE     = os.path.join("Meteorite", "Binaries", "Win64", "HaloCampaignEvolved.exe")
+DEFAULT_XML      = os.path.normpath(os.path.join(HERE, "..", "HCMInternal", "InternalPointerData.xml"))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -253,6 +255,342 @@ def fuzzy_candidates(pe, pattern_text, max_mismatch, xp_name, xp, top=5):
 
 
 # ---------------------------------------------------------------------------------------------
+# 4b. THE HARDENER - why signatures break, and how to stop it.
+#
+# A game update recompiles and relinks. Opcodes survive that; ADDRESSES DO NOT. So any signature
+# byte that is part of an address is a byte that will change even though the code did not:
+#
+#   * a RIP-relative displacement   48 8B 05 [xx xx xx xx]   - every global reference has one
+#   * a call/jump target            E8 [xx xx xx xx]         - changes if EITHER end moves
+#   * an absolute address immediate 48 B8 [xx xx xx xx xx xx xx xx]
+#
+# Those must be '??'. A signature that pins even one of them is not a fingerprint of the CODE, it
+# is a fingerprint of one BUILD, and it breaks on contact with the next one. That is the single
+# biggest cause of "most of the signatures stopped resolving after the update".
+#
+# This pass disassembles each match and reports every fixed byte sitting in one of those fields,
+# then proposes a version with exactly those wildcarded - and re-checks that the result is still
+# unique, because hardening costs specificity and an ambiguous signature is just as dead.
+# ---------------------------------------------------------------------------------------------
+def _volatile_ranges(insn, image_lo, image_hi):
+    """Byte ranges within this instruction that encode an ADDRESS, relative to the instruction."""
+    import capstone
+    from capstone import x86
+    out, e = [], insn.encoding
+
+    # RIP-relative displacement: the operand IS an address.
+    if e.disp_size:
+        for op in insn.operands:
+            if op.type == x86.X86_OP_MEM and op.mem.base == x86.X86_REG_RIP:
+                out.append((e.disp_offset, e.disp_size, "rip-relative displacement"))
+                break
+
+    if e.imm_size:
+        is_branch = insn.group(capstone.CS_GRP_JUMP) or insn.group(capstone.CS_GRP_CALL)
+        if is_branch:
+            out.append((e.imm_offset, e.imm_size, "branch target"))
+        else:
+            # An immediate that lands inside the image is an absolute address (mov r64, imm64).
+            for op in insn.operands:
+                if op.type == x86.X86_OP_IMM and image_lo <= (op.imm & 0xFFFFFFFFFFFFFFFF) < image_hi:
+                    out.append((e.imm_offset, e.imm_size, "absolute address immediate"))
+                    break
+    return out
+
+
+def analyse_signature(pe, entry, match_off):
+    """
+    Returns (fragile, notes, hardened_sig, decode_ok).
+    `fragile` lists (index, reason) for every FIXED byte that encodes an address.
+    """
+    try:
+        import capstone
+    except ImportError:
+        return None, ["capstone not installed - run: py -m pip install capstone"], None, False
+
+    pat, wild = parse_pattern(entry["signature"])
+    n = len(pat)
+    data = pe["data"][match_off:match_off + n + 16]
+    rva = offset_to_rva(pe["sections"], match_off)
+    lo = pe["image_base"]
+    hi = lo + max(s["va"] + max(s["vsize"], s["rsize"]) for s in pe["sections"])
+
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    md.detail = True
+
+    volatile = [False] * n
+    reasons = {}
+    consumed = 0
+    for insn in md.disasm(data, lo + rva):
+        if consumed >= n:
+            break
+        for off, size, why in _volatile_ranges(insn, lo, hi):
+            for k in range(off, off + size):
+                idx = consumed + k
+                if 0 <= idx < n:
+                    volatile[idx] = True
+                    reasons[idx] = why
+        consumed += insn.size
+
+    # If the decoder desynced we must not "harden" on a guess.
+    decode_ok = consumed >= n
+    fragile = [(i, reasons[i]) for i in range(n) if volatile[i] and not wild[i]]
+
+    hardened = " ".join("??" if (wild[i] or volatile[i]) else f"{pat[i]:02X}" for i in range(n))
+    return fragile, [], hardened, decode_ok
+
+
+def harden_report(pe, entries, out_dir):
+    lines, fragile_count, fixed_count = [], 0, 0
+    print()
+    print("-" * 78)
+    print(" SIGNATURE HARDENING - which signatures will survive the next update")
+    print("-" * 78)
+
+    for e in entries:
+        if not e["signature"] or e["extract"] == "TlsDirectory":
+            continue
+        hits = find_matches(pe, e["signature"])
+        if len(hits) != 1:
+            print(f" {e['name']:<26} skipped - does not resolve uniquely right now")
+            continue
+
+        fragile, notes, hardened, decode_ok = analyse_signature(pe, e, hits[0])
+        if fragile is None:
+            print(" " + notes[0]); return
+        if not decode_ok:
+            print(f" {e['name']:<26} ⚠ could not decode cleanly - NOT hardening (would be a guess)")
+            lines.append(f"--- {e['name']}\n    decode desync; left alone.\n")
+            continue
+
+        if not fragile:
+            print(f" {e['name']:<26} OK - no address bytes are pinned")
+            continue
+
+        fragile_count += 1
+        fixed_count += len(fragile)
+        uniq = len(find_matches(pe, hardened, limit=8))
+        why = ", ".join(sorted({r for _, r in fragile}))
+        verdict = "still UNIQUE" if uniq == 1 else f"becomes {uniq} matches - NEEDS MORE BYTES"
+        print(f" {e['name']:<26} {len(fragile)} pinned address byte(s) [{why}] -> {verdict}")
+
+        lines.append(f"--- {e['name']}  ({len(fragile)} pinned address bytes: {why})\n"
+                     f"    old: \"{e['signature']}\"\n"
+                     f"    new: \"{hardened}\"\n"
+                     f"    after hardening: {verdict}\n\n")
+
+    print()
+    if not fragile_count:
+        print(" RESULT: no signature pins an address byte. These are already update-resistant.")
+    else:
+        print(f" RESULT: {fragile_count} signature(s) pin {fixed_count} address byte(s) between them.")
+        print("         Those are the ones that break when the game updates, even if the code did not.")
+        path = os.path.join(out_dir, "anchor_harden.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("Signature hardening proposals\n")
+            f.write("Wildcarding bytes that encode an ADDRESS (rip displacements, branch targets,\n")
+            f.write("absolute immediates). Those change on every relink even when the code is identical.\n")
+            f.write("Only apply a proposal marked 'still UNIQUE'.\n\n")
+            f.writelines(lines)
+        print(f"\n wrote {path}")
+
+
+# ---------------------------------------------------------------------------------------------
+# 4c. COVERAGE AUDIT - the thing that actually broke last time.
+#
+# HCEAnchors only scans the SIM DLL. InternalPointerData.xml also hardcodes addresses into
+# HaloCampaignEvolved.EXE, and the 2026-08-17 update moved those by a DIFFERENT delta each
+# (-0x130, -0x1D0, ...) while every sim address moved by a uniform +0x10. Nothing re-derives them.
+#
+# But most patch sites already ship an `<...OriginalBytes>` block: the exact bytes HCM expects to
+# find there. HCM uses those to VERIFY and refuse - it never uses them to SEARCH. That is the whole
+# recovery mechanism, sitting unused. This pass:
+#     * checks each recorded offset still holds its OriginalBytes,
+#     * and if not, SCANS the binary for those bytes and reports where the site actually moved to.
+#
+# So an update becomes "run this, paste three new offsets" instead of a reverse-engineering session.
+# ---------------------------------------------------------------------------------------------
+ENTRY_XML_RE = re.compile(
+    r'<VersionedEntry\s+Name="([^"]+)"\s+Type="([^"]+)"[^>]*>(.*?)</VersionedEntry>', re.S)
+
+
+def parse_pointer_xml(path):
+    """HaloCER address entries and OriginalBytes blocks from InternalPointerData.xml."""
+    s = open(path, encoding="utf-8", errors="replace").read()
+    addrs, originals = {}, {}
+    for name, typ, body in ENTRY_XML_RE.findall(s):
+        if 'Game="HaloCER"' not in body:
+            continue
+        if "ExeOffset" in typ or "ModuleOffset" in typ:
+            # A multi-game entry lists one <Offset> per game; the HaloCER <Version> block is the
+            # one we want, so re-scope to it rather than taking the whole list.
+            cer = re.search(r'<Version[^>]*Game="HaloCER"[^>]*>(.*?)</Version>', body, re.S)
+            offs = re.findall(r"<Offset>([^<]+)</Offset>", cer.group(1) if cer else body)
+            if offs:
+                addrs[name] = dict(kind="exe" if "ExeOffset" in typ else "module",
+                                   offset=int(offs[-1], 16))
+        if name.endswith("OriginalBytes"):
+            d = re.search(r"<Data>([^<]+)</Data>", body)
+            if d:
+                originals[name] = bytes(int(x, 16) for x in d.group(1).split(",") if x.strip())
+    return addrs, originals
+
+
+def _norm(n):
+    # ⚠ Order matters: strip "guardsite" BEFORE "site", or FadeFromBlackGuardSite normalises to
+    # something the anchor of the same name no longer matches and gets reported as unprotected.
+    n = n.lower()
+    for p in ("hce", "function", "guardsite", "site"):
+        n = n.replace(p, "")
+    return n
+
+
+def volatile_mask(pe, rva, length):
+    """Byte positions in [rva, rva+length) that encode an ADDRESS. Empty if we cannot decode."""
+    try:
+        import capstone
+    except ImportError:
+        return set()
+    off = rva_to_offset(pe["sections"], rva)
+    if off is None:
+        return set()
+    lo = pe["image_base"]
+    hi = lo + max(s["va"] + max(s["vsize"], s["rsize"]) for s in pe["sections"])
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    md.detail = True
+    mask, consumed = set(), 0
+    for insn in md.disasm(pe["data"][off:off + length + 16], lo + rva):
+        if consumed >= length:
+            break
+        for o, size, _ in _volatile_ranges(insn, lo, hi):
+            for k in range(o, o + size):
+                if consumed + k < length:
+                    mask.add(consumed + k)
+        consumed += insn.size
+    return mask
+
+
+def coverage_audit(sim_pe, exe_pe, xml_path, anchors, out_dir):
+    addrs, originals = parse_pointer_xml(xml_path)
+    anchor_norms = {_norm(a["name"]): a["name"] for a in anchors}
+
+    print()
+    print("-" * 78)
+    print(" COVERAGE AUDIT - what protects each hardcoded address")
+    print("-" * 78)
+
+    rows, unprotected, moved, fragile_bytes = [], [], [], []
+    for name in sorted(addrs):
+        info = addrs[name]
+        pe = exe_pe if info["kind"] == "exe" else sim_pe
+        stem = name.replace("Function", "")
+        ob_key = next((k for k in originals if k.startswith(stem)), None)
+
+        anchor = anchor_norms.get(_norm(name))
+        protections = []
+        if anchor:
+            protections.append(f"anchor:{anchor}")
+
+        status = ""
+        if ob_key and pe:
+            want = originals[ob_key]
+            off = rva_to_offset(pe["sections"], info["offset"])
+            here = pe["data"][off:off + len(want)] if off is not None else b""
+            vol = volatile_mask(pe, info["offset"], len(want))
+            same_ignoring_addrs = (len(here) == len(want)
+                                   and all(here[i] == want[i] for i in range(len(want)) if i not in vol))
+
+            if here == want:
+                protections.append(f"bytes:{len(want)} OK")
+                if vol:
+                    # It matches TODAY, but it pins address bytes - it will false-alarm next update.
+                    fragile_bytes.append((name, len(want), sorted(vol)))
+            elif same_ignoring_addrs and vol:
+                # ⚠ NOT A BREAKAGE. The function is exactly where it should be; only the ADDRESS bytes
+                # inside it changed, because something it calls moved. An exact-compare OriginalBytes
+                # block cannot tell those apart, so HCM sees a mismatch and disables a healthy feature.
+                protections.append(f"bytes:{len(want)} OK ignoring {len(vol)} address byte(s)")
+                fragile_bytes.append((name, len(want), sorted(vol)))
+                status = f"exact-compare would FAIL here - {len(vol)} address bytes changed"
+            else:
+                # The site moved. The OriginalBytes ARE a signature - go find it.
+                found = [m for m in _find_bytes(pe, want, limit=4)]
+                if len(found) == 1:
+                    new_rva = offset_to_rva(pe["sections"], found[0])
+                    delta = new_rva - info["offset"]
+                    status = f"MOVED to 0x{new_rva:X}  (delta {delta:+#x})"
+                    moved.append((name, info, new_rva))
+                elif len(found) == 0:
+                    status = "BYTES GONE - needs a human"
+                    unprotected.append(name)
+                else:
+                    status = f"{len(found)} places match - ambiguous"
+                    unprotected.append(name)
+                protections.append("bytes:MISMATCH")
+
+        if not protections:
+            protections.append("** NOTHING **")
+            unprotected.append(name)
+
+        rows.append((name, info["kind"], info["offset"], ", ".join(protections), status))
+
+    for name, kind, off, prot, status in rows:
+        tag = "EXE" if kind == "exe" else "sim"
+        line = f" {tag}  {name:<44} 0x{off:<9X} {prot}"
+        if status:
+            line += "   " + status
+        print(line)
+
+    print()
+    n_anchor = sum(1 for r in rows if "anchor:" in r[3])
+    n_bytes = sum(1 for r in rows if "bytes:" in r[3])
+    print(f" {len(rows)} HaloCER addresses: {n_anchor} anchored, {n_bytes} byte-verified, "
+          f"{len(set(unprotected))} with no protection at all")
+    if moved:
+        print(f" {len(moved)} SITE(S) HAVE MOVED - new offsets below")
+    for name, info, new_rva in moved:
+        print(f"   {name}: <Offset>0x{new_rva:X}</Offset>")
+
+    if fragile_bytes:
+        print()
+        print(" ⚠ OriginalBytes blocks that PIN ADDRESS BYTES. An OriginalBytes block is an EXACT byte")
+        print("   compare with no wildcards, so a call/jump displacement inside one changes whenever the")
+        print("   callee moves - and HCM then reads a healthy site as tampered and disables the feature.")
+        print("   Trim each block to the bytes BEFORE its first address operand:")
+        for name, total, vol in fragile_bytes:
+            print(f"   {name}: {total} bytes, {len(vol)} of them addresses, first at +{vol[0]}"
+                  f"  ->  safe length is {vol[0]}")
+
+    path = os.path.join(out_dir, "anchor_coverage.txt")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("Coverage of every hardcoded HaloCER address in InternalPointerData.xml\n\n")
+        f.write("anchor:X       = HCEAnchors re-derives it by byte signature at runtime. Safe.\n")
+        f.write("bytes:N OK     = an OriginalBytes block matches at the recorded offset. Verified.\n")
+        f.write("bytes:MISMATCH = the site MOVED; the new offset is given if the bytes are unique.\n")
+        f.write("** NOTHING **  = no signature and no OriginalBytes. This is the exposed set.\n\n")
+        for name, kind, off, prot, status in rows:
+            f.write(f"{'EXE' if kind=='exe' else 'sim'}  {name:<44} 0x{off:X}  {prot}  {status}\n")
+        if moved:
+            f.write("\nPASTE THESE INTO InternalPointerData.xml:\n")
+            for name, info, new_rva in moved:
+                f.write(f"  {name}\n    <Offset>0x{new_rva:X}</Offset>\n")
+    print(f"\n wrote {path}")
+
+
+def _find_bytes(pe, needle, limit=8):
+    """Literal byte search across executable sections."""
+    hits, data = [], pe["data"]
+    for s in pe["sections"]:
+        if not s["exec"]:
+            continue
+        pos = data.find(needle, s["ptr"], s["ptr"] + s["rsize"])
+        while pos != -1 and len(hits) < limit:
+            hits.append(pos)
+            pos = data.find(needle, pos + 1, s["ptr"] + s["rsize"])
+    return hits
+
+
+# ---------------------------------------------------------------------------------------------
 # 5. Resolve an anchor the same way HCEAnchors::resolveAll does.
 # ---------------------------------------------------------------------------------------------
 def resolve(pe, entry, match_off):
@@ -287,6 +625,11 @@ def main():
     ap.add_argument("--repair-distance", type=int, default=4,
                     help="how many mismatched bytes a repair candidate may have (default 4)")
     ap.add_argument("--out", default=HERE, help="where to write the reports")
+    ap.add_argument("--harden", action="store_true",
+                    help="audit every signature for pinned ADDRESS bytes - the ones that break on update")
+    ap.add_argument("--audit", action="store_true",
+                    help="check every hardcoded address in InternalPointerData.xml, including the EXE ones")
+    ap.add_argument("--xml", default=DEFAULT_XML, help="path to InternalPointerData.xml")
     args = ap.parse_args()
 
     game = find_game_folder(args.game)
@@ -357,6 +700,19 @@ def main():
 
     print()
     print(f" {len(ok)} resolved, {len(structural)} structural, {len(ambiguous)} ambiguous, {len(missing)} broken")
+
+    if args.harden:
+        harden_report(pe, entries, args.out)
+
+    if args.audit:
+        exe_path = os.path.join(game, EXE_RELATIVE)
+        exe_pe = load_pe(exe_path) if os.path.isfile(exe_path) else None
+        if exe_pe is None:
+            print("\n !! HaloCampaignEvolved.exe not found - EXE-side addresses cannot be checked")
+        if os.path.isfile(args.xml):
+            coverage_audit(pe, exe_pe, args.xml, entries, args.out)
+        else:
+            print(f"\n !! {args.xml} not found - skipping the coverage audit")
 
     # ---- repairs -----------------------------------------------------------------------------
     repairs = []

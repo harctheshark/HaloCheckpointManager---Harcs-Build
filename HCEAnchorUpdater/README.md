@@ -82,6 +82,45 @@ py hce_anchor_update.py --repair-distance 8
 Wider searches find more, but a candidate that differs in eight places is weak evidence — check it
 in a disassembler before trusting it.
 
+## The other two modes
+
+`Update Anchors.bat` runs the signature check. Two deeper audits are worth running **before** an
+update lands, because they find what *will* break rather than what already did:
+
+```
+py hce_anchor_update.py --harden     what pins an address inside a SIGNATURE
+py hce_anchor_update.py --audit      what protects every hardcoded address, sim AND exe
+```
+
+### Why things break
+
+A game update recompiles and relinks. **Opcodes survive that; addresses do not.** So any byte that
+is part of an address changes even when the code is identical:
+
+| | |
+|---|---|
+| `48 8B 05 [xx xx xx xx]` | rip-relative displacement — every global reference has one |
+| `E8 [xx xx xx xx]` | call target — changes if *either* end moves |
+| `48 B8 [xx …]` | absolute address immediate |
+
+Those must be `??` in a signature. One that pins even a single address byte is not a fingerprint of
+the *code*, it is a fingerprint of one *build*.
+
+### `--audit` and the OriginalBytes trap
+
+`HCEAnchors` only scans the **sim DLL**. `InternalPointerData.xml` also hardcodes addresses into
+**HaloCampaignEvolved.exe**, and nothing re-derives those — last update they each moved by a
+different delta while every sim address moved by a uniform `+0x10`.
+
+Most patch sites do ship an `<...OriginalBytes>` block: the bytes HCM expects to find there. HCM
+uses them to *verify and refuse*, never to *search*. `--audit` uses them both ways — it checks each
+recorded offset still holds its bytes, and if not it **scans for them and tells you the new offset**.
+
+⚠ It also flags OriginalBytes blocks that **pin address bytes**. Those are an exact compare with no
+wildcards, so a call displacement inside one changes whenever the callee moves — and HCM then reads
+a perfectly healthy site as tampered and disables the feature. That is a false alarm that looks
+exactly like a broken build.
+
 ## Using the GPU
 
 The scan is CPU-bound and takes about a second; your graphics card cannot help with it and there is

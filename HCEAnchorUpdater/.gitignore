@@ -2,3 +2,5 @@
 anchor_report.txt
 anchor_repair.txt
 _test_anchors.cpp
+anchor_coverage.txt
+anchor_harden.txt
