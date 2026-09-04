@@ -2915,7 +2915,7 @@ private:
 
 				case GUIElementEnum::hceTriggerOverlayShowRegular:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Ordinary trigger volumes - anything that is not a kill volume or a zone-set switch. Includes sector volumes, whose footprint is a polygon rather than a box; that is a shape, not a different kind of trigger."), RebindableHotkeyEnum::hceTriggerOverlayShowRegularHotkey, "Regular Triggers", settings->hceTriggerOverlayShowRegular));
+						(game, ToolTipCollection("Ordinary trigger volumes - anything that is not a kill volume or a zone-set switch. Checkpoint-grant volumes are included here too (in their own colour), since a checkpoint trigger is just a regular trigger that also saves; turn on Checkpoint Grant Triggers by itself to see ONLY those. Includes sector volumes, whose footprint is a polygon rather than a box; that is a shape, not a different kind of trigger."), RebindableHotkeyEnum::hceTriggerOverlayShowRegularHotkey, "Regular Triggers", settings->hceTriggerOverlayShowRegular));
 
 				case GUIElementEnum::hceTriggerOverlayShowKill:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>

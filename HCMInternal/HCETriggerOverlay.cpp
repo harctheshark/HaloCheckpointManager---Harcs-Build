@@ -980,7 +980,18 @@ private:
 		if (volume.isBeginZoneSet)              return filter.showBeginZoneSet;
 		// Below the zone-set pair on purpose: crossing one of those reloads the world, which outranks
 		// "this also happens to save". Above kill, because a checkpoint is the thing a runner is looking for.
-		if (volume.isCheckpointGrant)           return filter.showCheckpointGrant;
+		//
+		// ⚠ THE ONLY NON-EXCLUSIVE CATEGORY. A plain checkpoint-grant volume IS a regular trigger that also
+		// happens to save, so it shows under EITHER toggle - turning Regular on must not make checkpoints
+		// disappear from it. The Checkpoint Grant toggle stays exact in the other direction: on its own it
+		// still reveals checkpoint volumes and nothing else.
+		// A grant that is ALSO a kill or safe zone stays out of Regular - that one has its own filter, and
+		// folding it in would put a "stay out or die" volume in the harmless set.
+		if (volume.isCheckpointGrant)
+		{
+			if (!(volume.isKill || volume.isSafeZone) && filter.showRegular) return true;
+			return filter.showCheckpointGrant;
+		}
 		if (volume.isKill || volume.isSafeZone) return filter.showKill;   // one toggle, two colours
 		return filter.showRegular;                                        // sectors included - shape, not category
 	}
