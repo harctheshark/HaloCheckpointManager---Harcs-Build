@@ -19,6 +19,19 @@ namespace
 	// third of the three angle floats that follow it.
 	constexpr int64_t kCameraRollOffset = 0x34;   // float, RADIANS
 
+	// ⚠⚠⚠ THE CAMERA ENTRY IS A UNION AND +0x34 IS INSIDE IT. Everything from +0x08 on is laid out by the
+	// CAMERA-MODE CLASS, of which there are 13. +0x20..+0x34 is pos/yaw/pitch/roll only under mode 2, the
+	// flying camera. Under other modes those same bytes are different fields entirely (mode 7 keeps a
+	// VTABLE POINTER at +0x28 and only a word at +0x20, caching its pose at +0x50 instead).
+	//
+	// Writing roll unconditionally at 4 Hz therefore corrupts whatever the current mode keeps at +0x34 the
+	// moment the camera leaves mode 2 - which is exactly what handing control back to Chief does. Reported
+	// symptom: "the camera will spin around and face some random direction until I return control to the
+	// camera", i.e. the bytes read as roll again once mode 2 comes back. Same trap, same fix, as
+	// HCEFreecamKeepPosition - see its long comment for the full derivation.
+	constexpr int64_t   kModeObject = 0x08;                  // the camera-mode object's vtable pointer
+	constexpr uintptr_t kFlyingCameraVtableRva = 0x882318;   // mode 2, the flying camera
+
 	// How fast the roll hotkeys wind the value, in DEGREES PER SECOND. Deliberately frame-rate independent - the
 	// same key held for the same wall-clock time gives the same roll at 60 fps and at 240.
 	constexpr float kRollDegreesPerSecond = 60.f;
@@ -97,11 +110,40 @@ private:
 		return on;
 	}
 
+	// simBase + kFlyingCameraVtableRva, resolved lazily and cached. 0 = unknown, in which case we refuse to
+	// write at all: no gate is strictly worse than no feature.
+	std::atomic<uintptr_t> mFlyingVtable{ 0 };
+
+	// True only when the camera entry is a mode-2 flying camera, so +0x34 really is the roll float. One
+	// 8-byte read; never calls into an object that might not be one.
+	bool isFlyingCamera(uintptr_t cameraEntry)
+	{
+		uintptr_t want = mFlyingVtable.load(std::memory_order_relaxed);
+		if (!want)
+		{
+			auto playerState = playerStateWeak.lock();
+			if (!playerState) return false;
+			uintptr_t simBase = 0;
+			try { simBase = playerState->getSimModuleBase(); }
+			catch (HCMRuntimeException&) { return false; }
+			if (!simBase) return false;
+			want = simBase + kFlyingCameraVtableRva;
+			mFlyingVtable.store(want, std::memory_order_relaxed);
+		}
+		uintptr_t vptr = 0;
+		return HCEGetPlayerState::tryReadRaw(cameraEntry + kModeObject, &vptr, sizeof(vptr)) && vptr == want;
+	}
+
 	void writeRoll(float degrees) // throws HCMRuntimeException
 	{
 		lockOrThrow(playerStateWeak, playerState);
 
 		const uintptr_t cameraEntry = playerState->getActiveCameraEntry();
+
+		// ⚠ NOT an error, and NOT worth a message: handing control back to Chief legitimately changes the
+		// camera mode several times a session. Just do nothing until the flying camera is back.
+		if (!isFlyingCamera(cameraEntry)) return;
+
 		const uintptr_t rollAddress = cameraEntry + kCameraRollOffset;
 		const float radians = DirectX::XMConvertToRadians(degrees);
 

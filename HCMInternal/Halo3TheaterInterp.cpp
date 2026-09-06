@@ -22,13 +22,10 @@
 // Three sites fix the three visible symptoms. They were found over a long RE session (see
 // Fixes/Halo3_Theater_Interp_FIXES.md) and are shipped here as the cave that session produced.
 //
-// ⚠⚠⚠ THE CAVE MUST LIVE AT moduleBase + kCaveRva. Every entry derives its own ASLR slide with
-//     lea r10,[rip] ; movabs rax,<its linked VA> ; sub r10,rax
-// and then adds that slide to every absolute it touches - including GAME addresses. That is only
-// correct while the cave sits at the offset from the module base it was linked at. Put it anywhere
-// else and it computes garbage addresses and writes them into the render path. So this deliberately
-// does NOT do what FPScaleFix does (allocNear, take whatever address you get); it demands one exact
-// address and REFUSES if it cannot have it.
+// THE CAVE PREFERS moduleBase + kCaveRva (there it is byte-identical to the recovered blob), but it
+// is no longer pinned to it: kCaveRva is one page past halo3.dll's image end, i.e. unowned address
+// space that another allocation can and did take. relocateCave() lifts the pin - see the header for
+// why only 13 fixups are needed and why placement is bounded to +/-2GB.
 //
 // ⚠⚠ WHY THE ORIGINAL BYTES ARE VERIFIED. These are jmp-over-instruction patches. If an MCC update
 // moves the code, a stale RVA lands the jmp in the MIDDLE of an instruction and the game executes
@@ -179,10 +176,19 @@ private:
 				<< " absolute + " << Halo3TheaterInterp_Detail::kRelFixupCount << " rel32 fixups verified";
 		}
 
-		// Shipping knob values, from the build the RE session settled on: FPCODE=3, CULLFIX=1.
-		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobFpCode  - Halo3TheaterInterp_Detail::kCaveRva)) = 3;
-		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobCullFix - Halo3TheaterInterp_Detail::kCaveRva)) = 1;
-		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobEnable  - Halo3TheaterInterp_Detail::kCaveRva)) = 1;
+		// Knob values. ⚠ Write ONLY what we mean to change - every knob already holds the value the
+		// recovered (working) blob shipped, so a stray write is a behaviour change, not a no-op. HCM
+		// used to write 3 into DESTGATE and 1 into OBSPOS through a mislabelled table; that second one
+		// is what made the body detach. OBSPOS is written explicitly as 0 so the intent is on the record
+		// rather than relying on the blob's contents.
+		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobFpCode - Halo3TheaterInterp_Detail::kCaveRva)) = 3;
+		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobEnable - Halo3TheaterInterp_Detail::kCaveRva)) = 1;
+		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobObsPos - Halo3TheaterInterp_Detail::kCaveRva)) = 0;
+		// Our own knob (not from the blob): 1 = interpolate the FP leg anchor. Poke it to 0 live to A/B
+		// the leg fix without disturbing the camera fix; kLegFixHits counts hooked frames, so a stuck-at-0
+		// counter means the hook never fired rather than that the interpolation did nothing.
+		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobLegFix - Halo3TheaterInterp_Detail::kCaveRva)) = 1;
+		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kLegFixHits - Halo3TheaterInterp_Detail::kCaveRva)) = 0;
 		setCrouchKnob(currentCrouchSetting());
 
 		FlushInstructionCache(GetCurrentProcess(), mCave, Halo3TheaterInterp_Detail::kCaveSize);
