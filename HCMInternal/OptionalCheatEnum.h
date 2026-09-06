@@ -161,6 +161,7 @@ HCEFreecam,\
 HCETriggerOverlay,\
 HCEBspOverlay,\
 HCEAISquadOverlay,\
+Halo3TheaterInterp,\
 HCETriggerActivity,\
 HCEDisableBarriers,\
 HCESkyFix,\

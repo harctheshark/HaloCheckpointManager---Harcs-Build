@@ -590,7 +590,7 @@ static hkGeometry* g_objGeo = HK_NULL;   // unused for objects now; kept for the
 // shows up as large patchy holes even though every triangle was emitted correctly.
 // 20000 tris = 60000 verts, safely under that ceiling.
 static const int WM_TRIS_PER_CHUNK = 20000;
-static const int WM_MAX_CHUNKS = 2048;          // 40M triangles of capacity
+static const int WM_MAX_CHUNKS = 4096;          // 81.9M triangles - must exceed MAX_WORLD_TRIS
 static hkGeometry* g_worldChunk[WM_MAX_CHUNKS] = { HK_NULL };
 static int g_worldChunkCount = 0;
 static hkGeometry* g_worldGeo = HK_NULL;
@@ -719,7 +719,20 @@ static inline void setObjTarget(int bucket)
 // shared mesh is re-emitted per instance and the level expands enormously. 25M triangles is
 // 900 MB of plain buffer, so the region is RESERVED and committed on demand in 64 MB chunks -
 // a small map pays only for what it touches. The proper fix remains addGeometryInstance().
-static const int MAX_WORLD_TRIS = 25000000;
+// ⚠⚠ THIS IS WHAT WAS EATING THE LEVEL. At 25,000,000 the world walk clipped at exactly the cap:
+// HCM_HCEHavokDebugger.log read `world: bodies=257 tris=25000000 (TRUNCATED)` on EVERY frame with
+// `unhandled=[none]`, so nothing was wrong with the shapes - the builder simply ran out of room and
+// every triangle after that point vanished from every collision view at once.
+//
+// Raised to 64M. Two ceilings have to move together, and MAX_WORLD_TRIS must stay <= the chunk
+// capacity or the chunk cap clips silently instead:
+//     MAX_WORLD_TRIS                       64,000,000
+//     WM_MAX_CHUNKS * WM_TRIS_PER_CHUNK    81,920,000   (4096 * 20000)
+//
+// Cost is address space, not resident memory: the buffer is RESERVED (64M * 36 = 2.3 GB) and
+// wmEnsure COMMITS it 64 MB at a time as the walk fills it, so a small level still pays for a small
+// level. If it ever truncates again the log now prints the TRUE required count - raise it to that.
+static const int MAX_WORLD_TRIS = 64000000;
 static const size_t WM_TRI_BYTES = 9 * sizeof(float);
 
 // ---- per-triangle SURFACE FLAGS, for the Bullet Collision viewer ------------------------------
@@ -779,6 +792,9 @@ static bool wmEnsure(long triIndex)
     return true;
 }
 static volatile long g_wmTriCount = 0;
+// Every triangle the world walk TRIED to emit, including those dropped for want of room. The
+// difference against g_wmTriCount is exactly the geometry missing from every collision view.
+static volatile long g_wmWanted = 0;
 static volatile long g_wmGen = 0;
 static bool g_plainTarget = false;
 static int g_triCount = 0;               // triangles into the CURRENT target
@@ -808,6 +824,11 @@ static void addTri(float ax, float ay, float az, float bx, float by, float bz, f
               if (py[k] < g_wmMin[1]) g_wmMin[1] = py[k];  if (py[k] > g_wmMax[1]) g_wmMax[1] = py[k];
               if (pz[k] < g_wmMin[2]) g_wmMin[2] = pz[k];  if (pz[k] > g_wmMax[2]) g_wmMax[2] = pz[k];
           } }
+        // ⚠ Count what the walk WANTED before deciding whether it fits. g_wmTriCount saturates at
+        // MAX_WORLD_TRIS, so on its own the log could only ever say "(TRUNCATED)" and never BY HOW
+        // MUCH - which is why a 25M overflow looked identical to a healthy 25M level. g_wmWanted is
+        // the true size of the collision world.
+        ++g_wmWanted;
         long i = g_wmTriCount;
         if (!g_wmTri || i >= MAX_WORLD_TRIS || !wmEnsure(i)) { g_triCapped = true; ++g_capWorld; return; }
         float* t = g_wmTri[i];
@@ -1714,6 +1735,13 @@ static int g_bodyCount = 0;
 static int g_scBadTri = 0;   // soft-ceiling triangles rejected by the bounding-sphere check
 static volatile long g_objGen = 0;   // bumped per object gather; viewers re-send only on change
 static uint64_t g_lastWorldSig = 0;  // world is re-walked only when this fingerprint changes
+// Debounce state. A content signature has to survive kWorldSettlePolls consecutive polls (each ~1.5 s)
+// before it earns a ~1.5 s engine-thread walk; if it reverts to the one we already built, it earns
+// nothing. See the poll site for the measured streaming flicker this exists to absorb.
+static uint64_t g_pendingSig = 0;
+static int      g_pendingSeen = 0;
+static long     g_worldWalksSkipped = 0;
+static const int kWorldSettlePolls = 2;
 static uintptr_t g_allBodies[65536];
 static int g_allN = 0;
 
@@ -1897,13 +1925,210 @@ static long g_worldGeoGen = -1;
 static bool g_worldCapped = false;
 static long g_capMeshWorld = 0, g_capWorldWorld = 0;
 
+// ====================================================================================================
+// WORLD COLLISION CACHE
+//
+// A world walk costs ~1.5-2 s ON THE ENGINE THREAD (measured: 12 walks, 17.6 s, mean 1470 ms in one
+// session). The geometry is STATIC - it is the level's collision mesh - so walking it again for a BSP
+// set we have already seen is pure waste. This writes each completed walk to disk and loads it back
+// instead of re-walking.
+//
+// ★ THE KEY IS worldContentSig(), AND IT IS SAFE TO PERSIST. It is built from each type-7 shape's BSP
+// INDEX and its surface counts - content values, not heap pointers - so it identifies the same BSP set
+// across runs and across sessions. (The other signature in this file, worldSignature(), mixes in shape
+// POINTERS and would be useless on disk.)
+//
+// ⚠⚠ NEVER CACHE A TRUNCATED WALK. If the walk hit MAX_WORLD_TRIS the geometry is incomplete; writing
+// that to disk would make a transient buffer limit permanent and it would reload as "correct" forever.
+//
+// ⚠ Size: triangle soup at 38 B/tri (36 position + 2 flags). A full set of levels is on the order of
+// 10-15 GB. Off by default for that reason, and the toggle says so.
+// A ~4x reduction is available later by de-duplicating by CONTENT rather than storing soup - the tag
+// data says unique collision surfaces expand 4.05x across placements - but that is a bigger change and
+// this format is versioned so it can be superseded.
+// ====================================================================================================
+// Defined further down (it needs the shape walkers); the cache is keyed on it, so declare it here.
+static uint64_t worldContentSigGuarded();
+
+static volatile long g_worldCacheEnabled = 0;    // mirrors the GUI toggle; read on the engine thread
+static long g_worldCacheHits = 0, g_worldCacheWrites = 0;
+
+#pragma pack(push, 1)
+struct WorldCacheHeader
+{
+    char     magic[4];      // "HWC1"
+    uint32_t format;        // bump to invalidate every file at once
+    uint64_t sig;           // worldContentSig of the BSP set this describes
+    uint32_t triCount;
+    uint32_t hasFlags;
+    float    mn[3], mx[3];
+    uint32_t reserved[4];
+};
+#pragma pack(pop)
+static const uint32_t kWorldCacheFormat = 1;
+
+// ⚠ NOT std::min. This TU is C++14 against the Havok 2007 SDK and pulls in Windows.h, whose min/max
+// MACROS collide with the std ones - hence a plain helper. 16 MB per call keeps ReadFile/WriteFile
+// off the >4 GB DWORD ceiling for a multi-GB world.
+static DWORD wcChunk(size_t remaining)
+{
+    const size_t kMax = 1u << 24;
+    return (DWORD)(remaining < kMax ? remaining : kMax);
+}
+
+static bool worldCachePath(uint64_t sig, char* out, size_t cap)
+{
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCSTR)&worldCachePath, &self)) return false;
+    char dir[MAX_PATH];
+    if (!GetModuleFileNameA(self, dir, MAX_PATH)) return false;
+    char* sl = strrchr(dir, '\\');
+    if (sl) sl[1] = 0; else dir[0] = 0;
+    strcat_s(dir, MAX_PATH, "HCM_HavokWorldCache");
+    CreateDirectoryA(dir, nullptr);                       // harmless if it already exists
+    sprintf_s(out, cap, "%s\\world_%016llX.hwc", dir, (unsigned long long)sig);
+    return true;
+}
+
+// Returns true if the whole world was restored from disk and the walk can be skipped.
+static bool worldCacheLoad(uint64_t sig)
+{
+    if (!sig || !g_worldCacheEnabled || !g_wmTri) return false;
+    char path[MAX_PATH];
+    if (!worldCachePath(sig, path, MAX_PATH)) return false;
+
+    HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+
+    bool ok = false;
+    WorldCacheHeader hdr{};
+    DWORD got = 0;
+    if (ReadFile(h, &hdr, sizeof(hdr), &got, nullptr) && got == sizeof(hdr)
+        && memcmp(hdr.magic, "HWC1", 4) == 0 && hdr.format == kWorldCacheFormat && hdr.sig == sig
+        && hdr.triCount > 0 && hdr.triCount <= (uint32_t)MAX_WORLD_TRIS)
+    {
+        // Commit the buffer the same way the walk would have, then read straight into it.
+        if (wmEnsure((long)hdr.triCount - 1))
+        {
+            const size_t triBytes = (size_t)hdr.triCount * WM_TRI_BYTES;
+            ok = true;
+            size_t done = 0;
+            while (done < triBytes && ok)
+            {
+                const DWORD chunk = wcChunk(triBytes - done);
+                DWORD n = 0;
+                ok = ReadFile(h, (char*)g_wmTri + done, chunk, &n, nullptr) && n == chunk;
+                done += n;
+            }
+            if (ok && hdr.hasFlags && g_wmFlags)
+            {
+                const size_t flagBytes = (size_t)hdr.triCount * WM_FLAG_BYTES;
+                size_t fdone = 0;
+                while (fdone < flagBytes && ok)
+                {
+                    const DWORD chunk = wcChunk(flagBytes - fdone);
+                    DWORD n = 0;
+                    ok = ReadFile(h, (char*)g_wmFlags + fdone, chunk, &n, nullptr) && n == chunk;
+                    fdone += n;
+                }
+            }
+            if (ok)
+            {
+                g_wmTriCount = (long)hdr.triCount;
+                g_wmWanted = (long)hdr.triCount;
+                g_worldTris = (int)hdr.triCount;
+                g_worldCapped = false;                     // never written for a truncated walk
+                for (int i = 0; i < 3; ++i) { g_wmMin[i] = hdr.mn[i]; g_wmMax[i] = hdr.mx[i]; }
+            }
+        }
+    }
+    CloseHandle(h);
+    if (ok) { ++g_worldCacheHits; LOG("world cache HIT %016llX (%d tris) - skipped the walk",
+        (unsigned long long)sig, g_worldTris); }
+    return ok;
+}
+
+static void worldCacheStore(uint64_t sig)
+{
+    if (!sig || !g_worldCacheEnabled || !g_wmTri || g_wmTriCount <= 0) return;
+    if (g_worldCapped || g_triCapped) { LOG("world cache: NOT storing %016llX - the walk was truncated",
+        (unsigned long long)sig); return; }
+
+    char path[MAX_PATH], tmp[MAX_PATH];
+    if (!worldCachePath(sig, path, MAX_PATH)) return;
+    sprintf_s(tmp, MAX_PATH, "%s.part", path);
+
+    HANDLE h = CreateFileA(tmp, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+
+    WorldCacheHeader hdr{};
+    memcpy(hdr.magic, "HWC1", 4);
+    hdr.format = kWorldCacheFormat;
+    hdr.sig = sig;
+    hdr.triCount = (uint32_t)g_wmTriCount;
+    hdr.hasFlags = g_wmFlags ? 1u : 0u;
+    for (int i = 0; i < 3; ++i) { hdr.mn[i] = g_wmMin[i]; hdr.mx[i] = g_wmMax[i]; }
+
+    bool ok = true; DWORD n = 0;
+    ok = WriteFile(h, &hdr, sizeof(hdr), &n, nullptr) && n == sizeof(hdr);
+    const size_t triBytes = (size_t)g_wmTriCount * WM_TRI_BYTES;
+    size_t done = 0;
+    while (done < triBytes && ok)
+    {
+        const DWORD chunk = wcChunk(triBytes - done);
+        ok = WriteFile(h, (const char*)g_wmTri + done, chunk, &n, nullptr) && n == chunk;
+        done += n;
+    }
+    if (ok && hdr.hasFlags)
+    {
+        const size_t flagBytes = (size_t)g_wmTriCount * WM_FLAG_BYTES;
+        size_t fdone = 0;
+        while (fdone < flagBytes && ok)
+        {
+            const DWORD chunk = wcChunk(flagBytes - fdone);
+            ok = WriteFile(h, (const char*)g_wmFlags + fdone, chunk, &n, nullptr) && n == chunk;
+            fdone += n;
+        }
+    }
+    CloseHandle(h);
+
+    // ⚠ Write to .part and rename, so a crash or a full disk mid-write can never leave a SHORT file
+    // that still has a valid header - that would reload as a silently incomplete world.
+    if (ok && MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING))
+    {
+        ++g_worldCacheWrites;
+        LOG("world cache STORE %016llX (%d tris, %.0f MB)", (unsigned long long)sig, g_wmTriCount,
+            (double)(sizeof(hdr) + triBytes + (hdr.hasFlags ? (size_t)g_wmTriCount * WM_FLAG_BYTES : 0)) / 1048576.0);
+    }
+    else
+    {
+        DeleteFileA(tmp);
+        LOG("world cache: write FAILED for %016llX (disk full?) - left no partial file",
+            (unsigned long long)sig);
+    }
+}
+
+
 // World Collision = ONLY the level mesh (shape type 7). Static scenery and machines are ordinary
 // objects and are drawn by the Object Collision viewer, so they no longer appear here.
 static void gatherWorld()
 {
     if (!g_allN) collectBodies();
+
+    // Cache probe BEFORE any of the expensive work. A hit fills the same buffers the walk would have.
+    const uint64_t cacheSig = g_worldCacheEnabled ? worldContentSigGuarded() : 0;
+    if (cacheSig && worldCacheLoad(cacheSig))
+    {
+        InterlockedIncrement(&g_wmGen);     // publish to the VDB thread exactly as a walk does
+        return;
+    }
+
     g_plainTarget = true;
     g_wmTriCount = 0;
+    g_wmWanted = 0;      // reset alongside the count it is measured against
     g_wmMeshTriCount = 0;
     g_wmMin[0]=g_wmMin[1]=g_wmMin[2]= 1e30f;
     g_wmMax[0]=g_wmMax[1]=g_wmMax[2]=-1e30f;
@@ -1929,6 +2154,10 @@ static void gatherWorld()
     g_bspNSnap = g_bspN;
     for (int i = 0; i < 16; ++i) g_polyHistSnap[i] = g_polyHist[i];
     g_polyTooFewSnap = g_polyTooFew; g_polyFarVtxSnap = g_polyFarVtx; g_polyNonPlanarSnap = g_polyNonPlanar;
+
+    // Store AFTER the walk completed, using the signature taken before it - so the file is keyed to the
+    // BSP set we actually walked, not to whatever the world drifted to while we were walking it.
+    if (cacheSig) worldCacheStore(cacheSig);
 }
 
 
@@ -2585,11 +2814,35 @@ static void __fastcall tickDetour(void* a1)
     if ((n % 120) == 0 && g_ready && g_allN > 0) {
         const uint64_t sig = worldContentSigGuarded();
         if (sig && sig != g_lastWorldSig) {
-            LOG("level content changed (sig %016llX -> %016llX) - re-walking",
-                (unsigned long long)g_lastWorldSig, (unsigned long long)sig);
-            g_lastWorldSig = sig;
-            gatherWorldGuarded();
-            gatherScenarioGuarded();
+            // ⚠⚠ DEBOUNCE. A world walk costs ~1.5 s ON THE ENGINE THREAD, and BSP streaming passes
+            // through TRANSIENT content states on the way to a settled one - a measured session went
+            // A B A B C A C D C E C, where D and E each existed for one poll and then reverted to C
+            // with an identical key count. Walking on first sight paid ~1.5 s for each of those and
+            // then paid again to come back. Nothing is ever drawn from a state that brief.
+            //
+            // So: require the new signature to still be there on the NEXT poll before walking, and
+            // if it reverts to what we already have, cancel outright and walk nothing.
+            if (sig != g_pendingSig) {
+                g_pendingSig = sig;          // first sighting - wait one poll (~1.5 s) and re-check
+                g_pendingSeen = 1;
+            }
+            else if (++g_pendingSeen >= kWorldSettlePolls) {
+                LOG("level content changed (sig %016llX -> %016llX, stable for %d polls) - re-walking",
+                    (unsigned long long)g_lastWorldSig, (unsigned long long)sig, g_pendingSeen);
+                g_lastWorldSig = sig;
+                g_pendingSig = 0;
+                g_pendingSeen = 0;
+                gatherWorldGuarded();
+                gatherScenarioGuarded();
+            }
+        }
+        else if (sig && g_pendingSig && sig == g_lastWorldSig) {
+            // It went somewhere and came straight back. This is the case the debounce exists for.
+            LOG("transient content state %016llX reverted to %016llX - skipped a world walk",
+                (unsigned long long)g_pendingSig, (unsigned long long)sig);
+            ++g_worldWalksSkipped;
+            g_pendingSig = 0;
+            g_pendingSeen = 0;
         }
     }
 }
@@ -2711,7 +2964,11 @@ enum { CAT_OBJECTS, CAT_WORLD, CAT_COM, CAT_ISLANDS, CAT_TRIGVOL, CAT_SOFTCEIL,
 static int s_tag[CAT_COUNT];
 // Distinct ranges: OBJ occupies OBJ_GEOM_ID .. +BK_COUNT-1, so it must not reach WORLD_GEOM_ID.
 static const hkUlong OBJ_GEOM_ID   = 0x11CE0100ull;
-static const hkUlong WORLD_GEOM_ID   = 0x11CE1000ull;   // .. +2048 (chunks)
+// ⚠⚠ .. +WM_MAX_CHUNKS. At 4096 this spans 0x11CE1000..0x11CE1FFF and TRIGVOL_GEOM_ID begins at
+// 0x11CE2000, so the world id range is now EXACTLY FULL with zero headroom. Raising WM_MAX_CHUNKS
+// again REQUIRES moving TRIGVOL/SOFTCEIL/LIVETRIG up first, or world chunks will silently overwrite
+// the trigger-volume geometry instead of failing.
+static const hkUlong WORLD_GEOM_ID   = 0x11CE1000ull;
 static const hkUlong TRIGVOL_GEOM_ID = 0x11CE2000ull;
 static const hkUlong SOFTCEIL_GEOM_ID= 0x11CE2001ull;
 // ---- FILTERED WORLD VIEWS -----------------------------------------------------------------------
@@ -2733,7 +2990,10 @@ static const hkUlong SOFTCEIL_GEOM_ID= 0x11CE2001ull;
 // movement mask (0x41) collapses to "accept everything", so those two flags ARE the whole difference.
 // `invalid` and `plane negated` get no view: they are authoring/debug state, not something to look at.
 static const hkUlong FILT_GEOM_BASE = 0x11CE3000ull;   // each view gets its own 0x1000 id range
-static const int     FILT_GEOM_STRIDE = 0x1000;        // > WM_MAX_CHUNKS, so ranges cannot overlap
+// ⚠ MUST STAY > WM_MAX_CHUNKS or two filtered views share geometry ids and overwrite each other.
+// Raised to 0x2000 in lockstep with WM_MAX_CHUNKS going 2048 -> 4096; at 0x1000 they would have been
+// EQUAL, which is already an overlap.
+static const int     FILT_GEOM_STRIDE = 0x2000;
 
 struct FilteredView
 {
@@ -3373,6 +3633,17 @@ static DWORD WINAPI vdbThread(LPVOID)
                 g_triCapped ? " (TRUNCATED)" : "",
                 g_worldBodies, g_worldTris, g_worldCapped ? " (TRUNCATED)" : "",
                 g_ticks, un[0] ? un : "none");
+            // ⚠ SAY BY HOW MUCH. "(TRUNCATED)" alone is indistinguishable from a level that happens
+            // to be exactly MAX_WORLD_TRIS, which is how a 25M overflow went unexplained. Quote the
+            // real requirement so the next ceiling can be set from a measurement, not a guess.
+            if (g_worldCapped || g_triCapped)
+                LOG("   !! WORLD TRUNCATED: needs %ld tris, cap is %d - DROPPED %ld (%.1f%% of the "
+                    "collision world is missing from EVERY view). Raise MAX_WORLD_TRIS above the "
+                    "needed count, and WM_MAX_CHUNKS above needed/%d.",
+                    g_wmWanted, MAX_WORLD_TRIS,
+                    (g_wmWanted > MAX_WORLD_TRIS) ? g_wmWanted - MAX_WORLD_TRIS : 0L,
+                    g_wmWanted ? (100.0 * (double)((g_wmWanted > MAX_WORLD_TRIS) ? g_wmWanted - MAX_WORLD_TRIS : 0L) / (double)g_wmWanted) : 0.0,
+                    WM_TRIS_PER_CHUNK);
             for (int t = 0; t < 64; ++t) g_unhandled[t] = 0;
         }
         Sleep(16);
@@ -3384,7 +3655,10 @@ static DWORD WINAPI vdbThread(LPVOID)
 static void resetGatherState()
 {
     g_lastWorldSig = 0;
+    g_pendingSig = 0;        // a re-enable must not inherit a half-settled signature
+    g_pendingSeen = 0;
     g_wmTriCount = 0;
+    g_wmWanted = 0;      // reset alongside the count it is measured against
     g_wmMeshTriCount = 0;
     g_wmMeshCount = 0;
     g_wmInstCount = 0;
@@ -3491,6 +3765,45 @@ namespace HceHavokDebuggerBridge
         for (int i = 0; i < A_COUNT; ++i) if (!g_anchors[i].resolved) ++bad;
         return bad;
     }
+
+    void setWorldCacheEnabled(bool enabled)
+    {
+        InterlockedExchange(&g_worldCacheEnabled, enabled ? 1 : 0);
+        LOG("world collision cache %s", enabled ? "ENABLED" : "disabled");
+    }
+
+    void worldCacheStats(int& hits, int& writes)
+    {
+        hits = (int)g_worldCacheHits;
+        writes = (int)g_worldCacheWrites;
+    }
+
+    unsigned long long clearWorldCache()
+    {
+        char probe[MAX_PATH];
+        if (!worldCachePath(0, probe, MAX_PATH)) return 0;
+        char* sl = strrchr(probe, '\\');
+        if (!sl) return 0;
+        *sl = 0;                                   // -> the directory
+        char glob[MAX_PATH];
+        sprintf_s(glob, MAX_PATH, "%s\\world_*.hwc", probe);
+
+        unsigned long long freed = 0;
+        WIN32_FIND_DATAA fd{};
+        HANDLE h = FindFirstFileA(glob, &fd);
+        if (h == INVALID_HANDLE_VALUE) return 0;
+        do
+        {
+            char full[MAX_PATH];
+            sprintf_s(full, MAX_PATH, "%s\\%s", probe, fd.cFileName);
+            const unsigned long long sz = ((unsigned long long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+            if (DeleteFileA(full)) freed += sz;
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+        g_worldCacheHits = g_worldCacheWrites = 0;
+        LOG("world collision cache cleared: %.1f MB freed", (double)freed / 1048576.0);
+        return freed;
+    }
 }
 
 #else  // !HCM_HAVOK_AVAILABLE -> no-op stub so Debug links without havok.lib
@@ -3502,6 +3815,9 @@ namespace HceHavokDebuggerBridge
     void stop()   {}
     bool isRunning() { return false; }
     int  unresolvedAnchorCount() { return 0; }
+    void setWorldCacheEnabled(bool) {}
+    void worldCacheStats(int& hits, int& writes) { hits = 0; writes = 0; }
+    unsigned long long clearWorldCache() { return 0; }
 }
 
 #endif // HCM_HAVOK_AVAILABLE

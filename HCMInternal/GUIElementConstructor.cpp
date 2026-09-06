@@ -589,10 +589,14 @@ private:
 							// HaloCER-facing tool and belongs near the top rather than buried among the MCC
 							// rendering fixes below.
 							createNestedElement(GUIElementEnum::havokDebuggerGUI),
+							createNestedElement(GUIElementEnum::havokWorldCacheGUI),
+							createNestedElement(GUIElementEnum::havokWorldCacheClearGUI),
 							createNestedElement(GUIElementEnum::invulnGUI),
 							createNestedElement(GUIElementEnum::invulnerabilitySettingsSubheading),
 							createNestedElement(GUIElementEnum::infiniteAmmoGUI),
 							createNestedElement(GUIElementEnum::bottomlessClipGUI),
+							createNestedElement(GUIElementEnum::halo3TheaterInterpToggleGUI),
+							createNestedElement(GUIElementEnum::halo3TheaterInterpCrouchGUI),
 							createNestedElement(GUIElementEnum::season7PhysicsToggle),
 							createNestedElement(GUIElementEnum::farClipDistanceGUI),
 							createNestedElement(GUIElementEnum::sunScaleFixToggle),
@@ -787,7 +791,7 @@ private:
 
 				case GUIElementEnum::masterTickrateEnableGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIToggleWithChildren<GUIToggleWithChildrenParameters::AlwaysShowChildren, false>>
-						(game, ToolTipCollection("Halo 2: arm the master simulation tickrate. Off by default and never saved to a preset - the 30/60 toggle and value box below are always visible (and reflect the real tickrate), but only take effect while this is checked, so you can't change the tickrate by accident. Unchecking it restores the game's stock tickrate."), std::nullopt, "Master Tickrate", settings->masterTickrateEnabled, headerChildElements
+						(game, ToolTipCollection("Arms the master simulation tickrate. Off by default and never saved to a preset - the 30/60 toggle and value box below are always visible (and reflect the real tickrate), but only take effect while this is checked, so you can't change the tickrate by accident. Unchecking it restores the game's stock 60 Hz. Supported in Halo 2, Halo 3, ODST, Halo 4, Reach and Campaign Evolved - all of which run at 60 by default. Halo 1 (CE) is absent on purpose: its 30 Hz is structural, not a field, so there is nothing to write."), std::nullopt, "Master Tickrate", settings->masterTickrateEnabled, headerChildElements
 							{
 							createNestedElement(GUIElementEnum::masterTickrateToggleGUI),
 							createNestedElement(GUIElementEnum::masterTickrateCustomGUI),
@@ -795,12 +799,12 @@ private:
 
 				case GUIElementEnum::masterTickrateToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-						(game, ToolTipCollection("Halo 2: flips the master simulation tickrate between 60 and 30 Hz (and the matching dt). Requires a loaded Halo 2 game."), std::nullopt, "Toggle Tickrate (60/30)", settings->masterTickrateFlipEvent
+						(game, ToolTipCollection("Flips the master simulation tickrate between 60 and 30 Hz (and the matching seconds-per-tick). Requires a loaded game."), std::nullopt, "Toggle Tickrate (60/30)", settings->masterTickrateFlipEvent
 						));
 
 				case GUIElementEnum::masterTickrateCustomGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<SliderParam<int>{}, true>>
-						(game, ToolTipCollection("Halo 2: type a master simulation tickrate (Hz) from 3 to 32766, then press Enter to apply (it does NOT apply while you're still typing). The matching seconds-per-tick (dt = 1/rate) is written for you so game speed stays 1x. Values below 3 and above 32766 are rejected - the engine stores the tickrate as a signed 16-bit int, and rates of 1-2 crash the game. Requires a loaded Halo 2 game; resets to the game default on map load."), "Custom Tickrate (Hz)", settings->customTickrate
+						(game, ToolTipCollection("Type a master simulation tickrate (Hz) from 3 to 32766, then press Enter to apply (it does NOT apply while you're still typing). The matching seconds-per-tick (dt = 1/rate) is written for you so game speed stays 1x. Values below 3 and above 32766 are rejected - the engine stores the tickrate as a signed 16-bit int, and rates of 1-2 crash the game. Requires a loaded game; the game resets the rate on every map load, so HCM re-applies it for you. Halo 2 additionally matches the Havok collision scalar and rebuilds live collision; the other games need the timing write only."), "Custom Tickrate (Hz)", settings->customTickrate
 						));
 
 				case GUIElementEnum::aiFreezeGUI:
@@ -2495,6 +2499,22 @@ private:
 				// Halo Campaign Evolved AI squad overlay. Labels each live AI with the scenario squad and squad
 				// group it belongs to. Every name is read out of the scenario tag at runtime, so it works on
 				// every level without a shipped per-level table.
+				case GUIElementEnum::havokWorldCacheGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Save each level's collision geometry to disk the first time the Havok Debugger walks it, and load it back instantly afterwards instead of re-walking.\n\nBuilding a world costs roughly 1.5-2 seconds ON THE ENGINE THREAD - the game visibly hitches - and it happens again every time you return to a BSP set you have already seen. The collision mesh is static, so that work only needs doing once.\n\nCOSTS DISK: about 1 GB per BSP set, and around 15 GB once every level has been visited. That is why it is off by default. Use Clear World Cache below to reclaim the space."), std::nullopt, "World Collision Cache", settings->havokWorldCacheToggle));
+
+				case GUIElementEnum::havokWorldCacheClearGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+						(game, ToolTipCollection("Delete every cached world from HCM_HavokWorldCache and report how much space was reclaimed. Safe at any time - anything deleted is simply rebuilt on the next visit."), std::nullopt, "Clear World Cache", settings->havokWorldCacheClearEvent));
+
+				case GUIElementEnum::halo3TheaterInterpToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Smooths Theater playback. Halo 3 renders Theater straight off the tick stream, and while the engine interpolates object POSITION it rebuilds the camera ORIENTATION from raw per-tick aiming - so the moment the player you are watching turns, the whole world steps. This interpolates it, and also fixes the object/shadow de-render that the naive fix causes. Gameplay is unaffected (there the camera already follows live input at frame rate).\n\nKnown limitation: in first person your own LEGS still step when you turn. That is a separate unsolved problem - the render alpha is pinned at every biped-pose site, so nothing in that chain can be smoothed."), std::nullopt, "Theater Interpolation Fix", settings->halo3TheaterInterpToggle));
+
+				case GUIElementEnum::halo3TheaterInterpCrouchGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Also interpolate the crouch height change, so crouching in Theater is smooth instead of stepping.\n\nCosts a small cosmetic glitch: the first-person legs render from the biped's own interpolated nodes, which this does not move, so they separate slightly from the upper body during the height change. Turn it off to keep the legs attached and accept the crouch step."), std::nullopt, "Interpolate Crouch", settings->halo3TheaterInterpCrouch));
+
 				case GUIElementEnum::hceAISquadOverlayToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Prints the scenario squad (and squad group) above every live AI's head. Names are read out of the level's own scenario tag at runtime, so this works on every level. AI that have MIGRATED out of the squad they spawned in are drawn in a second colour, since those are the ones a squad-based script gate can behave unexpectedly around."), RebindableHotkeyEnum::hceAISquadOverlayToggleHotkey, "AI Squad Overlay", settings->hceAISquadOverlayToggle));

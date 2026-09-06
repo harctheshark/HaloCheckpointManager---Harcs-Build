@@ -1846,6 +1846,23 @@ public:
 	// that field is 'default' for 1506 of 2406 squads game-wide and for 197 of 197 on d20, so filtering on
 	// it would put every unit on that level into one bucket.
 	// ================================================================================================
+	// ---- Halo 3 Theater Interpolation Fix -----------------------------------------------------------
+	// Patches three sites in halo3.dll so Theater renders between ticks. See Halo3TheaterInterp.cpp.
+	// ---- Havok Debugger world collision cache -------------------------------------------------------
+	// A world walk costs ~1.5-2 s ON THE ENGINE THREAD. The level collision mesh is static, so a BSP set
+	// walked once can be reloaded from disk. ⚠ OFF BY DEFAULT: it trades that stall for disk, and with
+	// every level cached it reaches roughly 15 GB. See HCEHavokDebuggerBridge.h.
+	std::shared_ptr<BinarySetting<bool>> havokWorldCacheToggle = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(havokWorldCacheToggle));
+	std::shared_ptr<ActionEvent> havokWorldCacheClearEvent = std::make_shared<ActionEvent>();
+
+	std::shared_ptr<BinarySetting<bool>> halo3TheaterInterpToggle = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(halo3TheaterInterpToggle));
+	// The crouch half has a known cosmetic cost - the FP legs separate slightly during the height
+	// change - so it is separable from the turn/de-render fixes rather than bundled with them.
+	std::shared_ptr<BinarySetting<bool>> halo3TheaterInterpCrouch = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(halo3TheaterInterpCrouch));
+
 	std::shared_ptr<BinarySetting<bool>> hceAISquadOverlayToggle = std::make_shared<BinarySetting<bool>>
 		(false, [](bool in) { return true; }, nameof(hceAISquadOverlayToggle));
 
@@ -3487,6 +3504,9 @@ public:
 		hceTriggerOverlayShowRegular,
 		hceTriggerOverlayShowKill,
 		hceTriggerOverlayShowZoneSet,
+		havokWorldCacheToggle,
+		halo3TheaterInterpToggle,
+		halo3TheaterInterpCrouch,
 		hceAISquadOverlayToggle,
 		hceAISquadOverlayShowTeam,
 		hceAISquadOverlayShowPlayer,

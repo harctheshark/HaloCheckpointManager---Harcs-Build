@@ -11,6 +11,9 @@ template<GameState::Value mGame>
 class HavokDebuggerImpl : public HavokDebuggerImplUntemplated {
 private:
 	ScopedCallback<ToggleEvent> mToggleCallbackHandle;
+	ScopedCallback<ToggleEvent> mWorldCacheCallbackHandle;
+	ScopedCallback<ActionEvent> mClearCacheCallbackHandle;
+	std::weak_ptr<SettingsStateAndEvents> settingsWeak;
 
 	std::weak_ptr<IMCCStateHook> mccStateHookWeak;
 	std::weak_ptr<IMessagesGUI> messagesGUIWeak;
@@ -48,6 +51,11 @@ private:
 						messagesGUI->addMessage("Havok Debugger on. Connect the Havok Visual Debugger to 127.0.0.1:25001. Viewers: Object Collision, World Collision, Center of Mass, Havok Islands, Trigger Volumes, Soft Ceilings.");
 
 					messagesGUI->addMessage("Note: the first world walk runs on the engine thread and will hitch the game for a moment.");
+
+					// Push the current cache setting down whenever the debugger starts - the toggle can
+					// have been changed (or restored from a preset) while the debugger was off.
+					HceHavokDebuggerBridge::setWorldCacheEnabled(
+						settingsWeak.lock()->havokWorldCacheToggle->GetValue());
 				}
 				else
 				{
@@ -76,12 +84,58 @@ private:
 		}
 	}
 
+	// The world collision cache. Trades disk for the ~1.5-2 s engine-thread stall a world walk costs.
+	void onWorldCacheChange(bool& newValue)
+	{
+		try
+		{
+			lockOrThrow(messagesGUIWeak, messagesGUI);
+			HceHavokDebuggerBridge::setWorldCacheEnabled(newValue);
+
+			if (newValue)
+			{
+				// ⚠ Say the cost UP FRONT. Every BSP set the user visits gets written, so this grows
+				// quietly in the background until it is large. Better a plain warning than a surprise.
+				messagesGUI->addMessage("World collision cache ON. Each BSP set is saved to "
+					"HCM_HavokWorldCache next to HCMInternal.dll the first time it is walked, and loaded "
+					"instantly after that.");
+				messagesGUI->addMessage("Disk use: roughly 1 GB per BSP set. With every level cached this "
+					"can reach about 15 GB. Turn it off and use Clear World Cache to reclaim the space.");
+			}
+			else
+			{
+				int hits = 0, writes = 0;
+				HceHavokDebuggerBridge::worldCacheStats(hits, writes);
+				messagesGUI->addMessage(std::format(
+					"World collision cache off. This session it skipped {} world walk(s) and wrote {} file(s). "
+					"Cached files are kept - clear them explicitly if you want the space back.", hits, writes));
+			}
+		}
+		catch (HCMRuntimeException ex) { runtimeExceptions->handleMessage(ex); }
+	}
+
+	void onClearWorldCache()
+	{
+		try
+		{
+			lockOrThrow(messagesGUIWeak, messagesGUI);
+			const unsigned long long freed = HceHavokDebuggerBridge::clearWorldCache();
+			messagesGUI->addMessage(freed
+				? std::format("World collision cache cleared - {:.1f} MB freed.", (double)freed / 1048576.0)
+				: std::string("World collision cache was already empty."));
+		}
+		catch (HCMRuntimeException ex) { runtimeExceptions->handleMessage(ex); }
+	}
+
 public:
 	HavokDebuggerImpl(IDIContainer& dicon) :
 		mToggleCallbackHandle(dicon.Resolve<SettingsStateAndEvents>().lock()->havokDebuggerToggle->valueChangedEvent, [this](bool& n) { onToggleChange(n); }),
+		mWorldCacheCallbackHandle(dicon.Resolve<SettingsStateAndEvents>().lock()->havokWorldCacheToggle->valueChangedEvent, [this](bool& n) { onWorldCacheChange(n); }),
+		mClearCacheCallbackHandle(dicon.Resolve<SettingsStateAndEvents>().lock()->havokWorldCacheClearEvent, [this]() { onClearWorldCache(); }),
 		mccStateHookWeak(dicon.Resolve<IMCCStateHook>()),
 		messagesGUIWeak(dicon.Resolve<IMessagesGUI>()),
-		runtimeExceptions(dicon.Resolve<RuntimeExceptionHandler>())
+		runtimeExceptions(dicon.Resolve<RuntimeExceptionHandler>()),
+		settingsWeak(dicon.Resolve<SettingsStateAndEvents>())
 	{
 	}
 };

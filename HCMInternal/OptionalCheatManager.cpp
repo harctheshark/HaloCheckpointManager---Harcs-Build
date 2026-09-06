@@ -24,6 +24,7 @@
 #include "HCETriggerOverlay.h"
 #include "HCEBspOverlay.h"
 #include "HCEAISquadOverlay.h"
+#include "Halo3TheaterInterp.h"
 #include "HCETriggerActivity.h"
 #include "HCEDisableBarriers.h"
 #include "HCESkyFix.h"

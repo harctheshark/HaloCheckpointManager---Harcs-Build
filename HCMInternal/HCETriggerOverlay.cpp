@@ -1871,17 +1871,25 @@ private:
 				// then BSP/zone-set (crossing one reloads the world), then kill, then plain. Sector-shaped
 				// volumes take the plain colour - shape is not a category.
 				const bool isLive = highlightActive && isVolumeActive(volume.index);
+
+				// ⚠ THE CHECKPOINT COLOUR FOLLOWS THE CHECKPOINT FILTER, not the volume's nature. A
+				// checkpoint grant is also an ordinary trigger, so with only Regular Triggers on it must
+				// look like every other regular trigger - painting it green there says "this is its own
+				// category" while the filter that reveals it says the opposite. Turn Checkpoint Grant
+				// Triggers on (alone or alongside Regular) and the colour comes back.
+				const bool cpColour = volume.isCheckpointGrant && typeFilter.showCheckpointGrant;
+
 				const ImU32 colour = isLive ? activeWire
 					: volume.isCommitZoneSet ? bspWire
 					: volume.isBeginZoneSet ? beginWire
-					: volume.isCheckpointGrant ? cpWire
+					: cpColour ? cpWire
 					: volume.isKill ? killWire
 					: volume.isSafeZone ? safeWire
 					: boxWire;
 				const ImU32 fill = isLive ? activeFill
 					: volume.isCommitZoneSet ? bspFill
 					: volume.isBeginZoneSet ? beginFill
-					: volume.isCheckpointGrant ? cpFill
+					: cpColour ? cpFill            // same gate as the wire - see cpColour above
 					: volume.isKill ? killFill
 					: volume.isSafeZone ? safeFill
 					: boxFill;
@@ -2179,17 +2187,21 @@ private:
 					continue;
 				}
 
+				// Same gate as the other draw path: the checkpoint colour belongs to the checkpoint
+				// FILTER, not to the volume. Under Regular Triggers alone a grant is just a trigger.
+				const bool cpColour3D = volume.isCheckpointGrant && typeFilter.showCheckpointGrant;
+
 				const SimpleMath::Vector4& wireColour = isLive ? activeWire
 					: volume.isCommitZoneSet ? bspWire
 					: volume.isBeginZoneSet ? beginWire
-					: volume.isCheckpointGrant ? cpWire
+					: cpColour3D ? cpWire
 					: volume.isKill ? killWire
 					: volume.isSafeZone ? safeWire
 					: boxWire;                                    // sectors included - shape is not a category
 				const SimpleMath::Vector4& fillColour = isLive ? activeFill
 					: volume.isCommitZoneSet ? bspFill
 					: volume.isBeginZoneSet ? beginFill
-					: volume.isCheckpointGrant ? cpFill
+					: cpColour3D ? cpFill
 					: volume.isKill ? killFill
 					: volume.isSafeZone ? safeFill
 					: boxFill;

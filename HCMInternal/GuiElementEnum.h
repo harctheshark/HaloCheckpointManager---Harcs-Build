@@ -164,9 +164,11 @@
 	((fpScaleFixLegTuckGUI, (Halo2)))\
 	((animationFixesToggle, (Halo2)))\
 	((havokDebuggerGUI, (Halo2, Halo3, Halo3ODST, HaloReach, HaloCER)))\
-	((masterTickrateEnableGUI, (Halo2)))\
-	((masterTickrateToggleGUI, (Halo2)))\
-	((masterTickrateCustomGUI, (Halo2)))\
+	((havokWorldCacheGUI, (HALOCER_ONLY)))\
+	((havokWorldCacheClearGUI, (HALOCER_ONLY)))\
+	((masterTickrateEnableGUI, (Halo2, Halo3, Halo3ODST, Halo4, HaloReach, HaloCER)))\
+	((masterTickrateToggleGUI, (Halo2, Halo3, Halo3ODST, Halo4, HaloReach, HaloCER)))\
+	((masterTickrateCustomGUI, (Halo2, Halo3, Halo3ODST, Halo4, HaloReach, HaloCER)))\
 	((aiFreezeGUI, (ALL_SUPPORTED_GAMES)))\
 	((medusaGUI, (Halo1, Halo2)))\
 	((forceTeleportGUI, (ALL_SUPPORTED_GAMES)))\
@@ -551,6 +553,8 @@
 			((hceTriggerOverlayLabelScale, (HALOCER_ONLY)))\
 			((hceTriggerOverlayBoxColour, (HALOCER_ONLY)))\
 			((hceTriggerOverlayWireframeAlpha, (HALOCER_ONLY)))\
+	((halo3TheaterInterpToggleGUI, (Halo3)))\
+	((halo3TheaterInterpCrouchGUI, (Halo3)))\
 	((hceAISquadOverlayToggleGUI, (HALOCER_ONLY)))\
 	((hceAISquadOverlaySettingsSubheading, (HALOCER_ONLY)))\
 			((hceAISquadOverlayTeamsShownSubheading, (HALOCER_ONLY)))\

@@ -787,6 +787,20 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	// pointer data, so folding it in would make the trigger overlay fail whenever the BSP path did.
 	// AI Squad Overlay. Its own cheat: it reads the LIVE object and actor tables plus the scenario's squad and
 	// squad-group blocks, none of which any other overlay touches, and it needs the simulation-thread pump.
+	{ GUIElementEnum::havokWorldCacheGUI,
+{OptionalCheatEnum::HavokDebugger}
+	},
+	{ GUIElementEnum::havokWorldCacheClearGUI,
+{OptionalCheatEnum::HavokDebugger}
+	},
+
+	{ GUIElementEnum::halo3TheaterInterpToggleGUI,
+{OptionalCheatEnum::Halo3TheaterInterp}
+	},
+	{ GUIElementEnum::halo3TheaterInterpCrouchGUI,
+{OptionalCheatEnum::Halo3TheaterInterp}
+	},
+
 	{ GUIElementEnum::hceAISquadOverlayToggleGUI,
 {OptionalCheatEnum::HCEAISquadOverlay}
 	},
