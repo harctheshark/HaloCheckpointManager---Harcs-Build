@@ -144,13 +144,18 @@ namespace
 		  "load that follow it. Unique at 12 of these 41 bytes; the rest is deliberate redundancy." },
 
 		{ Anchor::FadeFromBlackGuardSite, "FadeFromBlackGuardSite",
-		  "41 B9 3C 00 00 00 C5 E8 57 D2 C5 F0 57 C9 C5 F8 57 C0 E8 ?? ?? ?? ?? 4C 8B 6C 24 60 4C 8B 74 24 58 40 84 F6 48 8B 74 24 78",
+		  "41 C6 40 25 01 42 8D 04 12 45 89 50 28 45 33 C9 41 89 40 2C BA FF FF FF FF C5 E0 57 DB C5 FA 5F C3 C5 FA 5D C2",
 		  Extract::MatchIsTarget, 0, 0, 0,
-		  "`mov r9d, 3Ch` (the fade duration) followed by three vxorps zeroing the colour. HCM patches the "
-		  "IMM32 INSIDE this instruction, so the patch target is this address + 2 and the guard site is this "
-		  "address - keeping both derived from one anchor is what stops them drifting apart. The imm 3C is "
-		  "part of the pattern on purpose: it proves this is the fade call and not another vxorps triple. "
-		  "Unique at 10 of these 41 bytes." },
+		  "INSIDE fade_in itself, not at a call site. `mov byte[r8+0x25],1` (the fade DIRECTION byte) followed "
+		  "by `lea eax,[rdx+r10]`, which computes end = start + duration into the fade struct at +0x2C. HCM "
+		  "replaces that lea with `mov eax,r10d` so end == start and the evaluator's `end > tick` test is false "
+		  "immediately - every fade-from-black is transparent on its first frame, whoever asked for it. Patch "
+		  "target is this address + 5; guard site is this address, so both derive from one anchor and cannot "
+		  "drift apart. "
+		  "⚠ THE LEADING `41 C6 40 25 01` IS LOAD-BEARING. fade_out is byte-identical from the lea onward and "
+		  "sits 0xE0 earlier; without the direction byte the 32 bytes after it match BOTH functions. The 01 is "
+		  "what says fade-FROM-black (fade_out writes 00 there, and 1.0f rather than 0 as its resting value). "
+		  "Patching fade_out too would break every intentional fade TO black. Unique at all 37 bytes." },
 
 		{ Anchor::TriggerVolumeTestPoint, "TriggerVolumeTestPoint",
 		  "40 55 53 56 57 41 54 41 55 41 56 41 57 48 8D 6C 24 E8 48 81 EC 18 01 00 00 48 63 D9 4D 8B F0 8B 0D ?? ?? ?? ?? C5 F8 29 B4 24 00 01 00 00",

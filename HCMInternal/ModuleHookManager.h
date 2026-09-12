@@ -30,6 +30,14 @@ private:
 	static inline safetyhook::InlineHook mHook_LoadLibraryExW;
 	static inline safetyhook::InlineHook mHook_FreeLibrary;
 
+	// ⚠ The first bytes at each kernel32 site as WE left them, captured right after install. Compared at
+	// teardown so we never restore over another injector's hook - the same rule the dxgi sites follow.
+	// static inline: these outlive a session, exactly like the hooks they describe.
+	static constexpr size_t kLoaderSiteBytes = 16;
+	static inline uint8_t mLoaderSiteSnapshot[5][kLoaderSiteBytes]{};
+	static inline void* mLoaderSiteAddress[5]{};
+	static inline bool mLoaderSitesSnapshotted = false;
+
 	// So we can process the hooks we need to attach/detach of the loading/unloading library
 	static HMODULE newLoadLibraryA(LPCSTR lpLibFileName);
 	static HMODULE newLoadLibraryW(LPCWSTR lpLibFileName);

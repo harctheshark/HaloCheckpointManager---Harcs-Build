@@ -37,6 +37,11 @@ const std::wstring& ModuleHookBase::getAssociatedModule() const
 	return this->mAssociatedModule;
 }
 
+void ModuleInlineHook::retireFromManager()
+{
+	ModuleHookManager::removeHook(getAssociatedModule(), this);
+}
+
 ModuleInlineHook::~ModuleInlineHook()
 {
 	detach();

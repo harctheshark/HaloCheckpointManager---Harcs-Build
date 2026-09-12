@@ -11,6 +11,7 @@
 #include "GUISpeedhack.h"
 #include "GUIGameSpeed.h"
 #include "GUIHCEConsole.h"
+#include "GUIHCESwitchZoneSet.h"
 #include "GUIInvulnerability.h"
 #include "GUIHeading.h"
 #include "GUISubHeading.h"
@@ -2284,6 +2285,7 @@ private:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
 					(game, ToolTipCollection("Run HaloScript directly. This is the game's own script language - the same one the campaign missions are written in."), "HaloScript", headerChildElements
 						{
+							createNestedElement(GUIElementEnum::hceSwitchZoneSetGUI),
 							createNestedElement(GUIElementEnum::hceConsoleGUI),
 						}
 					));
@@ -2791,7 +2793,11 @@ private:
 
 				case GUIElementEnum::hceDisableFadeFromBlackGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Removes the fade-in from black after a checkpoint revert, so you get your view back instantly. Only affects the fade the restore path starts - script and cinematic fades are untouched. Level loads and mission restarts come back instantly too, since they share that path."), RebindableHotkeyEnum::hceDisableFadeFromBlackHotkey, "Disable Fade From Black", settings->hceDisableFadeFromBlackToggle));
+						(game, ToolTipCollection("Removes the fade-in from black, so you get your view back instantly. Covers EVERY fade-from-black: checkpoint reverts, level loads, mission restarts, and the fades a level script or cinematic starts. Fades TO black still play normally, so cinematic transitions out are unaffected."), RebindableHotkeyEnum::hceDisableFadeFromBlackHotkey, "Disable Fade From Black", settings->hceDisableFadeFromBlackToggle));
+
+				case GUIElementEnum::hceSwitchZoneSetGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHCESwitchZoneSet>
+						(game, ToolTipCollection("Switch to any zone set the CURRENT level declares.\n\nThe list is read straight out of the loaded scenario tag, so it is correct on every level with no shipped per-level table - pick one and press the button.\n\nA zone set controls which BSPs are resident. Switching is how the game itself moves you between the sections of a level, so this can load geometry you have not reached yet, or unload what you are standing on.\n\nThe entry marked <- current is the one the game is on. Note it updates as soon as the switch is REQUESTED, before the BSPs have finished loading.\n\nEvery level also ships one internal zone set with no name in the tag; it is listed for completeness but cannot be switched to, because HaloScript addresses zone sets BY NAME and it has none."), std::nullopt, "Switch Zone Set", settings->hceSwitchZoneSetEvent));
 
 				case GUIElementEnum::hceConsoleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHCEConsole>

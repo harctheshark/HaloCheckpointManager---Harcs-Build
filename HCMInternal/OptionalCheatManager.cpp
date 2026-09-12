@@ -38,6 +38,7 @@
 #include "HCEGameSpeed.h"
 #include "HCEGameThreadPump.h"
 #include "HCEConsole.h"
+#include "HCESwitchZoneSet.h"
 #include "HCEFreecamKeepPosition.h"
 #include "HCEFreecamDrift.h"
 

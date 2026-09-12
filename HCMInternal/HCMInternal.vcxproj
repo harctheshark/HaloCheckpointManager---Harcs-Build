@@ -588,6 +588,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HCEGameSpeed.h" />
     <ClInclude Include="HCEGameThreadPump.h" />
     <ClInclude Include="HCEConsole.h" />
+    <ClInclude Include="HCESwitchZoneSet.h" />
+    <ClInclude Include="GUIHCESwitchZoneSet.h" />
     <ClInclude Include="GUIHCEConsole.h" />
     <ClInclude Include="HCEFreecamKeepPosition.h" />
     <ClInclude Include="HCEAISquadOverlay.h" />
@@ -922,6 +924,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="HCEGameSpeed.cpp" />
     <ClCompile Include="HCEGameThreadPump.cpp" />
     <ClCompile Include="HCEConsole.cpp" />
+    <ClCompile Include="HCESwitchZoneSet.cpp" />
     <ClCompile Include="HCEFreecamKeepPosition.cpp" />
     <ClCompile Include="HCEFreecamDrift.cpp" />
     <ClCompile Include="HCEScriptRegistry.cpp" />

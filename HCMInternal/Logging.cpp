@@ -53,13 +53,27 @@ void Logging::initConsoleLogging()
      // Delete the file if it already exists
      remove(logFileDestination.c_str());
 
+     // ⚠⚠ REGISTER THE APPENDER ONCE PER PROCESS, NOT ONCE PER SESSION.
+     // The appender is a function-local static, so it stays bound to the FIRST session's filename; and
+     // plog::init/addAppender both push_back with no dedup, so session N used to write every record N
+     // times - into session 1's file, while the "log written to" line named a file this function had just
+     // deleted. Re-point the existing appender instead: setFileName closes the current file and resets
+     // the first-write flag, which is exactly a session rollover.
      // rolling behaviour disabled by setting maxSize to 0
      static plog::RollingFileAppender<plog::TxtFormatter> fileAppender(logFileDestination.c_str(), 0, 0);
-     plog::init<FileAppender>(plog::verbose, &fileAppender);
-
-    // log using both appenders
-     // Always set this to verbose, the appenders will filter according to their own severity
-    plog::init(plog::verbose).addAppender(plog::get<FileAppender>());
+     static bool appenderRegistered = false;
+     if (!appenderRegistered)
+     {
+         plog::init<FileAppender>(plog::verbose, &fileAppender);
+         // log using both appenders
+         // Always set this to verbose, the appenders will filter according to their own severity
+         plog::init(plog::verbose).addAppender(plog::get<FileAppender>());
+         appenderRegistered = true;
+     }
+     else
+     {
+         fileAppender.setFileName(logFileDestination.c_str());
+     }
 }
 
 

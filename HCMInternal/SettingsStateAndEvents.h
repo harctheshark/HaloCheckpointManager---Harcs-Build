@@ -133,6 +133,9 @@ public:
 	std::shared_ptr<ActionEvent> advanceTicksEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceCheckpointEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceRevertEvent = std::make_shared<ActionEvent>();
+	// HaloCER: fired by the Switch Zone Set button. The selected index lives in HCEZoneSetBridge, not here,
+	// because the list is per-scenario and there is nothing meaningful to serialise between levels.
+	std::shared_ptr<ActionEvent> hceSwitchZoneSetEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceDoubleRevertEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceCoreSaveEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceCoreLoadEvent = std::make_shared<ActionEvent>();

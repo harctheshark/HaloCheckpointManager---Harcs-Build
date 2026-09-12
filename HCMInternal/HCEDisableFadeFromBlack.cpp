@@ -33,13 +33,13 @@ private:
 	std::weak_ptr<IMessagesGUI> messagesGUIWeak;
 	std::shared_ptr<RuntimeExceptionHandler> runtimeExceptions;
 
-	// The patch target is the IMMEDIATE (one byte), the guard covers the WHOLE instruction that contains it -
-	// so a match proves we are looking at `mov r9d, 3Ch` and not at whatever a game update might have moved
-	// into that address.
-	std::shared_ptr<MultilevelPointer> mPatchTarget;    // 0x2117CA, the imm8
-	std::shared_ptr<MultilevelPointer> mGuardSite;      // 0x2117C8, the instruction start
-	std::shared_ptr<std::vector<byte>> mExpectedBytes;  // 41 B9 3C 00 00 00
-	std::shared_ptr<std::vector<byte>> mPatchCode;      // 00
+	// The guard starts 5 bytes BEFORE the patch target, at fade_in's direction-byte write. That is not
+	// incidental: fade_out is byte-identical from the patched instruction onward, so the direction byte is the
+	// only thing proving we are about to neuter the fade FROM black and not the fade TO black.
+	std::shared_ptr<MultilevelPointer> mPatchTarget;    // 0x213257, `lea eax,[rdx+r10]`
+	std::shared_ptr<MultilevelPointer> mGuardSite;      // 0x213252, `mov byte[r8+0x25],1`
+	std::shared_ptr<std::vector<byte>> mExpectedBytes;  // 41 C6 40 25 01 42 8D 04 12 45 89 50 28 45 33 C9 41 89 40 2C
+	std::shared_ptr<std::vector<byte>> mPatchCode;      // 44 89 D0 90  (mov eax,r10d ; nop)
 
 	std::unique_ptr<ModulePatch> mPatch;
 
@@ -104,7 +104,7 @@ private:
 
 			if (mccStateHook->isGameCurrentlyPlaying(mGame))
 				messagesGUI->addMessage(newValue
-					? "Fade from black disabled - reverts come back instantly."
+					? "Fade from black disabled - fade-ins are instant."
 					: "Fade from black restored.");
 		}
 		catch (HCMRuntimeException ex)

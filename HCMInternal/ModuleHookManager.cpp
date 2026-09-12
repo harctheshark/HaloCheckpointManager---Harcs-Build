@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "ModuleHookManager.h"
+#include "HookGraveyard.h"
 #include "WindowsUtilities.h"
 #include "ImageResidencyGuard.h"
 
@@ -20,6 +21,21 @@ ModuleHookManager::ModuleHookManager()
 	mHook_LoadLibraryExW = safetyhook::create_inline(&LoadLibraryExW, &newLoadLibraryExW); // Crashes on safetyhook 0.5.3 due to shared mem page with VirtualProtect.
 	mHook_FreeLibrary = safetyhook::create_inline(&FreeLibrary, &newFreeLibrary);
 
+	// Record what we left at each site, so teardown can tell "still ours" from "somebody hooked over us".
+	// Only on the first session - on later ones the hooks may have been kept installed, and re-snapshotting
+	// would record another injector's bytes as if they were ours.
+	if (!mLoaderSitesSnapshotted)
+	{
+		void* const sites[5] = { (void*)&LoadLibraryA, (void*)&LoadLibraryW, (void*)&LoadLibraryExA,
+								 (void*)&LoadLibraryExW, (void*)&FreeLibrary };
+		for (int i = 0; i < 5; i++)
+		{
+			mLoaderSiteAddress[i] = sites[i];
+			memcpy(mLoaderSiteSnapshot[i], sites[i], kLoaderSiteBytes);
+		}
+		mLoaderSitesSnapshotted = true;
+	}
+
 	//mModuleHooksMap.reserve(6); // probably only the 6 game dll's that we might care about ever
 	PLOG_VERBOSE << "Hooking module load/unload done";
 }
@@ -32,11 +48,32 @@ ModuleHookManager::~ModuleHookManager()
 	// otherwise we could have a stale reference issue
 	detachAllHooks();
 
-	mHook_LoadLibraryA.reset();
-	mHook_LoadLibraryW.reset();
-	mHook_LoadLibraryExA.reset();
-	mHook_LoadLibraryExW.reset();
-	mHook_FreeLibrary.reset();
+	// ⚠⚠⚠ NEVER BLIND-RESTORE A SHARED FUNCTION. reset() destroys the hook, and ~InlineHook -> disable()
+	// unconditionally writes our saved "original" bytes back over whatever is at the site NOW. These five
+	// are kernel32's loader entry points - the most contended addresses in the process, hooked by every
+	// other injector and anti-cheat in it. Restoring over one of those erases their hook and cuts their
+	// dispatch, and until now HCM did it on every single session end.
+	// Same rule as the dxgi sites: if it is still ours, take it down; if it is not, leave it installed and
+	// forwarding, and let the graveyard keep it mapped forever.
+	safetyhook::InlineHook* const hooks[5] = { &mHook_LoadLibraryA, &mHook_LoadLibraryW, &mHook_LoadLibraryExA,
+											   &mHook_LoadLibraryExW, &mHook_FreeLibrary };
+	static const char* const names[5] = { "LoadLibraryA", "LoadLibraryW", "LoadLibraryExA", "LoadLibraryExW", "FreeLibrary" };
+	for (int i = 0; i < 5; i++)
+	{
+		if (!*hooks[i]) continue;
+		const bool stillOurs = mLoaderSitesSnapshotted && mLoaderSiteAddress[i]
+			&& memcmp(mLoaderSiteAddress[i], mLoaderSiteSnapshot[i], kLoaderSiteBytes) == 0;
+		if (stillOurs)
+		{
+			hooks[i]->reset();
+		}
+		else
+		{
+			PLOG_WARNING << "kernel32 hook site " << names[i] << " no longer contains HCM's patch - another "
+				"injector hooked over us. LEAVING our hook installed rather than erasing theirs.";
+			HookGraveyard::keepInstalled(*hooks[i]);
+		}
+	}
 
 }
 

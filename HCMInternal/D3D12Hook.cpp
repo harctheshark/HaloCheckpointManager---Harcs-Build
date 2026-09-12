@@ -468,6 +468,13 @@ D3D12Hook::D3D12Hook(std::weak_ptr<PointerDataStore> pointerDataStore)
 	// rather than in the destructor: shuttingDown in particular must STAY true after teardown so a
 	// straggling detour keeps forwarding.
 	shuttingDown.store(false, std::memory_order_release);
+	// ⚠ An ADOPTED hook is already live at this point, so nothing may run a detour body until
+	// beginHook() has finished. Under the old lifecycle this was guaranteed by there being no hook yet.
+	servicesReady.store(false, std::memory_order_release);
+	// N2: static inline and never reset, so from session 2 the re-hook watchdog read session 1's count,
+	// concluded "presents are reaching HCM", stood down, and never fired again - which is why a dead
+	// overlay in session 2 would have been completely silent.
+	mPresentDetourFires.store(0, std::memory_order_relaxed);
 	mQueueSearchActive.store(true, std::memory_order_relaxed);
 	mRejectedSwapChain.store(nullptr, std::memory_order_relaxed);
 	mRejectedSwapChainSkips.store(0, std::memory_order_relaxed);
@@ -755,6 +762,43 @@ void D3D12Hook::beginHook()
 		// Detours trampolines back into. See setOBSBypass.
 		mHarvestedAddresses = addresses;
 
+		// ⚠⚠⚠ ADOPT ANY HOOK A PREVIOUS SESSION LEFT INSTALLED.
+		// ~D3D12Hook deliberately leaves a hook in place when another overlay has patched over it - see the
+		// long comment there. Such a hook is still live, still forwarding, and its trampoline is still
+		// published in the gOriginal* atomic. Calling create_inline again over OUR OWN jmp would take that
+		// jmp as the "original" bytes and build a trampoline that calls straight back into us: an infinite
+		// loop in Present, i.e. a hung game on the second injection.
+		// So when a trampoline is already published we do not re-hook, we ADOPT. The per-instance hook member
+		// stays empty, which is exactly right - ~D3D12Hook only parks hooks it actually owns (`if (!hook)
+		// return;`), so an adopted hook is left alone again on the way out.
+		const bool adoptExecute   = gOriginalExecuteCommandLists.load(std::memory_order_acquire) != nullptr;
+		const bool adoptPresent   = gOriginalPresent.load(std::memory_order_acquire) != nullptr;
+		const bool adoptPresent1  = gOriginalPresent1.load(std::memory_order_acquire) != nullptr;
+		const bool adoptResize    = gOriginalResizeBuffers.load(std::memory_order_acquire) != nullptr;
+		const bool adoptResize1   = gOriginalResizeBuffers1.load(std::memory_order_acquire) != nullptr;
+		const bool adoptCreateSC  = gOriginalCreateSwapChain.load(std::memory_order_acquire) != nullptr;
+		const bool adoptCreateSCH = gOriginalCreateSwapChainForHwnd.load(std::memory_order_acquire) != nullptr;
+		mAdopted[0] = adoptPresent;  mAdopted[1] = adoptPresent1;
+		mAdopted[2] = adoptResize;   mAdopted[3] = adoptResize1;
+		mAdopted[4] = adoptExecute;  mAdopted[5] = adoptCreateSC;  mAdopted[6] = adoptCreateSCH;
+		if (adoptExecute || adoptPresent || adoptPresent1 || adoptResize || adoptResize1
+			|| adoptCreateSC || adoptCreateSCH)
+		{
+			PLOG_INFO << "Adopting renderer hooks left installed by a previous HCM session: ExecuteCommandLists="
+				<< adoptExecute << " Present=" << adoptPresent << " Present1=" << adoptPresent1
+				<< " ResizeBuffers=" << adoptResize << " ResizeBuffers1=" << adoptResize1
+				<< " CreateSwapChain=" << adoptCreateSC << " CreateSwapChainForHwnd=" << adoptCreateSCH
+				<< ". They stayed in the chain because another overlay was hooked over them.";
+			// An adopted hook points at detour code in this image, so the image must stay mapped. (dllmain
+			// pins unconditionally now, but this keeps the invariant true independently of that.)
+			mMustStayResident = true;
+		}
+
+		// ⚠ THE ONLY RECORD OF WHAT THE PREVIOUS SESSION ACTUALLY LEFT BEHIND. Every other dump in this
+		// file ("before disable", "after restore", "all hooks down") runs BEFORE member destruction, so
+		// none of them could ever observe a hook being erased by ~InlineHook on the way out.
+		logSwapChainHookSiteBytes("session start");
+
 		// Every hook below follows the same three-step dance:
 		//     create (StartDisabled) -> publish the trampoline -> enable
 		// so that a detour firing on another thread can never observe an installed hook whose
@@ -766,7 +810,7 @@ void D3D12Hook::beginHook()
 		// GROUND TRUTH, installed before anything that could race it. All three are OPTIONAL: none of
 		// them fires on a late attach, and their whole purpose is to upgrade the statistic to a fact
 		// the next time the game recreates its swapchain - i.e. on any render-mode or FG change.
-		if (addresses.createSwapChainForHwnd)
+		if (addresses.createSwapChainForHwnd && !adoptCreateSCH)
 		{
 			createSwapChainForHwndHook = safetyhook::create_inline(addresses.createSwapChainForHwnd, &newCreateSwapChainForHwnd, safetyhook::InlineHook::StartDisabled);
 			if (createSwapChainForHwndHook)
@@ -779,7 +823,7 @@ void D3D12Hook::beginHook()
 		// ⚠ Only hook slot 10 when it is genuinely a DIFFERENT function. Same reasoning as the
 		// present1 != present guard below: dxgi's CreateSwapChain reaches the ForHwnd body internally on
 		// some builds, and hooking one address twice corrupts the trampoline.
-		if (addresses.createSwapChain && addresses.createSwapChain != addresses.createSwapChainForHwnd)
+		if (addresses.createSwapChain && addresses.createSwapChain != addresses.createSwapChainForHwnd && !adoptCreateSC)
 		{
 			createSwapChainHook = safetyhook::create_inline(addresses.createSwapChain, &newCreateSwapChain, safetyhook::InlineHook::StartDisabled);
 			if (createSwapChainHook)
@@ -789,19 +833,25 @@ void D3D12Hook::beginHook()
 			}
 		}
 
-		executeCommandListsHook = safetyhook::create_inline(addresses.executeCommandLists, &newDX12ExecuteCommandLists, safetyhook::InlineHook::StartDisabled);
-		if (!executeCommandListsHook)
-			throw HCMInitException("Failed to hook ID3D12CommandQueue::ExecuteCommandLists");
-		gOriginalExecuteCommandLists.store(executeCommandListsHook.original<DX12ExecuteCommandLists*>(), std::memory_order_release);
-		if (!executeCommandListsHook.enable())
-			throw HCMInitException("Failed to enable the ID3D12CommandQueue::ExecuteCommandLists hook");
+		if (!adoptExecute)
+		{
+			executeCommandListsHook = safetyhook::create_inline(addresses.executeCommandLists, &newDX12ExecuteCommandLists, safetyhook::InlineHook::StartDisabled);
+			if (!executeCommandListsHook)
+				throw HCMInitException("Failed to hook ID3D12CommandQueue::ExecuteCommandLists");
+			gOriginalExecuteCommandLists.store(executeCommandListsHook.original<DX12ExecuteCommandLists*>(), std::memory_order_release);
+			if (!executeCommandListsHook.enable())
+				throw HCMInitException("Failed to enable the ID3D12CommandQueue::ExecuteCommandLists hook");
+		}
 
-		presentHook = safetyhook::create_inline(addresses.present, &newDX12Present, safetyhook::InlineHook::StartDisabled);
-		if (!presentHook)
-			throw HCMInitException("Failed to hook IDXGISwapChain::Present");
-		gOriginalPresent.store(presentHook.original<DX12Present*>(), std::memory_order_release);
-		if (!presentHook.enable())
-			throw HCMInitException("Failed to enable the IDXGISwapChain::Present hook");
+		if (!adoptPresent)
+		{
+			presentHook = safetyhook::create_inline(addresses.present, &newDX12Present, safetyhook::InlineHook::StartDisabled);
+			if (!presentHook)
+				throw HCMInitException("Failed to hook IDXGISwapChain::Present");
+			gOriginalPresent.store(presentHook.original<DX12Present*>(), std::memory_order_release);
+			if (!presentHook.enable())
+				throw HCMInitException("Failed to enable the IDXGISwapChain::Present hook");
+		}
 
 		// UE5's D3D12 RHI presents through Present1, so this one is what actually makes the overlay
 		// appear on HaloCampaignEvolved.exe. It is still only best-effort: on the (impossible on
@@ -809,7 +859,7 @@ void D3D12Hook::beginHook()
 		// slot-8 hook and log, rather than refusing to start.
 		// If dxgi implements both slots with the same body, hooking it twice would corrupt the
 		// prologue - so never install the second hook over the same address.
-		if (addresses.present1 && addresses.present1 != addresses.present)
+		if (addresses.present1 && addresses.present1 != addresses.present && !adoptPresent1)
 		{
 			present1Hook = safetyhook::create_inline(addresses.present1, &newDX12Present1, safetyhook::InlineHook::StartDisabled);
 			if (!present1Hook)
@@ -832,16 +882,19 @@ void D3D12Hook::beginHook()
 			PLOG_WARNING << "IDXGISwapChain1::Present1 was not hooked (address unavailable, or identical to Present)";
 		}
 
-		resizeBuffersHook = safetyhook::create_inline(addresses.resizeBuffers, &newDX12ResizeBuffers, safetyhook::InlineHook::StartDisabled);
-		if (!resizeBuffersHook)
-			throw HCMInitException("Failed to hook IDXGISwapChain::ResizeBuffers");
-		gOriginalResizeBuffers.store(resizeBuffersHook.original<DX12ResizeBuffers*>(), std::memory_order_release);
-		if (!resizeBuffersHook.enable())
-			throw HCMInitException("Failed to enable the IDXGISwapChain::ResizeBuffers hook");
+		if (!adoptResize)
+		{
+			resizeBuffersHook = safetyhook::create_inline(addresses.resizeBuffers, &newDX12ResizeBuffers, safetyhook::InlineHook::StartDisabled);
+			if (!resizeBuffersHook)
+				throw HCMInitException("Failed to hook IDXGISwapChain::ResizeBuffers");
+			gOriginalResizeBuffers.store(resizeBuffersHook.original<DX12ResizeBuffers*>(), std::memory_order_release);
+			if (!resizeBuffersHook.enable())
+				throw HCMInitException("Failed to enable the IDXGISwapChain::ResizeBuffers hook");
+		}
 
 		// Best-effort, same reasoning as Present1: missing it means the game could resize while we
 		// still hold back-buffer references, which fails its resize - so we want it if we can get it.
-		if (addresses.resizeBuffers1 && addresses.resizeBuffers1 != addresses.resizeBuffers)
+		if (addresses.resizeBuffers1 && addresses.resizeBuffers1 != addresses.resizeBuffers && !adoptResize1)
 		{
 			resizeBuffers1Hook = safetyhook::create_inline(addresses.resizeBuffers1, &newDX12ResizeBuffers1, safetyhook::InlineHook::StartDisabled);
 			if (!resizeBuffers1Hook)
@@ -876,6 +929,9 @@ void D3D12Hook::beginHook()
 
 		// Frames may never reach us if another overlay owns the chain - see startRehookWatchdog().
 		startRehookWatchdog();
+
+		// ⚠ LAST. Everything above must be in place before any detour body is allowed to run.
+		servicesReady.store(true, std::memory_order_release);
 
 		PLOG_DEBUG << "D3D12 hooks set";
 	}
@@ -1960,6 +2016,12 @@ void D3D12Hook::renderOverlayFrame(IDXGISwapChain* pSwapChain, UINT presentFlags
 	if (shuttingDown.load(std::memory_order_acquire))
 		return;
 
+	// ⚠ An adopted hook fires from the CONSTRUCTOR onward, not from beginHook(). App builds ~15 services
+	// and parses all pointer data in between, so without this the first Present of a re-opened session
+	// re-enters a half-built service graph.
+	if (!servicesReady.load(std::memory_order_acquire))
+		return;
+
 
 	// Once shutdown has begun, stop invoking HCM's render/overlay callbacks. The services they
 	// call into are being destroyed on the shutdown thread; firing render events here races with
@@ -2295,6 +2357,11 @@ HRESULT __stdcall D3D12Hook::newDX12Present(IDXGISwapChain* pSwapChain, UINT Syn
 HRESULT __stdcall D3D12Hook::newDX12Present1(IDXGISwapChain1* pSwapChain, UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters)
 {
 	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::newDX12Present1");
+
+	// ⚠ Must be counted here too. The re-hook watchdog treats this as "presents are reaching HCM", and
+	// Halo Campaign Evolved (UE5) presents through Present1 exclusively - so counting only in
+	// newDX12Present meant the watchdog was blind on the one title that needs it most.
+	mPresentDetourFires.fetch_add(1, std::memory_order_relaxed);
 
 	DetourEntryGuard entry(swapChainHookGuard);
 
@@ -2701,7 +2768,17 @@ HRESULT __stdcall D3D12Hook::newCreateSwapChain(IDXGIFactory* pFactory, IUnknown
 
 	DetourEntryGuard entry(swapChainHookGuard);
 
-	const HRESULT hr = d3d->createSwapChainHook.stdcall<HRESULT>(pFactory, pDevice, pDesc, ppSwapChain);
+	// ⚠ Forward through the published trampoline, NOT the member. When this hook was adopted from a
+	// previous session the member is EMPTY, and InlineHook::stdcall on an empty hook returns RetT() -
+	// S_OK for an HRESULT, with *ppSwapChain never written. The caller then uses an uninitialised
+	// swapchain pointer it believes it owns.
+	auto* originalCreate = gOriginalCreateSwapChain.load(std::memory_order_acquire);
+	if (!originalCreate)
+	{
+		PLOG_ERROR << "newCreateSwapChain: no trampoline published; cannot forward";
+		return E_FAIL;
+	}
+	const HRESULT hr = originalCreate(pFactory, pDevice, pDesc, ppSwapChain);
 	if (SUCCEEDED(hr) && ppSwapChain && *ppSwapChain)
 		recordAuthoritativeQueue(pDevice, *ppSwapChain, "CreateSwapChain");
 	return hr;
@@ -2721,7 +2798,13 @@ HRESULT __stdcall D3D12Hook::newCreateSwapChainForHwnd(IDXGIFactory2* pFactory, 
 
 	DetourEntryGuard entry(swapChainHookGuard);
 
-	const HRESULT hr = d3d->createSwapChainForHwndHook.stdcall<HRESULT>(
+	auto* originalCreateHwnd = gOriginalCreateSwapChainForHwnd.load(std::memory_order_acquire);
+	if (!originalCreateHwnd)
+	{
+		PLOG_ERROR << "newCreateSwapChainForHwnd: no trampoline published; cannot forward";
+		return E_FAIL;
+	}
+	const HRESULT hr = originalCreateHwnd(
 		pFactory, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
 	if (SUCCEEDED(hr) && ppSwapChain && *ppSwapChain)
 		recordAuthoritativeQueue(pDevice, *ppSwapChain, "CreateSwapChainForHwnd");
@@ -2793,6 +2876,7 @@ void __stdcall D3D12Hook::newDX12ExecuteCommandLists(ID3D12CommandQueue* pComman
 
 	if (pCommandQueue != nullptr
 		&& !shuttingDown.load(std::memory_order_relaxed)
+		&& servicesReady.load(std::memory_order_acquire)   // adopted hooks fire before beginHook completes
 		&& !GlobalKill::isKillSet())
 	{
 		if (mQueueSearchActive.load(std::memory_order_relaxed))
@@ -3122,6 +3206,7 @@ D3D12Hook::~D3D12Hook()
 	stopRehookWatchdog();
 
 	shuttingDown.store(true, std::memory_order_release);
+	servicesReady.store(false, std::memory_order_release);   // adopted hooks outlive us; stop their bodies first
 	mQueueSearchActive.store(false, std::memory_order_relaxed);
 
 	// 1b. The OBS bypass thunks sit on OBS's trampoline pointers, one link further down the same
@@ -3187,33 +3272,51 @@ D3D12Hook::~D3D12Hook()
 		// until the game restarts. That is the price of not breaking someone else's renderer, and it is the
 		// cheaper of the two outcomes by a wide margin.
 		bool leftInstalled = false;
-		auto parkIfOurs = [&](int index, const char* name, safetyhook::InlineHook& hook)
+		bool tookDown[kHookSiteCount] = {};
+		// Returns TRUE only when the site was genuinely restored to what was there before HCM.
+		auto parkIfOurs = [&](int index, const char* name, safetyhook::InlineHook& hook) -> bool
 		{
-			if (!hook) return;
+			if (!hook) return false;   // never installed, or ADOPTED - either way we did not take it down
 			if (!hookSiteIsStillOurs(index))
 			{
 				PLOG_WARNING << "hook site " << name << " no longer contains HCM's patch - another overlay "
 					"(RivaTuner / Steam overlay / Streamline) hooked over us. LEAVING our hook installed rather "
 					"than erasing theirs.";
 				leftInstalled = true;
-				return;   // deliberately not disabled, not parked: it stays live and forwarding
+				// ⚠⚠⚠ MOVING IT OUT IS NOT OPTIONAL. This branch used to just `return;`, which reads as
+				// "leave it alone" but is not: the member is a BY-VALUE safetyhook::InlineHook, so
+				// ~D3D12Hook runs ~InlineHook -> destroy() -> disable(), and disable() unconditionally
+				// copies our saved original bytes back over the target. That erased the third party's jmp
+				// a hundred lines after the log line promising we would not - so the promise this whole
+				// branch exists to keep was never actually kept. keepInstalled() moves it into the leaked
+				// graveyard, where no destructor will ever run on it.
+				HookGraveyard::keepInstalled(hook);
+				return false;
 			}
 			if (!HookGraveyard::park(hook)) { PLOG_ERROR << "could not disable the " << name << " hook; destroying it"; hook = {}; }
+			return true;
 		};
 
-		parkIfOurs(0, "Present",        presentHook);
-		parkIfOurs(1, "Present1",       present1Hook);
-		parkIfOurs(2, "ResizeBuffers",  resizeBuffersHook);
-		parkIfOurs(3, "ResizeBuffers1", resizeBuffers1Hook);
+		tookDown[0] = parkIfOurs(0, "Present",        presentHook);
+		tookDown[1] = parkIfOurs(1, "Present1",       present1Hook);
+		tookDown[2] = parkIfOurs(2, "ResizeBuffers",  resizeBuffersHook);
+		tookDown[3] = parkIfOurs(3, "ResizeBuffers1", resizeBuffers1Hook);
+		// B3: these two were previously restored with NO "still ours" check at all, over the very
+		// functions RTSS and the Steam overlay hook, and their trampoline atomics were never nulled.
+		tookDown[5] = parkIfOurs(5, "CreateSwapChain",        createSwapChainHook);
+		tookDown[6] = parkIfOurs(6, "CreateSwapChainForHwnd", createSwapChainForHwndHook);
 
 		logSwapChainHookSiteBytes("after restore");
 
-		// ⚠ ONLY null the trampoline pointers for hooks we actually took down. A hook we left installed is still
-		// going to fire, and its detour forwards through exactly these - nulling them would strand the call.
-		if (!presentHook)        gOriginalPresent.store(nullptr, std::memory_order_release);
-		if (!present1Hook)       gOriginalPresent1.store(nullptr, std::memory_order_release);
-		if (!resizeBuffersHook)  gOriginalResizeBuffers.store(nullptr, std::memory_order_release);
-		if (!resizeBuffers1Hook) gOriginalResizeBuffers1.store(nullptr, std::memory_order_release);
+		// ⚠ Null a trampoline ONLY for a site we actually took down. A hook left installed - or adopted and
+		// left installed again - is still going to fire, and forwards through exactly these. Nulling one of
+		// those strands the call, and the COM fallback then re-enters our own still-installed jmp.
+		if (tookDown[0]) gOriginalPresent.store(nullptr, std::memory_order_release);
+		if (tookDown[1]) gOriginalPresent1.store(nullptr, std::memory_order_release);
+		if (tookDown[2]) gOriginalResizeBuffers.store(nullptr, std::memory_order_release);
+		if (tookDown[3]) gOriginalResizeBuffers1.store(nullptr, std::memory_order_release);
+		if (tookDown[5]) gOriginalCreateSwapChain.store(nullptr, std::memory_order_release);
+		if (tookDown[6]) gOriginalCreateSwapChainForHwnd.store(nullptr, std::memory_order_release);
 
 		if (leftInstalled) mMustStayResident = true;
 		PLOG_INFO << "D3D12 swapchain detours handled (trampolines deliberately leaked)"
@@ -3223,11 +3326,21 @@ D3D12Hook::~D3D12Hook()
 	// 3. Same for ExecuteCommandLists, under its own guard so it never serialised against Present.
 	{
 		std::unique_lock<std::shared_mutex> guard(executeCommandListsGuard);
-		if (!hookSiteIsStillOurs(4))
+		// ⚠ mAdopted must be tested FIRST. hookSiteIsStillOurs(4) returns TRUE for an adopted hook,
+		// because snapshotHookSites() skips empty members and an invalid snapshot defaults to "ours" -
+		// so without this the adopted case falls into the park branch and nulls a live trampoline.
+		if (mAdopted[4])
+		{
+			PLOG_INFO << "ExecuteCommandLists was adopted from a previous session; leaving it installed "
+				"and its trampoline published.";
+			mMustStayResident = true;
+		}
+		else if (!hookSiteIsStillOurs(4))
 		{
 			PLOG_WARNING << "hook site ExecuteCommandLists no longer contains HCM's patch - another overlay "
 				"hooked over us. LEAVING our hook installed rather than erasing theirs.";
 			mMustStayResident = true;
+			HookGraveyard::keepInstalled(executeCommandListsHook);   // see parkIfOurs: moving it out is mandatory
 		}
 		else
 		{
@@ -3249,11 +3362,15 @@ D3D12Hook::~D3D12Hook()
 		HMODULE pinned = nullptr;
 		GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
 			(LPCWSTR)&newDX12Present, &pinned);
-		PLOG_FATAL << "HCM left one or more renderer hooks installed because another overlay (most likely "
-			"RivaTuner Statistics Server / MSI Afterburner, or the Steam overlay) patched over them while HCM was "
-			"running. Removing ours would have erased theirs and crashed the game. HCMInternal.dll has therefore "
-			"been PINNED and will stay loaded until the game is restarted - HCM cannot be injected again in this "
-			"session. To avoid this entirely, close RivaTuner before using HCM.";
+		// ⚠ THIS IS A NORMAL OUTCOME, NOT A FAILURE. It used to be FATAL and told the user to close
+		// RivaTuner, because a pinned module could not be injected into again. That is no longer true:
+		// the module stays mapped, the hooks stay live and forwarding, and the NEXT session adopts them
+		// (see the adopt* flags in beginHook). Coexisting with other overlays is the supported path -
+		// leaving hooks in someone else's chain is the correct thing to do and now costs nothing.
+		PLOG_INFO << "Renderer hooks were left installed because another overlay (RivaTuner / MSI Afterburner, "
+			"Steam, OBS, Discord or NVIDIA Streamline) is hooked over them. Removing ours would erase theirs, "
+			"so they stay in the chain, still forwarding. HCMInternal.dll stays mapped to keep that code valid; "
+			"the next HCM session will adopt these hooks instead of re-installing them.";
 	}
 
 	// All five are now down. Anything still showing an E9 here was NOT restored - which, with five other hooking
@@ -3316,7 +3433,16 @@ void D3D12Hook::teardownOBSBypass(const char* reason)
 	const auto retire = [](std::shared_ptr<ModuleInlineHook>& hook)
 	{
 		if (!hook) return;
+		// Park the inner safetyhook FIRST. That moves the InlineHook out of the wrapper, so nothing
+		// afterwards can restore bytes or free the trampoline out from under a straggling thunk.
 		HookGraveyard::park(hook->getInlineHook());
+		// ⚠⚠⚠ THEN TAKE IT OUT OF ModuleHookManager'S MAP. That map is static and outlives the session,
+		// and postModuleLoad_UpdateHooks re-attaches EVERY entry whose wantsToBeAttached flag is set the
+		// next time graphics-hook64.dll loads. A retired hook left in there is a zombie that comes back
+		// alive beside the next session's live hook - two hooks on one address, and the thunk chain loops
+		// into itself. Removing the entry is safer than clearing the flag, because setWantsToBeAttached
+		// runs detach(), which frees the trampoline we just parked.
+		hook->retireFromManager();
 		retiredOBSBypassHooks().push_back(std::move(hook));
 		hook.reset();
 	};
@@ -3353,7 +3479,16 @@ void D3D12Hook::teardownOBSPreCapture(const char* reason)
 	const auto retire = [](std::shared_ptr<ModuleInlineHook>& hook)
 	{
 		if (!hook) return;
+		// Park the inner safetyhook FIRST. That moves the InlineHook out of the wrapper, so nothing
+		// afterwards can restore bytes or free the trampoline out from under a straggling thunk.
 		HookGraveyard::park(hook->getInlineHook());
+		// ⚠⚠⚠ THEN TAKE IT OUT OF ModuleHookManager'S MAP. That map is static and outlives the session,
+		// and postModuleLoad_UpdateHooks re-attaches EVERY entry whose wantsToBeAttached flag is set the
+		// next time graphics-hook64.dll loads. A retired hook left in there is a zombie that comes back
+		// alive beside the next session's live hook - two hooks on one address, and the thunk chain loops
+		// into itself. Removing the entry is safer than clearing the flag, because setWantsToBeAttached
+		// runs detach(), which frees the trampoline we just parked.
+		hook->retireFromManager();
 		retiredOBSBypassHooks().push_back(std::move(hook));
 		hook.reset();
 	};

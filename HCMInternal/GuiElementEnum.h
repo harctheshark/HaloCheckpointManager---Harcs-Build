@@ -514,6 +514,7 @@
 	((hceFreecamKeepPositionGUI, (HALOCER_ONLY)))\
 	((hceFreecamDriftGUI, (HALOCER_ONLY)))\
 	((hceFreecamDriftAmountGUI, (HALOCER_ONLY)))\
+	((hceSwitchZoneSetGUI, (HALOCER_ONLY)))\
 	((hceConsoleGUI, (HALOCER_ONLY)))\
 	((freeCameraUserInputCameraTranslationInterpolatorDrift, (FREE_CAMERA_SUPPORT)))\
 	((freeCameraUserInputCameraRotationInterpolatorDrift, (FREE_CAMERA_SUPPORT)))\

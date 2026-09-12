@@ -82,6 +82,26 @@ namespace HookGraveyard
 		return true;
 	}
 
+	// ⚠⚠⚠ KEEPS THE HOOK LIVE. The opposite of park(): moves the hook into the graveyard WITHOUT
+	// disabling it, so the target's bytes are NEVER restored and the trampoline stays mapped forever.
+	//
+	// This exists because MOVING IT OUT OF THE CALLER'S MEMBER IS NOT OPTIONAL. safetyhook::InlineHook
+	// members are held BY VALUE, and ~InlineHook -> destroy() -> disable() does an UNCONDITIONAL
+	// std::copy(m_original_bytes -> m_target) (inline_hook.cpp:414-439). So a caller that merely
+	// declines to park a hook - `return;` and let the member die - still has its saved "original" bytes
+	// written over whatever is at the site now. When the site belongs to another overlay, that erases a
+	// live third-party hook, which is precisely what declining to park was trying to avoid.
+	//
+	// The graveyard container is heap-leaked and never destroyed, so ~InlineHook never runs on anything
+	// moved here. Move-assign transfers m_target/m_trampoline/m_original_bytes/m_enabled and leaves the
+	// source empty and disabled (inline_hook.cpp:144-166), so vector reallocation is safe.
+	inline void keepInstalled(safetyhook::InlineHook& hook)
+	{
+		if (!hook) return;
+		std::scoped_lock lock(detail::mutex());
+		detail::inlineHooks()->push_back(std::move(hook));
+	}
+
 	inline size_t parkedCount()
 	{
 		std::scoped_lock lock(detail::mutex());

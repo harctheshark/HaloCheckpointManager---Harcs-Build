@@ -22,6 +22,7 @@
 #include <vector>
 #include <cstdint>
 #include <optional>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <mutex>
@@ -162,12 +163,22 @@ constexpr int GUIFrameHeightWithSpacing = GUIFrameHeight + GUISpacing;
 constexpr float GUIWindowWidth = 600.f;
 
 // for logging
+// ⚠⚠ ONCE PER SESSION, NOT ONCE PER PROCESS. The guard used to be a per-callsite `static bool`, so from
+// the second session onward all ~286 LOG_ONCE sites were permanently silent - and those are exactly the
+// "we got here at all" markers you need when diagnosing a re-opened session. Comparing against a
+// generation counter that the session start bumps makes each site fire once per session instead.
+namespace LogOnceGeneration
+{
+    inline std::atomic<uint32_t> current{ 1 };
+    inline void newSession() { current.fetch_add(1, std::memory_order_relaxed); }
+}
 template <typename T, typename F>
 void once(T t, F f) {
-    static bool first = true;
-    if (first) {
+    static uint32_t seen = 0;
+    const uint32_t gen = LogOnceGeneration::current.load(std::memory_order_relaxed);
+    if (seen != gen) {
         f();
-        first = false;
+        seen = gen;
     }
 }
 #define LOG_ONCE(x)   once([](){},[](){ x; });

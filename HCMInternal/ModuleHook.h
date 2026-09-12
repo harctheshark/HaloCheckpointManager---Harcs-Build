@@ -67,6 +67,13 @@ public:
 
 
 
+	// Takes this hook OUT of ModuleHookManager's map WITHOUT detaching it.
+	// ⚠ For a hook that is being retired but deliberately LEFT INSTALLED. That map is static and outlives
+	// the HCM session, and postModuleLoad_UpdateHooks re-attaches every entry whose wantsToBeAttached flag
+	// is set the next time its module loads - so a retired entry left in the map comes back alive beside
+	// the next session's live hook, putting two hooks on one address and looping the thunk chain.
+	void retireFromManager();
+
 	safetyhook::InlineHook& getInlineHook(); // Useful for calling original function
 
 	bool isHookInstalled() const final;

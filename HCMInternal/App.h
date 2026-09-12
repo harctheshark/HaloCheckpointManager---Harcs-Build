@@ -66,12 +66,13 @@ public:
         }
         catch(HCMInitException ex)
         {
-            int msgboxID = MessageBoxA(
-                NULL,
-                std::format("HCM internal failed to create shared memory, error:\n{}", ex.what()).c_str(),
-                "Halo checkpoint manager error",
-                MB_OK
-            );
+            // ⚠⚠⚠ OFF-THREAD, AND DETACHED. MessageBoxA blocks until dismissed, and behind a fullscreen
+            // game it is frequently never seen at all. Under the old lifecycle a stuck box merely pinned the
+            // DLL; now MainThread would never return, its SessionGuard would never run, gSessionRunning would
+            // stay true, and EVERY future session in this process would be refused - and with the module
+            // resident, LoadLibrary can no longer rescue it. A box nobody dismisses must not do that.
+            std::thread([msg = std::format("HCM internal failed to create shared memory, error:\n{}", ex.what())]
+                { MessageBoxA(NULL, msg.c_str(), "Halo checkpoint manager error", MB_OK); }).detach();
             return;
         }
 
@@ -327,12 +328,9 @@ public:
             // an invisible modal on the game's thread.
             if (findProcess(L"HCMExternal.exe") || findProcess(L"HaloCheckpointManager.exe"))
             {
-                MessageBoxA(
-                    NULL,
-                    oss.str().c_str(),
-                    "Halo Checkpoint Manager error",
-                    MB_OK
-                );
+                // ⚠ Detached: see the shared-memory failure path above. Same lockout reasoning.
+                std::thread([msg = oss.str()]
+                    { MessageBoxA(NULL, msg.c_str(), "Halo Checkpoint Manager error", MB_OK); }).detach();
             }
             else
             {

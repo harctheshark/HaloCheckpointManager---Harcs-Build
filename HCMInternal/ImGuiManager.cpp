@@ -88,10 +88,16 @@ LRESULT __stdcall ImGuiManager::mNewWndProc(const HWND hWnd, UINT uMsg, WPARAM w
 		}
 	}
 
+	// ⚠ Read it ONCE and null-check it. ~ImGuiManager nulls mOldWndProc on the shutdown thread while
+	// messages are still arriving here, and these two forwards had no guard - unlike the two above.
+	// CallWindowProc(nullptr, ...) is an access violation inside user32, attributed to the game.
+	const WNDPROC oldProc = ImGuiManager::mOldWndProc;
+
 	if (io.WantCaptureMouse == false)
 	{
 		// ImGui didn't handle the click so let MCC do it
-		return CallWindowProc(ImGuiManager::mOldWndProc, hWnd, uMsg, wParam, lParam);
+		return oldProc ? CallWindowProc(oldProc, hWnd, uMsg, wParam, lParam)
+		               : DefWindowProcW(hWnd, uMsg, wParam, lParam);
 	}
 	else
 	{
@@ -101,7 +107,8 @@ LRESULT __stdcall ImGuiManager::mNewWndProc(const HWND hWnd, UINT uMsg, WPARAM w
 		case WM_ACTIVATE:
 		case WM_ACTIVATEAPP:
 		case WM_NCACTIVATE:
-			return CallWindowProc(ImGuiManager::mOldWndProc, hWnd, uMsg, wParam, lParam);
+			return oldProc ? CallWindowProc(oldProc, hWnd, uMsg, wParam, lParam)
+			               : DefWindowProcW(hWnd, uMsg, wParam, lParam);
 			break;
 		default:
 			return true; // otherwise we just tell MCC to not worry about it
@@ -120,13 +127,42 @@ void ImGuiManager::initializeImGuiContextAndPlatform(HWND windowHandle)
 {
 	m_windowHandle = windowHandle;
 
-	// Setup the imgui WndProc callback
-	mOldWndProc = (WNDPROC)SetWindowLongPtrW(m_windowHandle, GWLP_WNDPROC, (LONG_PTR)&mNewWndProc);
+	// ⚠⚠⚠ ADOPT, DO NOT RE-SUBCLASS. If a previous session left our proc installed (see the teardown
+	// below: something subclassed above us, so removing ours would have deleted them from the chain),
+	// then our proc is STILL LIVE in this window's chain. Subclassing again would set mOldWndProc - a
+	// static, shared across sessions - to a proc that eventually calls back into ours, and every single
+	// window message would recurse until the stack died.
+	//
+	// The flag rather than "is our proc on top?" is deliberate: when we were left installed it is
+	// precisely because we are NOT on top, so comparing against the current proc would miss it and
+	// subclass anyway. Our old proc is still in the chain, still forwarding through the mOldWndProc it
+	// was installed with, and the new session simply reuses it.
+	if (mWndProcLeftInstalled.load(std::memory_order_acquire)
+		&& mWndProcInstalledOn.load(std::memory_order_acquire) == m_windowHandle)
+	{
+		PLOG_INFO << "ImGuiManager: adopting the window procedure a previous session left installed on this "
+			"same window (mOldWndProc kept at 0x" << std::hex << (uintptr_t)mOldWndProc << std::dec << ")";
+	}
+	else
+	{
+		if (mWndProcLeftInstalled.load(std::memory_order_acquire))
+			PLOG_WARNING << "ImGuiManager: a previous session left our proc on HWND 0x" << std::hex
+				<< (uintptr_t)mWndProcInstalledOn.load(std::memory_order_acquire) << ", but this session's window "
+				"is 0x" << (uintptr_t)m_windowHandle << std::dec << "; subclassing the new one";
+		// Setup the imgui WndProc callback
+		mOldWndProc = (WNDPROC)SetWindowLongPtrW(m_windowHandle, GWLP_WNDPROC, (LONG_PTR)&mNewWndProc);
+		mWndProcInstalledOn.store(m_windowHandle, std::memory_order_release);
+		mWndProcLeftInstalled.store(false, std::memory_order_release);
+	}
 
 
 	// Setup ImGui stuff
 	PLOG_DEBUG << "Initializing ImGui";
-	ImGui::CreateContext();
+	// ⚠ SET IT CURRENT. CreateContext RESTORES the previously-current context, so with the return value
+	// discarded a second session kept running against session 1's destroyed context - and that defeats
+	// mNewWndProc's ImGui::GetCurrentContext() guard, which is the check that stops the documented
+	// crash-when-RivaTuner-is-closed.
+	ImGui::SetCurrentContext(ImGui::CreateContext());
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags = ImGuiConfigFlags_NoMouseCursorChange;// | ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
 
@@ -283,7 +319,17 @@ ImGuiManager::~ImGuiManager()
 	//presentEventCallback.~ScopedCallback();
 	if (presentEventCallback) presentEventCallback->removeCallback(); // no new callback invokes
 	if (presentEventCallbackD3D12) presentEventCallbackD3D12->removeCallback();
-	if (mOldWndProc) 		// restore the original wndProc
+	// ⚠ A DESTROYED WINDOW IS NOT A THIRD-PARTY SUBCLASS. GetWindowLongPtrW on a dead HWND returns 0,
+	// which compares unequal to our proc and would latch mWndProcLeftInstalled with nobody else involved.
+	// HaloCER recreates its window mid-session, so this is the common case there, not a corner.
+	if (mOldWndProc && (!m_windowHandle || !IsWindow(m_windowHandle)))
+	{
+		PLOG_INFO << "ImGuiManager: our window is gone; there is no chain to restore and none to stay in.";
+		mOldWndProc = nullptr;
+		mWndProcInstalledOn.store(nullptr, std::memory_order_release);
+		mWndProcLeftInstalled.store(false, std::memory_order_release);
+	}
+	else if (mOldWndProc) 		// restore the original wndProc
 	{
 		// ⚠ ONLY RESTORE IF WE ARE STILL THE TOP OF THE CHAIN. WndProc subclassing is a linked list, and this
 		// used to write mOldWndProc back unconditionally. If anything subclassed AFTER us - RTSS, the Steam
@@ -299,6 +345,8 @@ ImGuiManager::~ImGuiManager()
 		{
 			SetWindowLongPtrW(m_windowHandle, GWLP_WNDPROC, (LONG_PTR)mOldWndProc);
 			mOldWndProc = nullptr;
+			// We really did come off, so the next session must subclass again rather than adopt.
+			mWndProcLeftInstalled.store(false, std::memory_order_release);
 		}
 		else
 		{
@@ -306,6 +354,7 @@ ImGuiManager::~ImGuiManager()
 				"us (current proc is 0x" << std::hex << current << std::dec << ", ours is not on top). "
 				"Restoring would delete that subclass from the chain. Our proc stays installed and inert; "
 				"HCMInternal.dll must therefore not be unloaded from under it.";
+			mWndProcInstalledOn.store(m_windowHandle, std::memory_order_release);
 			mWndProcLeftInstalled.store(true, std::memory_order_release);
 		}
 	}
@@ -364,6 +413,9 @@ ImGuiManager::~ImGuiManager()
 			ImGui_ImplDX11_Shutdown();
 			ImGui_ImplWin32_Shutdown();
 			ImGui::DestroyContext();
+			// Nothing may run against a destroyed context; leaving it current is what let a straggling
+			// WndProc message walk into freed memory.
+			ImGui::SetCurrentContext(nullptr);
 		}
 
 		m_isImguiInitialized = false;
@@ -386,7 +438,12 @@ ImGuiManager::~ImGuiManager()
 void ImGuiManager::onPresentHookEvent(ID3D11Device* pDevice, ID3D11DeviceContext* pDeviceContext, IDXGISwapChain* pSwapChain, ID3D11RenderTargetView* pMainRenderTargetView)
 {
 	LOG_ONCE(PLOG_DEBUG << "ImGuiManager::onPresentHookEvent running");
+	// ⚠ CHECK EITHER SIDE OF THE LOCK. ~ImGuiManager sets instance = nullptr INSIDE mDestructionGuard, so
+	// a handler that was already waiting on it is guaranteed to resume with instance null and then
+	// dereference it. The D3D12 twin below already does this; this one did not.
+	if (mShuttingDown.load(std::memory_order_acquire)) return;
 	std::unique_lock<std::mutex> lock(mDestructionGuard);
+	if (mShuttingDown.load(std::memory_order_acquire)) return;
 #pragma region init
 
 

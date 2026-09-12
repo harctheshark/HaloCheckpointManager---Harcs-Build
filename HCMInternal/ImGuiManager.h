@@ -66,6 +66,14 @@ private:
 	// installed - which means the image must NOT be unloaded from under it. dllmain consults this.
 	static inline std::atomic_bool mWndProcLeftInstalled{ false };
 
+	// ⚠⚠⚠ WHICH WINDOW that proc is installed on. The flag alone is not enough: Halo Campaign Evolved
+	// DESTROYS AND RECREATES ITS WINDOW mid-session, and the teardown check runs GetWindowLongPtrW on an
+	// HWND that may already be gone - which returns 0, compares unequal to our proc, and latches the flag
+	// true with no third party involved at all. The next session would then "adopt" a proc on a dead
+	// window, never subclass the live one, and the overlay would draw while being completely deaf to
+	// input, announced by a reassuring INFO line. Adopt only when the window matches.
+	static inline std::atomic<HWND> mWndProcInstalledOn{ nullptr };
+
 public:
 	// dllmain must know this before it decides whether the image can be unmapped.
 	static bool wndProcWasLeftInstalled() { return mWndProcLeftInstalled.load(std::memory_order_acquire); }

@@ -83,6 +83,14 @@ private:
 	// instruction stops touching D3D12/HCM state and just forwards.
 	static inline std::atomic_bool shuttingDown{ false };
 
+	// ⚠⚠⚠ ADOPTED HOOKS ARE LIVE FROM THE CONSTRUCTOR, NOT FROM beginHook().
+	// The two-phase bring-up (construct services, THEN install hooks) used to be enforced by accident:
+	// no hook existed until beginHook, so no detour could fire early. A hook adopted from a previous
+	// session is already installed and already firing, and the constructor publishes `instance` and
+	// clears `shuttingDown` ~15 services and a full pointer-data parse before beginHook() runs. Without
+	// this gate the very first Present after construction re-enters a half-built service graph.
+	static inline std::atomic_bool servicesReady{ false };
+
 	// Our hook functions
 	static DX12Present newDX12Present;
 	static DX12Present1 newDX12Present1;
@@ -250,6 +258,13 @@ private:
 	// Set when a hook had to be left installed inside a third party's chain, which means our detour code must
 	// never be unmapped. Drives the PIN at the end of ~D3D12Hook.
 	bool mMustStayResident = false;
+
+	// Which sites this session ADOPTED from a previous one. An adopted hook is LIVE but its member is
+	// empty, so `if (!hook)` cannot distinguish "we parked it" from "we never owned it" - and that is
+	// exactly the distinction that decides whether its trampoline atomic may be nulled at teardown.
+	// Nulling the trampoline of a still-installed hook sends the detour's fallback back into our own
+	// jmp: unbounded recursion on the render thread.
+	bool mAdopted[kHookSiteCount] = {};
 
 	// ================================================================================================================
 	// THE RE-HOOK WATCHDOG - because "hooks installed" is not the same as "frames arriving".

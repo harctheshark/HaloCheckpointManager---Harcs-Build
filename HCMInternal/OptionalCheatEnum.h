@@ -177,6 +177,7 @@ HCEFreecamKeepPosition,\
 HCEFreecamDrift,\
 HCEGameThreadPumpHost,\
 HCEConsole,\
+HCESwitchZoneSet,\
 CompetitionMode
 
 

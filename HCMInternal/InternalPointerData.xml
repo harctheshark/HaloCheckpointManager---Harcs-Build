@@ -15,8 +15,8 @@
 
 	    sim (HaloSimulation_tag_release.dll), all exactly +0x10:
 	        pauseGameFunction                         0x210175  -> 0x210185
-	        hceDisableFadeFromBlackGuardSite          0x2117C8  -> 0x2117D8
-	        hceDisableFadeFromBlackFunction           0x2117CA  -> 0x2117DA
+	        hceDisableFadeFromBlackGuardSite          0x213252  (fade_in direction byte)
+	        hceDisableFadeFromBlackFunction           0x213257  (fade_in end=start+duration)
 	        hceTriggerVolumeTestPointFunction         0x2E45F0  -> 0x2E4600
 	        hceTriggerVolumeTestPointScriptCallSite8  0x2E50D6  -> 0x2E50E6
 	    exe (HaloCampaignEvolved.exe), each a DIFFERENT delta - the exe changed more:
@@ -4183,51 +4183,56 @@
 
 
 	<!-- #region hceDisableFadeFromBlack-->
-	<!--Removes the fade-in from black after a checkpoint revert. RVAs into HaloSimulation_tag_release.dll.
+	<!--Removes the fade-in from black. RVAs into HaloSimulation_tag_release.dll.
 
-	    The revert sub_18019D730 is called from the host sub_1801AD9F0 at 0x1ADAC1 with a1 = 4. On success, at
-	    0x19DBEF, it calls sub_1803277D0, which at 0x327827 loops 33 post-restore callbacks from the table at
-	    .rdata 0x8617A0 with the flags in ECX. Entry [10] is sub_180211660, gated `test cl, 0B0h` at 0x21166D -
-	    taken because a1 and 4 sets bit 0x80. With no cinematic active it reaches:
+	    WHAT CHANGED (2026-09-09): this used to patch a single CALL SITE - the `mov r9d, 3Ch` at 0x2117D8 that
+	    passes 60 script ticks to fade_in from post-restore callback [10]. That works, and was verified live,
+	    but it is one of FOUR calls to fade_in and the only one whose duration is an immediate:
 
-	        0x2117C8  41 B9 3C 00 00 00   mov  r9d, 3Ch        (60 script ticks; WE PATCH THE IMM AT 0x2117CA)
-	        0x2117DA  E8 F1 19 00 00      call sub_1802131D0   ; fade_in(black, 60)
+	        0x2117EA   duration = mov r9d, 3Ch          <- the old patch target, a literal
+	        0x1E2CB2   duration = [rax+0x0C]            <- from a looked-up tag record
+	        0x1E3086   duration = [rbx+0x68]            <- from a struct
+	        0x1E33E2   duration = [rbx+0x17C]           <- from a struct
 
-	    ★ Entry [10] is the ONLY one of the 33 post-restore callbacks that touches the fade.
+	    The other three take their duration from DATA at runtime, so no byte patch can reach them. Since every
+	    CER cinematic is a save/play/game_revert sandwich, reverting to a checkpoint that lives inside one
+	    replays the level script's own fade through one of those three - which is exactly why the feature
+	    looked like it "sometimes didn't work".
 
-	    fade_in (sub_1802131D0) writes the start tick to fadeStruct+0x28, end = start + duration to +0x2C, and
-	    the RESTING value 0.0 to +0x30. The evaluator sub_1802132B0 is:
+	    SO WE PATCH fade_in ITSELF, once, and cover all four:
+
+	        0x213252  41 C6 40 25 01   mov  byte [r8+0x25], 1     ; direction = fade FROM black
+	        0x213257  42 8D 04 12      lea  eax, [rdx + r10]      ; end = start + duration   <- WE PATCH THIS
+	        0x21325B  45 89 50 28      mov  [r8+0x28], r10d       ; start tick
+	        0x213262  41 89 40 2C      mov  [r8+0x2C], eax        ; end tick
+
+	    Replacing the lea with `mov eax, r10d` (44 89 D0, plus one 90 to keep the length at 4) makes
+	    end == start. The evaluator sub_1802132B0 is:
 	        out.xyzw = S[0x30..0x3F];
 	        if (gtg and *(u8*)gtg and S->end > gtg->tick) { ...interpolate... }
-	    so with duration 0 the interpolation - INCLUDING THE DIVISION - is skipped entirely and out.x, the black
-	    overlay's opacity, is 0.0 on the first frame. No divide-by-zero is possible. Duration 0 is engine-legal:
-	    the sibling branch at 0x2116D9 already passes 0 to fade_out. (Use 0x01 instead for a one-tick fade.)
+	    so `end > tick` is false on the very first frame and it returns the RESTING value at +0x30, which
+	    fade_in sets to 0.0 = fully transparent. The interpolation - INCLUDING THE DIVISION - never runs, so no
+	    divide-by-zero is possible. rdx (the scaled duration) is dead afterwards: nothing reads it before
+	    0x213266 overwrites edx with -1.
 
-	    WHY A PATCH AND NOT A WRITE, unlike most HaloCER features: the alternative is poking the fade struct
-	    (*(uintptr*)(TLS+0xA8), end at +0x2C) every frame, which would ALSO collapse cinematic fade-ins.
-	    Patching this one immediate touches only the post-restore path and leaves script fade_in/fade_out and
-	    every cinematic_fade_* alone.
+	    ⚠⚠ fade_out IS DELIBERATELY UNTOUCHED, and it is byte-identical from the lea onward, sitting 0xE0
+	    earlier at 0x213172. The ONLY thing telling them apart is the direction byte: fade_in writes 01 at
+	    +0x25 and 0.0 to +0x30; fade_out writes 00 and 1.0f. That is why the guard site is the direction-byte
+	    instruction and not the lea. Patching fade_out as well would collapse every intentional fade TO black.
 
-	    SAFETY: 1 byte, so the write is inherently atomic (no torn-write concern, unlike the 2-byte pause
-	    patch). IDA reports NO base relocations anywhere on page 0x211000, and the only code xref into
-	    0x2117C0..0x2117E0 lands on 0x2117C8, the instruction start, so nothing can enter mid-instruction. The
-	    two .pdata entries referencing 0x2117C8 as an unwind-scope boundary stay valid because no instruction
-	    boundary moves.
+	    SCOPE: this now makes ALL fade-from-black instant, including cinematic fade-ins - which is what the
+	    toggle's name promises and was chosen deliberately. Fades TO black are unaffected.
 
-	    SCOPE: sub_1803277D0's other callers (sub_18019DF80, sub_18019EF80, sub_180389980) are almost certainly
-	    save-load / level-restart restores, so those fades become instant too.
-	    ⚠ UNVERIFIED: if part of the observed black time is a UE5 loading widget rather than this fade, this
-	    shortens the delay without eliminating it.
-
-	    The guard deliberately covers the WHOLE instruction (6 bytes at 0x2117C8), not just the byte we write,
-	    so a match proves this really is `mov r9d, 3Ch`. HCE has NO VERSION RESOURCE (every build reports
-	    0.0.0.0) so this guard is the only protection against a game update. Verified against the shipped DLL,
-	    MD5 E8B0A01BE43A7B805912474A13F0954F, 14,668,560 bytes; rva 0x2117C8 is file offset 0x210BC8.-->
+	    SAFETY: 4 bytes replacing a 4-byte instruction, so no instruction boundary moves and the .pdata unwind
+	    scopes stay valid. The patched stream was re-disassembled and decodes cleanly into the following
+	    instructions. HCE has NO VERSION RESOURCE (every build reports 0.0.0.0) so the 20-byte guard below,
+	    plus the HCEAnchors signature cross-check, is the only protection against a game update moving this.
+	    Verified against the shipped DLL, 14,668,560 bytes, Aug 17 build.-->
 	<VersionedEntry Name="hceDisableFadeFromBlackFunction" Type="MultilevelPointer::ModuleOffset">
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
-				<Offset>0x2117DA</Offset>
+				<Offset>0x213257</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -4235,19 +4240,21 @@
 		<Version Version="0.0.0.0" Game="HaloCER">
 			<Module>HaloSimulation_tag_release.dll</Module>
 			<Offsets>
-				<Offset>0x2117D8</Offset>
+				<Offset>0x213252</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
+	<!--The direction byte write (proving fade_in, not fade_out) plus the lea we overwrite and the two stores
+	    that consume it.-->
 	<VersionedEntry Name="hceDisableFadeFromBlackOriginalBytes" Type="Vector" Typename="byte">
 		<Version Version="0.0.0.0" Game="HaloCER">
-			<Data>0x41, 0xB9, 0x3C, 0x00, 0x00, 0x00</Data>
+			<Data>0x41, 0xC6, 0x40, 0x25, 0x01, 0x42, 0x8D, 0x04, 0x12, 0x45, 0x89, 0x50, 0x28, 0x45, 0x33, 0xC9, 0x41, 0x89, 0x40, 0x2C</Data>
 		</Version>
 	</VersionedEntry>
-	<!--0x00 = instant. 0x01 gives a single-tick (~16 ms) fade instead.-->
+	<!--mov eax, r10d ; nop   -> end = start, i.e. duration 0 for every caller of fade_in.-->
 	<VersionedEntry Name="hceDisableFadeFromBlackCode" Type="Vector" Typename="byte">
 		<Version Version="0.0.0.0" Game="HaloCER">
-			<Data>0x00</Data>
+			<Data>0x44, 0x89, 0xD0, 0x90</Data>
 		</Version>
 	</VersionedEntry>
 	<!-- #endregion hceDisableFadeFromBlack-->

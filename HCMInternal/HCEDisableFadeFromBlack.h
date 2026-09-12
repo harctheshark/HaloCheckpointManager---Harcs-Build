@@ -8,45 +8,50 @@
 //
 // Reverting a checkpoint fades the screen in from black before you get your view back. This removes that fade.
 //
-// MECHANISM (all rvas into HaloSimulation_tag_release.dll, imagebase 0x180000000):
-//   The revert sub_18019D730 is called from the host sub_1801AD9F0 at 0x1ADAC1 with a1 = 4. On success, at
-//   0x19DBEF, it calls sub_1803277D0, which at 0x327827 loops 33 post-restore callbacks from the table at
-//   .rdata 0x8617A0 with the flags in ECX. Entry [10] is sub_180211660, gated `test cl, 0B0h` at 0x21166D -
-//   taken because a1 & 4 set bit 0x80. With no cinematic active it reaches:
+// ⚠ HISTORY, because the obvious implementation is the one that was here and it was too narrow.
+// This used to patch a single CALL SITE: the `mov r9d, 3Ch` at 0x2117D8 feeding fade_in from post-restore
+// callback [10]. That does work - verified in a live process - but it is one of FOUR calls to fade_in, and the
+// only one whose duration is a literal:
 //
-//       2117C8  41 B9 3C 00 00 00   mov  r9d, 3Ch          <- 60 script ticks. WE PATCH THE IMM AT 0x2117CA.
-//       2117DA  E8 F1 19 00 00      call sub_1802131D0     ; fade_in(black, 60)
+//     0x2117EA   duration = mov r9d, 3Ch     <- the old target, an immediate
+//     0x1E2CB2   duration = [rax+0x0C]       <- a looked-up tag record
+//     0x1E3086   duration = [rbx+0x68]       <- a struct field
+//     0x1E33E2   duration = [rbx+0x17C]      <- a struct field
 //
-//   ★ Entry [10] is the ONLY one of the 33 callbacks that touches the fade, so this is as narrow as it gets.
+// The other three read their duration from DATA at runtime, so no byte patch can reach them. Every CER cinematic
+// is a save/play/game_revert sandwich, so reverting into one replays the level script's own fade through one of
+// those three - which is precisely why the feature "sometimes didn't work".
 //
-//   fade_in (sub_1802131D0) stores the start tick at fadeStruct+0x28 and end = start + duration at +0x2C, and
-//   sets the RESTING value at +0x30 to 0.0. The evaluator (sub_1802132B0) early-returns the resting value
-//   whenever end <= now:
+// MECHANISM NOW: patch fade_in ITSELF, once, and cover all four callers.
 //
-//       out.xyzw = S[0x30..0x3F];
-//       if (gtg && *(u8*)gtg && S->end > gtg->tick) { ...interpolate... }
+//     0x213252  41 C6 40 25 01   mov  byte [r8+0x25], 1   ; direction = fade FROM black
+//     0x213257  42 8D 04 12      lea  eax, [rdx + r10]    ; end = start + duration   <- REPLACED
+//     0x21325B  45 89 50 28      mov  [r8+0x28], r10d     ; start tick
+//     0x213262  41 89 40 2C      mov  [r8+0x2C], eax      ; end tick
 //
-//   So a duration of 0 makes end == start, the interpolation (INCLUDING THE DIVISION) is skipped entirely, and
-//   out.x - the black overlay's opacity - is 0.0 on the very first frame. No divide-by-zero is possible, and
-//   duration 0 is engine-legal: the sibling branch at 0x2116D9 already passes 0 to fade_out.
+// `mov eax, r10d` (44 89 D0) plus one 0x90 to hold the length at 4 makes end == start. The evaluator
+// sub_1802132B0 reads the resting value first and only interpolates `if (gtg && *(u8*)gtg && end > tick)`, so
+// with end == start that test is false on the very first frame and it returns +0x30, which fade_in sets to 0.0 =
+// fully transparent. The interpolation - INCLUDING ITS DIVISION - never executes, so duration 0 cannot divide by
+// zero. rdx is dead afterwards: nothing reads it before 0x213266 overwrites edx with -1.
 //
-// WHY A BYTE PATCH RATHER THAN A WRITE, for once: the alternative is poking the fade struct (*(uintptr*)
-// (TLS+0xA8), end at +0x2C) every frame, which would also collapse CINEMATIC fade-ins. Patching this one
-// immediate touches only the post-restore path and leaves script fade_in/fade_out and every cinematic_fade_*
-// completely alone.
+// ⚠⚠ fade_out IS DELIBERATELY LEFT ALONE, and it is byte-identical from the lea onward, 0xE0 earlier at
+// 0x213172. The ONLY discriminator is the direction byte: fade_in writes 01 at +0x25 and 0.0 as its resting
+// value; fade_out writes 00 and 1.0f. That is why the guard site is the direction-byte instruction rather than
+// the lea itself, and why the anchor signature starts there. Patching fade_out too would collapse every
+// intentional fade TO black.
 //
-// ⚠ 1 byte, so the write is inherently atomic - unlike the 2-byte Pause patch there is no torn-write concern.
-// IDA reports NO base relocations anywhere on page 0x211000, and the only code xref into 0x2117C0..0x2117E0
-// lands on 0x2117C8 (the instruction start), so nothing can enter mid-instruction. The two .pdata entries that
-// reference 0x2117C8 as an unwind-scope boundary stay valid because no instruction boundary moves.
+// SCOPE: all fade-from-black is now instant, cinematic fade-ins included. That is a deliberate choice and what
+// the toggle's name promises. Fades TO black are unaffected.
 //
-// ⚠ HCE has NO VERSION RESOURCE - every build reports 0.0.0.0 - so the expected-original-byte check is the only
-// thing standing between a game update and us writing 0x00 over whatever now lives there. DO NOT REMOVE IT.
+// ⚠ WRITE ATOMICITY: this is 4 bytes at 0x213257, which is NOT 4-byte aligned - so unlike the old 1-byte patch
+// it is not trivially atomic. It is however entirely inside the 64-byte cache line at 0x213240 (offset 0x17,
+// ending 0x1B), and x86 does not tear an access that stays within a cache line. The instruction length is
+// unchanged, so no boundary moves and the .pdata unwind scopes covering this range stay valid.
 //
-// SCOPE: sub_1803277D0's other callers (sub_18019DF80, sub_18019EF80, sub_180389980) are almost certainly
-// save-load / level-restart restores, so those fades go instant too. That is very likely what a user wants.
-// UNVERIFIED: if part of the black time is a UE5 loading widget rather than this fade, this shortens the delay
-// without eliminating it.
+// ⚠ HCE has NO VERSION RESOURCE - every build reports 0.0.0.0 - so the expected-original-byte check plus the
+// HCEAnchors signature cross-check are the only things standing between a game update and us writing over
+// whatever now lives there. DO NOT REMOVE THEM.
 // ================================================================================================================
 class HCEDisableFadeFromBlack : public IOptionalCheat
 {

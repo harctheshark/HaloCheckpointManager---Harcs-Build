@@ -75,6 +75,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{GUIElementEnum::hceFreecamDriftAmountGUI,
 			{OptionalCheatEnum::HCEFreecamDrift}
 	},
+	// The switch itself is queued on HCEConsoleBridge, so the console cheat must exist too.
+	{GUIElementEnum::hceSwitchZoneSetGUI,
+			{OptionalCheatEnum::HCESwitchZoneSet, OptionalCheatEnum::HCEConsole}
+	},
 	{GUIElementEnum::hceConsoleGUI,
 			{OptionalCheatEnum::HCEConsole}
 	},
@@ -823,13 +827,7 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{ GUIElementEnum::hceSoftCeilingOverlayToggleGUI,
 {OptionalCheatEnum::HCESoftCeilingOverlay}
 	},
-	{ GUIElementEnum::hceSoftCeilingOverlaySettingsSubheading,
-{OptionalCheatEnum::HCESoftCeilingOverlay}
-	},
 
-	// Same reasoning as the trigger overlay above: the MCC disableBarriersToggle element is keyed to the MCC
-	// DisableBarriers cheat (a code patch with no HaloCER pointer data), so HaloCER needs its own element. The
-	// disableBarriersToggle SETTING and hotkey are still shared.
 	{ GUIElementEnum::hceDisableBarriersGUI,
 {OptionalCheatEnum::HCEDisableBarriers}
 	},
