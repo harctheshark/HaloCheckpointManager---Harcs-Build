@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
 
 	<!--⚠⚠⚠ HALO CAMPAIGN EVOLVED HAS NO VERSION RESOURCE, SO HCM CANNOT TELL ITS BUILDS APART.
@@ -52,6 +52,12 @@
 		<!--Halo Campaign Evolved. HaloSimulation_tag_release.dll carries NO version resource (reads 0.0.0.0),
 		    so HCM uses that as HCE's synthetic version key. See GetMCCVersion::evalVersion.-->
 		<Entry>0.0.0.0</Entry>
+		<!--Halo 5: Forge. halo5forge.exe DOES carry a version resource, but it is the Store package
+		    version - it says nothing about the engine build our RVAs target and it moves on every
+		    Store update, which would silently un-support HCM. So Halo 5 gets its own synthetic key.
+		    ⚠ 0.0.0.1, deliberately NOT HaloCER's 0.0.0.0: two titles sharing a version key would
+		    share pointer-data entries. See GetMCCVersion::evalVersion.-->
+		<Entry>0.0.0.1</Entry>
 	</SupportedGameVersions>
 
 

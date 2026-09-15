@@ -38,6 +38,10 @@ public:
 		if (isInputValid(valueDisplay))
 		{
 			value = valueDisplay;
+			// The one choke point every setting of every game passes through - see the autosave note on
+			// SerialisableSetting. Marking BEFORE the event fires means a subscriber that throws still leaves
+			// the config marked dirty, which is the safe direction.
+			markDirty();
 			PLOG_VERBOSE << "Firing value changed event for " << mOptionName;
 			valueChangedEvent.get()->operator()(value);
 			//valueChangedEvent->operator ()(value);

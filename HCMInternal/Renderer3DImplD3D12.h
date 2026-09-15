@@ -9,6 +9,7 @@
 #include "SettingsStateAndEvents.h"
 #include "HCEGetCameraData.h"
 #include "HCEGetPlayerState.h"
+#include "H5GetPlayerState.h"
 
 #include <d3d12.h>
 #include <dxgiformat.h>
@@ -277,8 +278,18 @@ private:
 	std::vector<uint16_t> mSphereIndices;
 
 	// ---- injected services -------------------------------------------------------------------------------
+	// ⚠ TWO TITLES SHARE THIS RENDERER NOW. HaloCER and Halo 5: Forge are both D3D12, and everything below
+	// the camera is title-agnostic, so only the camera source is branched (see updateCamera). Exactly one of
+	// the two groups below is populated, decided by mGame in the constructor.
+	GameState mGame;
+
+	// HaloCER
 	std::weak_ptr<HCEGetCameraData> mCameraDataWeak;
 	std::optional<std::weak_ptr<HCEGetPlayerState>> mPlayerStateOptionalWeak;   // fallback camera only
+
+	// Halo 5: Forge. There is no render-camera POV for this title, so the player's eye position and aim ARE
+	// the camera, and the horizontal FOV comes from a setting because no FOV field has been located.
+	std::optional<std::weak_ptr<H5GetPlayerState>> mH5PlayerStateOptionalWeak;
 	std::weak_ptr<SettingsStateAndEvents> mSettingsWeak;
 	std::weak_ptr<IMCCStateHook> mMccStateHookWeak;
 	std::weak_ptr<IMessagesGUI> mMessagesGUIWeak;

@@ -1,5 +1,6 @@
-#pragma once
+﻿#pragma once
 #include "Logging.h"
+#include "BootstrapTrace.h"
 #include "GlobalKill.h"
 #include "ModuleCache.h"
 #include "ModuleHookManager.h"
@@ -13,6 +14,7 @@
 #include "MessagesGUI.h"
 #include "MCCStateHook.h"
 #include "HCEStateHook.h"
+#include "H5StateHook.h"
 #include "HeartbeatTimer.h"
 #include "GUIServiceInfo.h"
 #include "HotkeyManager.h"
@@ -66,6 +68,10 @@ public:
         }
         catch(HCMInitException ex)
         {
+            // ⚠ IN AN APPCONTAINER THE MESSAGEBOX BELOW IS INVISIBLE - a sandboxed process generally
+            // cannot put a window on the interactive desktop. Without this line the shared-memory
+            // failure is completely silent: injection reports success and nothing ever initialises.
+            bootstrapTrace(std::format("App: SHARED MEMORY FAILED: {}", ex.what()).c_str());
             // ⚠⚠⚠ OFF-THREAD, AND DETACHED. MessageBoxA blocks until dismissed, and behind a fullscreen
             // game it is frequently never seen at all. Under the old lifecycle a stuck box merely pinned the
             // DLL; now MainThread would never return, its SessionGuard would never run, gSessionRunning would
@@ -75,6 +81,8 @@ public:
                 { MessageBoxA(NULL, msg.c_str(), "Halo checkpoint manager error", MB_OK); }).detach();
             return;
         }
+
+        bootstrapTrace("App: shared memory OK");
 
         std::string dirPath = sharedMem->HCMDirPath;
        
@@ -87,6 +95,7 @@ public:
         try
         {
             // some very important services
+            bootstrapTrace("App: entering main try");
             ModuleCache::initialize(); PLOGV << "moduleCache init"; // static singleton still.. blah
             auto mhm = std::make_unique<ModuleHookManager>(); PLOGV << "mhm init"; // is a static singleton still.. blah 
             auto ver = std::make_shared<GetMCCVersion>(); PLOGV << "ver init";// gets the version of MCC that we're currently injected into
@@ -94,6 +103,7 @@ public:
 
             // load dynamic (version & game specific) pointer data
             // latest data is pulled from github page
+            bootstrapTrace("App: version resolved, fetching pointer data");
             std::string pointerXMLData = PointerDataGetter::getXMLDocument(dirPath);
 
             // parse it into a keyed map of data
@@ -117,14 +127,22 @@ public:
 
 
             // setup some optional services mainly related to controls, eg freeing the cursor, pausing the game, etc
+            bootstrapTrace("App: pointer data OK, version supported");
             auto hotkeyDisabler = std::make_shared< TokenSharedRequestProvider>();
             auto control = std::make_shared<ControlServiceContainer>(ptrStore, hotkeyDisabler);
 
      
-            // Which graphics API are we in? MCC (Steam/WinStore) is D3D11; Halo Campaign Evolved
-            // (HaloCampaignEvolved.exe, UE 5.5.4) is D3D12. Decided once, here, and nothing below
-            // this point re-evaluates it.
-            const bool isCampaignEvolved = (ver->getMCCProcessType() == MCCProcessType::CampaignEvolved);
+            // ⚠ TWO SEPARATE DECISIONS - do not collapse them back into one bool.
+            //   isCampaignEvolved : which TITLE are we in? Picks the state hook, the cursor source, and
+            //                       every HaloCER-specific service.
+            //   usesD3D12         : which GRAPHICS API? MCC (Steam/WinStore) is D3D11; BOTH standalone
+            //                       titles (HaloCampaignEvolved.exe, halo5forge.exe) are D3D12.
+            // These used to be the same test because HaloCER was the only non-MCC title. Adding Halo 5
+            // made them diverge: Halo 5 needs the D3D12 hook but must NOT get HCEStateHook.
+            const MCCProcessType procType = ver->getMCCProcessType();
+            const bool isCampaignEvolved = (procType == MCCProcessType::CampaignEvolved);
+            const bool isHalo5Forge = (procType == MCCProcessType::Halo5Forge);
+            const bool usesD3D12 = processUsesD3D12(procType);
 
             // DECLARATION ORDER HERE IS LOAD-BEARING.
             // These are automatic locals, so they are destroyed in REVERSE declaration order: `imm`
@@ -133,10 +151,11 @@ public:
             // signature / vertex+index ring / font texture - all of which the last submitted overlay
             // command list still references, and none of which D3D12 defers destruction on.
             // Exactly one of d3d/d3d12 is ever non-null.
+            bootstrapTrace("App: about to create the graphics hook");
             std::shared_ptr<D3D11Hook> d3d;
             std::shared_ptr<D3D12Hook> d3d12;
             std::shared_ptr<ImGuiManager> imm;
-            if (isCampaignEvolved)
+            if (usesD3D12)
             {
                 d3d12 = std::make_shared<D3D12Hook>(ptrStore); PLOGV << "d3d12 init"; // hooks dxgi Present/Present1/ResizeBuffers(1) and d3d12 ExecuteCommandLists
                 imm = std::make_shared<ImGuiManager>(d3d12, d3d12->presentHookEvent); PLOGV << "imm init"; // sets up imgui context and fires off imgui render events
@@ -156,10 +175,17 @@ public:
             // indicators to hook), so it derives the same MCCState from HaloSimulation_tag_release.dll.
             std::shared_ptr<IMCCStateHook> mccStateHook;
             std::shared_ptr<HCEStateHook> hceStateHook; // concrete handle kept so we can read its cursor flag below
+            std::shared_ptr<H5StateHook> h5StateHook;   // same, for Halo 5: Forge
             if (isCampaignEvolved)
             {
                 hceStateHook = std::make_shared<HCEStateHook>(); PLOGV << "hceStateHook init";
                 mccStateHook = hceStateHook;
+            }
+            else if (isHalo5Forge)
+            {
+                // Halo 5 derives its state from the simulation thread's TLS block - see H5StateHook.h.
+                h5StateHook = std::make_shared<H5StateHook>(); PLOGV << "h5StateHook init";
+                mccStateHook = h5StateHook;
             }
             else
             {
@@ -193,6 +219,11 @@ public:
                 isCursorShowingResolved = (uintptr_t)hceStateHook->getCursorShowingFlag();
                 PLOG_DEBUG << "HCE: isCursorShowing sourced from live WIN32 cursor state";
             }
+            else if (isHalo5Forge)
+            {
+                isCursorShowingResolved = (uintptr_t)h5StateHook->getCursorShowingFlag();
+                PLOG_DEBUG << "Halo5: isCursorShowing sourced from live WIN32 cursor state";
+            }
             else
             {
                 auto isCursorShowingPtr = ptrStore->getData<std::shared_ptr<MultilevelPointer>>("isCursorShowing");
@@ -225,12 +256,18 @@ public:
             // just has to cover Present1 as well, because UE5 presents through it. `imes` is passed so
             // the "OBS isn't running yet, the bypass will engage by itself" case can be reported as a
             // plain message rather than as an error that resets the toggle.
-            auto obsBypass = isCampaignEvolved
+            // ⚠ usesD3D12, NOT isCampaignEvolved. These two pick a GRAPHICS BACKEND, so they must follow
+            // the same test that decided which hook to CREATE. They were written when HaloCER was the only
+            // non-MCC title and the two questions had the same answer; with Halo 5: Forge they do not.
+            // Getting this wrong is not a graceful failure - `d3d` is null on the D3D12 path, so
+            // d3d->beginHook() logged "beginning vmt hook" and then died on the first member access,
+            // which is an unhandled AV in the middle of App with every service already built.
+            auto obsBypass = usesD3D12
                 ? std::make_shared<OBSBypassManager>(std::weak_ptr<D3D12Hook>(d3d12), settings->OBSBypassToggle, exp, imes)
                 : std::make_shared<OBSBypassManager>(std::weak_ptr<D3D11Hook>(d3d), settings->OBSBypassToggle, exp, imes); PLOGV << "obsBypass init";
             auto hideWatermark = std::make_shared<HideWatermarkManager>(settings->hideWatermark, exp); PLOGV << "hideWatermark init";
             // Installed LAST, once every service that its callbacks touch exists.
-            if (isCampaignEvolved)
+            if (usesD3D12)
                 d3d12->beginHook();
             else
                 d3d->beginHook();

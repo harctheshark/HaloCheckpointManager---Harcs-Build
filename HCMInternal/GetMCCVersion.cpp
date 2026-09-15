@@ -38,6 +38,19 @@ VersionInfo GetMCCVersion::evalVersion()
         return outCurrentMCCVersion;
     }
 
+    // Halo 5: Forge. The exe DOES carry a version resource, but it is the Store package's version and
+    // says nothing about which engine build our RVAs target - and it moves on every Store update,
+    // which would silently un-support HCM. Use a synthetic key instead, exactly as HCE does, so the
+    // SupportedGameVersions gate is a deliberate decision rather than a Store versioning accident.
+    // ⚠ 0.0.0.1, NOT HCE's 0.0.0.0 - two games sharing a version key would share pointer-data entries.
+    if (evalVersionType() == MCCProcessType::Halo5Forge)
+    {
+        outCurrentMCCVersion.major = 0; outCurrentMCCVersion.minor = 0;
+        outCurrentMCCVersion.build = 0; outCurrentMCCVersion.revision = 1;
+        PLOG_DEBUG << "Halo 5: Forge synthetic version: " << outCurrentMCCVersion;
+        return outCurrentMCCVersion;
+    }
+
     if (evalVersionType() == MCCProcessType::WinStore)
     {
         // hard coded
@@ -104,6 +117,13 @@ MCCProcessType GetMCCVersion::evalVersionType()
         PLOG_DEBUG << "setting process type to CampaignEvolved";
         return MCCProcessType::CampaignEvolved;
     }
+    // Halo 5: Forge. Unlike HaloCER there is no separate simulation DLL - the whole engine is in the
+    // exe, so every Halo5Forge offset is an RVA into halo5forge.exe itself.
+    else if (boost::iequals(mccName, "halo5forge.exe"))
+    {
+        PLOG_DEBUG << "setting process type to Halo5Forge";
+        return MCCProcessType::Halo5Forge;
+    }
     else
     {
         throw HCMInitException(std::format("Host process had an unrecognised name!: {}", mccName));
@@ -117,6 +137,7 @@ std::string GetMCCVersion::processToString(MCCProcessType in)
     case MCCProcessType::Steam:           return "Steam";
     case MCCProcessType::WinStore:        return "WinStore";
     case MCCProcessType::CampaignEvolved: return "CampaignEvolved";
+    case MCCProcessType::Halo5Forge:      return "Halo5Forge";
     default:                              return "Unknown";
     }
 }

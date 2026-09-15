@@ -1,5 +1,7 @@
 ﻿#include "pch.h"
 #include "GUIElementConstructor.h"
+#include "GameProcessFilter.h"
+#include <typeinfo>   // typeid, for naming an unexpected exception type in the catch-alls below
 #include "SettingsStateAndEvents.h"
 #include "HotkeysEnum.h"
 #include "IGUIElement.h"
@@ -12,6 +14,7 @@
 #include "GUIGameSpeed.h"
 #include "GUIHCEConsole.h"
 #include "GUIHCESwitchZoneSet.h"
+#include "GUIH5SwitchZoneSet.h"
 #include "GUIInvulnerability.h"
 #include "GUIHeading.h"
 #include "GUISubHeading.h"
@@ -80,14 +83,11 @@ private:
 		// decision made in two places, and if they ever disagree you get either phantom failures (element built,
 		// cheat wasn't) or silently missing UI (cheat built, element wasn't).
 		{
-			const bool processIsCampaignEvolved = (mProcType == MCCProcessType::CampaignEvolved);
+			// See GameProcessFilter.h. This was a boolean (isHaloCER != isCampaignEvolvedProcess) until
+			// Halo 5: Forge made a third title exist, at which point "not HaloCER" stopped identifying
+			// "an MCC game" and each standalone title would have been built inside the other's process.
 			const auto elementGame = game.operator GameState::Value();
-			const bool elementIsHaloCER = (elementGame == GameState::Value::HaloCER);
-
-			// NoGame (255) is the GAME-AGNOSTIC bucket - global settings elements that belong to neither title.
-			// It must be exempt: it is not HaloCER, so a naive test would skip every one of them inside the CER
-			// process and take the global UI with it.
-			if (elementGame != GameState::Value::NoGame && elementIsHaloCER != processIsCampaignEvolved)
+			if (!gameBelongsToProcess(elementGame, mProcType))
 			{
 				PLOG_DEBUG << "GUIElementEnum::" << magic_enum::enum_name(guielementenum) << " for Game::"
 					<< game.toString() << " belongs to the other title, skipping construction";
@@ -277,6 +277,23 @@ private:
 						{
 							createNestedElement(GUIElementEnum::forceCheckpointGUI),
 							createNestedElement(GUIElementEnum::hceForceCheckpointGUI),
+							createNestedElement(GUIElementEnum::h5ForceCheckpointGUI),
+							createNestedElement(GUIElementEnum::h5ForceTeleportGUI),
+							createNestedElement(GUIElementEnum::h5ForceTeleportSettingsSubheading),
+							createNestedElement(GUIElementEnum::h5ForceLaunchGUI),
+							createNestedElement(GUIElementEnum::h5ForceLaunchSettingsSubheading),
+							createNestedElement(GUIElementEnum::h5AcrophobiaGUI),
+							createNestedElement(GUIElementEnum::h5InvincibilityGUI),
+							createNestedElement(GUIElementEnum::h5PauseMenuFixGUI),
+							createNestedElement(GUIElementEnum::h5OutOfBoundsBypassGUI),
+							createNestedElement(GUIElementEnum::h5GameSpeedGUI),
+							createNestedElement(GUIElementEnum::h5GameSpeedAmountGUI),
+							createNestedElement(GUIElementEnum::h5HavokOverlayToggleGUI),
+							createNestedElement(GUIElementEnum::h5HavokOverlaySettingsSubheading),
+							createNestedElement(GUIElementEnum::h5SwitchZoneSetGUI),
+							createNestedElement(GUIElementEnum::h5TriggerOverlayToggleGUI),
+							createNestedElement(GUIElementEnum::h5TriggerOverlaySettingsSubheading),
+							createNestedElement(GUIElementEnum::h5ForceRevertGUI),
 							createNestedElement(GUIElementEnum::forceRevertGUI),
 							createNestedElement(GUIElementEnum::forceDoubleRevertGUI),
 							createNestedElement(GUIElementEnum::forceCoreSaveGUI),
@@ -311,6 +328,320 @@ private:
 				case GUIElementEnum::hceForceCheckpointGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
 						(game, ToolTipCollection("Forces a checkpoint, regardless of if the player is safe or not"), RebindableHotkeyEnum::forceCheckpoint, "Force Checkpoint##hce", settings->forceCheckpointEvent));
+
+				// Halo 5: Forge. Same deliberate event/hotkey reuse as the HaloCER pair above - the three
+				// titles can never coexist in one process, so exactly one listener exists at a time.
+				// "##h5" keeps the visible label but gives imgui a unique ID.
+				case GUIElementEnum::h5ForceCheckpointGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Forces a checkpoint, regardless of if the player is safe or not"), RebindableHotkeyEnum::forceCheckpoint, "Force Checkpoint##h5", settings->forceCheckpointEvent));
+
+				case GUIElementEnum::h5ForceRevertGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Forces a revert to the last checkpoint.\nHalo 5: campaign only - refused in a session where you are not the simulation authority."), RebindableHotkeyEnum::forceRevert, "Force Revert##h5", settings->forceRevertEvent));
+
+				// Force Teleport. Mirrors the HaloCER tree below, and deliberately REUSES the hce* hotkey
+				// slots for the sub-options rather than adding Halo-5-specific ones: inserting entries into
+				// HotkeysEnum.h shifts the hard-coded alias indices in HotkeyEventsLambdas.h and trips the
+				// static_asserts, and the two titles can never be loaded at the same time anyway.
+				case GUIElementEnum::h5ForceTeleportGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Teleports the player.\nUses the engine's own teleport call, so physics follows - writing the position directly desyncs and then kills you."), RebindableHotkeyEnum::forceTeleport, "Force Teleport##h5", settings->forceTeleportEvent));
+
+				case GUIElementEnum::h5ForceTeleportSettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection(""), "Force Teleport Settings##h5", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::h5ForceTeleportSettingsRadioGroup),
+							}));
+
+					case GUIElementEnum::h5ForceTeleportSettingsRadioGroup:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioGroup>
+							(game, ToolTipCollection(""), "Force Teleport Radio Group##h5", headerChildElements
+								{
+								createNestedElement(GUIElementEnum::h5ForceTeleportForward),
+								createNestedElement(GUIElementEnum::h5ForceTeleportManual),
+								}));
+
+						case GUIElementEnum::h5ForceTeleportForward:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Teleport relative to the players position and look-direction"), RebindableHotkeyEnum::hceForceTeleportForwardHotkey, "Teleport Relative to Player##h5", settings->forceTeleportForward, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::h5ForceTeleportRelativeVec3),
+									createNestedElement(GUIElementEnum::h5ForceTeleportForwardIgnoreZ),
+									}));
+
+							case GUIElementEnum::h5ForceTeleportRelativeVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("How far forward/right/up to teleport the player, relative to their look-direction"), "Teleport: ##h5ForceTeleportRelativeVec3", settings->forceTeleportRelativeVec3, "Forward", "Right", "Up"));
+
+							case GUIElementEnum::h5ForceTeleportForwardIgnoreZ:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+									(game, ToolTipCollection("Will ignore the vertical component of your look direction (ie pretends you're looking at the horizon)"), RebindableHotkeyEnum::hceForceTeleportForwardIgnoreZHotkey, "Ignore vertical look angle##h5Teleport", settings->forceTeleportForwardIgnoreZ));
+
+						case GUIElementEnum::h5ForceTeleportManual:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Teleport to absolute world coordinates"), RebindableHotkeyEnum::hceForceTeleportManualHotkey, "Teleport to Manual Coordinates##h5", settings->forceTeleportManual, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::h5ForceTeleportAbsoluteVec3),
+									createNestedElement(GUIElementEnum::h5ForceTeleportAbsoluteFillCurrent),
+									}));
+
+							case GUIElementEnum::h5ForceTeleportAbsoluteVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("The xyz world coordinates to teleport to"), "Teleport: ##h5ForceTeleportAbsoluteVec3", settings->forceTeleportAbsoluteVec3));
+
+							case GUIElementEnum::h5ForceTeleportAbsoluteFillCurrent:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+									(game, ToolTipCollection("Fill with the current xyz position of the player"), RebindableHotkeyEnum::hceForceTeleportAbsoluteFillCurrentHotkey, "Fill with current position##h5", settings->forceTeleportAbsoluteFillCurrent));
+
+				// Force Launch. Same structure as the teleport tree above, writing the character
+				// controller's VELOCITY instead of its position. Reuses the hce* hotkey slots for the same
+				// reason - adding entries to HotkeysEnum.h shifts hard-coded alias indices.
+				case GUIElementEnum::h5ForceLaunchGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Launches the player at the given velocity.\nWrites the character controller's own velocity, so the engine integrates it and gravity applies normally."), RebindableHotkeyEnum::forceLaunch, "Force Launch##h5", settings->forceLaunchEvent));
+
+				case GUIElementEnum::h5ForceLaunchSettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection(""), "Force Launch Settings##h5", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::h5ForceLaunchSettingsRadioGroup),
+							}));
+
+					case GUIElementEnum::h5ForceLaunchSettingsRadioGroup:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioGroup>
+							(game, ToolTipCollection(""), "Force Launch Radio Group##h5", headerChildElements
+								{
+								createNestedElement(GUIElementEnum::h5ForceLaunchForward),
+								createNestedElement(GUIElementEnum::h5ForceLaunchManual),
+								}));
+
+						case GUIElementEnum::h5ForceLaunchForward:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Launch relative to the players look-direction"), RebindableHotkeyEnum::hceForceLaunchForwardHotkey, "Launch Relative to Player##h5", settings->forceLaunchForward, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::h5ForceLaunchRelativeVec3),
+									createNestedElement(GUIElementEnum::h5ForceLaunchForwardIgnoreZ),
+									}));
+
+							case GUIElementEnum::h5ForceLaunchRelativeVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("How fast to launch forward/right/up, relative to the players look-direction"), "Launch: ##h5ForceLaunchRelativeVec3", settings->forceLaunchRelativeVec3, "Forward", "Right", "Up"));
+
+							case GUIElementEnum::h5ForceLaunchForwardIgnoreZ:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+									(game, ToolTipCollection("Will ignore the vertical component of your look direction (ie pretends you're looking at the horizon)"), RebindableHotkeyEnum::hceForceLaunchForwardIgnoreZHotkey, "Ignore vertical look angle##h5Launch", settings->forceLaunchForwardIgnoreZ));
+
+						case GUIElementEnum::h5ForceLaunchManual:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Launch at an absolute world-space velocity"), RebindableHotkeyEnum::hceForceLaunchManualHotkey, "Launch at Manual Velocity##h5", settings->forceLaunchManual, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::h5ForceLaunchAbsoluteVec3),
+									}));
+
+							case GUIElementEnum::h5ForceLaunchAbsoluteVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("The xyz world-space velocity to launch at"), "Launch: ##h5ForceLaunchAbsoluteVec3", settings->forceLaunchAbsoluteVec3));
+
+				case GUIElementEnum::h5AcrophobiaGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Acrophobia (boots off the ground): hold JUMP to fly along your look direction.\nThe Halo 1 / CER flight model - the acceleration curve is its own speed limiter, topping out at 16 wu/s."), RebindableHotkeyEnum::hceSkullAcrophobiaHotkey, "Acrophobia##h5", settings->h5AcrophobiaToggle));
+
+
+				case GUIElementEnum::h5TriggerOverlayToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Draw the scenario's trigger volumes in 3D.\n\nCategories are read from the scenario's own index blocks, not from volume names, so they are correct even though Halo 5 cannot resolve a volume name back to text at runtime.\n\n\u26a0 Sector-shaped volumes (about half of them) are arbitrary geometry, not boxes. That mesh is not decoded yet, so they are drawn as their BOUNDING BOX and are hidden by default.\n\n\u26a0 If the boxes do not line up with the world, set FOV below to match your in-game field of view - Halo 5 exposes no FOV value we can read."), std::nullopt, "Trigger Overlay##h5", settings->h5TriggerOverlayToggle));
+
+				case GUIElementEnum::h5TriggerOverlaySettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Trigger overlay filters, colours and appearance"), "Trigger Overlay Settings##h5", headerChildElements
+							{
+								createNestedElement(GUIElementEnum::h5TriggerOverlayShowRegular),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayShowKill),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayShowBeginZoneSet),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayShowCommitZoneSet),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayShowLabels),
+								createNestedElement(GUIElementEnum::h5TriggerOverlaySpeedrunOnly),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayEditNameFilter),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayColourByScript),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayScriptedColor),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayInertColor),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayLabelScale),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayLabelColor),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayHitMessages),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayNormalColor),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayKillColor),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayBeginZoneSetColor),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayCommitZoneSetColor),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayAlpha),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayWireframeAlpha),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayRenderDistance),
+							}));
+
+					case GUIElementEnum::h5TriggerOverlayShowRegular:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show volumes that belong to no category - the ordinary scripted triggers."), std::nullopt, "Show Regular##h5tv", settings->h5TriggerOverlayShowRegular));
+
+					case GUIElementEnum::h5TriggerOverlaySpeedrunOnly:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Draws ONLY the volumes a speedrun has to touch: the level's goal advance volumes plus its end trigger.\n\nUnlike the HaloCER version this is NOT a community name list - it is read out of the level's own decompiled script, where each goal declares exactly one gotoVolume and entering it is the whole advance condition. Matched by string_id hash, so a renamed volume drops out rather than silently matching the wrong one.\n\nAll 15 campaign levels are mapped (100 volumes).\n\n⚠ NOT EVERY STEP IS A VOLUME. The engine has four advance mechanisms and only one of them is a trigger volume - a goal that advances on a Warden kill, a device or a script flag has nothing to draw. So this shows a SUBSET of the route, not all of it; the per-level notes in H5_Speedrun_Notes carry the rest.\n\n⚠ \"Not a speedrun volume\" does NOT mean skippable: a door can still be in the way. It means the mission does not advance on it."), std::nullopt, "Speedrun Triggers Only##h5tv", settings->h5TriggerOverlaySpeedrunOnly));
+
+					case GUIElementEnum::h5TriggerOverlayEditNameFilter:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+							(game, ToolTipCollection("Choose exactly which trigger volumes to draw, by name, from a checkbox list of the ones in this level. Has a search box, All / None per category, and a Speedrun only button.\n\nVolumes on the minimum completion path are tagged green.\n\nSelecting names switches the filter on for you. An empty list means EVERYTHING, not nothing.\n\nYou must be in a level with the Trigger Overlay on, otherwise there are no volume names to show yet."), std::nullopt, "Filter by Name...##h5tv", settings->h5TriggerOverlayEditNameFilterEvent));
+
+					case GUIElementEnum::h5TriggerOverlayShowKill:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show kill volumes."), std::nullopt, "Show Kill##h5tv", settings->h5TriggerOverlayShowKill));
+
+					case GUIElementEnum::h5TriggerOverlayShowBeginZoneSet:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show volumes that BEGIN a zone set switch - entering one starts preparing the next zone set's BSPs."), std::nullopt, "Show Begin Zone Set##h5tv", settings->h5TriggerOverlayShowBeginZoneSet));
+
+					case GUIElementEnum::h5TriggerOverlayShowCommitZoneSet:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show volumes that COMMIT a zone set switch - entering one performs the switch."), std::nullopt, "Show Zone Set Commit##h5tv", settings->h5TriggerOverlayShowCommitZoneSet));
+
+					case GUIElementEnum::h5TriggerOverlayShowLabels:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Mark each visible volume's centre with a small sphere."), std::nullopt, "Mark Centres##h5tv", settings->h5TriggerOverlayShowLabels));
+
+					case GUIElementEnum::h5TriggerOverlayLabelScale:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(6.5f, 64.f)>>
+							(game, ToolTipCollection("Size of the volume name text."), "Name Text Size##h5tv", settings->h5TriggerOverlayLabelScale));
+
+					case GUIElementEnum::h5TriggerOverlayLabelColor:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<false>>
+							(game, ToolTipCollection("Colour of the volume name text"), "Name Text Colour##h5tv", settings->h5TriggerOverlayLabelColor));
+
+					case GUIElementEnum::h5TriggerOverlayHitMessages:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Print a message whenever you ENTER or EXIT a trigger volume.\n\n\u26a0 This is where YOU are standing, tested geometrically - it is not the same as a script having looked at the volume, and entering one does not mean anything happened. Sector-shaped volumes are not included, because their stored extents are placeholders and cannot be tested.\n\nWorks with the overlay itself switched off."), std::nullopt, "Report Volumes Entered/Exited##h5tv", settings->h5TriggerOverlayHitMessages));
+
+					case GUIElementEnum::h5TriggerOverlayColourByScript:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Colour volumes by whether a SCRIPT can actually hit or wake them, instead of by category.\n\nBlue - a mission script polls, queries or acts on this volume.\nRed  - nothing references it. It is inert.\nKill and zone-set volumes keep their own colours: they are driven by the ENGINE and appear in no script, so colouring them red would be wrong.\n\n\u26a0 This is read from the compiled mission scripts in your H5_Scripts folder, matched to live volumes by name hash - it is not a live trace of what the game is doing right now. A volume can be script-reachable and still never fire on your route. Levels with no script tag in the corpus will show as inert; add their .lua and regenerate to widen coverage."), std::nullopt, "Colour By Script Activity##h5tv", settings->h5TriggerOverlayColourByScript));
+
+					case GUIElementEnum::h5TriggerOverlayScriptedColor:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<false>>
+							(game, ToolTipCollection("Colour for volumes a script can hit or wake"), "Script-Reachable Colour##h5tv", settings->h5TriggerOverlayScriptedColor));
+
+					case GUIElementEnum::h5TriggerOverlayInertColor:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<false>>
+							(game, ToolTipCollection("Colour for volumes nothing references"), "Inert Colour##h5tv", settings->h5TriggerOverlayInertColor));
+
+					case GUIElementEnum::h5TriggerOverlayNormalColor:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<false>>
+							(game, ToolTipCollection("Colour of regular trigger volumes"), "Regular Colour##h5tv", settings->h5TriggerOverlayNormalColor));
+
+					case GUIElementEnum::h5TriggerOverlayKillColor:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<false>>
+							(game, ToolTipCollection("Colour of kill volumes"), "Kill Colour##h5tv", settings->h5TriggerOverlayKillColor));
+
+					case GUIElementEnum::h5TriggerOverlayBeginZoneSetColor:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<false>>
+							(game, ToolTipCollection("Colour of begin-zone-set volumes"), "Begin Zone Set Colour##h5tv", settings->h5TriggerOverlayBeginZoneSetColor));
+
+					case GUIElementEnum::h5TriggerOverlayCommitZoneSetColor:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<false>>
+							(game, ToolTipCollection("Colour of zone-set-commit volumes"), "Zone Set Commit Colour##h5tv", settings->h5TriggerOverlayCommitZoneSetColor));
+
+					case GUIElementEnum::h5TriggerOverlayAlpha:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+							(game, ToolTipCollection("Opacity of the filled volume faces. Zero draws wireframe only."), "Fill Opacity##h5tv", settings->h5TriggerOverlayAlpha));
+
+					case GUIElementEnum::h5TriggerOverlayWireframeAlpha:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+							(game, ToolTipCollection("Opacity of the volume edges."), "Edge Opacity##h5tv", settings->h5TriggerOverlayWireframeAlpha));
+
+					case GUIElementEnum::h5TriggerOverlayRenderDistance:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 2000.f)>>
+							(game, ToolTipCollection("Hide volumes further than this from the camera, measured to the volume's surface rather than its centre so a volume you are standing inside is never culled."), "Render Distance##h5tv", settings->h5TriggerOverlayRenderDistance));
+
+				case GUIElementEnum::h5InvincibilityGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Player takes no damage and cannot be killed.\n\nSets the engine's own per-object damage flags (cannot_take_damage + cannot_die) rather than rewriting your health, so nothing fights it.\n\n\u26a0 Re-applied every tick, because the engine zeroes those flags when you respawn.\n\n\u26a0 Falling damage uses a separate system that has not been traced, and this is untested in multiplayer - treat it as campaign/Forge for now."), std::nullopt, "Invincibility##h5", settings->h5InvincibilityToggle));
+
+				case GUIElementEnum::h5GameSpeedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Scales the SIMULATION, using the engine's own game speed field rather than faking the process clock.\n\nOnly the simulation scales - rendering and the frame pacer keep real time.\n\n⚠ Suppresses scripted slow-motion effects while it is on: the engine drives those by ramping this same field, so we zero the ramp every tick to stop it stomping your value.\n\n⚠ The engine clamps its own catch-up budget at 15x - above that the simulation stops keeping up instead of going faster."), std::nullopt, "Game Speed##h5", settings->h5GameSpeedToggle));
+
+				case GUIElementEnum::h5GameSpeedAmountGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.01f, 15.f)>>
+						(game, ToolTipCollection("Simulation speed multiplier. 1.0 is normal, below 1 is slow motion."), "Speed Multiplier##h5", settings->h5GameSpeedAmount));
+
+				case GUIElementEnum::h5OutOfBoundsBypassGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Fly out of bounds forever without being removed.\n\nDisables BOTH mechanisms that remove you:\n\n1. The player \"went outside of the world\" death - the engine counts ticks spent outside and kills you after half a second. We zero that counter every tick, so it never gets there. No code is patched.\n\n2. The Havok broadphase exit - when a rigid body leaves the broadphase the engine DELETES the owning object. That one cannot be starved, so the 5-byte delete call is NOPed while this is on, found by signature and restored exactly as it was when you switch off.\n\n⚠ Outside the broadphase you collide with nothing until you come back inside."), std::nullopt, "Havok Broadphase Deletion Bypass##h5", settings->h5OutOfBoundsBypassToggle));
+
+				case GUIElementEnum::h5PauseMenuFixGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Removes the ~3 second delay before you can reopen the pause menu.\n\nThe engine records the game time each time the menu opens and refuses to reopen it until 3 seconds of UNPAUSED gameplay have passed. This keeps that timestamp far in the past.\n\nWrites one float that nothing else in the game reads - it does not patch any code, and the 3.0 second constant itself is shared by 268 other places and is left alone."), std::nullopt, "Pause Menu Fix##h5", settings->h5PauseMenuFixToggle));
+
+				case GUIElementEnum::h5HavokOverlayToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Draw the live Havok collision geometry.\n\nStatic level collision first, then instanced geometry, then dynamic object shapes.\n\n\u26a0 The level holds 2.37 MILLION collision triangles, so only what is near you is decoded. Raise Radius to see more and expect the triangle budget to bite; the budget exists so a big radius draws less rather than stalling the frame.\n\nWireframe by default - solid collision is an opaque wall you cannot read."), std::nullopt, "Havok Debugger##h5", settings->h5HavokOverlayToggle));
+
+				case GUIElementEnum::h5HavokOverlaySettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Havok debugger filters and appearance"), "Havok Debugger Settings##h5", headerChildElements
+							{
+								createNestedElement(GUIElementEnum::h5HavokOverlayShowStatic),
+								createNestedElement(GUIElementEnum::h5HavokOverlayShowInstances),
+								createNestedElement(GUIElementEnum::h5HavokOverlayShowObjects),
+								createNestedElement(GUIElementEnum::h5HavokOverlayRadius),
+								createNestedElement(GUIElementEnum::h5HavokOverlayTriangleBudget),
+								createNestedElement(GUIElementEnum::h5HavokOverlayRefreshMs),
+								createNestedElement(GUIElementEnum::h5HavokOverlayWireAlpha),
+								createNestedElement(GUIElementEnum::h5HavokOverlayFillAlpha),
+								createNestedElement(GUIElementEnum::h5HavokOverlayStaticColor),
+								createNestedElement(GUIElementEnum::h5HavokOverlayObjectColor),
+							}));
+
+					case GUIElementEnum::h5HavokOverlayShowStatic:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show the static level collision mesh - the walls and floors you actually collide with."), std::nullopt, "Show World Geometry##h5hk", settings->h5HavokOverlayShowStatic));
+
+					case GUIElementEnum::h5HavokOverlayShowInstances:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show instanced geometry placed around the level."), std::nullopt, "Show Instances##h5hk", settings->h5HavokOverlayShowInstances));
+
+					case GUIElementEnum::h5HavokOverlayShowObjects:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Show dynamic object collision - hulls, spheres and capsules, including the player's own capsule.\n\nOff by default: these move every frame and clutter the view."), std::nullopt, "Show Object Shapes##h5hk", settings->h5HavokOverlayShowObjects));
+
+					case GUIElementEnum::h5HavokOverlayRadius:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 500.f)>>
+							(game, ToolTipCollection("How far from the camera collision is decoded, in WORLD UNITS (1 WU = 10 feet)."), "Radius (world units)##h5hk", settings->h5HavokOverlayRadius));
+
+					case GUIElementEnum::h5HavokOverlayTriangleBudget:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1000.f, 400000.f)>>
+							(game, ToolTipCollection("Hard cap on triangles decoded per refresh. Decoding STOPS at this number, so a large radius draws an incomplete picture instead of stalling."), "Triangle Budget##h5hk", settings->h5HavokOverlayTriangleBudget));
+
+					case GUIElementEnum::h5HavokOverlayRefreshMs:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(16.f, 5000.f)>>
+							(game, ToolTipCollection("How often the collision is re-decoded, in milliseconds. Collision does not move, so decoding every frame would burn CPU for an identical picture."), "Refresh (ms)##h5hk", settings->h5HavokOverlayRefreshMs));
+
+					case GUIElementEnum::h5HavokOverlayWireAlpha:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+							(game, ToolTipCollection("Opacity of the collision wireframe."), "Wireframe Opacity##h5hk", settings->h5HavokOverlayWireAlpha));
+
+					case GUIElementEnum::h5HavokOverlayFillAlpha:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+							(game, ToolTipCollection("Opacity of filled collision faces. Zero (the default) draws wireframe only - solid collision is an opaque wall."), "Fill Opacity##h5hk", settings->h5HavokOverlayFillAlpha));
+
+					case GUIElementEnum::h5HavokOverlayStaticColor:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<false>>
+							(game, ToolTipCollection("Colour of the static level collision"), "World Geometry Colour##h5hk", settings->h5HavokOverlayStaticColor));
+
+					case GUIElementEnum::h5HavokOverlayObjectColor:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<false>>
+							(game, ToolTipCollection("Colour of object collision shapes"), "Object Shape Colour##h5hk", settings->h5HavokOverlayObjectColor));
+
+				case GUIElementEnum::h5SwitchZoneSetGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIH5SwitchZoneSet>
+						(game, ToolTipCollection("Switch to any zone set the CURRENT map declares.\n\nThe list is read straight out of the loaded scenario tag, so it is correct on every map with no shipped per-level table - pick one and press the button.\n\nA zone set controls which BSPs are resident. Switching is how the game itself moves you between the sections of a level, so this can load geometry you have not reached yet, or unload what you are standing on.\n\nThe entry marked <- current is the one the game is on, read from the engine's own active-zone-set value.\n\nUnlike the HaloCER version, every zone set here is switchable - Halo 5 selects them by index, so even ones the tag does not name can be used."), std::nullopt, "Switch Zone Set##h5", settings->h5SwitchZoneSetEvent));
 
 				case GUIElementEnum::forceRevertGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -1275,6 +1606,8 @@ private:
 							createNestedElement(GUIElementEnum::display2DInfoSettingsInfoSubheading),
 							createNestedElement(GUIElementEnum::display2DInfoSettingsVisualSubheading),
 							createNestedElement(GUIElementEnum::hceDisplayInfoToggleGUI),
+							createNestedElement(GUIElementEnum::h5DisplayInfoToggleGUI),
+							createNestedElement(GUIElementEnum::h5DisplayInfoShowZoneSetPrep),
 							createNestedElement(GUIElementEnum::hceDisplayInfoSettingsInfoSubheading),
 							createNestedElement(GUIElementEnum::hceDisplayInfoSettingsVisualSubheading),
 							createNestedElement(GUIElementEnum::waypoint3DGUIToggle),
@@ -1545,6 +1878,25 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Displays player and game information as text on your screen"), RebindableHotkeyEnum::display2DInfo, "Display 2D Game Info##hce", settings->display2DInfoToggle));
 
+				// Halo 5: Forge. Same toggle, same hotkey, same six visual settings - only the row list differs,
+				// because Halo 5 can honestly supply position/aim/datum/object/sim-kind/object-write-gate and
+				// nothing more today. No settings subheading: every row is unconditional, so there is nothing
+				// to configure yet.
+				// No hotkey (std::nullopt) deliberately: HCE_HOTKEYS is index-addressed, so adding one there
+				// shifts every alias index after it. This drives the SAME setting object as HaloCER's
+				// transition rows - the titles cannot coexist in one process.
+				case GUIElementEnum::h5DisplayInfoShowZoneSetPrep:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Show what a zone set switch is currently DOING, as two extra rows:\n\n"
+							"  Preparing Zone Set - True while a switch is in flight\n"
+							"  Prepared Zone Set  - the incoming zone set's name, or NULL when nothing is preparing\n\n"
+							"The 'Zone Set' row shows the zone set that is committed, so it does not change until the new one is actually resident."),
+							std::nullopt, "Show Zone Set Transition##h5", settings->hceDisplayInfoShowZoneSetPrep));
+
+				case GUIElementEnum::h5DisplayInfoToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Displays player and game information as text on your screen"), RebindableHotkeyEnum::display2DInfo, "Display 2D Game Info##h5", settings->display2DInfoToggle));
+
 				case GUIElementEnum::hceDisplayInfoSettingsInfoSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
 						(game, ToolTipCollection("Control what information should be displayed"), "Info Settings##hce", headerChildElements
@@ -1556,6 +1908,7 @@ private:
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowLevel),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowBSP),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowZoneSet),
+							createNestedElement(GUIElementEnum::hceDisplayInfoShowZoneSetPrep),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowCameraDiag),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowTick),
 							createNestedElement(GUIElementEnum::hceDisplayInfoShowPlayerDatum),
@@ -1586,9 +1939,17 @@ private:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 							(game, ToolTipCollection("Show the current BSP index.\n\nNote: the underlying global is actually the current ZONE SET index, not a BSP index - it is what HaloScript's current_zone_set returns. The row name is kept for compatibility; 'Show Current Zone Set' below shows the same value as a readable name."), RebindableHotkeyEnum::hceDisplayInfoShowBSPHotkey, "Show Current BSP", settings->hceDisplayInfoShowBSP));
 
+				case GUIElementEnum::hceDisplayInfoShowZoneSetPrep:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Show what a zone set switch is currently DOING, as two extra rows:\n\n"
+							"  Preparing Zone Set - True while a switch is in flight\n"
+							"  Prepared Zone Set  - the incoming zone set's name, or NULL when nothing is preparing\n\n"
+							"The 'Current Zone Set' row above shows the zone set that is fully loaded and committed, so it does not change until the new one is actually resident."),
+							RebindableHotkeyEnum::hceDisplayInfoShowZoneSetPrepHotkey, "Show Zone Set Transition", settings->hceDisplayInfoShowZoneSetPrep));
+
 				case GUIElementEnum::hceDisplayInfoShowZoneSet:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Show the current zone set's name. A zone set is the set of structure BSPs and designer zones the engine currently has resident; it is what zone-set trigger volumes switch between.\n\nShows '(loading)' while the switch is still bringing BSPs in - the index is published before the load finishes."), RebindableHotkeyEnum::hceDisplayInfoShowZoneSetHotkey, "Show Current Zone Set", settings->hceDisplayInfoShowZoneSet));
+						(game, ToolTipCollection("Show the name of the zone set that is fully loaded and COMMITTED. A zone set is the set of structure BSPs and designer zones the engine currently has resident; it is what zone-set trigger volumes switch between.\n\nThis does not change the moment a Begin Zone Set Change fires - the engine publishes the new index before the BSPs finish loading, so this row waits until the incoming zone set is actually resident.\n\nTo watch a switch in progress, enable 'Show Zone Set Transition' below."), RebindableHotkeyEnum::hceDisplayInfoShowZoneSetHotkey, "Show Current Zone Set", settings->hceDisplayInfoShowZoneSet));
 
 				case GUIElementEnum::hceDisplayInfoShowCameraDiag:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -3641,6 +4002,33 @@ private:
 		catch (HCMInitException ex)
 		{
 			info->addFailure(guielementenum, game, ex);
+			cacheFailedServices.insert(std::make_pair(guielementenum, game));
+			return std::nullopt;
+		}
+		// ⚠ ANYTHING ELSE USED TO KILL THE WHOLE SESSION. Only HCMInitException was caught here, so a
+		// std::exception (or anything else) thrown while building ONE gui row escaped all the way out of
+		// App and took HCMInternal down - an unhandled 0xE06D7363, a minidump, and an injected module that
+		// silently never finishes initialising. One optional row failing is not worth that: it is exactly
+		// the case the HCMInitException path above already degrades gracefully for.
+		//
+		// The type name is logged because the old behaviour told you nothing at all about WHICH row or
+		// WHAT threw - the crash landed in KERNELBASE with no HCM frame to read.
+		catch (const std::exception& ex)
+		{
+			const auto msg = std::format("GUI element threw a non-HCM exception ({}): {}",
+				typeid(ex).name(), ex.what());
+			PLOG_ERROR << "GUIElementEnum::" << magic_enum::enum_name(guielementenum)
+				<< " for Game::" << game.toString() << " - " << msg;
+			info->addFailure(guielementenum, game, HCMInitException(msg));
+			cacheFailedServices.insert(std::make_pair(guielementenum, game));
+			return std::nullopt;
+		}
+		catch (...)
+		{
+			const auto msg = std::string("GUI element threw an exception of unknown type");
+			PLOG_ERROR << "GUIElementEnum::" << magic_enum::enum_name(guielementenum)
+				<< " for Game::" << game.toString() << " - " << msg;
+			info->addFailure(guielementenum, game, HCMInitException(msg));
 			cacheFailedServices.insert(std::make_pair(guielementenum, game));
 			return std::nullopt;
 		}

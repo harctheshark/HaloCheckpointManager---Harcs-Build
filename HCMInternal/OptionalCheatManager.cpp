@@ -1,5 +1,6 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "OptionalCheatManager.h"
+#include "GameProcessFilter.h"
 #include "OptionalCheatEnum.h"
 #include "IOptionalCheat.h"
 
@@ -13,6 +14,23 @@
 #include "HCECheckpointDetours.h"
 
 // Halo Campaign Evolved (ALLOPTIONALCHEATS3)
+// Halo 5: Forge (ALLOPTIONALCHEATS4)
+#include "H5GetPlayerState.h"
+#include "H5Checkpoint.h"
+#include "H5ForceTeleport.h"
+#include "H5ForceLaunch.h"
+#include "H5Acrophobia.h"
+#include "H5SwitchZoneSet.h"
+#include "H5GetTriggerData.h"
+#include "H5TriggerOverlay.h"
+#include "H5Invincibility.h"
+#include "H5PauseMenuFix.h"
+#include "H5GameSpeed.h"
+#include "H5OutOfBoundsBypass.h"
+#include "H5GetHavokData.h"
+#include "H5HavokOverlay.h"
+#include "H5DisplayInfo.h"
+
 #include "HCEGetPlayerState.h"
 #include "HCEGetCameraData.h"
 #include "HCEFreezeAI.h"
@@ -260,12 +278,18 @@ public:
 		// Only build cheats for games that can actually exist in THIS process. Halo Campaign Evolved is a separate
 		// title (not MCC), so inside it every MCC-game cheat is guaranteed to fail for want of MCC pointer data -
 		// that produced ~428 bogus "failed service" reports plus a lot of pointless work. Filter both directions.
-		bool isCampaignEvolvedProcess = false;
+		// Default to Steam (an MCC process) if we cannot tell, which reproduces the old
+		// "build everything as before" fallback for MCC titles.
+		MCCProcessType hostProcType = MCCProcessType::Steam;
+		bool knowHostProcType = false;
 		try
 		{
 			if (auto store = cheatStore.lock())
 				if (auto verSvc = store->dicon.Resolve<IGetMCCVersion>().lock())
-					isCampaignEvolvedProcess = (verSvc->getMCCProcessType() == MCCProcessType::CampaignEvolved);
+				{
+					hostProcType = verSvc->getMCCProcessType();
+					knowHostProcType = true;
+				}
 		}
 		catch (...) { /* if we can't tell, fall back to building everything as before */ }
 
@@ -274,12 +298,10 @@ public:
 
 		for (const std::pair<GameState, OptionalCheatEnum>& gameCheatPair : reqSer->getAllRequiredServices())
 		{
-			// NoGame (255) is the GAME-AGNOSTIC bucket and must be exempt from the title filter: it is not
-			// HaloCER, so the naive test skipped every NoGame cheat inside the CER process, which then surfaced
-			// as NoGame GUI elements failing for want of services that were never built.
+			// See GameProcessFilter.h - NoGame (255) is exempt, and each standalone title only builds
+			// inside its own process. Must mirror GUIElementConstructor's filter exactly.
 			const auto pairGame = static_cast<GameState::Value>(gameCheatPair.first);
-			const bool pairIsHaloCE = (pairGame == GameState::Value::HaloCER);
-			if (pairGame != GameState::Value::NoGame && pairIsHaloCE != isCampaignEvolvedProcess)
+			if (knowHostProcType && !gameBelongsToProcess(pairGame, hostProcType))
 				continue; // wrong title for this process - skip silently
 
 			auto& th = createCheatThreads.emplace_back(std::thread([gameCheatPair, cheatStore,info, this]() {
@@ -397,6 +419,7 @@ case OptionalCheatEnum::_var:																	\
 		MAKECASE(ALLOPTIONALCHEATS1);
 		MAKECASE(ALLOPTIONALCHEATS2);
 		MAKECASE(ALLOPTIONALCHEATS3);
+		MAKECASE(ALLOPTIONALCHEATS4);
 		/* Expands to:
 		 
 		 case OptionalCheatEnum::ForceCheckpoint: 

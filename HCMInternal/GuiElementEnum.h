@@ -16,6 +16,16 @@
 // hundred failed services. Opt elements in one at a time using these instead.
 #define ALL_SUPPORTED_GAMES_AND_HALOCER Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER
 #define HALOCER_ONLY HaloCER
+#define HALO5_ONLY Halo5Forge
+// Halo 5: Forge, same reasoning as HaloCER above - it is opted in per element, never wholesale. These two
+// exist because a HALO5_ONLY child is invisible unless its PARENT HEADING also lists Halo5Forge: the four
+// h5* elements were declared and correct, but saveManagementHeadingGUI and debugHeadingGUI did not include
+// the game, so the heading was never constructed and the menu came up empty apart from the title bar.
+// Every MCC-only child under these headings independently returns std::nullopt for Halo5Forge, and
+// GUIHeading::render early-outs when all children are nullopt, so widening cannot produce empty headings.
+// ⚠ Keep in sync with TOPGUIELEMENTS_RELEASE in GUIRequiredServices.h - a heading must appear in BOTH.
+#define ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5 Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER, Halo5Forge
+#define ALL_SUPPORTED_GAMES_AND_HALO5 Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, Halo5Forge
 // Deliberately narrower than "widen ALL_GAMES_AND_MAINMENU": this is only for the handful of elements that are
 // pure HCM plumbing (no game pointer data at all) and that HaloCER genuinely needs. Right now that means the
 // Control heading and the "Show optional cheat service failures" button underneath it - without those two,
@@ -92,9 +102,71 @@
 	   only these rows were gated off. */\
 	((HideWatermarkGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((HideWatermarkIncludeMessagesGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
-((saveManagementHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
+((saveManagementHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5)))\
 	((forceCheckpointGUI, (ALL_SUPPORTED_GAMES)))\
 	((hceForceCheckpointGUI, (HALOCER_ONLY)))\
+	((h5ForceCheckpointGUI, (HALO5_ONLY)))\
+	((h5ForceRevertGUI, (HALO5_ONLY)))\
+	((h5ForceTeleportGUI, (HALO5_ONLY)))\
+	((h5ForceTeleportSettingsSubheading, (HALO5_ONLY)))\
+		((h5ForceTeleportSettingsRadioGroup, (HALO5_ONLY)))\
+		((h5ForceTeleportForward, (HALO5_ONLY)))\
+			((h5ForceTeleportRelativeVec3, (HALO5_ONLY)))\
+			((h5ForceTeleportForwardIgnoreZ, (HALO5_ONLY)))\
+		((h5ForceTeleportManual, (HALO5_ONLY)))\
+			((h5ForceTeleportAbsoluteVec3, (HALO5_ONLY)))\
+			((h5ForceTeleportAbsoluteFillCurrent, (HALO5_ONLY)))\
+	((h5ForceLaunchGUI, (HALO5_ONLY)))\
+	((h5ForceLaunchSettingsSubheading, (HALO5_ONLY)))\
+		((h5ForceLaunchSettingsRadioGroup, (HALO5_ONLY)))\
+		((h5ForceLaunchForward, (HALO5_ONLY)))\
+			((h5ForceLaunchRelativeVec3, (HALO5_ONLY)))\
+			((h5ForceLaunchForwardIgnoreZ, (HALO5_ONLY)))\
+		((h5ForceLaunchManual, (HALO5_ONLY)))\
+			((h5ForceLaunchAbsoluteVec3, (HALO5_ONLY)))\
+	((h5AcrophobiaGUI, (HALO5_ONLY)))\
+	((h5InvincibilityGUI, (HALO5_ONLY)))\
+	((h5TriggerOverlaySpeedrunOnly, (HALO5_ONLY)))\
+	((h5TriggerOverlayEditNameFilter, (HALO5_ONLY)))\
+	((h5GameSpeedGUI, (HALO5_ONLY)))\
+	((h5GameSpeedAmountGUI, (HALO5_ONLY)))\
+	((h5OutOfBoundsBypassGUI, (HALO5_ONLY)))\
+	((h5PauseMenuFixGUI, (HALO5_ONLY)))\
+	((h5HavokOverlayToggleGUI, (HALO5_ONLY)))\
+	((h5HavokOverlaySettingsSubheading, (HALO5_ONLY)))\
+		((h5HavokOverlayShowStatic, (HALO5_ONLY)))\
+		((h5HavokOverlayShowInstances, (HALO5_ONLY)))\
+		((h5HavokOverlayShowObjects, (HALO5_ONLY)))\
+		((h5HavokOverlayRadius, (HALO5_ONLY)))\
+		((h5HavokOverlayTriangleBudget, (HALO5_ONLY)))\
+		((h5HavokOverlayRefreshMs, (HALO5_ONLY)))\
+		((h5HavokOverlayWireAlpha, (HALO5_ONLY)))\
+		((h5HavokOverlayFillAlpha, (HALO5_ONLY)))\
+		((h5HavokOverlayStaticColor, (HALO5_ONLY)))\
+		((h5HavokOverlayObjectColor, (HALO5_ONLY)))\
+	/* Sits with the other Halo 5 features rather than in a script heading like the HaloCER one: Halo 5 has
+	   no script console, and this is where everything else Halo-5 already lives. */\
+	((h5SwitchZoneSetGUI, (HALO5_ONLY)))\
+	((h5TriggerOverlayToggleGUI, (HALO5_ONLY)))\
+	((h5TriggerOverlaySettingsSubheading, (HALO5_ONLY)))\
+		((h5TriggerOverlayShowRegular, (HALO5_ONLY)))\
+		((h5TriggerOverlayShowKill, (HALO5_ONLY)))\
+		((h5TriggerOverlayShowBeginZoneSet, (HALO5_ONLY)))\
+		((h5TriggerOverlayShowCommitZoneSet, (HALO5_ONLY)))\
+		((h5TriggerOverlayShowLabels, (HALO5_ONLY)))\
+		((h5TriggerOverlayColourByScript, (HALO5_ONLY)))\
+		((h5TriggerOverlayScriptedColor, (HALO5_ONLY)))\
+		((h5TriggerOverlayInertColor, (HALO5_ONLY)))\
+		((h5TriggerOverlayLabelScale, (HALO5_ONLY)))\
+		((h5TriggerOverlayLabelColor, (HALO5_ONLY)))\
+		((h5TriggerOverlayHitMessages, (HALO5_ONLY)))\
+		((h5TriggerOverlayNormalColor, (HALO5_ONLY)))\
+		((h5TriggerOverlayKillColor, (HALO5_ONLY)))\
+		((h5TriggerOverlayBeginZoneSetColor, (HALO5_ONLY)))\
+		((h5TriggerOverlayCommitZoneSetColor, (HALO5_ONLY)))\
+		((h5TriggerOverlayAlpha, (HALO5_ONLY)))\
+		((h5TriggerOverlayWireframeAlpha, (HALO5_ONLY)))\
+		((h5TriggerOverlayRenderDistance, (HALO5_ONLY)))\
 	((forceRevertGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((forceDoubleRevertGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER)))\
 	((forceCoreSaveGUI, (Halo1)))\
@@ -227,7 +299,7 @@
 
 
 #define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES2 \
-((overlaysHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
+((overlaysHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5)))\
 	((renderDistance3DGUI, (ALL_SUPPORTED_GAMES)))\
 	((display2DInfoToggleGUI, (ALL_SUPPORTED_GAMES)))\
 	((display2DInfoSettingsInfoSubheading, (ALL_SUPPORTED_GAMES)))\
@@ -472,6 +544,8 @@
 			((hceForceLaunchAbsoluteVec3, (HALOCER_ONLY)))\
 	((hceSkullToggleGUI, (HALOCER_ONLY)))\
 	((hceDisplayInfoToggleGUI, (HALOCER_ONLY)))\
+	((h5DisplayInfoToggleGUI, (HALO5_ONLY)))\
+	((h5DisplayInfoShowZoneSetPrep, (HALO5_ONLY)))\
 	((hceDisplayInfoSettingsInfoSubheading, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowCoordinates, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowVelocity, (HALOCER_ONLY)))\
@@ -480,6 +554,7 @@
 			((hceDisplayInfoShowLevel, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowBSP, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowZoneSet, (HALOCER_ONLY)))\
+			((hceDisplayInfoShowZoneSetPrep, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowCameraDiag, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowTick, (HALOCER_ONLY)))\
 			((hceDisplayInfoShowPlayerDatum, (HALOCER_ONLY)))\

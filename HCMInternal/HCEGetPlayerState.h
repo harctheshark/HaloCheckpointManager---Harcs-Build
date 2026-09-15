@@ -107,6 +107,20 @@ public:
 	// True when the switch this index names has actually COMPLETED: the index is published before the BSPs
 	// finish loading, so it means "switching to", not "finished". Never throws; false when it cannot tell.
 	bool isCurrentZoneSetFullyLoaded() noexcept;
+
+	// ---- committed vs preparing -------------------------------------------------------------------------
+	// getCurrentZoneSetName() answers "which zone set has the engine been TOLD to be in", which during a
+	// switch is the incoming one. These three answer the two questions a user actually asks.
+	//
+	// The COMMITTED zone set: the last one observed fully loaded. This is what "which zone set am I in"
+	// means to a player - it does not flip the moment a Begin Zone Set Change fires, it flips when the new
+	// one is actually resident. Requires polling (the overlay refreshes ~30x/s), so it latches the last
+	// fully-loaded name rather than deriving it from a single sample. Throws if nothing has committed yet.
+	std::string getCommittedZoneSetName();
+	// True while a switch is in flight - the index names a zone set whose BSPs are not all resident yet.
+	bool isPreparingZoneSet() noexcept;
+	// The INCOMING zone set's name while preparing; EMPTY when not preparing. Never throws.
+	std::string getPreparedZoneSetName() noexcept;
 	int32_t getTickCounter();           // simBase + 0x12944C8 is a POINTER to the int32
 
 	// ---- guarded raw memory helpers, shared by every HCE cheat ----

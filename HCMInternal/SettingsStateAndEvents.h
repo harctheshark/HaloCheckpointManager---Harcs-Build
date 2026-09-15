@@ -30,26 +30,94 @@ public:
 		: mSerialiser(serialiser)
 	{
 		// deserialise (load) serialisable options
-		mSerialiser->deserialise(allSerialisableOptions);
+		{
+			// Loading pushes values through the same mutation path a user edit does, so suppress the dirty
+			// mark or we would autosave a file identical to the one just read.
+			SerialisableSetting::DirtySuppressor noDirt;
+			mSerialiser->deserialise(allSerialisableOptions);
+		}
+		startAutosave();
 
 		// The last four Halo Campaign Evolved hotkeys drive BUTTONS that already have an event, so they point at
 		// that same event object instead of owning a new one - press the hotkey and the button's existing
 		// subscriber runs, with nothing else to keep in sync. Done here rather than in the array's initialiser
 		// because a default member initialiser cannot rely on members declared after it, and these four are.
 		// ⚠ INDICES ARE POSITIONS IN HCE_HOTKEYS (HotkeysEnum.h). They are the last block of that macro.
-		hceHotkeyEvents[54] = forceTeleportAbsoluteFillCurrent;
-		hceHotkeyEvents[55] = forceTeleportAbsoluteCopy;
-		hceHotkeyEvents[56] = forceTeleportAbsolutePaste;
-		hceHotkeyEvents[57] = hceTriggerOverlayEditNameFilterEvent;
-		hceHotkeyEvents[58] = hceCameraRollResetEvent;
-		hceHotkeyEvents[59] = hceFieldOfViewResetEvent;
-		hceHotkeyEvents[60] = hceCameraMoveSpeedResetEvent;
+		// ⚠ THESE SHIFTED BY +1 when hceDisplayInfoShowZoneSetPrepHotkey was inserted mid-macro (right after
+		// hceDisplayInfoShowZoneSetHotkey). They are POSITIONS in HCE_HOTKEYS, so anything inserted ABOVE
+		// this block moves every one of them. Adding a hotkey at the END of the macro instead would avoid
+		// touching these - but the toggle has to sit next to the row it controls in the UI, so the
+		// hotkey order follows it.
+		hceHotkeyEvents[55] = forceTeleportAbsoluteFillCurrent;
+		hceHotkeyEvents[56] = forceTeleportAbsoluteCopy;
+		hceHotkeyEvents[57] = forceTeleportAbsolutePaste;
+		hceHotkeyEvents[58] = hceTriggerOverlayEditNameFilterEvent;
+		hceHotkeyEvents[59] = hceCameraRollResetEvent;
+		hceHotkeyEvents[60] = hceFieldOfViewResetEvent;
+		hceHotkeyEvents[61] = hceCameraMoveSpeedResetEvent;
 	}
 	~SettingsStateAndEvents() {
 		PLOG_DEBUG << "~SettingsStateAndEvents()";
+		stopAutosave();
 		// serialise (save) serialisable options
 		mSerialiser->serialise(allSerialisableOptions);
 	};
+
+	// ---- crash-durable autosave ---------------------------------------------------------------------------
+	// ⚠⚠ THE DESTRUCTOR ABOVE USED TO BE THE **ONLY** SAVE. A game that crashes never runs it, so a user with
+	// frequent crashes loses every setting they changed that session, every session. That is not a corruption
+	// problem and no amount of re-entering settings fixes it - the write simply never happened.
+	//
+	// So: every value change stamps SerialisableSetting::s_lastChange, and this thread flushes once the user
+	// has been quiet for kQuietPeriod. Debounced rather than save-on-every-change because dragging a colour
+	// picker or a slider fires the change event continuously and each save serialises the whole option list.
+	//
+	// SAFE TO RUN DURING PLAY because SettingsSerialiser writes a temp file and atomically swaps it in - a
+	// crash mid-save cannot truncate the live config. See the note there.
+	//
+	// ⚠ Applies to EVERY GAME, not just Halo 5. Nothing here is title-specific.
+	void saveNow()
+	{
+		try
+		{
+			SerialisableSetting::s_dirty.store(false, std::memory_order_release);
+			mSerialiser->serialise(allSerialisableOptions);
+		}
+		catch (...) { /* a failed autosave must never take the game down; the destructor save still runs */ }
+	}
+
+private:
+	static constexpr auto kQuietPeriod = std::chrono::seconds(2);
+	static constexpr auto kPollPeriod = std::chrono::milliseconds(500);
+
+	std::atomic<bool> mAutosaveStop{ false };
+	std::thread mAutosaveThread;
+
+	void startAutosave()
+	{
+		mAutosaveThread = std::thread([this]()
+			{
+				while (!mAutosaveStop.load(std::memory_order_acquire))
+				{
+					std::this_thread::sleep_for(kPollPeriod);
+					if (mAutosaveStop.load(std::memory_order_acquire)) return;
+					if (!SerialisableSetting::s_dirty.load(std::memory_order_acquire)) continue;
+
+					const auto last = SerialisableSetting::s_lastChange.load(std::memory_order_acquire);
+					if (std::chrono::steady_clock::now() - last < kQuietPeriod) continue;   // still fiddling
+
+					saveNow();
+				}
+			});
+	}
+
+	void stopAutosave()
+	{
+		mAutosaveStop.store(true, std::memory_order_release);
+		if (mAutosaveThread.joinable()) mAutosaveThread.join();
+	}
+
+public:
 
 	// --- Presets: save/load the full settings snapshot to/from a named file (see PresetManager) ---
 	// Fired by the Save/Load Preset buttons. PresetManager handles the file dialog then calls these.
@@ -136,6 +204,9 @@ public:
 	// HaloCER: fired by the Switch Zone Set button. The selected index lives in HCEZoneSetBridge, not here,
 	// because the list is per-scenario and there is nothing meaningful to serialise between levels.
 	std::shared_ptr<ActionEvent> hceSwitchZoneSetEvent = std::make_shared<ActionEvent>();
+	// Halo 5: same idea, separate event - the two bridges hold different selections and the titles can never
+	// coexist in one process, so sharing the event would only make the wiring harder to follow.
+	std::shared_ptr<ActionEvent> h5SwitchZoneSetEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceDoubleRevertEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceCoreSaveEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceCoreLoadEvent = std::make_shared<ActionEvent>();
@@ -259,7 +330,7 @@ public:
 	//
 	// The last four elements are REPLACED IN THE CONSTRUCTOR with events that already exist (see below), so
 	// those hotkeys fire the very same event object the equivalent button does. Everything before them is new.
-	static constexpr inline int kHCEHotkeyCount = 61;
+	static constexpr inline int kHCEHotkeyCount = 62;
 	std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> hceHotkeyEvents = []()
 		{
 			std::array<std::shared_ptr<ActionEvent>, kHCEHotkeyCount> events;
@@ -739,6 +810,15 @@ public:
 			false,
 			[](bool in) { return true; },
 			nameof(forceLaunchForwardIgnoreZ)
+		);
+
+	// Halo 5 Acrophobia (boots off the ground). A toggle rather than an ActionEvent because the effect runs
+	// every frame while jump is held, not once on a keypress.
+	std::shared_ptr<BinarySetting<bool>> h5AcrophobiaToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5AcrophobiaToggle)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> forceLaunchManual = std::make_shared<BinarySetting<bool>>
@@ -1264,6 +1344,17 @@ public:
 			true,
 			[](bool in) { return true; },
 			nameof(hceDisplayInfoShowZoneSet)
+		);
+
+	// The zone set TRANSITION rows: "Preparing Zone Set" true/false and "Prepared Zone Set" name-or-NULL.
+	// Split out of the Current Zone Set row, which used to append " (loading)" and so flipped to the
+	// INCOMING zone set's name the instant a Begin Zone Set Change fired. Off by default: only interesting
+	// while deliberately watching a transition.
+	std::shared_ptr<BinarySetting<bool>> hceDisplayInfoShowZoneSetPrep = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceDisplayInfoShowZoneSetPrep)
 		);
 
 	// ⚠ A DIAGNOSTIC ROW, not a feature. It exists because HCM writes no log file under Linux/Proton, so the
@@ -3275,6 +3366,238 @@ public:
 
 
 	// settings that ought to be serialised/deserialised between HCM runs
+
+	// ---- Halo 5: Forge trigger volume overlay -----------------------------------------------------------
+	// Its own settings rather than sharing the MCC/HaloCER ones: the CATEGORIES differ (Halo 5 has begin and
+	// commit zone set volumes, which no other title has) and the defaults want to differ with them.
+	std::shared_ptr<BinarySetting<bool>> h5TriggerOverlayToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5TriggerOverlayToggle)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> h5TriggerOverlayShowRegular = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(h5TriggerOverlayShowRegular)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> h5TriggerOverlayShowKill = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(h5TriggerOverlayShowKill)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> h5TriggerOverlayShowBeginZoneSet = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(h5TriggerOverlayShowBeginZoneSet)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> h5TriggerOverlayShowCommitZoneSet = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(h5TriggerOverlayShowCommitZoneSet)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> h5TriggerOverlayShowLabels = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5TriggerOverlayShowLabels)
+		);
+
+	std::shared_ptr<BinarySetting<float>> h5TriggerOverlayAlpha = std::make_shared<BinarySetting<float>>
+		(
+			0.25f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(h5TriggerOverlayAlpha)
+		);
+
+	std::shared_ptr<BinarySetting<float>> h5TriggerOverlayWireframeAlpha = std::make_shared<BinarySetting<float>>
+		(
+			0.9f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(h5TriggerOverlayWireframeAlpha)
+		);
+
+	std::shared_ptr<BinarySetting<float>> h5TriggerOverlayRenderDistance = std::make_shared<BinarySetting<float>>
+		(
+			150.f,
+			[](float in) { return in >= 1.f && in <= 10000.f; },
+			nameof(h5TriggerOverlayRenderDistance)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> h5TriggerOverlayNormalColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{ 1.0f, 0.0f, 0.0f, 1.0f }, // red
+			[](SimpleMath::Vector4 in) { return in.w >= 0.05f; },
+			nameof(h5TriggerOverlayNormalColor)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> h5TriggerOverlayKillColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{ 1.0f, 0.35f, 0.0f, 1.0f }, // orange
+			[](SimpleMath::Vector4 in) { return in.w >= 0.05f; },
+			nameof(h5TriggerOverlayKillColor)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> h5TriggerOverlayBeginZoneSetColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{ 0.0f, 0.85f, 1.0f, 1.0f }, // cyan - the switch is being PREPARED
+			[](SimpleMath::Vector4 in) { return in.w >= 0.05f; },
+			nameof(h5TriggerOverlayBeginZoneSetColor)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> h5TriggerOverlayCommitZoneSetColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{ 0.35f, 0.25f, 1.0f, 1.0f }, // blue - the switch COMMITS here
+			[](SimpleMath::Vector4 in) { return in.w >= 0.05f; },
+			nameof(h5TriggerOverlayCommitZoneSetColor)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> h5TriggerOverlayHitMessages = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5TriggerOverlayHitMessages)
+		);
+
+	std::shared_ptr<BinarySetting<float>> h5TriggerOverlayLabelScale = std::make_shared<BinarySetting<float>>
+		(
+			16.f,
+			[](float in) { return in > 6.f && in <= 64.f; },
+			nameof(h5TriggerOverlayLabelScale)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> h5TriggerOverlayLabelColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{ 1.0f, 1.0f, 1.0f, 1.0f },
+			[](SimpleMath::Vector4 in) { return in.w >= 0.05f; },
+			nameof(h5TriggerOverlayLabelColor)
+		);
+
+	// ---- Halo 5: Forge misc ------------------------------------------------------------------------------
+	std::shared_ptr<BinarySetting<bool>> h5InvincibilityToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5InvincibilityToggle)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> h5PauseMenuFixToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5PauseMenuFixToggle)
+		);
+
+	// Draw ONLY the volumes a speedrun must touch - the level's goal gotoVolumes plus its end trigger.
+	// See H5SpeedrunTriggers.h. Composes with the name filter rather than overriding it.
+	std::shared_ptr<BinarySetting<bool>> h5TriggerOverlaySpeedrunOnly = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5TriggerOverlaySpeedrunOnly)
+		);
+
+	// Opens the by-name picker (HaloCER's dialog, reused). Writes triggerOverlayFilterString.
+	std::shared_ptr<ActionEvent> h5TriggerOverlayEditNameFilterEvent = std::make_shared<ActionEvent>();
+
+	std::shared_ptr<BinarySetting<bool>> h5GameSpeedToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5GameSpeedToggle)
+		);
+
+	// The engine clamps its own per-frame catch-up budget at 15 (exe+0x033200BC), so past that the simulation
+	// stops keeping up rather than running faster. Allow up to 15 and no further.
+	std::shared_ptr<BinarySetting<float>> h5GameSpeedAmount = std::make_shared<BinarySetting<float>>
+		(1.f, [](float in) { return in >= 0.01f && in <= 15.f; }, nameof(h5GameSpeedAmount));
+
+	std::shared_ptr<BinarySetting<bool>> h5OutOfBoundsBypassToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5OutOfBoundsBypassToggle)
+		);
+
+	// ---- Halo 5 trigger overlay: colour by SCRIPT ACTIVITY instead of by category ------------------
+	// "Blue if a script can hit or wake it, red if inert." Derived statically from the compiled mission
+	// script corpus (see H5TriggerVolumeNames.h) plus the engine's own per-volume kill flag, so nothing
+	// has to be patched into the running game.
+	std::shared_ptr<BinarySetting<bool>> h5TriggerOverlayColourByScript = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5TriggerOverlayColourByScript)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> h5TriggerOverlayScriptedColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{ 0.15f, 0.45f, 1.0f, 1.0f }, // blue - a script polls or acts on it
+			[](SimpleMath::Vector4 in) { return in.w >= 0.05f; },
+			nameof(h5TriggerOverlayScriptedColor)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> h5TriggerOverlayInertColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{ 1.0f, 0.1f, 0.1f, 1.0f }, // red - nothing references it
+			[](SimpleMath::Vector4 in) { return in.w >= 0.05f; },
+			nameof(h5TriggerOverlayInertColor)
+		);
+
+	// ---- Halo 5: Forge Havok debugger --------------------------------------------------------------
+	std::shared_ptr<BinarySetting<bool>> h5HavokOverlayToggle = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(h5HavokOverlayToggle));
+
+	std::shared_ptr<BinarySetting<bool>> h5HavokOverlayShowStatic = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(h5HavokOverlayShowStatic));
+
+	std::shared_ptr<BinarySetting<bool>> h5HavokOverlayShowInstances = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(h5HavokOverlayShowInstances));
+
+	std::shared_ptr<BinarySetting<bool>> h5HavokOverlayShowObjects = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(h5HavokOverlayShowObjects));
+
+	// World units: 1 WU = 10 feet, so 30 is a large room. The level holds 2.37M collision triangles, and
+	// the per-section cull is what makes this affordable - a bigger radius costs real time.
+	std::shared_ptr<BinarySetting<float>> h5HavokOverlayRadius = std::make_shared<BinarySetting<float>>
+		(25.f, [](float in) { return in >= 1.f && in <= 500.f; }, nameof(h5HavokOverlayRadius));
+
+	// A hard stop, so a large radius degrades into "draws less" instead of stalling the render thread.
+	std::shared_ptr<BinarySetting<float>> h5HavokOverlayTriangleBudget = std::make_shared<BinarySetting<float>>
+		(40000.f, [](float in) { return in >= 1000.f && in <= 400000.f; }, nameof(h5HavokOverlayTriangleBudget));
+
+	// Collision does not move, so re-decoding every frame would burn CPU for an identical picture.
+	std::shared_ptr<BinarySetting<float>> h5HavokOverlayRefreshMs = std::make_shared<BinarySetting<float>>
+		(250.f, [](float in) { return in >= 16.f && in <= 5000.f; }, nameof(h5HavokOverlayRefreshMs));
+
+	// Wireframe by default: a solid 2M-triangle collision mesh is an opaque wall.
+	std::shared_ptr<BinarySetting<float>> h5HavokOverlayWireAlpha = std::make_shared<BinarySetting<float>>
+		(0.85f, [](float in) { return in >= 0.f && in <= 1.f; }, nameof(h5HavokOverlayWireAlpha));
+
+	std::shared_ptr<BinarySetting<float>> h5HavokOverlayFillAlpha = std::make_shared<BinarySetting<float>>
+		(0.f, [](float in) { return in >= 0.f && in <= 1.f; }, nameof(h5HavokOverlayFillAlpha));
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> h5HavokOverlayStaticColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(SimpleMath::Vector4{ 0.1f, 1.0f, 0.4f, 1.0f },
+		 [](SimpleMath::Vector4 in) { return in.w >= 0.05f; }, nameof(h5HavokOverlayStaticColor));
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> h5HavokOverlayObjectColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(SimpleMath::Vector4{ 1.0f, 0.85f, 0.1f, 1.0f },
+		 [](SimpleMath::Vector4 in) { return in.w >= 0.05f; }, nameof(h5HavokOverlayObjectColor));
+
+	// ⚠⚠ THIS LIST MUST BE DECLARED AFTER EVERY SETTING IT NAMES. It is a member initialised in
+	// DECLARATION ORDER, so a setting declared below it is captured as a NULL shared_ptr and the
+	// first save dereferences it. That is a runtime crash, not a compile error - the compiler cannot
+	// see the problem. Keep this block immediately above the PresetCollectorDisarmer.
 	std::vector<std::shared_ptr<SerialisableSetting>> allSerialisableOptions
 	{
 		changeOOBBackgroundColor,
@@ -3535,6 +3858,7 @@ public:
 		hceTriggerOverlayZoneSetReport,
 		hceTriggerOverlayBeginZoneSetColor,
 		hceDisplayInfoShowZoneSet,
+		hceDisplayInfoShowZoneSetPrep,
 		hceDisplayInfoShowCameraDiag,
 		// ⚠ hceBspOverlayToggle is DELIBERATELY ABSENT from this list. Everything here is written to
 		// HCMInternalConfig.xml and read back at startup, so listing the toggle would make the overlay
@@ -3632,6 +3956,42 @@ public:
 		consoleCommandFreeCursor,
 		consoleCommandBlockInput,
 		consoleCommandPauseGame,
+
+		// ---- Halo 5: Forge ----------------------------------------------------------------------
+		// The master TOGGLES are deliberately absent, like the HaloCER ones - a cheat that switches
+		// itself back on at launch is a surprise, not a convenience. Everything that is CONFIGURATION
+		// (colours, radii, filters, budgets) persists, which is what actually costs the user time to
+		// set up again.
+		h5TriggerOverlayNormalColor,
+		h5TriggerOverlayKillColor,
+		h5TriggerOverlayCommitZoneSetColor,
+		h5TriggerOverlayBeginZoneSetColor,
+		h5TriggerOverlayScriptedColor,
+		h5TriggerOverlayInertColor,
+		h5TriggerOverlayLabelColor,
+		h5TriggerOverlayAlpha,
+		h5TriggerOverlayWireframeAlpha,
+		h5TriggerOverlayLabelScale,
+		h5TriggerOverlayRenderDistance,
+		h5TriggerOverlayShowRegular,
+		h5TriggerOverlayShowKill,
+		h5TriggerOverlayShowCommitZoneSet,
+		h5TriggerOverlayShowBeginZoneSet,
+		h5TriggerOverlayShowLabels,
+		h5TriggerOverlayHitMessages,
+		h5TriggerOverlayColourByScript,
+		h5HavokOverlayStaticColor,
+		h5HavokOverlayObjectColor,
+		h5HavokOverlayFillAlpha,
+		h5HavokOverlayWireAlpha,
+		h5HavokOverlayRadius,
+		h5HavokOverlayTriangleBudget,
+		h5HavokOverlayRefreshMs,
+		h5HavokOverlayShowStatic,
+		h5HavokOverlayShowInstances,
+		h5HavokOverlayShowObjects,
+		h5GameSpeedAmount,
+		h5TriggerOverlaySpeedrunOnly,
 
 	};
 

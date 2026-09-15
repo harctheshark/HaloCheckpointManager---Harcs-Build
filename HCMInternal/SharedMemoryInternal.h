@@ -46,6 +46,75 @@ public:
 	virtual void setStatusFlag(HCMInternalStatus in) noexcept override;
 	std::string HCMDirPath;
 
+	// HCMExternal's liveness counter, bumped once per state machine tick (~1s).
+	//
+	// ⚠ This exists because the usual proof of life - OpenProcess + GetExitCodeProcess on HCMExternal -
+	// is IMPOSSIBLE from a sandboxed host. An AppContainer (Halo 5: Forge is a UWP title) can neither
+	// enumerate desktop processes nor open a handle to one, so HeartbeatTimer decided it was an orphan and
+	// killed the session about three seconds in, every time.
+	//
+	// Returns nullopt when the field is absent, which means an OLDER HCMExternal that predates this
+	// counter. Callers must treat that as "cannot tell" and fall back, never as "external is dead".
+	std::optional<int> getExternalHeartbeat() noexcept
+	{
+		try
+		{
+			auto* p = segment.find<int>("externalHeartbeat").first;
+			if (!p) return std::nullopt;
+			return *p;
+		}
+		catch (...) { return std::nullopt; }
+	}
+
+	// Keyboard state forwarded by HCMExternal, one byte per virtual key.
+	//
+	// ⚠ THIS IS THE ONLY KEYBOARD SOURCE THAT WORKS IN AN APPCONTAINER. Inside the sandbox
+	// GetAsyncKeyState returns 0x0000 for everything, and Raw Input - which registers successfully for
+	// mouse AND keyboard - delivers mouse events only, never a single keystroke. Since HCM's hotkeys are
+	// ImGui::IsKeyDown() checks, without this every hotkey on Halo 5: Forge is dead, not just text entry.
+	//
+	// Returns nullptr against an older HCMExternal that predates the array; callers must treat that as
+	// "no keyboard available" rather than "all keys up".
+	const unsigned char* getForwardedKeyStates() noexcept
+	{
+		try
+		{
+			auto found = segment.find<unsigned char>("hcmKeyStates");
+			if (!found.first || found.second < 256) return nullptr;
+			return found.first;
+		}
+		catch (...) { return nullptr; }
+	}
+
+	// Static, because ImGuiManager is constructed from the graphics hook and has no shared memory handle
+	// of its own. Null when there is no shared memory or no forwarding external.
+	static const unsigned char* forwardedKeyStates() noexcept
+	{
+		return instance ? instance->getForwardedKeyStates() : nullptr;
+	}
+
+	// Cumulative mouse motion collected by HCMExternal. ⚠ The game clips the cursor to 1x1 for mouse-look,
+	// which freezes GetCursorPos, and raw input cannot be used inside the game without stealing the game's
+	// own (it is registered per process). Diff these against what you last saw.
+	bool getForwardedMouseMotion(int& x, int& y, int& wheel) noexcept
+	{
+		try
+		{
+			auto px = segment.find<int>("hcmMouseAccumX").first;
+			auto py = segment.find<int>("hcmMouseAccumY").first;
+			auto pw = segment.find<int>("hcmMouseAccumWheel").first;
+			if (!px || !py || !pw) return false;
+			x = *px; y = *py; wheel = *pw;
+			return true;
+		}
+		catch (...) { return false; }
+	}
+
+	static bool forwardedMouseMotion(int& x, int& y, int& wheel) noexcept
+	{
+		return instance ? instance->getForwardedMouseMotion(x, y, wheel) : false;
+	}
+
 	// setStatusFlag but static for access by UnhandledExceptionHandler in emergencies
 	static void UnhandledExceptionSetStatusErrorFlag()
 	{

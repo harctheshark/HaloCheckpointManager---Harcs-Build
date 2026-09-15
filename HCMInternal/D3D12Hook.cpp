@@ -308,6 +308,52 @@ bool D3D12Hook::isOwnedByThisProcess(HWND hwnd)
 	return windowProcessId == ::GetCurrentProcessId();
 }
 
+// Find THIS process's CoreWindow.
+//
+// ⚠ A UWP TITLE'S SWAPCHAIN HAS NO HWND. Win32 games call IDXGIFactory2::CreateSwapChainForHwnd, so
+// DXGI_SWAP_CHAIN_DESC::OutputWindow names the game window and isOwnedByThisProcess can vet it. A UWP
+// title cannot use that API at all - it must call CreateSwapChainForCoreWindow, which binds the swapchain
+// to an ICoreWindow instead, and GetDesc() then reports OutputWindow == NULL. Halo 5: Forge is such a
+// title, so adoption rejected the game's own swapchain on every Present ("whose window isn't ours") and
+// the overlay never drew a single frame.
+//
+// The CoreWindow does still have a real HWND (class Windows.UI.Core.CoreWindow) - DXGI just doesn't hand
+// it to us - and ImGui_ImplWin32_Init and the WndProc subclass both need it. So go find it ourselves.
+//
+// Every candidate is vetted with GetWindowThreadProcessId against our own PID, so even where the
+// enumeration can see other processes' windows we can never adopt one of theirs.
+HWND D3D12Hook::resolveOwnCoreWindow()
+{
+	const DWORD ownPid = ::GetCurrentProcessId();
+
+	// Preferred: ask for the class directly. Cheap, and needs no enumeration rights beyond the window
+	// station we already live in.
+	for (HWND h = nullptr; (h = ::FindWindowExW(nullptr, h, L"Windows.UI.Core.CoreWindow", nullptr)) != nullptr; )
+	{
+		DWORD pid = 0;
+		::GetWindowThreadProcessId(h, &pid);
+		if (pid == ownPid)
+			return h;
+	}
+
+	// Fallback: sweep top-level windows and keep the best one we own. Prefer a visible window, because a
+	// UWP process also owns invisible helper windows and subclassing one of those would silently eat
+	// every input message we care about.
+	struct SweepCtx { DWORD pid; HWND best; } ctx{ ownPid, nullptr };
+	::EnumWindows([](HWND h, LPARAM lp) -> BOOL
+		{
+			auto* c = reinterpret_cast<SweepCtx*>(lp);
+			DWORD pid = 0;
+			::GetWindowThreadProcessId(h, &pid);
+			if (pid != c->pid) return TRUE;
+			if (!::IsWindowVisible(h)) return TRUE;
+			c->best = h;
+			return FALSE;   // first visible window we own is good enough
+		}, reinterpret_cast<LPARAM>(&ctx));
+
+	return ctx.best;
+}
+
 // COM canonical-identity comparison. Two interface pointers refer to the same object if and only
 // if their IUnknown identities are equal - comparing (say) two ID3D12Device* directly is not valid,
 // because a single object can hand out different pointers for different interfaces.
@@ -1008,12 +1054,55 @@ bool D3D12Hook::tryAdoptSwapChain(IDXGISwapChain* pSwapChain)
 
 	// Filter 2: is the output window one of ours? Rejects out-of-process / thumbnail swapchains.
 	DXGI_SWAP_CHAIN_DESC swapDesc{};
-	if (FAILED(candidateSwapChain3->GetDesc(&swapDesc)) || !isOwnedByThisProcess(swapDesc.OutputWindow))
+	if (FAILED(candidateSwapChain3->GetDesc(&swapDesc)))
 	{
-		LOG_ONCE(PLOG_VERBOSE << "Present on a D3D12 swapchain whose window isn't ours; ignoring");
+		LOG_ONCE(PLOG_VERBOSE << "Present on a D3D12 swapchain whose desc we can't read; ignoring");
 		safe_release(candidateDevice);
 		safe_release(candidateSwapChain3);
 		return false;
+	}
+
+	// ⚠⚠⚠ A NULL OutputWindow IS NOT A FOREIGN SWAPCHAIN - IT IS A COMPOSITION SWAPCHAIN, AND IT MAY WELL
+	// BE THE GAME'S ONLY ONE. Rejecting it here is what kept the overlay off Halo 5: Forge entirely: the
+	// Present hook fired, the watchdog reported presents reaching us, HCMExternal said "internal
+	// connected", and not one frame ever drew.
+	//
+	// Halo 5: Forge is UWP and has ZERO HWNDs - 60 threads, not a window between them. The visible
+	// "Halo 5: Forge" ApplicationFrameWindow belongs to ApplicationFrameHost, not to the game, and has no
+	// children. So we cannot demand a window; we can only prefer one where it exists.
+	HWND effectiveWindow = swapDesc.OutputWindow;
+	if (effectiveWindow)
+	{
+		// Normal Win32 path, unchanged: a named window must be ours, or this is somebody else's swapchain
+		// (thumbnailers, Steam overlay, capture surfaces) and drawing into it would be a bug.
+		if (!isOwnedByThisProcess(effectiveWindow))
+		{
+			DWORD ownerPid = 0;
+			::GetWindowThreadProcessId(effectiveWindow, &ownerPid);
+			const std::string rejectMsg = std::format(
+				"Present on a D3D12 swapchain whose window isn't ours; ignoring. "
+				"hwnd: 0x{:X}, IsWindow: {}, owner pid: {}, our pid: {}",
+				(uintptr_t)effectiveWindow, (bool)::IsWindow(effectiveWindow),
+				ownerPid, ::GetCurrentProcessId());
+			LOG_ONCE_CAPTURE(PLOG_VERBOSE << rejectMsg, rejectMsg);
+			safe_release(candidateDevice);
+			safe_release(candidateSwapChain3);
+			return false;
+		}
+	}
+	else
+	{
+		// Composition / CoreWindow swapchain. Some UWP titles do own a CoreWindow we can still use for
+		// input, so look for one - but its absence is NOT a reason to refuse to draw.
+		effectiveWindow = resolveOwnCoreWindow();
+		const std::string compositionMsg = std::format(
+			"D3D12 swapchain reports no output window - a composition (UWP) swapchain. Own window "
+			"resolved to 0x{:X}{}",
+			(uintptr_t)effectiveWindow,
+			effectiveWindow
+				? " - adopting the swapchain and using that window for input."
+				: " - this target has NO window at all; adopting the swapchain anyway and synthesising input.");
+		LOG_ONCE_CAPTURE(PLOG_INFO << compositionMsg, compositionMsg);
 	}
 
 	if (mAdoptedSwapChain != nullptr)
@@ -1022,7 +1111,7 @@ bool D3D12Hook::tryAdoptSwapChain(IDXGISwapChain* pSwapChain)
 		// same window - otherwise it is a second, unrelated swapchain (a secondary window, a video
 		// capture surface) and adopting it would make us ping-pong between the two, tearing down and
 		// rebuilding every D3D12 resource on alternate frames.
-		if (swapDesc.OutputWindow != mWindowHandle)
+		if (effectiveWindow != mWindowHandle)
 		{
 			LOG_ONCE(PLOG_INFO << "Ignoring a second D3D12 swapchain on a different window");
 			safe_release(candidateDevice);
@@ -1083,7 +1172,7 @@ bool D3D12Hook::tryAdoptSwapChain(IDXGISwapChain* pSwapChain)
 	mAdoptedSwapChain = pSwapChain;   // identity only; kept valid by the ref mSwapChain3 holds
 	mSwapChain3 = candidateSwapChain3; // takes ownership of the QueryInterface ref
 	mDevice = candidateDevice;         // takes ownership of the GetDevice ref
-	mWindowHandle = swapDesc.OutputWindow;
+	mWindowHandle = effectiveWindow;   // NOT swapDesc.OutputWindow - that is NULL on a CoreWindow swapchain
 	isD3DdeviceInitialized = false;
 	// A new swapchain has to re-earn the right to draw: its presenting queue may be a different object
 	// entirely, so the previous verdict says nothing about it.
@@ -2007,20 +2096,64 @@ void D3D12Hook::renderOverlayFrame(IDXGISwapChain* pSwapChain, UINT presentFlags
 {
 	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::renderOverlayFrame");
 
+	// ───────────────────────────── TEMPORARY DIAGNOSTIC ─────────────────────────────
+	// ⚠ COUNTS BEFORE ANYTHING CAN RETURN. Every early return below is either SILENT or LOG_ONCE, so a
+	// frame that comes in and turns around leaves no trace - exactly the state Halo 5 was stuck in
+	// (swapchain adopted, then nothing, forever, with a mute log). Counting after the `instance` check
+	// would itself have been invisible if instance were null, which is why this sits above it.
+	// Remove once the Halo 5 overlay is up.
+	static std::atomic_uint32_t sDiagCalls{ 0 };
+	static std::atomic<const char*> sDiagLastBail{ "none (reached the gate)" };
+	const uint32_t diagCall = sDiagCalls.fetch_add(1, std::memory_order_relaxed) + 1;
+	auto diagBail = [](const char* where) { sDiagLastBail.store(where, std::memory_order_relaxed); };
+
+	// Report EARLY and often - 1..10, then every 60. A 300-frame interval can simply never be reached if
+	// presents are rare, and "no output" then looks identical to "not called at all".
+	if (diagCall <= 10 || (diagCall % 60) == 0)
+	{
+		D3D12Hook* diagHook = instance;
+		uint32_t candidates = 0;
+		{
+			std::scoped_lock lock(mQueueTableMutex);
+			candidates = mQueueTableCount;
+		}
+		PLOG_INFO << "[overlay-diag] frames into renderOverlayFrame: " << diagCall
+			<< " | last bail: " << sDiagLastBail.load(std::memory_order_relaxed)
+			<< " | instance: " << (diagHook ? "live" : "NULL")
+			<< " | gate: " << renderGateName(mRenderGate.load(std::memory_order_relaxed))
+			<< " | intervals: " << mPresentIntervalsObserved.load(std::memory_order_relaxed)
+			<< "/" << kQueueObserveIntervals
+			<< " | DIRECT queue candidates: " << candidates
+			<< " | queueSearchActive: " << mQueueSearchActive.load(std::memory_order_relaxed)
+			<< " | servicesReady: " << servicesReady.load(std::memory_order_relaxed)
+			<< " | thisChain: 0x" << std::hex << (uintptr_t)pSwapChain
+			<< " adopted: 0x" << (uintptr_t)(diagHook ? diagHook->mAdoptedSwapChain : nullptr)
+			<< " | presentFlags: 0x" << presentFlags << std::dec;
+	}
+
 	D3D12Hook* d3d = instance;
 	if (!d3d)
+	{
+		diagBail("instance == NULL");
 		return;
+	}
 
 	// Set before ~D3D12Hook starts draining, so a detour that got in just ahead of the drain stops
 	// touching D3D12 and HCM state immediately.
 	if (shuttingDown.load(std::memory_order_acquire))
+	{
+		diagBail("shuttingDown");
 		return;
+	}
 
 	// ⚠ An adopted hook fires from the CONSTRUCTOR onward, not from beginHook(). App builds ~15 services
 	// and parses all pointer data in between, so without this the first Present of a re-opened session
 	// re-enters a half-built service graph.
 	if (!servicesReady.load(std::memory_order_acquire))
+	{
+		diagBail("servicesReady == false");
 		return;
+	}
 
 
 	// Once shutdown has begun, stop invoking HCM's render/overlay callbacks. The services they
@@ -2049,7 +2182,10 @@ void D3D12Hook::renderOverlayFrame(IDXGISwapChain* pSwapChain, UINT presentFlags
 	// Latched after an unrecoverable failure. We keep the hooks installed (removing them from a
 	// detour is not safe) but never touch D3D12 again.
 	if (d3d->overlayPermanentlyDisabled)
+	{
+		diagBail("overlayPermanentlyDisabled");
 		return;
+	}
 
 	// DXGI_PRESENT_TEST is an occlusion poll: nothing is presented and GetCurrentBackBufferIndex()
 	// does NOT advance. DXGI_PRESENT_DO_NOT_SEQUENCE likewise does not flip. Rendering on those
@@ -2057,7 +2193,10 @@ void D3D12Hook::renderOverlayFrame(IDXGISwapChain* pSwapChain, UINT presentFlags
 	// moves, so imgui would overwrite a vertex/index buffer whose previous submission may still be
 	// executing. UE5/DXGI issue these routinely while the window is occluded.
 	if (presentFlags & (DXGI_PRESENT_TEST | DXGI_PRESENT_DO_NOT_SEQUENCE))
+	{
+		diagBail("DXGI_PRESENT_TEST / DO_NOT_SEQUENCE");
 		return;
+	}
 
 	// These are INLINE hooks on dxgi's shared Present/Present1, so we see every swapchain in the
 	// process. Everything below this point only runs for the one swapchain we adopted.
@@ -2071,13 +2210,17 @@ void D3D12Hook::renderOverlayFrame(IDXGISwapChain* pSwapChain, UINT presentFlags
 			// ...but decay it: this is a raw pointer compare, and a rejected swapchain that gets
 			// destroyed can have its address reused by the game's real one.
 			if (mRejectedSwapChainSkips.fetch_add(1, std::memory_order_relaxed) + 1 < kRejectedSwapChainRecheckInterval)
+			{
+				diagBail("foreign swapchain (negative cache hit)");
 				return;
+			}
 			mRejectedSwapChainSkips.store(0, std::memory_order_relaxed);
 		}
 
 		if (!d3d->tryAdoptSwapChain(pSwapChain))
 		{
 			mRejectedSwapChain.store(pSwapChain, std::memory_order_relaxed);
+			diagBail("tryAdoptSwapChain refused this chain");
 			return;
 		}
 
@@ -2102,7 +2245,11 @@ void D3D12Hook::renderOverlayFrame(IDXGISwapChain* pSwapChain, UINT presentFlags
 	// forwards the frame to the game untouched - the overlay appears a few frames later once a queue is
 	// proven, or never, if none can be. Losing the overlay is recoverable; losing the GPU is not.
 	if (!updateRenderGate())
+	{
+		diagBail("render gate closed (queue not yet proven)");
 		return;
+	}
+	diagBail("none (reached the gate)");
 
 	if (!d3d->isD3DdeviceInitialized)
 	{
@@ -2327,6 +2474,21 @@ HRESULT __stdcall D3D12Hook::newDX12Present(IDXGISwapChain* pSwapChain, UINT Syn
 	// atomic), which is what lets ~D3D12Hook prove nobody is inside a detour body before safetyhook
 	// frees the trampolines - and it doubles as the double-render guard for Present/Present1.
 	DetourEntryGuard entry(swapChainHookGuard);
+
+	// TEMPORARY DIAGNOSTIC - see renderOverlayFrame. Tells "the game barely presents" apart from
+	// "presents arrive but something diverts them before the overlay". Remove with the other one.
+	{
+		static std::atomic_uint32_t sPresentCalls{ 0 };
+		const uint32_t n = sPresentCalls.fetch_add(1, std::memory_order_relaxed) + 1;
+		if (n <= 10 || (n % 60) == 0)
+			PLOG_INFO << "[present-diag] newDX12Present #" << n
+				<< " | outermost: " << entry.isOutermost()
+				<< " | obsBypass: " << obsBypassOwnsFrame(false)
+				<< " | obsPreCapture: " << obsPreCaptureOwnsFrame(false)
+				<< " | chain: 0x" << std::hex << (uintptr_t)pSwapChain
+				<< " | flags: 0x" << Flags << std::dec
+				<< " | syncInterval: " << SyncInterval;
+	}
 
 	if (!entry.isOutermost())
 	{

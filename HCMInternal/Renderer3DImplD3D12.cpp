@@ -186,24 +186,39 @@ float4 PSMain(PSInput input) : SV_TARGET
 
 
 Renderer3DImplD3D12::Renderer3DImplD3D12(GameState game, IDIContainer& dicon)
-	: mSettingsWeak(dicon.Resolve<SettingsStateAndEvents>()),
+	: mGame(game),
+	mSettingsWeak(dicon.Resolve<SettingsStateAndEvents>()),
 	mMccStateHookWeak(dicon.Resolve<IMCCStateHook>()),
 	mMessagesGUIWeak(dicon.Resolve<IMessagesGUI>()),
-	mRuntimeExceptions(dicon.Resolve<RuntimeExceptionHandler>()),
-	mCameraDataWeak(resolveDependentCheat(HCEGetCameraData))
+	mRuntimeExceptions(dicon.Resolve<RuntimeExceptionHandler>())
 {
-	if (static_cast<GameState::Value>(game) != GameState::Value::HaloCER)
-		throw HCMInitException("Renderer3DImplD3D12 only supports Halo Campaign Evolved");
+	const auto gameValue = static_cast<GameState::Value>(game);
+	if (gameValue != GameState::Value::HaloCER && gameValue != GameState::Value::Halo5Forge)
+		throw HCMInitException("Renderer3DImplD3D12 only supports Halo Campaign Evolved and Halo 5: Forge");
 
-	// Fallback camera only: used for the frames before APlayerCameraManager::DoUpdateCamera has run even once.
-	// Optional - without it the renderer just skips those frames.
-	try
+	if (gameValue == GameState::Value::HaloCER)
 	{
-		mPlayerStateOptionalWeak = resolveDependentCheat(HCEGetPlayerState);
+		// ⚠ Resolved HERE rather than in the initialiser list, because HCEGetCameraData does not exist in a
+		// Halo 5 process - resolving it unconditionally would fail construction for the title that has no
+		// use for it.
+		mCameraDataWeak = resolveDependentCheat(HCEGetCameraData);
+
+		// Fallback camera only: used for the frames before APlayerCameraManager::DoUpdateCamera has run even
+		// once. Optional - without it the renderer just skips those frames.
+		try
+		{
+			mPlayerStateOptionalWeak = resolveDependentCheat(HCEGetPlayerState);
+		}
+		catch (HCMInitException)
+		{
+			PLOG_ERROR << "Renderer3DImplD3D12 could not resolve HCEGetPlayerState; no fallback camera";
+		}
 	}
-	catch (HCMInitException)
+	else
 	{
-		PLOG_ERROR << "Renderer3DImplD3D12 could not resolve HCEGetPlayerState; no fallback camera";
+		// Halo 5 has no separate camera service - the player state IS the camera source, and it is required
+		// rather than optional because there is nothing to fall back to.
+		mH5PlayerStateOptionalWeak = resolveDependentCheat(H5GetPlayerState);
 	}
 
 	// Unit sphere, radius 0.5 so its diameter is 1 - exactly GeometricPrimitive::CreateSphere's default on the
@@ -771,6 +786,110 @@ bool Renderer3DImplD3D12::updateCamera(SimpleMath::Vector2 screenSize)
 {
 	SimpleMath::Vector3 position, forward, right, up;
 	float horizontalFovDegrees = 0.f;
+
+	// ---- Halo 5: Forge -----------------------------------------------------------------------------------
+	// A completely separate camera source, taken before the HaloCER path so none of the UE POV machinery
+	// (which does not exist in this title) is touched.
+	if (static_cast<GameState::Value>(mGame) == GameState::Value::Halo5Forge)
+	{
+		if (!mH5PlayerStateOptionalWeak.has_value())
+		{
+			logCameraSourceIfChanged(CameraSource::NoCameraService, {}, 0.f);
+			return false;
+		}
+		auto h5 = mH5PlayerStateOptionalWeak.value().lock();
+		if (!h5)
+		{
+			logCameraSourceIfChanged(CameraSource::NoFallbackAvailable, {}, 0.f);
+			return false;
+		}
+
+		try
+		{
+			position = h5->getCameraPosition();
+			forward = h5->getPlayerAim();
+		}
+		catch (HCMRuntimeException)
+		{
+			// No level loaded, mid-load, or dead. Entirely normal - skip the frame.
+			logCameraSourceIfChanged(CameraSource::FallbackThrew, {}, 0.f);
+			return false;
+		}
+
+		if (forward.LengthSquared() < 1e-9f)
+		{
+			logCameraSourceIfChanged(CameraSource::RejectedValues, position, 0.f);
+			return false;
+		}
+		forward.Normalize();
+
+		// ⚠ DERIVE UP, DO NOT ASSUME IT. Blam is Z-up, but world Z is only the camera's up vector when the
+		// camera is level; at any pitch it has to be the component of Z perpendicular to forward, or the
+		// view matrix shears and the overlay tilts as you look up and down. Straight down/up is the
+		// degenerate case (forward parallel to Z), where any perpendicular will do.
+		const SimpleMath::Vector3 worldUp{ 0.f, 0.f, 1.f };
+		up = worldUp - forward * forward.Dot(worldUp);
+		if (up.LengthSquared() < 1e-6f)
+			up = SimpleMath::Vector3{ 0.f, 1.f, 0.f } - forward * forward.Dot({ 0.f, 1.f, 0.f });
+		up.Normalize();
+
+		// Read LIVE from the engine, so changing the in-game slider is followed automatically and there is
+		// no HCM-side setting to keep in sync. 90 only covers the read failing outright.
+		horizontalFovDegrees = 90.f;
+		try { horizontalFovDegrees = h5->getCameraFovDegrees(); }
+		catch (HCMRuntimeException) {}
+
+		logCameraSourceIfChanged(CameraSource::SimFallback, position, horizontalFovDegrees);
+
+		// ⚠ DIAGNOSTIC, rate limited. If the overlay is close but not aligned, the answer is almost
+		// certainly in this line: the back buffer HCM renders into must be the same aspect the GAME renders
+		// at, and on an ultrawide desktop running a 16:9 game they can differ - which tilts every box
+		// outward from the centre by an amount that grows toward the screen edge and looks exactly like a
+		// slightly wrong FOV.
+		{
+			static std::chrono::steady_clock::time_point sLast{};
+			const auto now = std::chrono::steady_clock::now();
+			if (sLast.time_since_epoch().count() == 0 || now - sLast > std::chrono::seconds(10))
+			{
+				sLast = now;
+				PLOG_INFO << "[h5-camera] backbuffer " << screenSize.x << "x" << screenSize.y
+					<< " aspect " << (screenSize.y > 0.f ? screenSize.x / screenSize.y : 0.f)
+					<< " | hFOV(engine) " << horizontalFovDegrees
+					<< " | eye (" << position.x << ", " << position.y << ", " << position.z << ")"
+					<< " | fwd (" << forward.x << ", " << forward.y << ", " << forward.z << ")";
+			}
+		}
+
+		// Falls through to the shared validation and matrix build below.
+		if (screenSize.x < 1.f || screenSize.y < 1.f) return false;
+		if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))
+		{
+			logCameraSourceIfChanged(CameraSource::RejectedValues, position, horizontalFovDegrees);
+			return false;
+		}
+		if (position == SimpleMath::Vector3::Zero)
+		{
+			logCameraSourceIfChanged(CameraSource::OriginRejected, position, horizontalFovDegrees);
+			return false;
+		}
+
+		const float hFov = DirectX::XMConvertToRadians(std::clamp(horizontalFovDegrees, 10.f, 170.f));
+		const float aspect = screenSize.x / screenSize.y;
+		const float vFov = 2.f * std::atan(std::tan(hFov * 0.5f) / aspect);
+		if (!std::isfinite(vFov) || vFov <= 0.0001f) return false;
+
+		mCameraPosition = position;
+		mCameraForward = forward;
+		mCameraUp = up;
+		mProjectionMatrix = SimpleMath::Matrix::CreatePerspectiveFieldOfView(vFov, aspect, kNearPlane, kFarPlane);
+		mViewMatrix = SimpleMath::Matrix::CreateLookAt(mCameraPosition, mCameraPosition + mCameraForward, mCameraUp);
+		mViewProjectionMatrix = mViewMatrix * mProjectionMatrix;
+		mScreenSize = screenSize;
+		mScreenCenter = { screenSize.x / 2.f, screenSize.y / 2.f };
+		DirectX::BoundingFrustum::CreateFromMatrix(mFrustumViewWorld, mProjectionMatrix, true);
+		mFrustumViewWorld.Transform(mFrustumViewWorld, mViewMatrix.Invert());
+		return true;
+	}
 
 	auto cameraData = mCameraDataWeak.lock();
 	if (!cameraData)

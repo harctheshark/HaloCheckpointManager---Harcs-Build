@@ -1,4 +1,4 @@
-// dllmain.cpp : Defines the entry point for the DLL application.
+﻿// dllmain.cpp : Defines the entry point for the DLL application.
 #include "pch.h"
 #include <fstream>
 #include <string>
@@ -6,6 +6,7 @@
 #include "WindowsUtilities.h"
 
 #include "App.h"
+#include "BootstrapTrace.h"
 #include "MCCInitialisationCheck.h"
 #include "ImageResidencyGuard.h"
 #include "ImGuiManager.h"
@@ -14,7 +15,9 @@
 // Main Execution Loop
 void RealMain(HMODULE dllHandle)
 {
+    bootstrapTrace("RealMain: constructing App");
     App app = App(dllHandle); // app blocks at the end of it's constructor until it's kill condition is met
+    bootstrapTrace("RealMain: App returned");
 }
 
 // ================================================================================================
@@ -76,6 +79,8 @@ DWORD WINAPI MainThread(HMODULE hDLL)
     if (hDLL) gSelfModule = hDLL; else hDLL = gSelfModule;
     if (!hDLL) return 0;
 
+    bootstrapTrace("MainThread: entered");
+
     if (!pinSelf())   // before anything installs a hook, so the image can never go away under one
     {
         PLOG_FATAL << "HCMInternal: could not pin the module. Refusing to install hooks that would outlive it.";
@@ -120,6 +125,8 @@ DWORD WINAPI MainThread(HMODULE hDLL)
     // module resident, LoadLibrary can no longer rescue it. That is why the MessageBoxA in App.h had to
     // move off this thread.
     struct SessionGuard { ~SessionGuard() { gSessionRunning.store(false, std::memory_order_release); } } sessionGuard;
+
+    bootstrapTrace("MainThread: session guard taken, init check passed");
 
     // Re-arm every LOG_ONCE site for this session (they are per-callsite statics; see pch.h).
     LogOnceGeneration::newSession();

@@ -181,9 +181,35 @@ HCESwitchZoneSet,\
 CompetitionMode
 
 
+// Halo 5: Forge. Its own list rather than an extension of ALLOPTIONALCHEATS3, for two reasons: the 64-entry
+// cap documented at the top of this file, and because these belong to a different TITLE - GameProcessFilter
+// only ever builds one title's cheats inside a given process, so keeping them visibly separate makes that
+// boundary obvious at a glance.
+// H5GetPlayerState is the foundation: it owns the simulation-thread TLS walk (including picking the thread
+// that holds the object-write gate) and everything else Halo5-side resolveDependentCheat()s it.
+#define ALLOPTIONALCHEATS4	\
+H5GetPlayerState,\
+H5ForceCheckpoint,\
+H5ForceRevert,\
+H5ForceTeleport,\
+H5ForceLaunch,\
+H5Acrophobia,\
+H5SwitchZoneSet,\
+H5GetTriggerData,\
+H5TriggerOverlay,\
+H5Invincibility,\
+H5GameSpeed,\
+H5OutOfBoundsBypass,\
+H5PauseMenuFix,\
+H5GetHavokData,\
+H5HavokOverlay,\
+H5DisplayInfo
+
+
 enum class OptionalCheatEnum {
 	ALLOPTIONALCHEATS1,
 	ALLOPTIONALCHEATS2,
 	ALLOPTIONALCHEATS3,
+	ALLOPTIONALCHEATS4,
 };
 

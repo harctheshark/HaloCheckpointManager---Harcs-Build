@@ -7,10 +7,14 @@
 
 void Render3DEventProvider::onDirectXRenderEvent(ID3D11Device* pDevice, ID3D11DeviceContext* pDeviceContext, SimpleMath::Vector2 screenSize, ID3D11RenderTargetView* pMainRenderTargetView)
 {
-	// HaloCER renders through onD3D12RenderEvent instead, and ImGuiManager never fires the D3D11 event on the
-	// D3D12 path anyway - so this is unreachable there. It is a compile-time-constant-false test for every MCC
-	// game, which is what makes it provably free of behaviour change for them.
-	if (static_cast<GameState::Value>(mGame) == GameState::Value::HaloCER) return;
+	// HaloCER and Halo 5 render through onD3D12RenderEvent instead, and ImGuiManager never fires the D3D11
+	// event on the D3D12 path anyway - so this is unreachable there. It is a constant-false test for every
+	// MCC game, which is what makes it provably free of behaviour change for them.
+	// ⚠ Halo 5 MUST be in this test, not just HaloCER: mUpdateCameraDataD3D11 is only bound on the D3D11
+	// branch of the constructor, so on either D3D12 title it is an empty std::function and calling it below
+	// would throw std::bad_function_call straight into the game's render thread.
+	const auto gameValue = static_cast<GameState::Value>(mGame);
+	if (gameValue == GameState::Value::HaloCER || gameValue == GameState::Value::Halo5Forge) return;
 
 	if (gameIsValid == false) return;
 	ScopedAtomicBool lock(currentlyRendering);
@@ -120,9 +124,12 @@ Render3DEventProvider::Render3DEventProvider(GameState gameImpl, IDIContainer& d
 		break;
 
 	case GameState::Value::HaloCER:
+	case GameState::Value::Halo5Forge:
 	{
-		// Halo Campaign Evolved: D3D12. Note this subscribes to a DIFFERENT event - ImGuiManager fires
+		// Both are D3D12 titles. Note this subscribes to a DIFFERENT event - ImGuiManager fires
 		// ForegroundD3D12RenderEvent (and never the D3D11 one) whenever the graphics backend is D3D12.
+		// Renderer3DImplD3D12 branches internally on the game for its camera source only; everything else
+		// about it is title-agnostic.
 		p3DRendererD3D12 = std::make_unique<Renderer3DImplD3D12>(gameImpl, dicon);
 		d3d12RenderEventCallback = std::make_unique<ScopedCallback<D3D12RenderEvent>>(
 			dicon.Resolve<D3D12RenderEvent>().lock(),

@@ -15,13 +15,24 @@ private:
 		{GameState::Value::Halo3ODST,""},
 		{GameState::Value::HaloReach,""},
 		{GameState::Value::HaloCER,""},   // REQUIRED: ctor does toolTipStrings.at(game) for every AllGameStateValues entry
+		{GameState::Value::Halo5Forge,""},// REQUIRED, same reason - see below
 		{GameState::Value::NoGame,""},
 	};
 
 public:
 	ToolTipCollection(std::string sharedTooltip)
 	{
-		// all games have the same tool tip
+		// ⚠⚠ THIS MAP MUST CONTAIN EVERY AllGameStateValues ENTRY. `.at()` throws std::out_of_range for a
+		// missing key, and NOTHING here catches it - it propagates out of the gui element's constructor,
+		// out of GUIElementConstructor, out of App, and terminates HCMInternal with an unhandled
+		// 0xE06D7363 and a minidump that lands in KERNELBASE with no HCM frame to read.
+		//
+		// That is not hypothetical: adding GameState::Halo5Forge to AllGameStateValues without seeding it
+		// here made EVERY gui element fail (every element builds a tooltip), which read as "HCM injects
+		// and then dies during GUI construction" rather than as "one map is missing one key".
+		//
+		// ★ If you add a GameState, add it above. The `at()` is deliberate - a silent operator[] insert
+		// would hide the mistake instead of pointing at it.
 		for (auto game : AllGameStateValues)
 		{
 			toolTipStrings.at(game) = sharedTooltip;

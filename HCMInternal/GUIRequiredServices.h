@@ -5,9 +5,9 @@
 #define TOPGUIELEMENTS_RELEASE \
 ((presetsHeadingGUI,(ALL_GAMES_AND_MAINMENU)))\
 ((controlHeadingGUI,(ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
-((saveManagementHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER)))\
+((saveManagementHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5)))\
 ((cheatsHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER)))\
-((overlaysHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER)))\
+((overlaysHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5)))\
 ((cameraHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 ((theaterHeadingGUI,(Halo3,Halo3ODST,HaloReach,Halo4)))\
 ((debugHeadingGUI, (ALL_SUPPORTED_GAMES)))\

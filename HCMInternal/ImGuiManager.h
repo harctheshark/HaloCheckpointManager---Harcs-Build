@@ -77,9 +77,84 @@ private:
 public:
 	// dllmain must know this before it decides whether the image can be unmapped.
 	static bool wndProcWasLeftInstalled() { return mWndProcLeftInstalled.load(std::memory_order_acquire); }
+
+	// ⚠ THE ONLY HONEST ANSWER TO "SHOULD WE TAKE THE MOUSE OFF THE GAME" IS HCM'S OWN MENU STATE.
+	// I tried inferring it from what ImGui had on screen twice and got it wrong both times: "any window
+	// visible" is always true (the collapsed title bar, the game/level readout, the 2D info overlay), and
+	// filtering by collapsed/NoMouseInputs then made it always FALSE. Meanwhile io.WantCaptureMouse is only
+	// true while the pointer is already over a window, so keying off it lets the game snatch the cursor
+	// back the moment the user moves off the menu and they can never return to it.
+	// HCMInternalGUI knows exactly when its window is open; it tells us here.
+	static void setMenuWantsCursor(bool open) { sMenuWantsCursor.store(open, std::memory_order_relaxed); }
 private:
 
 	HWND m_windowHandle = nullptr; // Needed for creating wndProc hook, will get from SwapChain description
+
+	// ⚠⚠⚠ SOME TARGETS HAVE NO WINDOW AT ALL. Halo 5: Forge (UWP/AppContainer) has 60 threads and ZERO
+	// HWNDs - the visible "Halo 5: Forge" ApplicationFrameWindow belongs to ApplicationFrameHost, not to
+	// the game, and it has no children. The swapchain is composition-based, so GetDesc().OutputWindow is
+	// NULL. (A Windows.UI.Core.CoreWindow titled 'Halo' does exist but belongs to HaloHub.exe, a different
+	// app - a red herring; do not chase it.)
+	//
+	// So there is no WndProc to subclass and imgui_impl_win32 is unusable: ImGui_ImplWin32_Init/NewFrame/
+	// Shutdown must all be skipped, and input synthesised per frame instead. See synthesiseWindowlessInput.
+	bool mWindowless = false;
+
+	// Drives ImGui's IO directly when there is no window to take messages from.
+	void synthesiseWindowlessInput(UINT backBufferWidth, UINT backBufferHeight);
+
+	// Was anything of ours actually on screen last frame? The windowless input path uses this to decide
+	// whether to take the cursor off the game.
+	// ⚠ It must NOT be io.WantCaptureMouse. That is only true while the pointer is already OVER one of
+	// our windows, so the instant the user moved off the menu the game would re-capture the cursor and
+	// they could never move back onto it.
+	static inline std::atomic<bool> sOverlayVisible{ false };
+	static inline std::atomic<bool> sMenuWantsCursor{ false };
+	static void refreshOverlayVisibility();
+
+	// ⚠⚠⚠ GetAsyncKeyState APPEARS TO RETURN NOTHING INSIDE THE GAME'S APPCONTAINER.
+	// Symptom: the overlay drew and tracked the cursor, but no click ever registered and Enter never
+	// closed a dialog that explicitly handles ImGuiKey_Enter - i.e. the KEY events were not arriving,
+	// not just the mouse ones. Same API behind both, so one cause.
+	//
+	// The fix is a real input source: our own message-only window plus Raw Input registered with
+	// RIDEV_INPUTSINK, which delivers mouse buttons and keystrokes even though we are never foreground.
+	// The game having no window of its own does not stop US from creating one.
+	//
+	// Both sources are OR'd together in synthesiseWindowlessInput, so if GetAsyncKeyState does work on
+	// some configuration nothing is lost, and if raw input fails to start we are no worse off than before.
+	static void startWindowlessRawInput();
+	static void stopWindowlessRawInput();
+	static LRESULT __stdcall rawInputWndProc(HWND, UINT, WPARAM, LPARAM);
+
+	// ⚠ EVENTS, NOT POLLING. Sampling "is the button down?" once per Present (60Hz) silently DROPS any
+	// press that begins and ends between two frames, and reorders a fast click-drag. Raw input hands us
+	// the actual transitions, so queue them and replay them into ImGui in order.
+	struct WindowlessInputEvent
+	{
+		enum class Kind : uint8_t { MouseButton, Key, Char, Wheel };
+		Kind kind{};
+		int code = 0;        // button index / virtual key / character
+		bool down = false;
+		float wheel = 0.0f;
+	};
+	static inline std::mutex sRawQueueMutex;
+	static inline std::vector<WindowlessInputEvent> sRawQueue;
+
+	static inline std::atomic<bool> sRawInputActive{ false };
+	static inline std::atomic<uint8_t> sRawKeyDown[256]{};   // current state, for modifiers
+	static inline std::atomic<uint8_t> sRawMouseDown[5]{};
+	static inline std::atomic<uint32_t> sRawEventCount{ 0 };
+	static inline std::atomic<uint32_t> sRawButtonEvents{ 0 };
+	static inline std::atomic<uint32_t> sRawKeyEvents{ 0 };
+
+	// Relative mouse motion. ⚠ This is what keeps the pointer usable while the GAME HAS THE CURSOR CLIPPED
+	// TO 1x1 - GetCursorPos is frozen then, but raw motion still arrives.
+	static inline std::atomic<int> sRawMouseDeltaX{ 0 };
+	static inline std::atomic<int> sRawMouseDeltaY{ 0 };
+	static inline HWND sRawInputWindow{ nullptr };
+	static inline std::thread sRawInputThread;
+	static inline std::atomic<DWORD> sRawInputThreadId{ 0 };
 
 	// When set, mNewWndProc stops forwarding INPUT messages to the game (see the switch in mNewWndProc).
 	// This is the fallback "GUI showing blocks game input" for titles with no engine-level block-input service

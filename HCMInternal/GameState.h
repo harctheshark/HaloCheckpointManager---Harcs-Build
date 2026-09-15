@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // This class could've been a simple enum class, but wrapping it like this allows deleting default constructor and adding a few helper methods
 class GameState
@@ -19,6 +19,10 @@ public:
 		// simulation lives in HaloSimulation_tag_release.dll. Value 8 is past MCC's gameIndicator range so it
 		// can never collide with one. Renders with D3D12 (MCC is D3D11) - see D3D12Hook.
 		HaloCER = 8,
+		// Halo 5: Forge - NOT an MCC game. A UWP/Store title (halo5forge.exe) with the whole engine in
+		// the exe, so every offset is an RVA into halo5forge.exe. 9 is past MCC's gameIndicator range
+		// and past HaloCER, so it can never collide.
+		Halo5Forge = 9,
 		NoGame = 255,
 	};
 	GameState() = delete; // no default construction
@@ -64,6 +68,7 @@ private:
 		(Value::Halo3ODST, "Halo3ODST")
 		(Value::HaloReach, "HaloReach")
 		(Value::HaloCER, "HaloCER")
+		(Value::Halo5Forge, "Halo5Forge")
 		(Value::NoGame, "NoGame");
 
 	static inline const std::map<Value, std::wstring> GameStateModuleNameMap =  // used in toModuleName
@@ -75,7 +80,9 @@ private:
 		(Value::Halo2MP, L"groundhog.dll")
 		(Value::Halo3ODST, L"halo3odst.dll")
 		(Value::HaloReach, L"haloreach.dll")
-		(Value::HaloCER, L"HaloSimulation_tag_release.dll");
+		(Value::HaloCER, L"HaloSimulation_tag_release.dll")
+		// Halo 5: Forge has no separate simulation module - the engine is the exe.
+		(Value::Halo5Forge, L"halo5forge.exe");
 };
 
 static inline const std::vector<GameState> AllGameStateValues
@@ -88,6 +95,7 @@ static inline const std::vector<GameState> AllGameStateValues
 		GameState::Value::Halo3ODST,
 		GameState::Value::HaloReach,
 		GameState::Value::HaloCER,
+		GameState::Value::Halo5Forge,
 		GameState::Value::NoGame
 };
 
@@ -101,6 +109,7 @@ static inline const std::vector<GameState> AllSupportedGames
 		GameState::Value::Halo3ODST,
 		GameState::Value::HaloReach,
 		GameState::Value::HaloCER,
+		GameState::Value::Halo5Forge,
 };
 
 static inline const std::vector<GameState> DoubleCheckpointGames // all except halo 1 (and HaloCER)

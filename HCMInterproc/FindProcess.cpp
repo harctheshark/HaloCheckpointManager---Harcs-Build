@@ -45,6 +45,46 @@ static std::optional<HandlePtr> findValidCampaignEvolvedProcess()
 	return std::nullopt;
 }
 
+// Halo 5: Forge (halo5forge.exe) - a third standalone title, found by process name for the same reason
+// HaloCER is: its window caption is not a stable constant.
+//
+// ⚠⚠ HALO 5 IS A UWP / STORE TITLE, SO IT RUNS IN AN APPCONTAINER. Finding and opening it works exactly
+// like the other two, but the INJECTION downstream has an extra requirement that nothing in this file can
+// satisfy: LoadLibraryA runs inside the sandbox, so the AppContainer must be able to READ HCMInternal.dll.
+// Without an ACE granting ALL APPLICATION PACKAGES (S-1-15-2-1) read+execute on the folder holding it,
+// CreateRemoteThread succeeds, LoadLibraryA returns NULL, and the injection fails with no obvious cause.
+//     icacls "<HCM folder>" /grant "*S-1-15-2-1:(OI)(CI)(RX)" /T
+// Proven necessary on this exe while injecting a test DLL by hand.
+static std::optional<HandlePtr> findValidHalo5ForgeProcess()
+{
+	HandlePtr snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
+	if (!snapshot || snapshot.get() == INVALID_HANDLE_VALUE) return std::nullopt;
+
+	PROCESSENTRY32 process;
+	ZeroMemory(&process, sizeof(process));
+	process.dwSize = sizeof(process);
+
+	if (Process32First(snapshot.get(), &process))
+	{
+		do
+		{
+			if (_wcsicmp(process.szExeFile, L"halo5forge.exe") == 0)
+			{
+				HandlePtr h5Handle(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, NULL, process.th32ProcessID));
+				if (!h5Handle)
+				{
+					PLOG_ERROR << "Found halo5forge.exe but failed to open it (PROCESS_QUERY_LIMITED_INFORMATION)";
+					return std::nullopt;
+				}
+				PLOG_DEBUG << "Found Halo 5: Forge process, pid: " << process.th32ProcessID;
+				return h5Handle;
+			}
+		} while (Process32Next(snapshot.get(), &process));
+	}
+
+	return std::nullopt;
+}
+
 // Returns a HandlePtr (with QueryLimitedInformation perms) to an active MCC process,
 // or nothing if there are no MCC processes or they are all invalid (terminated/terminating)
 std::optional<HandlePtr> findValidMCCProcess()
@@ -63,7 +103,12 @@ std::optional<HandlePtr> findValidMCCProcess()
 	// find mcc window
 	HWND mccWindowHandle = FindWindowA("UnrealWindow", "Halo: The Master Chief Collection  "); // I tested Japanese windows language and that didn't change the window title so we should be okay.
 	if (!mccWindowHandle)
-		return findValidCampaignEvolvedProcess(); // no MCC -> is Halo Campaign Evolved running instead?
+	{
+		// No MCC -> try the standalone titles in turn. They are mutually exclusive processes, so the
+		// order only decides which wins in the (unsupported) case of both running at once.
+		if (auto hce = findValidCampaignEvolvedProcess()) return hce;
+		return findValidHalo5ForgeProcess();
+	}
 
 
 	DWORD mccPID;

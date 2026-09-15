@@ -212,6 +212,7 @@ hceDisplayInfoShowVelocityXYZHotkey, \
 hceDisplayInfoShowLevelHotkey, \
 hceDisplayInfoShowBSPHotkey, \
 hceDisplayInfoShowZoneSetHotkey, \
+hceDisplayInfoShowZoneSetPrepHotkey, \
 hceDisplayInfoShowCameraDiagHotkey, \
 hceDisplayInfoShowTickHotkey, \
 hceDisplayInfoShowPlayerDatumHotkey, \

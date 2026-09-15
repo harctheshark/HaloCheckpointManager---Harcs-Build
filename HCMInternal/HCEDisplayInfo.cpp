@@ -221,15 +221,25 @@ private:
 
 		if (settings->hceDisplayInfoShowZoneSet->GetValue())
 		{
-			try
-			{
-				std::string name = playerState->getCurrentZoneSetName();
-				// The index global is written BEFORE the BSPs finish loading (it is the 4th instruction of the
-				// commit), so it means "switching to", not "finished". Say which.
-				if (!playerState->isCurrentZoneSetFullyLoaded()) name += " (loading)";
-				appendRow(out, "Current Zone Set", name);
-			}
+			// ⚠ THIS ROW SHOWS THE COMMITTED ZONE SET, NOT THE PUBLISHED INDEX.
+			// It used to show getCurrentZoneSetName() with " (loading)" appended mid-switch. That conflates
+			// two different questions: the index global is written as the 4th instruction of the commit, so
+			// during a Begin Zone Set Change it already names the INCOMING zone set - the row would flip to
+			// the new name while the player was still standing in the old one. "Which zone set am I in"
+			// should flip when the new one is actually resident, so this row now latches the last
+			// fully-loaded zone set. The in-flight switch is reported separately, below.
+			try { appendRow(out, "Current Zone Set", playerState->getCommittedZoneSetName()); }
 			catch (HCMRuntimeException) { appendRow(out, "Current Zone Set", "None"); }
+		}
+
+		// The other half of the split: what a switch is currently doing. Separate toggle so the main block
+		// stays clean - these two are only interesting while you are deliberately watching a transition.
+		if (settings->hceDisplayInfoShowZoneSetPrep->GetValue())
+		{
+			const bool preparing = playerState->isPreparingZoneSet();
+			appendRow(out, "Preparing Zone Set", preparing ? "True" : "False");
+			const auto prepared = playerState->getPreparedZoneSetName();
+			appendRow(out, "Prepared Zone Set", prepared.empty() ? "NULL" : prepared);
 		}
 
 		// ⚠ DIAGNOSTIC, off by default. The only window onto the camera election on Linux/Proton, where HCM

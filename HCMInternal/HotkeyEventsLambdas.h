@@ -75,9 +75,9 @@ public:
 		// hotkey silently drives the setting next to the one it is named after. Nothing catches that: the
 		// counts still add up and it compiles.
 
-		constexpr size_t hceToggleCount = 50; // [0..49]  flip a bool
-		constexpr size_t hceRadioCount = 4;  // [50..53] set a radio option
-		constexpr size_t hceAliasCount = 7;  // [54..60] fire an event that already has its own subscriber
+		constexpr size_t hceToggleCount = 51; // [0..50]  flip a bool
+		constexpr size_t hceRadioCount = 4;  // [51..54] set a radio option
+		constexpr size_t hceAliasCount = 7;  // [55..61] fire an event that already has its own subscriber
 		static_assert(hceToggleCount + hceRadioCount + hceAliasCount == SettingsStateAndEvents::kHCEHotkeyCount,
 			"The tables below no longer cover every HCE_HOTKEYS entry - a hotkey has been added without being wired up");
 
@@ -100,6 +100,7 @@ public:
 			settings->hceDisplayInfoShowLevel,
 			settings->hceDisplayInfoShowBSP,
 			settings->hceDisplayInfoShowZoneSet,
+			settings->hceDisplayInfoShowZoneSetPrep,
 			settings->hceDisplayInfoShowCameraDiag,
 			settings->hceDisplayInfoShowTick,
 			settings->hceDisplayInfoShowPlayerDatum,

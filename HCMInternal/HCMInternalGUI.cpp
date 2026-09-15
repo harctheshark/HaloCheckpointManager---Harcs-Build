@@ -218,6 +218,11 @@ void HCMInternalGUI::primaryRender()
 		ImGui::SetNextWindowCollapsed(!m_WindowOpen);
 		m_WindowOpen = ImGui::Begin(m_WindowOpen ? "Halo Checkpoint Manager###HCM" : "HCM###HCM", nullptr, windowFlags | blockInputsIfNoCursor); // Create window. Returns false when window collapsed
 
+		// Windowless targets (Halo 5) have to wrestle the cursor away from the game to be usable, and must
+		// hand it straight back when the menu closes or the player cannot aim. This is the authoritative
+		// signal for that - see ImGuiManager::setMenuWantsCursor. No-op on every other title.
+		ImGuiManager::setMenuWantsCursor(m_WindowOpen);
+
 		ImGui::PopStyleColor();
 
 		if (m_WindowOpen)  //only bother rendering children if it's not collapsed

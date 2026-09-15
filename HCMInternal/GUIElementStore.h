@@ -18,6 +18,7 @@ private:
 	{GameState::Value::HaloReach, {}},
 	{GameState::Value::Halo4, {}},
 	{GameState::Value::HaloCER, {}},   // REQUIRED: getTopLevelGUIElements does an unguarded .at(game)
+	{GameState::Value::Halo5Forge, {}},// REQUIRED, same reason
 	{GameState::Value::NoGame, {}},
 	};
 
@@ -39,6 +40,7 @@ public:
 		{ GameState::Value::HaloReach, std::set<GUIElementEnum>{} },
 		{ GameState::Value::Halo4, std::set<GUIElementEnum>{} },
 		{ GameState::Value::HaloCER, std::set<GUIElementEnum>{} },
+		{ GameState::Value::Halo5Forge, std::set<GUIElementEnum>{} },
 		{ GameState::Value::NoGame, std::set<GUIElementEnum>{} },
 	};
 

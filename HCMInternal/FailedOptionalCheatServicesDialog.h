@@ -23,6 +23,7 @@ public:
 			{GameState::Value::HaloReach, {{}, 0}  },
 			{GameState::Value::Halo4, {{}, 0}  },
 			{GameState::Value::HaloCER, {{}, 0}  },   // REQUIRED: the loop below does an unguarded .at(game)
+			{GameState::Value::Halo5Forge, {{}, 0}  },// REQUIRED, same reason
 			{GameState::Value::NoGame, {{}, 0}  },
 		};
 

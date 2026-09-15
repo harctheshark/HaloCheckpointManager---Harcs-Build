@@ -902,6 +902,60 @@ public:
 		return out;
 	}
 
+	// ---- committed vs preparing ---------------------------------------------------------------------
+	// The engine publishes the zone set INDEX as the 4th instruction of the commit, long before the BSPs
+	// are resident, so a single sample cannot tell you which zone set you are actually in. The committed
+	// name is therefore LATCHED: every time we observe the live index fully loaded, we remember its name.
+	//
+	// ⚠ This only tracks while something is polling it. The 2D info overlay refreshes ~30x/s, which is far
+	// finer than any zone set load, so in practice it never misses a commit. A caller that asks once, cold,
+	// mid-switch will correctly get "nothing has committed yet" rather than a guess.
+	std::string mLastCommittedZoneSetName;
+	std::mutex mCommittedZoneSetMutex;
+
+	std::string getCommittedZoneSetName() // throws
+	{
+		if (isCurrentZoneSetFullyLoaded())
+		{
+			// The live index IS the committed one right now - refresh the latch.
+			try
+			{
+				auto name = getCurrentZoneSetName();
+				std::scoped_lock lk(mCommittedZoneSetMutex);
+				mLastCommittedZoneSetName = name;
+				return name;
+			}
+			catch (HCMRuntimeException&) { /* fall through to the latch */ }
+		}
+
+		std::scoped_lock lk(mCommittedZoneSetMutex);
+		if (mLastCommittedZoneSetName.empty())
+			throw HCMRuntimeException("No HaloCER zone set has finished loading yet");
+		return mLastCommittedZoneSetName;
+	}
+
+	bool isPreparingZoneSet() noexcept
+	{
+		try
+		{
+			// A switch is in flight when the published index names something not yet fully resident.
+			// getCurrentZoneSetName() throwing means there is no scenario/index at all - not a switch.
+			(void)getCurrentZoneSetName();
+			return !isCurrentZoneSetFullyLoaded();
+		}
+		catch (...) { return false; }
+	}
+
+	std::string getPreparedZoneSetName() noexcept
+	{
+		try
+		{
+			if (!isPreparingZoneSet()) return {};
+			return getCurrentZoneSetName();
+		}
+		catch (...) { return {}; }
+	}
+
 	// Replicates zone_set_is_fully_active's BSP half. Never throws; false when it cannot tell.
 	bool isCurrentZoneSetFullyLoaded() noexcept
 	{
@@ -1158,5 +1212,8 @@ std::string HCEGetPlayerState::getCurrentLevelName() { return pimpl->getCurrentL
 int32_t HCEGetPlayerState::getCurrentBSP() { return pimpl->getCurrentBSP(); }
 std::string HCEGetPlayerState::getCurrentZoneSetName() { return pimpl->getCurrentZoneSetName(); }
 bool HCEGetPlayerState::isCurrentZoneSetFullyLoaded() noexcept { return pimpl->isCurrentZoneSetFullyLoaded(); }
+std::string HCEGetPlayerState::getCommittedZoneSetName() { return pimpl->getCommittedZoneSetName(); }
+bool HCEGetPlayerState::isPreparingZoneSet() noexcept { return pimpl->isPreparingZoneSet(); }
+std::string HCEGetPlayerState::getPreparedZoneSetName() noexcept { return pimpl->getPreparedZoneSetName(); }
 int32_t HCEGetPlayerState::getTickCounter() { return pimpl->getTickCounter(); }
 void HCEGetPlayerState::invalidateCache() { pimpl->invalidateCache(); }

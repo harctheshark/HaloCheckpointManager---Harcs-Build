@@ -61,10 +61,34 @@ namespace
 
 			throwOnDuplicateName(doc);
 
-			if (!doc.save_file(filePath.c_str()))
-				PLOG_ERROR << "Error saving config to " << filePath;
+			// ⚠⚠ ATOMIC REPLACE, NOT AN IN-PLACE WRITE. Saving straight over the config means a crash or a
+			// kill mid-write leaves a TRUNCATED file - and a truncated config still parses, so the user would
+			// silently come back with half their settings and no error. Writing a temp file and then asking
+			// the filesystem to swap it in means the old config stays intact and complete until the new one is
+			// fully on disk; the worst case is losing the latest change, never the whole file.
+			//
+			// This is what makes the autosave safe to run repeatedly during play (see SerialisableSetting).
+			const std::string tempPath = filePath + ".tmp";
+			if (!doc.save_file(tempPath.c_str()))
+			{
+				PLOG_ERROR << "Error saving config to " << tempPath;
+			}
 			else
-				PLOG_DEBUG << "Successfully saved settings to filepath: " << filePath;
+			{
+				const std::wstring wTemp(tempPath.begin(), tempPath.end());
+				const std::wstring wFinal(filePath.begin(), filePath.end());
+				// MOVEFILE_WRITE_THROUGH: do not report success until the swap is actually on disk.
+				if (MoveFileExW(wTemp.c_str(), wFinal.c_str(),
+					MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+				{
+					PLOG_DEBUG << "Successfully saved settings to filepath: " << filePath;
+				}
+				else
+				{
+					PLOG_ERROR << "Could not replace " << filePath << " (error " << GetLastError()
+						<< "); the previous config is untouched and the new one is at " << tempPath;
+				}
+			}
 		}
 		catch (HCMSerialisationException& ex)
 		{

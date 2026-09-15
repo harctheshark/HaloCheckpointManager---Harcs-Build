@@ -68,19 +68,51 @@ HeartbeatTimer::HeartbeatTimer(std::weak_ptr<SharedMemoryInternal> shm, std::wea
 
 	if (!h)
 	{
-		PLOG_WARNING << "HeartbeatTimer: no HCMExternal process after 3s (last error " << GetLastError()
-			<< "). This instance is an orphan - unloading quietly rather than failing loudly, so the DLL "
-			"does not stay pinned in the game and block the next launch.";
-		GlobalKill::killMe();
-		return;   // no handle, no heartbeat thread; the kill flag unwinds App and the DLL unloads
+		// ⚠⚠ "CANNOT SEE HCMExternal" IS NOT THE SAME AS "HCMExternal IS GONE".
+		// From an APPCONTAINER host it is simply impossible to tell this way: a sandboxed process can
+		// neither enumerate desktop processes nor OpenProcess one, so findProcess returns 0 and OpenProcess
+		// fails with ERROR_INVALID_PARAMETER. Halo 5: Forge is such a host, and treating that as orphanhood
+		// made every session initialise fully and then kill itself ~3s later.
+		//
+		// So before standing down, ask shared memory - which we are already connected to, and which the
+		// external bumps once per state machine tick. If that counter exists, the external is alive and we
+		// run in HEARTBEAT MODE (below) instead of handle mode.
+		bool shmAlive = false;
+		if (auto shm = sharedMemWeak.lock())
+			shmAlive = shm->getExternalHeartbeat().has_value();
+
+		if (!shmAlive)
+		{
+			PLOG_WARNING << "HeartbeatTimer: no HCMExternal process after 3s (last error " << GetLastError()
+				<< ") and no heartbeat in shared memory. This instance is an orphan - unloading quietly "
+				"rather than failing loudly, so the DLL does not stay pinned in the game and block the "
+				"next launch.";
+			GlobalKill::killMe();
+			return;   // no handle, no heartbeat thread; the kill flag unwinds App and the DLL unloads
+		}
+
+		PLOG_INFO << "HeartbeatTimer: cannot open the HCMExternal process (expected in a sandboxed host such "
+			"as Halo 5: Forge - an AppContainer cannot open desktop processes). Shared memory carries a live "
+			"heartbeat, so this session is NOT an orphan; watching the heartbeat instead.";
+		// fall through with a null handle - the thread below switches to heartbeat mode
 	}
 
-
-	HCMExternalHandle = std::move(h);
+	HCMExternalHandle = std::move(h);   // may legitimately be null in heartbeat mode
 
 	_thd = std::thread([this]()
 		{
 			static int waitCount = 0;
+
+			// Heartbeat mode state (only meaningful when HCMExternalHandle is null - see the constructor).
+			// We cannot detect a hard kill instantly the way GetExitCodeProcess does, so instead we require
+			// the counter to keep moving. The external bumps it once per state machine tick (~1s); allow a
+			// generous stall before concluding it is gone, because the external's tick can be delayed by a
+			// slow injection attempt or by the user dragging its window.
+			const bool heartbeatMode = (HCMExternalHandle.get() == nullptr);
+			int lastHeartbeat = -1;
+			auto lastHeartbeatChange = std::chrono::steady_clock::now();
+			constexpr auto heartbeatStallLimit = std::chrono::seconds(15);
+
 			while (!GlobalKill::isKillSet())
 			{
 				waitCount = (waitCount + 1) % 100;
@@ -105,21 +137,58 @@ HeartbeatTimer::HeartbeatTimer(std::weak_ptr<SharedMemoryInternal> shm, std::wea
 
 
 
-					DWORD exitCode = 0;
-					if (GetExitCodeProcess(HCMExternalHandle.get(), &exitCode) == FALSE)
+					if (heartbeatMode)
 					{
-						PLOG_ERROR << "GetExitCodeProcess failed, error code: " << GetLastError();
-						GlobalKill::killMe();
-						return;
+						// ⚠ NO PROCESS HANDLE HERE - DO NOT "FIX" THIS BY CALLING GetExitCodeProcess ANYWAY.
+						// On a null handle it fails, the old code read that as "external died" and killed the
+						// session immediately, which is the exact orphan-suicide this mode exists to avoid.
+						std::optional<int> beat;
+						try
+						{
+							lockOrThrow(sharedMemWeak, sharedMem);
+							beat = sharedMem->getExternalHeartbeat();
+						}
+						catch (HCMRuntimeException)
+						{
+							// shared memory gone entirely - that IS the external going away
+							PLOG_INFO << "HCMExternal's shared memory is gone; shutting down.";
+							GlobalKill::killMe();
+							return;
+						}
+
+						auto now = std::chrono::steady_clock::now();
+						if (beat.has_value() && beat.value() != lastHeartbeat)
+						{
+							lastHeartbeat = beat.value();
+							lastHeartbeatChange = now;
+						}
+						else if (now - lastHeartbeatChange > heartbeatStallLimit)
+						{
+							PLOG_INFO << "HCMExternal's heartbeat stalled at " << lastHeartbeat << " for over "
+								<< std::chrono::duration_cast<std::chrono::seconds>(heartbeatStallLimit).count()
+								<< "s; assuming it is gone and shutting down.";
+							GlobalKill::killMe();
+							return;
+						}
 					}
 					else
 					{
-						// https://youtu.be/APc8QCGOdUE
-						if (exitCode != STILL_ACTIVE)
+						DWORD exitCode = 0;
+						if (GetExitCodeProcess(HCMExternalHandle.get(), &exitCode) == FALSE)
 						{
-							PLOG_INFO << "HCMExternal terminated with code: " << exitCode;
+							PLOG_ERROR << "GetExitCodeProcess failed, error code: " << GetLastError();
 							GlobalKill::killMe();
 							return;
+						}
+						else
+						{
+							// https://youtu.be/APc8QCGOdUE
+							if (exitCode != STILL_ACTIVE)
+							{
+								PLOG_INFO << "HCMExternal terminated with code: " << exitCode;
+								GlobalKill::killMe();
+								return;
+							}
 						}
 					}
 				}

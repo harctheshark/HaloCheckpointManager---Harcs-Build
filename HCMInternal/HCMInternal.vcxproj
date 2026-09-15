@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -558,6 +558,26 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="ForceRevert.h" />
     <ClInclude Include="HCECheckpointDetours.h" />
     <ClInclude Include="HCEGetPlayerState.h" />
+    <ClInclude Include="H5GetPlayerState.h" />
+    <ClInclude Include="H5StateHook.h" />
+    <ClInclude Include="BootstrapTrace.h" />
+    <ClInclude Include="H5Checkpoint.h" />
+    <ClInclude Include="H5ForceTeleport.h" />
+    <ClInclude Include="H5ForceLaunch.h" />
+    <ClInclude Include="H5Acrophobia.h" />
+    <ClInclude Include="H5SwitchZoneSet.h" />
+    <ClInclude Include="H5GetTriggerData.h" />
+    <ClInclude Include="H5TriggerOverlay.h" />
+    <ClInclude Include="H5Invincibility.h" />
+    <ClInclude Include="H5SpeedrunTriggers.h" />
+    <ClInclude Include="H5GameSpeed.h" />
+    <ClInclude Include="H5OutOfBoundsBypass.h" />
+    <ClInclude Include="H5PauseMenuFix.h" />
+    <ClInclude Include="H5GetHavokData.h" />
+    <ClInclude Include="H5HavokOverlay.h" />
+    <ClInclude Include="H5TriggerVolumeNames.h" />
+    <ClInclude Include="H5DisplayInfo.h" />
+    <ClInclude Include="GameProcessFilter.h" />
     <ClInclude Include="HCEGetCameraData.h" />
     <ClInclude Include="HCEFreezeAI.h" />
     <ClInclude Include="HCEDisplayInfo.h" />
@@ -590,6 +610,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HCEConsole.h" />
     <ClInclude Include="HCESwitchZoneSet.h" />
     <ClInclude Include="GUIHCESwitchZoneSet.h" />
+    <ClInclude Include="GUIH5SwitchZoneSet.h" />
     <ClInclude Include="GUIHCEConsole.h" />
     <ClInclude Include="HCEFreecamKeepPosition.h" />
     <ClInclude Include="HCEAISquadOverlay.h" />
@@ -898,6 +919,22 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="GetPlayerDatum.cpp" />
     <ClCompile Include="HCECheckpointDetours.cpp" />
     <ClCompile Include="HCEGetPlayerState.cpp" />
+    <ClCompile Include="H5GetPlayerState.cpp" />
+    <ClCompile Include="H5StateHook.cpp" />
+    <ClCompile Include="H5Checkpoint.cpp" />
+    <ClCompile Include="H5ForceTeleport.cpp" />
+    <ClCompile Include="H5ForceLaunch.cpp" />
+    <ClCompile Include="H5Acrophobia.cpp" />
+    <ClCompile Include="H5SwitchZoneSet.cpp" />
+    <ClCompile Include="H5GetTriggerData.cpp" />
+    <ClCompile Include="H5TriggerOverlay.cpp" />
+    <ClCompile Include="H5Invincibility.cpp" />
+    <ClCompile Include="H5GameSpeed.cpp" />
+    <ClCompile Include="H5OutOfBoundsBypass.cpp" />
+    <ClCompile Include="H5PauseMenuFix.cpp" />
+    <ClCompile Include="H5GetHavokData.cpp" />
+    <ClCompile Include="H5HavokOverlay.cpp" />
+    <ClCompile Include="H5DisplayInfo.cpp" />
     <ClCompile Include="HCEGetCameraData.cpp" />
     <ClCompile Include="HCEFreezeAI.cpp" />
     <ClCompile Include="HCEDisplayInfo.cpp" />

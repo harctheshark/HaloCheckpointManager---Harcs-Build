@@ -542,6 +542,9 @@ private:
 	static bool sameComObject(IUnknown* a, IUnknown* b);
 	static bool queueMatchesDevice(ID3D12CommandQueue* queue, ID3D12Device* expectedDevice);
 	static bool isOwnedByThisProcess(HWND hwnd);
+
+	// UWP/CoreWindow titles (Halo 5: Forge) present swapchains with NO HWND - see the definition.
+	static HWND resolveOwnCoreWindow();
 	// Returns the device removed reason (S_OK when healthy) and logs it when it isn't.
 	static HRESULT checkDeviceRemoved(ID3D12Device* device, const char* context);
 

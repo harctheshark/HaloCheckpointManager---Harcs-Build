@@ -56,6 +56,55 @@ public:
 
 	int* HCMInternalStatusFlag;
 
+	// ⚠ LIVENESS THAT CROSSES AN APPCONTAINER BOUNDARY.
+	// HCMInternal normally proves HCMExternal is alive by OpenProcess + GetExitCodeProcess on it. That is
+	// impossible from a sandboxed host: Halo 5: Forge is a UWP title, and an AppContainer can neither
+	// enumerate desktop processes nor open a handle to one (findProcess returned 0 and OpenProcess failed
+	// with error 87). HCMInternal therefore concluded it was an ORPHAN and killed itself ~3s into every
+	// session - it initialised fully and then shut straight back down.
+	//
+	// So the external bumps this counter on every state machine tick (~1s) and HCMInternal watches it
+	// change. Works identically for sandboxed and normal hosts; the process handle stays the preferred
+	// mechanism where it is obtainable, because it detects a hard kill instantly.
+	int* externalHeartbeat;
+
+	void bumpHeartbeat() noexcept { if (externalHeartbeat) ++(*externalHeartbeat); }
+
+	// ⚠⚠⚠ KEYBOARD STATE, FORWARDED FROM OUTSIDE THE SANDBOX.
+	// A game running in an AppContainer has NO way to read the keyboard:
+	//   * GetAsyncKeyState returns 0x0000 for every key (measured over minutes of typing);
+	//   * Raw Input registers successfully for both mouse and keyboard, and then delivers MOUSE ONLY -
+	//     zero keyboard events ever arrive. RIDEV_INPUTSINK on a keyboard is a keylogger primitive, so
+	//     Windows withholding it from a LowBox token is entirely reasonable.
+	// That is not just "Enter does not close a dialog": HCM's hotkeys are ImGui::IsKeyDown() checks, so
+	// with no keyboard source EVERY hotkey on Halo 5 is dead - checkpoint, revert, the lot.
+	//
+	// HCMExternal is an ordinary desktop process where GetAsyncKeyState works fine, so it polls there and
+	// publishes the state here for HCMInternal to read. One byte per virtual key, 0 or 1.
+	//
+	// ⚠ GATED ON THE GAME BEING FOREGROUND - see publishKeyboardState. Without that gate HCM would react
+	// to keys typed into other applications, which is both a hotkey-misfire bug and a thing no tool should
+	// be doing while the user is in their browser.
+	static constexpr int kKeyStateCount = 256;
+	unsigned char* sharedKeyStates = nullptr;
+	int* sharedKeyStatesGeneration = nullptr;   // bumped on every publish; lets the reader spot a stale block
+
+	void publishKeyboardState(bool gameIsForeground) noexcept;
+
+	// ⚠⚠⚠ MOUSE MOTION MUST ALSO COME FROM OUT HERE, AND FOR A DIFFERENT REASON THAN THE KEYBOARD.
+	// The game clips the cursor to 1x1 for mouse-look, so GetCursorPos inside the game is FROZEN and the
+	// overlay's pointer cannot be moved at all. Relative motion via Raw Input is the only thing that still
+	// works while clipped - but registering raw input INSIDE the game replaces the game's own registration
+	// (it is scoped per process) and destroys the player's ability to aim and move. Registering it HERE, in
+	// a separate process, has no such effect.
+	//
+	// Cumulative counters rather than per-tick deltas, so a reader that misses a tick loses nothing: the
+	// internal side simply diffs against what it saw last.
+	int* sharedMouseAccumX = nullptr;
+	int* sharedMouseAccumY = nullptr;
+	int* sharedMouseAccumWheel = nullptr;
+
+	void publishMouseMotion(int dx, int dy, int wheel) noexcept;
 
 };
 
