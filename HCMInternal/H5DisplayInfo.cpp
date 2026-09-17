@@ -51,6 +51,25 @@ private:
 		}
 		catch (HCMRuntimeException&) { out += "Aim:      -\n"; }
 
+		// ⚠ THE OBSERVER, NOT THE PLAYER'S EYE. getCameraPosition() reads playerArray+0x38, which matches the
+		// player in X/Y and sits +0.60 WU above in Z - it tracks the player and nothing else, so it is wrong
+		// exactly when you want a camera readout: cinematics, death cams, scripted fly-throughs, Forge.
+		// getObserverPosition() is the camera the game actually renders from, and it resolves even at a menu
+		// with no player spawned.
+		try
+		{
+			const auto c = playerState->getObserverPosition();
+			out += std::format("Camera:   {:.3f}, {:.3f}, {:.3f}\n", c.x, c.y, c.z);
+		}
+		catch (HCMRuntimeException&) { out += "Camera:   -\n"; }
+
+		try
+		{
+			const auto cf = playerState->getObserverForward();
+			out += std::format("Cam Fwd:  {:.3f}, {:.3f}, {:.3f}\n", cf.x, cf.y, cf.z);
+		}
+		catch (HCMRuntimeException&) { out += "Cam Fwd:  -\n"; }
+
 		// The character controller's own velocity (proxy+0x40) - the field the engine integrates, NOT the
 		// published mirror at obj+0x248, which never changes. Speed is worth showing next to it: the
 		// Acrophobia limiter is defined in terms of it (thrust reaches zero at 16 wu/s).

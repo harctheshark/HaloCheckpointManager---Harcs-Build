@@ -70,6 +70,13 @@ public:
 	// getPlayerPosition() for any read-then-write: the object's published position only refreshes while
 	// the player is MOVING, so it is stale right after a teleport and frozen entirely while paused.
 	SimpleMath::Vector3 getProxyPosition();
+
+	// The camera the game is ACTUALLY RENDERING FROM, and its forward vector.
+	// ⚠ NOT getCameraPosition() - that reads the player's EYE and therefore tracks the player and only the
+	// player. The observer is the published render camera, so it is correct during cinematics, death cams,
+	// scripted fly-throughs and Forge, and it resolves even at a menu with no player spawned.
+	SimpleMath::Vector3 getObserverPosition();
+	SimpleMath::Vector3 getObserverForward();
 	SimpleMath::Vector3 getPlayerAim();        // playerArray + 0x44, unit vector
 
 	// playerArray + 0x38 - the EYE position, and the camera the 3D overlays render from. Verified live:

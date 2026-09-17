@@ -102,6 +102,29 @@ namespace
 
 	constexpr uintptr_t kObjectPublishedPosition = 0x224;
 
+	// ---- the OBSERVER, i.e. the camera actually being rendered from ------------------------------------
+	// ⚠⚠ THIS IS NOT getCameraPosition(). That one reads playerArray+0x38, which is the player's EYE - it
+	// matches the player object in X and Y to the last decimal and sits +0.60 WU above it in Z, drifting
+	// with stance. It therefore tracks the player and ONLY the player, which is useless the moment the
+	// camera is not on the player: cinematics, death cams, a scripted fly-through, Forge.
+	//
+	// The observer is the engine's published render camera. Measured live while sitting at a menu with no
+	// player spawned: observer (-2382.632, 1174.216, -794.190) while the player eye read (0,0,0) - 2772 WU
+	// apart, and the observer still valid when the player was not. That is the separation this exists for.
+	//
+	//     observers = [tls + 0x1B0]                 the observer array
+	//     director  = [tls + 0x198]                 the camera director
+	//     watched   = int32 [director + 0x1AC]      which observer is being rendered (0..3)
+	//     observer  = observers + watched * 0x4A0
+	//     observer + 0x15C   3f   position
+	//     observer + 0x184   3f   forward (unit)
+	constexpr uintptr_t kTlsDirectors = 0x198;
+	constexpr uintptr_t kTlsObservers = 0x1B0;
+	constexpr uintptr_t kDirectorWatched = 0x1AC;
+	constexpr uintptr_t kObserverStride = 0x4A0;
+	constexpr uintptr_t kObserverPosition = 0x15C;
+	constexpr uintptr_t kObserverForward = 0x184;
+
 	// ---- zone sets. All RVAs into halo5forge.exe, derived live. -----------------------------------------
 	constexpr uintptr_t kRvaScenarioGlobals = 0x05A62538;   // pointer to the scenario globals singleton
 	constexpr uintptr_t kGlobalsZoneArray   = 0x264;        // -> zone set array
@@ -754,6 +777,45 @@ public:
 		mCacheTrustedUntil = std::chrono::steady_clock::now() + kCacheTrustWindow;
 	}
 
+	// Resolves the observer currently being rendered from. See the offsets block for the chain and for why
+	// this is NOT the same thing as getCameraPosition().
+	// ⚠ Independent of the player: it resolves at a menu, during a cinematic and while dead, which is
+	// exactly when the player-derived camera is useless.
+	uintptr_t resolveObserver()
+	{
+		const uintptr_t tls = getTlsBase();
+		if (!tls) throw HCMRuntimeException("No Halo 5 simulation thread TLS block");
+
+		uintptr_t directors = 0, observers = 0;
+		if (!readAt(tls + kTlsDirectors, directors) || !directors)
+			throw HCMRuntimeException("The Halo 5 camera director block is null (no level loaded?)");
+		if (!readAt(tls + kTlsObservers, observers) || !observers)
+			throw HCMRuntimeException("The Halo 5 observer block is null (no level loaded?)");
+
+		int32_t watched = 0;
+		if (!readAt(directors + kDirectorWatched, watched)) watched = 0;
+		// ⚠ Clamp rather than trust: a garbage index here would read an arbitrary address as a camera.
+		if (watched < 0 || watched > 3) watched = 0;
+
+		return observers + (uintptr_t)watched * kObserverStride;
+	}
+
+	SimpleMath::Vector3 getObserverPosition()
+	{
+		float p[3]{};
+		if (!sehCopy(p, (const void*)(resolveObserver() + kObserverPosition), sizeof(p)))
+			throw HCMRuntimeException("Could not read the Halo 5 observer position");
+		return { p[0], p[1], p[2] };
+	}
+
+	SimpleMath::Vector3 getObserverForward()
+	{
+		float f[3]{};
+		if (!sehCopy(f, (const void*)(resolveObserver() + kObserverForward), sizeof(f)))
+			throw HCMRuntimeException("Could not read the Halo 5 observer forward");
+		return { f[0], f[1], f[2] };
+	}
+
 	// ★ THE POSITION THE CHARACTER CONTROLLER IS ACTUALLY AT - the authority we write, not the object's
 	// published mirror.
 	//
@@ -924,6 +986,8 @@ uintptr_t H5GetPlayerState::getPlayerObject() { return pimpl->getPlayerObject();
 uintptr_t H5GetPlayerState::getSaveRequestAddress() { return pimpl->getSaveRequestAddress(); }
 SimpleMath::Vector3 H5GetPlayerState::getPlayerPosition() { return pimpl->getPlayerPosition(); }
 SimpleMath::Vector3 H5GetPlayerState::getProxyPosition() { return pimpl->getProxyPosition(); }
+SimpleMath::Vector3 H5GetPlayerState::getObserverPosition() { return pimpl->getObserverPosition(); }
+SimpleMath::Vector3 H5GetPlayerState::getObserverForward() { return pimpl->getObserverForward(); }
 SimpleMath::Vector3 H5GetPlayerState::getPlayerAim() { return pimpl->getPlayerAim(); }
 SimpleMath::Vector3 H5GetPlayerState::getCameraPosition() { return pimpl->getCameraPosition(); }
 float H5GetPlayerState::getCameraFovDegrees() { return pimpl->getCameraFovDegrees(); }
