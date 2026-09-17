@@ -2,6 +2,8 @@
 #include "InitInterproc.h"
 #include "HookStateMachine.h"
 #include "SharedMemoryExports.h"
+#include "SharedMemoryExternal.h"
+#include <fstream>
 
 bool alreadyInitialised = false;
 bool resetStateMachineFlag = false;
@@ -38,6 +40,33 @@ void stateMachineLoop()
 		// Prove we are alive to a sandboxed HCMInternal, which cannot open our process to check.
 		// See SharedMemoryExternal::externalHeartbeat.
 		if (g_SharedMemoryExternal.get()) g_SharedMemoryExternal->bumpHeartbeat();
+
+		// Write a settings file on behalf of a sandboxed HCMInternal - see pendingConfigXml in the header.
+		// ⚠ Only ever non-empty for a title that could not write its own config (Halo 5: Forge). MCC and
+		// HaloCER write directly and never reach this path.
+		if (g_SharedMemoryExternal.get())
+		{
+			std::string xml;
+			if (g_SharedMemoryExternal->takePendingConfigSave(xml))
+			{
+				const std::string dir = getOwnProcessDirectory();
+				const std::string finalPath = dir + "HCMInternalConfig.xml";
+				const std::string tempPath = finalPath + ".tmp";
+				// Same temp-then-rename the in-process saver uses, for the same reason: a crash mid-write
+				// must not leave a truncated config, because a truncated config still PARSES.
+				bool ok = false;
+				{
+					std::ofstream f(tempPath, std::ios::binary | std::ios::trunc);
+					if (f) { f.write(xml.data(), (std::streamsize)xml.size()); ok = f.good(); }
+				}
+				if (ok && MoveFileExA(tempPath.c_str(), finalPath.c_str(),
+						MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+					PLOG_DEBUG << "Wrote forwarded settings (" << xml.size() << " bytes) to " << finalPath;
+				else
+					PLOG_ERROR << "Could not write forwarded settings to " << finalPath
+						<< " (error " << GetLastError() << ")";
+			}
+		}
 
 		// Sleep in slices so shutdown is observed within ~100ms rather than up to a second - the window in
 		// which an injection can still be started is exactly this sleep.

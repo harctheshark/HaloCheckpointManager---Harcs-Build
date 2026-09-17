@@ -3499,6 +3499,20 @@ public:
 
 	// Draw ONLY the volumes a speedrun must touch - the level's goal gotoVolumes plus its end trigger.
 	// See H5SpeedrunTriggers.h. Composes with the name filter rather than overriding it.
+	// Colour Regular volumes by whether a script has ACTUALLY tested them in the last window, rather than
+	// by whether the decompiled corpus references them anywhere in the level. See H5TriggerActivity.h.
+	std::shared_ptr<BinarySetting<bool>> h5TriggerOverlayUseLiveActivity = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(h5TriggerOverlayUseLiveActivity)
+		);
+
+	// How long after a script tests a volume it still counts as live. Mission scripts poll on their own
+	// cadence, so too short a window makes live volumes flicker.
+	std::shared_ptr<BinarySetting<float>> h5TriggerOverlayActivityWindowMs = std::make_shared<BinarySetting<float>>
+		(750.f, [](float in) { return in >= 50.f && in <= 10000.f; }, nameof(h5TriggerOverlayActivityWindowMs));
+
 	std::shared_ptr<BinarySetting<bool>> h5TriggerOverlaySpeedrunOnly = std::make_shared<BinarySetting<bool>>
 		(
 			false,
@@ -3568,8 +3582,19 @@ public:
 
 	// World units: 1 WU = 10 feet, so 30 is a large room. The level holds 2.37M collision triangles, and
 	// the per-section cull is what makes this affordable - a bigger radius costs real time.
+	// Which hknp collision LAYERS to draw. Empty = all (the original behaviour).
+	// Accepts decimal or hex, separated by commas/spaces: "29" or "0x1D, 0x1C".
+	// ⚠ The low 5 bits of body+0x44 are the layer. Halo puts bullet-only and vehicle-only static geometry
+	// on their own layers, which is why the overlay otherwise outlines surfaces the player walks through.
+	std::shared_ptr<BinarySetting<std::string>> h5HavokOverlayLayerFilter = std::make_shared<BinarySetting<std::string>>
+		(std::string(""), [](std::string in) { return in.size() < 128; }, nameof(h5HavokOverlayLayerFilter));
+
 	std::shared_ptr<BinarySetting<float>> h5HavokOverlayRadius = std::make_shared<BinarySetting<float>>
-		(25.f, [](float in) { return in >= 1.f && in <= 500.f; }, nameof(h5HavokOverlayRadius));
+		// Upper bound is 32767 WU (~62 miles) - far larger than any level, so this is effectively "no cull".
+		// Safe to open up now that the piece-spill bug is fixed: the 60,000-vertex cap used to zero the
+		// SHARED triangle budget, which silently dropped every body after the first one to fill up. Past
+		// roughly the level's own size the TRIANGLE BUDGET is what actually governs, not this.
+		(25.f, [](float in) { return in >= 1.f && in <= 32767.f; }, nameof(h5HavokOverlayRadius));
 
 	// A hard stop, so a large radius degrades into "draws less" instead of stalling the render thread.
 	std::shared_ptr<BinarySetting<float>> h5HavokOverlayTriangleBudget = std::make_shared<BinarySetting<float>>
@@ -3985,6 +4010,7 @@ public:
 		h5HavokOverlayFillAlpha,
 		h5HavokOverlayWireAlpha,
 		h5HavokOverlayRadius,
+		h5HavokOverlayLayerFilter,
 		h5HavokOverlayTriangleBudget,
 		h5HavokOverlayRefreshMs,
 		h5HavokOverlayShowStatic,
@@ -3992,6 +4018,8 @@ public:
 		h5HavokOverlayShowObjects,
 		h5GameSpeedAmount,
 		h5TriggerOverlaySpeedrunOnly,
+		h5TriggerOverlayUseLiveActivity,
+		h5TriggerOverlayActivityWindowMs,
 
 	};
 

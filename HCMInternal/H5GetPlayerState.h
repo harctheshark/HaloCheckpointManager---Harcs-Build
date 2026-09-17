@@ -65,6 +65,11 @@ public:
 	// only while the player is MOVING - a stationary player's position is never rewritten. Reading it is
 	// correct; WRITING it is not, and produces a one-frame flash followed by a snap back.
 	SimpleMath::Vector3 getPlayerPosition();
+
+	// The CHARACTER CONTROLLER's position - the authority Force Teleport writes. Prefer this over
+	// getPlayerPosition() for any read-then-write: the object's published position only refreshes while
+	// the player is MOVING, so it is stale right after a teleport and frozen entirely while paused.
+	SimpleMath::Vector3 getProxyPosition();
 	SimpleMath::Vector3 getPlayerAim();        // playerArray + 0x44, unit vector
 
 	// playerArray + 0x38 - the EYE position, and the camera the 3D overlays render from. Verified live:

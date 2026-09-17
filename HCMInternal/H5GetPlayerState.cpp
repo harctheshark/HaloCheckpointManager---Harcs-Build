@@ -754,6 +754,28 @@ public:
 		mCacheTrustedUntil = std::chrono::steady_clock::now() + kCacheTrustWindow;
 	}
 
+	// ★ THE POSITION THE CHARACTER CONTROLLER IS ACTUALLY AT - the authority we write, not the object's
+	// published mirror.
+	//
+	// ⚠⚠ USE THIS, NOT getPlayerPosition(), FOR ANYTHING THAT READS-THEN-WRITES A POSITION. The object's
+	// published position (kObjectPublishedPosition) is only refreshed while the player is MOVING, so:
+	//   * two relative teleports in quick succession both read the SAME stale position and target the same
+	//     point - which is exactly "Force Teleport is not additive";
+	//   * while PAUSED the mirror never refreshes at all, so a relative teleport computed from it goes
+	//     nowhere no matter how many times it is pressed.
+	// The proxy is refreshed by the controller itself and is correct in both cases.
+	SimpleMath::Vector3 getProxyPosition()
+	{
+		SimpleMath::Vector3 centreOffset{};
+		const uintptr_t proxy = proxyCachedOrResolve(centreOffset);
+		float p[3]{};
+		if (!sehCopy(p, (const void*)(proxy + kProxyPosition), sizeof(p)))
+			throw HCMRuntimeException("Could not read the Halo 5 character controller position");
+		// Undo the centre compensation teleportPlayerTo applies, so this and teleportPlayerTo speak the
+		// same coordinate space and a read/modify/write round-trips exactly.
+		return { p[0] - centreOffset.x, p[1] - centreOffset.y, p[2] - centreOffset.z };
+	}
+
 	// The velocity the character controller integrates - see kProxyVelocity. Unlike the position, this
 	// needs no centre compensation: it is a rate, not a point.
 	// ⚠ CACHED RESOLVE. The 2D info overlay reads this EVERY FRAME, and a full resolve scans ~1MB across
@@ -901,6 +923,7 @@ uint32_t  H5GetPlayerState::getPlayerDatum() { return pimpl->getPlayerDatum(); }
 uintptr_t H5GetPlayerState::getPlayerObject() { return pimpl->getPlayerObject(); }
 uintptr_t H5GetPlayerState::getSaveRequestAddress() { return pimpl->getSaveRequestAddress(); }
 SimpleMath::Vector3 H5GetPlayerState::getPlayerPosition() { return pimpl->getPlayerPosition(); }
+SimpleMath::Vector3 H5GetPlayerState::getProxyPosition() { return pimpl->getProxyPosition(); }
 SimpleMath::Vector3 H5GetPlayerState::getPlayerAim() { return pimpl->getPlayerAim(); }
 SimpleMath::Vector3 H5GetPlayerState::getCameraPosition() { return pimpl->getCameraPosition(); }
 float H5GetPlayerState::getCameraFovDegrees() { return pimpl->getCameraFovDegrees(); }
@@ -918,7 +941,10 @@ void H5GetPlayerState::teleportPlayerTo(SimpleMath::Vector3 target) { pimpl->tel
 
 SimpleMath::Vector3 H5GetPlayerState::teleportPlayerBy(SimpleMath::Vector3 offset)
 {
-	const auto current = pimpl->getPlayerPosition();
+	// ⚠ PROXY, NOT THE OBJECT'S PUBLISHED POSITION. See getProxyPosition: the published mirror only refreshes
+	// while the player is moving, so basing the delta on it made back-to-back teleports land on the same
+	// point (not additive) and made relative teleport a no-op while paused.
+	const auto current = pimpl->getProxyPosition();
 	const auto target = current + offset;
 	pimpl->teleportPlayerTo(target);
 	return target;

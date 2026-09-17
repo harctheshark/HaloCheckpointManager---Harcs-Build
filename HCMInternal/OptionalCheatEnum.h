@@ -197,6 +197,7 @@ H5Acrophobia,\
 H5SwitchZoneSet,\
 H5GetTriggerData,\
 H5TriggerOverlay,\
+H5TriggerActivity,\
 H5Invincibility,\
 H5GameSpeed,\
 H5OutOfBoundsBypass,\

@@ -125,6 +125,14 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{GUIElementEnum::h5AcrophobiaGUI,
 			{OptionalCheatEnum::H5Acrophobia}
 	},
+	{GUIElementEnum::h5TriggerOverlayUseLiveActivity,
+			{OptionalCheatEnum::H5TriggerOverlay}
+	},
+
+	{GUIElementEnum::h5TriggerOverlayActivityWindowMs,
+			{OptionalCheatEnum::H5TriggerOverlay}
+	},
+
 	{GUIElementEnum::h5TriggerOverlaySpeedrunOnly,
 			{OptionalCheatEnum::H5TriggerOverlay}
 	},
@@ -166,6 +174,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{GUIElementEnum::h5HavokOverlayShowObjects,
 			{OptionalCheatEnum::H5HavokOverlay}
 	},
+	{GUIElementEnum::h5HavokOverlayLayerFilter,
+			{OptionalCheatEnum::H5HavokOverlay}
+	},
+
 	{GUIElementEnum::h5HavokOverlayRadius,
 			{OptionalCheatEnum::H5HavokOverlay}
 	},

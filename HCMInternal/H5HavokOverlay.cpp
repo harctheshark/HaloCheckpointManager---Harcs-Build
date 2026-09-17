@@ -7,6 +7,8 @@
 #include "IMCCStateHook.h"
 #include "IMessagesGUI.h"
 #include "SettingsStateAndEvents.h"
+#include <map>
+#include <string>
 #include "RuntimeExceptionHandler.h"
 #include "IMakeOrGetCheat.h"
 #include "GlobalKill.h"
@@ -52,6 +54,8 @@ private:
 
 	std::vector<H5GetHavokData::Piece> mPieces;
 	std::chrono::steady_clock::time_point mLastFailureLog{};
+	// Last reported layer census, so the message fires once per distinct result rather than per rebuild.
+	std::string mLastLayerCensus;
 	std::chrono::steady_clock::time_point mLastRebuild{};
 
 	void setRenderingEnabled(bool enable)
@@ -122,9 +126,70 @@ private:
 			auto staticColour = settings->h5HavokOverlayStaticColor->GetValue();
 			auto objectColour = settings->h5HavokOverlayObjectColor->GetValue();
 
+			// ---- collision layer filter ---------------------------------------------------------------
+			// ⚠ NOT EVERY COLLISION SURFACE IS ONE THE PLAYER CAN TOUCH. body+0x44 is hknp's
+			// collisionFilterInfo and its low 5 bits are the LAYER; the engine decides what collides with
+			// what through a 32x32 layer matrix (hknp's collisionLookupTable, which is present in this
+			// build's reflection data). Halo splits static geometry across several layers - measured on the
+			// test level: 0x1D carried 6 bodies and 2,270,990 triangles, 0x1C another 6, 0x1B another 4 -
+			// so drawing all of them outlines bullet-only and vehicle-only surfaces the player walks
+			// straight through.
+			//
+			// ⚠ THE MATRIX IS NOT READ HERE. Resolving hknpWorld's filter pointer and validating the table
+			// needs the game running, and guessing that offset would silently filter by nonsense. So this
+			// is an explicit layer list the user controls, and the census below tells them what the level
+			// actually has. Empty means draw everything, which is the old behaviour exactly.
+			const std::string layerFilterRaw = settings->h5HavokOverlayLayerFilter->GetValue();
+			uint32_t layerMask = 0;
+			bool layerFilterActive = false;
+			{
+				std::string tok;
+				auto flush = [&]()
+					{
+						if (tok.empty()) return;
+						try
+						{
+							const int v = std::stoi(tok, nullptr, 0);   // accepts 29 and 0x1D
+							if (v >= 0 && v < 32) { layerMask |= (1u << v); layerFilterActive = true; }
+						}
+						catch (...) {}
+						tok.clear();
+					};
+				for (char c : layerFilterRaw)
+				{
+					if (c == ',' || c == ' ' || c == ';') flush();
+					else tok += c;
+				}
+				flush();
+			}
+
+			// One-shot census so the user can find out what the level has without guessing. Rebuilt only
+			// when the piece set is rebuilt, and reported once per distinct result.
+			{
+				std::map<uint32_t, std::pair<int, size_t>> census;   // layer -> (bodies, triangles)
+				for (const auto& p : mPieces)
+				{
+					auto& e = census[p.collisionFilter & 0x1Fu];
+					e.first += 1;
+					e.second += p.triangles.size() / 3;
+				}
+				std::string line;
+				for (const auto& [layer, e] : census)
+					line += std::format("{}0x{:02X}: {} bodies, {} tris", line.empty() ? "" : " | ",
+						layer, e.first, e.second);
+				if (!line.empty() && line != mLastLayerCensus)
+				{
+					mLastLayerCensus = line;
+					PLOG_INFO << "Havok collision layers present: " << line;
+					if (auto messagesGUI = messagesGUIWeak.lock())
+						messagesGUI->addMessage("Havok layers - " + line);
+				}
+			}
+
 			for (const auto& p : mPieces)
 			{
 				if (p.verts.empty()) continue;
+				if (layerFilterActive && !(layerMask & (1u << (p.collisionFilter & 0x1Fu)))) continue;
 				auto c = (p.kind == H5GetHavokData::ShapeKind::CompressedMesh) ? staticColour : objectColour;
 				PieceModel model(p.verts, p.triangles, p.edges);
 

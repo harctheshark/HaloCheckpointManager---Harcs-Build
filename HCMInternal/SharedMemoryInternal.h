@@ -115,6 +115,34 @@ public:
 		return instance ? instance->getForwardedMouseMotion(x, y, wheel) : false;
 	}
 
+	// Ask HCMExternal to write the settings file on our behalf.
+	//
+	// ⚠⚠ ONLY REACHED WHEN OUR OWN WRITE FAILED. Halo 5: Forge runs this DLL inside an AppContainer, and
+	// the HCM install directory grants ALL APPLICATION PACKAGES only ReadAndExecute - so the config can be
+	// read but never written, and every Halo 5 setting was lost on exit. MCC and HaloCER write directly and
+	// never come through here, so their behaviour is completely unchanged.
+	//
+	// Returns false when the fields are absent (an older HCMExternal), which the caller must report rather
+	// than treat as a successful save - otherwise the user is told their settings saved when they did not.
+	bool forwardConfigSave(const std::string& xml) noexcept
+	{
+		try
+		{
+			auto* text = segment.find<shm_string>("pendingConfigXml").first;
+			auto* gen = segment.find<int>("pendingConfigGeneration").first;
+			if (!text || !gen) return false;
+			text->assign(xml.c_str(), xml.size());
+			++(*gen);   // ⚠ bumped LAST: the generation is what tells the reader the text is complete.
+			return true;
+		}
+		catch (...) { return false; }
+	}
+
+	static bool forwardConfigSaveStatic(const std::string& xml) noexcept
+	{
+		return instance ? instance->forwardConfigSave(xml) : false;
+	}
+
 	// setStatusFlag but static for access by UnhandledExceptionHandler in emergencies
 	static void UnhandledExceptionSetStatusErrorFlag()
 	{

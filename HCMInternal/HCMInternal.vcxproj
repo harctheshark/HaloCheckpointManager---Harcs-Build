@@ -570,6 +570,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="H5TriggerOverlay.h" />
     <ClInclude Include="H5Invincibility.h" />
     <ClInclude Include="H5SpeedrunTriggers.h" />
+    <ClInclude Include="H5TriggerActivity.h" />
     <ClInclude Include="H5GameSpeed.h" />
     <ClInclude Include="H5OutOfBoundsBypass.h" />
     <ClInclude Include="H5PauseMenuFix.h" />
@@ -929,6 +930,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="H5GetTriggerData.cpp" />
     <ClCompile Include="H5TriggerOverlay.cpp" />
     <ClCompile Include="H5Invincibility.cpp" />
+    <ClCompile Include="H5TriggerActivity.cpp" />
     <ClCompile Include="H5GameSpeed.cpp" />
     <ClCompile Include="H5OutOfBoundsBypass.cpp" />
     <ClCompile Include="H5PauseMenuFix.cpp" />

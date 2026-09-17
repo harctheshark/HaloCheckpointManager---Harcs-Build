@@ -465,6 +465,8 @@ private:
 								createNestedElement(GUIElementEnum::h5TriggerOverlaySpeedrunOnly),
 								createNestedElement(GUIElementEnum::h5TriggerOverlayEditNameFilter),
 								createNestedElement(GUIElementEnum::h5TriggerOverlayColourByScript),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayUseLiveActivity),
+								createNestedElement(GUIElementEnum::h5TriggerOverlayActivityWindowMs),
 								createNestedElement(GUIElementEnum::h5TriggerOverlayScriptedColor),
 								createNestedElement(GUIElementEnum::h5TriggerOverlayInertColor),
 								createNestedElement(GUIElementEnum::h5TriggerOverlayLabelScale),
@@ -482,6 +484,14 @@ private:
 					case GUIElementEnum::h5TriggerOverlayShowRegular:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 							(game, ToolTipCollection("Show volumes that belong to no category - the ordinary scripted triggers."), std::nullopt, "Show Regular##h5tv", settings->h5TriggerOverlayShowRegular));
+
+					case GUIElementEnum::h5TriggerOverlayUseLiveActivity:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Colour regular volumes by whether a mission script has ACTUALLY tested them in the last moment, instead of by whether the level's script mentions them anywhere.\n\nThis hooks the engine's own named script bindings (volume_test_players and friends), so a volume lights up exactly when something is polling it. Halo 5 registers its script functions by name, so this catches script polls and nothing else - the engine's AI and damage systems do not route through those bindings.\n\n\u26a0 Falls back to the old static answer if the hooks are not installed, rather than painting everything dead.\n\n\u26a0 Kill volumes and zone-set volumes are engine-driven and never go through a script binding, so they keep their category colour and are never shown as inert."), std::nullopt, "Live Script Activity##h5tv", settings->h5TriggerOverlayUseLiveActivity));
+
+					case GUIElementEnum::h5TriggerOverlayActivityWindowMs:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(50.f, 10000.f)>>
+							(game, ToolTipCollection("How long after a script tests a volume it still counts as live, in milliseconds.\n\nMission scripts poll on their own cadence rather than every tick, so too short a window makes live volumes flicker in and out."), "Activity Window (ms)##h5tv", settings->h5TriggerOverlayActivityWindowMs));
 
 					case GUIElementEnum::h5TriggerOverlaySpeedrunOnly:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -590,6 +600,7 @@ private:
 								createNestedElement(GUIElementEnum::h5HavokOverlayShowStatic),
 								createNestedElement(GUIElementEnum::h5HavokOverlayShowInstances),
 								createNestedElement(GUIElementEnum::h5HavokOverlayShowObjects),
+								createNestedElement(GUIElementEnum::h5HavokOverlayLayerFilter),
 								createNestedElement(GUIElementEnum::h5HavokOverlayRadius),
 								createNestedElement(GUIElementEnum::h5HavokOverlayTriangleBudget),
 								createNestedElement(GUIElementEnum::h5HavokOverlayRefreshMs),
@@ -611,9 +622,13 @@ private:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 							(game, ToolTipCollection("Show dynamic object collision - hulls, spheres and capsules, including the player's own capsule.\n\nOff by default: these move every frame and clutter the view."), std::nullopt, "Show Object Shapes##h5hk", settings->h5HavokOverlayShowObjects));
 
+					case GUIElementEnum::h5HavokOverlayLayerFilter:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputString>
+							(game, ToolTipCollection("Which collision LAYERS to draw. Leave EMPTY to draw everything (the default).\n\nNot every collision surface is one you can walk into - Halo puts bullet-only and vehicle-only geometry on their own layers, so the overlay otherwise outlines walls you pass straight through.\n\nWhen the overlay rebuilds it reports the layers this level actually has, with body and triangle counts, as an on-screen message - e.g. \"0x1D: 6 bodies, 2270990 tris\". Turn layers off one at a time to find the one you want, then put it here.\n\nAccepts decimal or hex, comma or space separated: 29  or  0x1D, 0x1C\n\n\u26a0 This is an explicit list, NOT the engine's own collision matrix. Halo 5 does have one (hknp's 32x32 collisionLookupTable) but reading it needs the world's filter pointer verified against a running game, and a guessed offset would filter by nonsense."), "Collision Layers##h5hk", settings->h5HavokOverlayLayerFilter));
+
 					case GUIElementEnum::h5HavokOverlayRadius:
-						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 500.f)>>
-							(game, ToolTipCollection("How far from the camera collision is decoded, in WORLD UNITS (1 WU = 10 feet)."), "Radius (world units)##h5hk", settings->h5HavokOverlayRadius));
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 32767.f)>>
+							(game, ToolTipCollection("How far from the camera collision is decoded, in WORLD UNITS (1 WU = 10 feet).\n\nThe maximum, 32767, is far larger than any level, so it effectively means \"no distance culling - decode the whole map\".\n\nPast roughly the size of the level the TRIANGLE BUDGET below is what actually limits what you see, not this. If raising the radius stops adding geometry, raise the budget.\n\n⚠ The slider is very coarse over this range - ctrl+click it to type an exact value."), "Radius (world units)##h5hk", settings->h5HavokOverlayRadius));
 
 					case GUIElementEnum::h5HavokOverlayTriangleBudget:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1000.f, 400000.f)>>

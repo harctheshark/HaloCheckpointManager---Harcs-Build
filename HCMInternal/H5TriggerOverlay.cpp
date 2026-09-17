@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "H5TriggerOverlay.h"
 #include "H5GetTriggerData.h"
+#include "H5TriggerActivity.h"
 #include "IRenderer3D.h"
 #include "IModel.h"
 #include "Render3DEventProvider.h"
@@ -69,6 +70,8 @@ private:
 	std::weak_ptr<H5GetTriggerData> mTriggerDataWeak;
 	std::weak_ptr<H5GetPlayerState> mPlayerStateWeak;
 	std::weak_ptr<ModalDialogRenderer> modalDialogsWeak;
+	// Optional: the overlay must still work if the activity tracker fails to construct.
+	std::weak_ptr<H5TriggerActivity> mActivityWeak;
 
 	std::atomic<bool> mReady{ false };
 
@@ -204,6 +207,28 @@ private:
 		if (v.category != H5GetTriggerData::Category::Regular || v.isKillVolume)
 			return categoryColour(settings, v.category);
 
+		// ★ LIVE ACTIVITY BEATS THE STATIC CORPUS. If the activity tracker is up, ask it whether a script has
+		// actually tested this volume recently - that is the ground truth. The corpus tier only says the volume
+		// is referenced SOMEWHERE in the level's script, which scores a volume from a goal finished an hour ago
+		// exactly the same as the one the current goal is waiting on.
+		//
+		// ⚠ Falls back to the corpus, never to "inert". If the tracker is off or its hooks are not installed,
+		// nothing has been tested and every volume would read as dead - which is worse than the old answer.
+		if (settings->h5TriggerOverlayUseLiveActivity->GetValue())
+		{
+			if (auto activity = mActivityWeak.lock())
+			{
+				const auto windowMs = (uint32_t)std::clamp(
+					settings->h5TriggerOverlayActivityWindowMs->GetValue(), 50.f, 10000.f);
+				if (activity->everTestedCount() > 0)
+				{
+					return activity->isActive(v.index, windowMs)
+						? settings->h5TriggerOverlayScriptedColor->GetValue()
+						: settings->h5TriggerOverlayInertColor->GetValue();
+				}
+			}
+		}
+
 		return H5TriggerVolumeNames::isScriptReachable(v.scriptTier)
 			? settings->h5TriggerOverlayScriptedColor->GetValue()
 			: settings->h5TriggerOverlayInertColor->GetValue();
@@ -212,6 +237,10 @@ private:
 	// Subscribe / unsubscribe the 3D render event. See mRenderGuard.
 	void setRenderingEnabled(bool enable)
 	{
+		// The activity hooks only exist to feed this overlay, so they live and die with it rather than
+		// staying installed while nothing reads them.
+		try { if (auto a = mActivityWeak.lock()) a->setEnabled(enable); } catch (...) {}
+
 		std::unique_lock<std::shared_mutex> lk(mRenderGuard);
 		if (!enable)
 		{
@@ -516,6 +545,7 @@ public:
 		mTriggerDataWeak(resolveDependentCheat(H5GetTriggerData)),
 		mPlayerStateWeak(resolveDependentCheat(H5GetPlayerState)),
 		modalDialogsWeak(dicon.Resolve<ModalDialogRenderer>()),
+		mActivityWeak(resolveDependentCheat(H5TriggerActivity)),
 		mToggleCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->h5TriggerOverlayToggle->valueChangedEvent,
 			[this](bool& n) { onToggleChanged(n); }),
 		mHitMessagesCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->h5TriggerOverlayHitMessages->valueChangedEvent,

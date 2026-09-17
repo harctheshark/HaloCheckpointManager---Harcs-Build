@@ -3,6 +3,8 @@
 #include "SettingsStateAndEvents.h"
 #include "MessagesGUI.h"
 #include <pugixml.hpp>
+#include <sstream>
+#include "SharedMemoryInternal.h"
 
 
 // need to get some xml code up in here
@@ -44,6 +46,35 @@ void throwOnDuplicateName(pugi::xml_document& doc)
 // either, so one template covers both.
 namespace
 {
+	// Last resort when we cannot write the file ourselves: hand the XML to HCMExternal and let it write.
+	//
+	// ⚠⚠ THIS IS THE HALO 5 PATH, AND ONLY THE HALO 5 PATH. A UWP title runs this DLL in an AppContainer,
+	// which has no write access to the HCM directory - so the save above fails and the user's settings were
+	// silently lost every session. MCC and HaloCER never get here: their write succeeds.
+	//
+	// ⚠ It is deliberately reached from the FAILURE branches rather than from a "is this Halo 5?" check.
+	// Capability, not title: if a future host can write, it writes; if it cannot, it forwards. Nothing has
+	// to be kept in sync with a list of sandboxed games.
+	void forwardSaveToExternal(pugi::xml_document& doc, const std::string& filePath)
+	{
+		std::ostringstream ss;
+		doc.save(ss);
+		const std::string xml = ss.str();
+
+		if (SharedMemoryInternal::forwardConfigSaveStatic(xml))
+		{
+			PLOG_INFO << "Could not write " << filePath << " from inside the game (sandboxed host); "
+				<< xml.size() << " bytes handed to HCMExternal to write instead.";
+		}
+		else
+		{
+			// ⚠ Do NOT let this look like a success. If it lands here the settings really are lost, and
+			// the user needs to know rather than discover it next launch.
+			PLOG_ERROR << "Could not write " << filePath << " AND could not hand it to HCMExternal - "
+				"settings for this session are lost. An older HCMExternal does not support forwarding.";
+		}
+	}
+
 	template<typename Container>
 	void writeSettingsFile(const std::string& filePath, Container& options, RuntimeExceptionHandler* runtimeExceptions)
 	{
@@ -72,6 +103,7 @@ namespace
 			if (!doc.save_file(tempPath.c_str()))
 			{
 				PLOG_ERROR << "Error saving config to " << tempPath;
+				forwardSaveToExternal(doc, filePath);
 			}
 			else
 			{
@@ -87,6 +119,7 @@ namespace
 				{
 					PLOG_ERROR << "Could not replace " << filePath << " (error " << GetLastError()
 						<< "); the previous config is untouched and the new one is at " << tempPath;
+					forwardSaveToExternal(doc, filePath);
 				}
 			}
 		}

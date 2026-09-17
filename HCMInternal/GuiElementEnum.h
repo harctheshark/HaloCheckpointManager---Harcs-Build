@@ -126,6 +126,8 @@
 			((h5ForceLaunchAbsoluteVec3, (HALO5_ONLY)))\
 	((h5AcrophobiaGUI, (HALO5_ONLY)))\
 	((h5InvincibilityGUI, (HALO5_ONLY)))\
+	((h5TriggerOverlayUseLiveActivity, (HALO5_ONLY)))\
+	((h5TriggerOverlayActivityWindowMs, (HALO5_ONLY)))\
 	((h5TriggerOverlaySpeedrunOnly, (HALO5_ONLY)))\
 	((h5TriggerOverlayEditNameFilter, (HALO5_ONLY)))\
 	((h5GameSpeedGUI, (HALO5_ONLY)))\
@@ -137,7 +139,8 @@
 		((h5HavokOverlayShowStatic, (HALO5_ONLY)))\
 		((h5HavokOverlayShowInstances, (HALO5_ONLY)))\
 		((h5HavokOverlayShowObjects, (HALO5_ONLY)))\
-		((h5HavokOverlayRadius, (HALO5_ONLY)))\
+		((h5HavokOverlayLayerFilter, (HALO5_ONLY)))\
+	((h5HavokOverlayRadius, (HALO5_ONLY)))\
 		((h5HavokOverlayTriangleBudget, (HALO5_ONLY)))\
 		((h5HavokOverlayRefreshMs, (HALO5_ONLY)))\
 		((h5HavokOverlayWireAlpha, (HALO5_ONLY)))\

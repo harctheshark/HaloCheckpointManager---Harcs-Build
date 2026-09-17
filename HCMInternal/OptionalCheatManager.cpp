@@ -25,6 +25,7 @@
 #include "H5TriggerOverlay.h"
 #include "H5Invincibility.h"
 #include "H5PauseMenuFix.h"
+#include "H5TriggerActivity.h"
 #include "H5GameSpeed.h"
 #include "H5OutOfBoundsBypass.h"
 #include "H5GetHavokData.h"
@@ -291,7 +292,20 @@ public:
 					knowHostProcType = true;
 				}
 		}
-		catch (...) { /* if we can't tell, fall back to building everything as before */ }
+		catch (...) { /* leave hostProcType at its Steam default - see the note at the filter below */ }
+
+		// ⚠⚠ DO NOT RE-ADD A "BUILD EVERYTHING IF WE CANNOT TELL" FALLBACK. This used to skip the filter
+		// whenever getMCCProcessType() was unavailable, which meant MCC built HALO 5's cheats inside itself.
+		// They then failed to construct (no halo5forge.exe, no Halo 5 TLS, nothing to resolve) and the user
+		// got a wall of Halo 5 service-failure errors on launching MCC.
+		//
+		// GUIElementConstructor.cpp:90 applies gameBelongsToProcess() UNCONDITIONALLY against its own
+		// mProcType with no such escape hatch, so the fallback also made the two sides disagree: the GUI
+		// hid an element while the cheat behind it was still built. Mirroring it exactly is the whole point -
+		// hostProcType's Steam default is the same assumption the GUI makes.
+		if (!knowHostProcType)
+			PLOG_ERROR << "Could not determine the MCC process type; assuming Steam for the title filter. "
+				"If this is a standalone title (HaloCER / Halo 5), its cheats will be skipped.";
 
 		// Create cheats on multiple threads. Only one thread will access the cheatCollection at a time, but this way exceptions won't block execution of the next getOrMakeCheat
 		std::vector<std::thread> createCheatThreads;
@@ -301,7 +315,7 @@ public:
 			// See GameProcessFilter.h - NoGame (255) is exempt, and each standalone title only builds
 			// inside its own process. Must mirror GUIElementConstructor's filter exactly.
 			const auto pairGame = static_cast<GameState::Value>(gameCheatPair.first);
-			if (knowHostProcType && !gameBelongsToProcess(pairGame, hostProcType))
+			if (!gameBelongsToProcess(pairGame, hostProcType))
 				continue; // wrong title for this process - skip silently
 
 			auto& th = createCheatThreads.emplace_back(std::thread([gameCheatPair, cheatStore,info, this]() {
