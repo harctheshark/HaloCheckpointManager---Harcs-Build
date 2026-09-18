@@ -126,6 +126,10 @@
 			((h5ForceLaunchAbsoluteVec3, (HALO5_ONLY)))\
 	((h5AcrophobiaGUI, (HALO5_ONLY)))\
 	((h5InvincibilityGUI, (HALO5_ONLY)))\
+	((h5InfiniteAmmoGUI, (HALO5_ONLY)))\
+	((h5BottomlessClipGUI, (HALO5_ONLY)))\
+	((h5OneShotKillGUI, (HALO5_ONLY)))\
+	((h5OneShotKillMultiplierGUI, (HALO5_ONLY)))\
 	((h5TriggerOverlayUseLiveActivity, (HALO5_ONLY)))\
 	((h5TriggerOverlayActivityWindowMs, (HALO5_ONLY)))\
 	((h5TriggerOverlaySpeedrunOnly, (HALO5_ONLY)))\

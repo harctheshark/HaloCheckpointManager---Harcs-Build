@@ -2107,9 +2107,23 @@ void D3D12Hook::renderOverlayFrame(IDXGISwapChain* pSwapChain, UINT presentFlags
 	const uint32_t diagCall = sDiagCalls.fetch_add(1, std::memory_order_relaxed) + 1;
 	auto diagBail = [](const char* where) { sDiagLastBail.store(where, std::memory_order_relaxed); };
 
-	// Report EARLY and often - 1..10, then every 60. A 300-frame interval can simply never be reached if
-	// presents are rare, and "no output" then looks identical to "not called at all".
-	if (diagCall <= 10 || (diagCall % 60) == 0)
+	// Report EARLY - 1..10 - and then ONLY WHEN THE BAIL REASON CHANGES.
+	//
+	// ⚠⚠ THIS USED TO LOG EVERY 60 FRAMES, FOREVER, AND THAT WAS ACTIVELY HARMFUL. PLOG takes a mutex and
+	// does synchronous file IO, and this runs on the PRESENT THREAD. At ~120fps that was ~2 blocking disk
+	// writes a second here, plus the same again from the present-diag and input-diag sites, for the whole
+	// session - measured at 1.4-2.5 MB of log per few minutes of play. Blocking Present on file IO is a
+	// textbook way to make an app "stop interacting with Windows", which is exactly the hang signature
+	// these builds were producing.
+	//
+	// The diagnostic value was always in the FIRST few frames ("did we ever reach the gate?") and in
+	// TRANSITIONS ("we were rendering, now we bail - why?"). Steady-state repetition added nothing. So keep
+	// both of those and drop the spam: the startup window, plus one line whenever the bail reason differs
+	// from the last one we reported.
+	static std::atomic<const char*> sDiagLastReported{ nullptr };
+	const char* const diagNowBail = sDiagLastBail.load(std::memory_order_relaxed);
+	const bool diagBailChanged = sDiagLastReported.exchange(diagNowBail, std::memory_order_relaxed) != diagNowBail;
+	if (diagCall <= 10 || diagBailChanged)
 	{
 		D3D12Hook* diagHook = instance;
 		uint32_t candidates = 0;
@@ -2475,12 +2489,17 @@ HRESULT __stdcall D3D12Hook::newDX12Present(IDXGISwapChain* pSwapChain, UINT Syn
 	// frees the trampolines - and it doubles as the double-render guard for Present/Present1.
 	DetourEntryGuard entry(swapChainHookGuard);
 
-	// TEMPORARY DIAGNOSTIC - see renderOverlayFrame. Tells "the game barely presents" apart from
-	// "presents arrive but something diverts them before the overlay". Remove with the other one.
+	// Startup diagnostic - see renderOverlayFrame. Tells "the game barely presents" apart from "presents
+	// arrive but something diverts them before the overlay".
+	//
+	// ⚠ FIRST TEN FRAMES ONLY. This is the PRESENT THREAD; PLOG is a mutex plus synchronous file IO, so a
+	// periodic log here is a periodic stall in the game's frame loop. The question this answers - "do
+	// presents reach us at all?" - is answered by frame 10 or never. See the longer note at the
+	// overlay-diag site for what the every-60-frames version was costing.
 	{
 		static std::atomic_uint32_t sPresentCalls{ 0 };
 		const uint32_t n = sPresentCalls.fetch_add(1, std::memory_order_relaxed) + 1;
-		if (n <= 10 || (n % 60) == 0)
+		if (n <= 10)
 			PLOG_INFO << "[present-diag] newDX12Present #" << n
 				<< " | outermost: " << entry.isOutermost()
 				<< " | obsBypass: " << obsBypassOwnsFrame(false)

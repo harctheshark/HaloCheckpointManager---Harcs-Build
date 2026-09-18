@@ -24,6 +24,7 @@
 #include "H5GetTriggerData.h"
 #include "H5TriggerOverlay.h"
 #include "H5Invincibility.h"
+#include "H5UnitCheats.h"
 #include "H5PauseMenuFix.h"
 #include "H5TriggerActivity.h"
 #include "H5GameSpeed.h"

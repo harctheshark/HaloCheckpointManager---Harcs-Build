@@ -29,12 +29,63 @@ private:
 	std::shared_ptr<BinarySetting<bool>> mShowZoneSetPrep;
 	std::chrono::steady_clock::time_point mLastUpdate{};
 
+	// ---- diagnostics that are LOGGED, NOT DISPLAYED (see logDiagnosticsOnChange) ----
+	std::chrono::steady_clock::time_point mLastDiagSample{};
+	static constexpr std::chrono::milliseconds kDiagSamplePeriod{ 1000 };
+	std::string mLastDiagLine;
+
+	// Datum / Object / Sim / ObjGate were scaffolding for bringing Halo 5 up. They are noise on a HUD that
+	// is actually played with, but they are exactly what you want in the log when something misbehaves, so
+	// they are kept - recorded rather than drawn.
+	//
+	// ⚠ SAMPLED AT 1Hz, NOT EVERY UPDATE, AND LOGGED ONLY ON CHANGE. Two separate reasons, both measured:
+	//   * updateData runs at ~30Hz and PLOG is a mutex plus synchronous file IO. A per-frame log here is
+	//     the same mistake that was just removed from the D3D12 present path.
+	//   * getPlayerDatum() and getPlayerObject() THROW when there is no player (menu, load, death), and
+	//     every HCMRuntimeException costs a full std::stacktrace::current() plus two log writes. Those two
+	//     alone accounted for ~1,800 throws in a single day of logs. Sampling at 1Hz bounds that to one
+	//     attempt a second; it does not need to be tighter, because nothing here changes per frame.
+	void logDiagnosticsOnChange(const std::shared_ptr<H5GetPlayerState>& playerState) noexcept
+	{
+		try
+		{
+			const auto now = std::chrono::steady_clock::now();
+			if (mLastDiagSample.time_since_epoch().count() != 0 && (now - mLastDiagSample) < kDiagSamplePeriod)
+				return;
+			mLastDiagSample = now;
+
+			std::string datum = "-", object = "-", sim = "-", gate = "-";
+			try { datum = std::format("0x{:08X}", playerState->getPlayerDatum()); }   catch (HCMRuntimeException&) {}
+			try { object = std::format("0x{:X}", playerState->getPlayerObject()); }   catch (HCMRuntimeException&) {}
+			try { sim = playerState->getSimulationKind(); }                           catch (HCMRuntimeException&) {}
+			try { gate = playerState->hasObjectWriteGate() ? "yes" : "no"; }          catch (HCMRuntimeException&) {}
+
+			auto line = std::format("datum {} | object {} | sim {} | objGate {}", datum, object, sim, gate);
+			if (line != mLastDiagLine)
+			{
+				mLastDiagLine = std::move(line);
+				PLOG_INFO << "[h5-state] " << mLastDiagLine;
+			}
+		}
+		catch (...) {}   // a diagnostic must never be able to take the overlay down
+	}
+
 	void updateData()
 	{
 		auto playerState = playerStateWeak.lock();
 		if (!playerState) return;
 
 		std::string out;
+
+		// The scenario's own internal name, e.g. "w1_unconfirmed_reports". Identity first - it is the row
+		// that tells you which level's coordinates everything below is in.
+		// ⚠ "..." IS NOT AN ERROR. getMapName() returns "" until its one-per-level worker scan lands; there
+		// is no pointer chain to this string. See the note on getMapName.
+		{
+			const auto mapName = playerState->getMapName();
+			out += std::format("Map:      {}\n", mapName.empty() ? "..." : mapName);
+		}
+
 		// Each row is independently guarded: at a menu or mid-respawn some of these resolve and some throw,
 		// and a single failure must not blank the whole overlay.
 		try
@@ -73,27 +124,27 @@ private:
 		// The character controller's own velocity (proxy+0x40) - the field the engine integrates, NOT the
 		// published mirror at obj+0x248, which never changes. Speed is worth showing next to it: the
 		// Acrophobia limiter is defined in terms of it (thrust reaches zero at 16 wu/s).
-		try
+		// ⚠ tryGetPlayerVelocity, NOT getPlayerVelocity - this is the one row here backed by the character
+		// controller, and resolving that costs a scan over ~1MB of physics arrays when the cache misses.
+		// The throwing version reported "no player right now" (menu, load, death, mid-revert) by
+		// constructing an HCMRuntimeException, and that constructor takes a full stack trace and writes two
+		// log lines. At 60fps that was thousands of stack walks a minute from the render path - 15,700 in a
+		// single day of logs - for a condition that is completely normal and whose only consequence is the
+		// dash below. The try- variant reports it by returning nullopt and additionally throttles how often
+		// it retries the scan while it keeps failing.
+		//
+		// ⚠ THIS STILL SELF-HEALS. Nothing latches: the row repopulates on its own within a second of the
+		// player becoming controllable again. Do not "fix" a blank row by adding a disable/enable flag.
+		if (const auto v = playerState->tryGetPlayerVelocity())
 		{
-			const auto v = playerState->getPlayerVelocity();
-			out += std::format("Velocity: {:.3f}, {:.3f}, {:.3f}\n", v.x, v.y, v.z);
-			out += std::format("Speed:    {:.3f} wu/s\n", v.Length());
+			out += std::format("Velocity: {:.3f}, {:.3f}, {:.3f}\n", v->x, v->y, v->z);
+			out += std::format("Speed:    {:.3f} wu/s\n", v->Length());
 		}
-		catch (HCMRuntimeException&) { out += "Velocity: -\nSpeed:    -\n"; }
+		else { out += "Velocity: -\nSpeed:    -\n"; }
 
-		try { out += std::format("Datum:    0x{:08X}\n", playerState->getPlayerDatum()); }
-		catch (HCMRuntimeException&) { out += "Datum:    -\n"; }
-
-		try { out += std::format("Object:   0x{:X}\n", playerState->getPlayerObject()); }
-		catch (HCMRuntimeException&) { out += "Object:   -\n"; }
-
-		// Halo-5-specific and load-bearing: "local" is what makes checkpoint/revert meaningful, and the gate
-		// is what makes engine object calls (teleport) legal on the resolving thread.
-		try { out += std::format("Sim:      {}\n", playerState->getSimulationKind()); }
-		catch (HCMRuntimeException&) { out += "Sim:      -\n"; }
-
-		try { out += std::format("ObjGate:  {}\n", playerState->hasObjectWriteGate() ? "yes" : "no"); }
-		catch (HCMRuntimeException&) { out += "ObjGate:  -\n"; }
+		// Datum / Object / Sim / ObjGate are no longer drawn - they are bring-up diagnostics, not something
+		// worth a HUD row while playing. Still captured to the log, at 1Hz and only when they change.
+		logDiagnosticsOnChange(playerState);
 
 		// Same split as the HaloCER overlay: the main row is the COMMITTED zone set, so it does not flip to
 		// the incoming name the instant a switch begins. The transition rows are separate.

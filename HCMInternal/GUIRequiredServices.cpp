@@ -141,6 +141,22 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 			{OptionalCheatEnum::H5TriggerOverlay}
 	},
 
+	{GUIElementEnum::h5InfiniteAmmoGUI,
+			{OptionalCheatEnum::H5InfiniteAmmo}
+	},
+
+	{GUIElementEnum::h5BottomlessClipGUI,
+			{OptionalCheatEnum::H5InfiniteAmmo}
+	},
+
+	{GUIElementEnum::h5OneShotKillGUI,
+			{OptionalCheatEnum::H5OneShotKill}
+	},
+
+	{GUIElementEnum::h5OneShotKillMultiplierGUI,
+			{OptionalCheatEnum::H5OneShotKill}
+	},
+
 	{GUIElementEnum::h5GameSpeedGUI,
 			{OptionalCheatEnum::H5GameSpeed}
 	},

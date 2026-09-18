@@ -745,6 +745,89 @@
 		</Version>
 	</VersionedEntry>
 
+	<!--#region h5MouseCaptureRequestedFlag-->
+	<!--Halo 5: Forge. DELIBERATELY NOT NAMED shouldCursorBeFreeFunction.
+
+	    ⚠⚠ DO NOT ADD A shouldCursorBeFreeFunction ENTRY FOR HALO 5. FreeMCCCursorImpl does
+	    ModuleMidHook::make(L"main", shouldCursorBeFreeFunction, ...) on whatever that name resolves to.
+	    Pointing that at the address below - which is DATA, not code - would write a jmp trampoline into a
+	    live .data byte. There is no predicate function here to hook. Hence a new name, so nothing that
+	    already exists changes behaviour.
+
+	    WHAT THIS IS. halo5forge.exe imports no user32 at all, so the 1x1 cursor clip and the hidden cursor
+	    are the OS responding to ICoreWindow::SetPointerCapture - there is nothing for HCM to hook. Instead
+	    the engine keeps a mouse-capture REQUEST byte here, in .data (RW). The platform dispatcher loop reads
+	    it every iteration at 0x0060FFA4, compares it against the APPLIED state at [obj+0x59], and calls
+	    SetMouseCaptured (0x00610390) when the two disagree. So HCM just writes the byte and the game releases
+	    the cursor through its own native code path - no engine call, no hook, nothing to deadlock.
+
+	    ⚠ IT IS THE MASTER GAMEPLAY-vs-UI MOUSE MODE SWITCH, not merely "is the cursor free". At the
+	    MouseMoved delegate (0x0060CA80) a non-zero value feeds RELATIVE mouselook, and zero takes the
+	    ABSOLUTE get_PointerPosition path (0x00611C00). Zero is what the game itself uses when it opens its
+	    own menus, and it is why the two cursors used to drift apart - but it is a bigger lever than the name
+	    suggests, so FreeCursorH5Impl saves the original value and restores it rather than assuming 1.
+
+	    ⚠ A SINGLE WRITE MAY NOT HOLD. From 0x00869545 the engine can fall through to 0x0086955B and set this
+	    byte back to 1, re-capturing the cursor (the release there is conditional on sil==0). FreeCursorH5Impl
+	    therefore re-asserts the zero on every updateService rather than writing once.
+
+	    ⚠ NO Game= ATTRIBUTE, ON PURPOSE. FreeCursorH5Impl looks this up with no GameState, and
+	    PointerDataStore only ever falls back from (name, game) to (name, nullopt) - never the other way - so
+	    a Game="Halo5Forge" entry here would never resolve and would look identical to a missing one.
+	    ProcessType + Version already restrict it to Halo 5: only halo5forge.exe reports "Halo5Forge", and
+	    GetMCCVersion gives that title version 0.0.0.1 (NOT HaloCER's 0.0.0.0 - see the note there).
+
+	    Verified by byte-matching all 17 supporting RVAs against the live process across three separate runs
+	    with three different image bases, so it must stay a runtime-resolved RVA. ⚠ STILL UNTESTED AS A WRITE.-->
+	<VersionedEntry Name="h5MouseCaptureRequestedFlag" Type="MultilevelPointer::ExeOffset">
+		<Version Version="0.0.0.1" ProcessType="Halo5Forge">
+			<Offsets>
+				<Offset>0x050B3C98</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<!--#endregion h5MouseCaptureRequestedFlag-->
+
+	<!--#region h5KeyboardInputEnabledFlag-->
+	<!--Halo 5: Forge. DELIBERATELY NOT NAMED blockGameKeyboardInputFunction.
+
+	    ⚠⚠ DO NOT ADD A blockGameKeyboardInputFunction / blockGameKeyboardInputCode ENTRY FOR HALO 5.
+	    BlockGameInputImpl feeds those to ModulePatch::make(L"main", ...), which writes PATCH BYTES over
+	    whatever the name resolves to. The address below is DATA, not code. There is no function here to
+	    patch - Halo 5 has no equivalent of MCC's code-patch shape at all - so it gets its own name and its
+	    own implementation (BlockGameInputH5Impl).
+
+	    WHAT THIS IS, AND THE POLARITY. A one-byte "keyboard input is enabled" flag in .data (RW).
+	    ⚠ THE NAME IS THE INVERSE OF THE SERVICE'S. 1 = input ALLOWED, 0 = input BLOCKED. So blocking means
+	    writing ZERO, not one. Getting this backwards leaves the player permanently unable to move.
+
+	    MEASURED, NOT INFERRED. Watched live while the engine drove itself through states:
+	      * steady gameplay              -> 0x99 held 0x01 for 45s straight, never moved
+	      * ALT-TAB AWAY                 -> 0x98 AND 0x99 both went 1 -> 0 in the same sample
+	      * ALT-TAB BACK                 -> both went 0 -> 1 together
+	      * HCM overlay open/close        -> 0x98 alone moved; 0x99 stayed 0x01
+	    That last line is the bug this entry fixes: with no block-input service the game kept accepting
+	    keyboard input underneath HCM's overlay. The engine's own writers for this byte are COM delegate
+	    Invokes (window activation), which is exactly why focus change moves it and menus do not.
+
+	    ⚠ THE ENGINE ALSO WRITES IT. Alt-tabbing while the overlay is up means the engine and HCM both touch
+	    this byte, so BlockGameInputH5Impl restores only if the value is still the zero IT wrote - see there.
+
+	    ⚠ NO Game= ATTRIBUTE, ON PURPOSE - same reason as h5MouseCaptureRequestedFlag above: the lookup is
+	    made with no GameState, and PointerDataStore only falls back (name, game) -> (name, nullopt), never
+	    the reverse. ProcessType + Version already pin it to Halo 5.
+
+	    Address confirmed independently: .data (section va 0x046C0000, characteristics 0xC0000040), all ten
+	    claimed sites byte-matched against the live process, nine rip-relative disp32s recomputed.-->
+	<VersionedEntry Name="h5KeyboardInputEnabledFlag" Type="MultilevelPointer::ExeOffset">
+		<Version Version="0.0.0.1" ProcessType="Halo5Forge">
+			<Offsets>
+				<Offset>0x050B3C99</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+	<!--#endregion h5KeyboardInputEnabledFlag-->
+
 	<!--on mm scan wr "01 00 00 00 ff ff ff ff 1b" should be first result. (check by switching to gamepad)-->
 	<!--actually "01 00 00 00 ff ff ff ff 3F" on 2645
 	maybe do "01 00 00 00 FF FF FF FF ** ** ** ** 00 00 00 00 00 00 00 00 01 00 00 00"
@@ -1422,6 +1505,50 @@
 				<Offset>0x210185</Offset>
 			</Offsets>
 		</Version>
+
+		<!--Halo 5: Forge. Same idea as the HaloCER entry above - force the engine's OWN pause exit
+		    rather than lying to game_time_get_paused globally.
+		
+		    Site: exe+0x0131ACB0 is game_time_update(double dt, double* outSeconds, double* outTicks),
+		    the only function deciding how many simulation ticks the main loop runs, and it has exactly
+		    ONE caller in the whole image (0x005E6A11). That caller does
+		        cvttsd2si ecx,[rsp+0x40] ; call 0x01364090
+		    and 0x01364090 opens `test ecx,ecx / jle` - so ZERO TICKS skips the entire per-tick loop.
+		
+		    We patch the 2-byte test inside its existing pause branch:
+		        0131ADE1  E8 ..     call 0x0131A560   ; game_time_get_paused()
+		        0131ADE6  84 C0     test al, al       <- PATCHED to 0C 01 (or al,1)
+		        0131ADE8  0F 85 ..  jnz  0x0131AF67   ; 'paused - no time passed this frame'
+		
+		    (!) We deliberately do NOT patch game_time_get_paused (0x0131A560) itself: it has 36 callers
+		    across HUD, script, camera, audio and netcode. We lie only to this one consumer.
+		
+		    The 0x0131AF67 tail resets leftover to 0, so there is NO accumulated-time burst on unpause -
+		    it is byte-for-byte what the engine does when the player pauses. The forced path is also
+		    unwind-consistent: rbp is saved at 0x0131ADF7, AFTER our branch, and that tail does not
+		    restore it - the same path the engine's own je at 0x0131ADDB takes.
+		
+		    Why 2 bytes and not the 6-byte jnz: these two sit entirely inside one 8-byte aligned block
+		    (0x0131ADE0..0x0131ADE7), so ModulePatch's unsuspended write cannot be seen torn by the game
+		    thread; a 6-byte patch would straddle that boundary. The image has ZERO base relocations in
+		    0x0131ACB0..0x0131AFE4, and a full-image scan of every rel8/rel32/jcc encoding finds NOTHING
+		    targeting 0x0131ADE6 or 0x0131ADE8 - fall-through only, so it cannot be bypassed or entered
+		    mid-instruction.
+		
+		    (!) halo5forge.exe carries only the Store PACKAGE version, so HCM keys Halo 5 on the synthetic
+		    0.0.0.1 and this Version attribute CANNOT protect against a game update - exactly as for
+		    HaloCER. ModulePatch adopts whatever it finds as 'original' on its FIRST attach, so a moved
+		    site would be written blind. Re-derivation anchor, matching EXACTLY ONCE in the image, with
+		    the patch site at anchor+0x1B:
+		        41 BE 38 15 00 00  40 32 F6  E8 ?? ?? ?? ??  84 C0  0F 84 ?? ?? ?? ??
+		        E8 ?? ?? ?? ??  84 C0  0F 85 ?? ?? ?? ??  65 48 8B 04 25 58 00 00 00
+		    Verified live against a running game at a different ASLR base than the analysis dump.-->
+		<Version Version="0.0.0.1" Game="Halo5Forge">
+			<Module>halo5forge.exe</Module>
+			<Offsets>
+				<Offset>0x0131ADE6</Offset>
+			</Offsets>
+		</Version>
 	</VersionedEntry>
 
 
@@ -1471,6 +1598,13 @@
 		    the engine's own "game time is paused" exit out of game_time_update. al is dead on that path.
 		    See the matching pauseGameFunction comment for the full derivation.-->
 		<Version Version="0.0.0.0" Game="HaloCER">
+			<Data>0x0C, 0x01</Data>
+		</Version>
+
+		<!--Halo 5: Forge. `test al,al` -> `or al,1`, which clears ZF unconditionally so the following
+		    jnz always takes the engine's own 'paused, no time this frame' branch. Two bytes, matching
+		    the two at the patch site. See the pauseGameFunction comment for the derivation.-->
+		<Version Version="0.0.0.1" Game="Halo5Forge">
 			<Data>0x0C, 0x01</Data>
 		</Version>
 	</VersionedEntry>

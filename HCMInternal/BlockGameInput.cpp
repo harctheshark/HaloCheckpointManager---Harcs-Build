@@ -363,11 +363,144 @@ public:
 	}
 };
 
+// ================================================================================================================
+// Halo 5: Forge implementation.
+//
+// MCC's shape does not exist here. There is no predicate to patch and no WndProc to hook - gameplay input
+// arrives through the UWP CoreWindow, and halo5forge.exe imports no user32 at all. What the engine does have
+// is a one-byte "keyboard input is enabled" flag in .data, which its own window-activation handlers write.
+// So we write it too. No hook, no patched code, nothing to unwind - a single byte.
+//
+// ⚠⚠ THE POLARITY IS INVERTED RELATIVE TO THIS SERVICE'S NAME. 1 = input ALLOWED, 0 = input BLOCKED, so
+// "block" means writing ZERO. Backwards here leaves the player unable to move with no way to recover.
+//
+// MEASURED, NOT ASSUMED - watched live while the engine drove itself:
+//     steady gameplay        -> held 0x01 for 45s, never moved
+//     alt-tab away           -> this byte AND the cursor-capture byte both went 1 -> 0 together
+//     alt-tab back           -> both went 0 -> 1 together
+//     HCM overlay open/close -> only the cursor byte moved; this one stayed 0x01
+// That last case is the bug being fixed: the game kept taking keyboard input underneath the overlay.
+//
+// ⚠ KNOWN GAP, DELIBERATELY NOT PAPERED OVER. The engine writes this byte too, from its window-activation
+// handlers. Alt-tabbing AWAY and BACK while the HCM overlay is open makes the engine set it to 1 on focus
+// regain, which unblocks input under the overlay until the next toggle. Fixing that properly needs a
+// per-frame re-assert, and adding a new per-frame writer to the render path is exactly the kind of thing
+// that has been causing trouble in this title - so it is documented rather than guessed at. The restore
+// below is written to be safe in that race either way.
+// ================================================================================================================
+namespace
+{
+	// Separate helpers: a function containing __try/__except cannot also hold objects needing unwinding.
+	bool h5SehWrite8(void* dest, uint8_t v)
+	{
+		__try { *(uint8_t*)dest = v; return true; }
+		__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+	}
+
+	bool h5SehRead8(const void* src, uint8_t& out)
+	{
+		__try { out = *(const uint8_t*)src; return true; }
+		__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+	}
+}
+
+class BlockGameInputH5Impl : public TokenSharedRequestProvider
+{
+private:
+	std::shared_ptr<MultilevelPointer> mKeyboardEnabledFlag;
+	std::optional<uint8_t> mSaved;      // the value before we blocked; empty means "not currently blocking"
+
+public:
+	explicit BlockGameInputH5Impl(std::shared_ptr<PointerDataStore> ptr)
+	{
+		// getData throws HCMInitException when the entry is missing, which is exactly what
+		// ControlServiceContainer wants - the service is disabled, HCM carries on.
+		mKeyboardEnabledFlag = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(h5KeyboardInputEnabledFlag));
+		PLOG_INFO << "BlockGameInput: using Halo 5: Forge keyboard-enable-flag implementation";
+	}
+
+	// ⚠ MUST NOT THROW. SharedRequestProvider::makeScopedRequest installs a shared_ptr deleter that calls
+	// this, and a deleter runs in a noexcept destructor context - an escaping exception is std::terminate.
+	virtual void updateService() override
+	{
+		try
+		{
+			const bool requested = serviceIsRequested();
+			PLOG_INFO << "BlockGameInput (H5) service is turning " << (requested ? "ON!" : "OFF!");
+
+			uintptr_t addr = 0;
+			if (!mKeyboardEnabledFlag || !mKeyboardEnabledFlag->resolve(&addr) || !addr)
+			{
+				PLOG_ERROR << "BlockGameInput (H5): could not resolve the keyboard-enable flag";
+				return;
+			}
+
+			if (requested)
+			{
+				// Save the FIRST time only - repeated updates must not capture our own zero as "original".
+				if (!mSaved.has_value())
+				{
+					uint8_t original = 1;
+					if (h5SehRead8((const void*)addr, original)) mSaved = original;
+				}
+				h5SehWrite8((void*)addr, 0);      // 0 = blocked
+			}
+			else if (mSaved.has_value())
+			{
+				// ⚠ ONLY RESTORE IF IT IS STILL THE ZERO WE WROTE. If the engine has changed it since (a
+				// focus event while the overlay was up), it knows better than our stale snapshot does, and
+				// stamping our saved value over the engine's current one is how you end up with input
+				// blocked after the overlay is already closed.
+				uint8_t now = 0;
+				if (h5SehRead8((const void*)addr, now) && now == 0)
+					h5SehWrite8((void*)addr, mSaved.value());
+				mSaved.reset();
+			}
+		}
+		catch (...)
+		{
+			// FAIL OPEN. If we cannot block input we must at least not leave it blocked.
+			try { PLOG_ERROR << "BlockGameInput (H5) failed to update"; } catch (...) {}
+		}
+	}
+
+	~BlockGameInputH5Impl()
+	{
+		PLOG_DEBUG << "~" << nameof(BlockGameInputH5Impl);
+		// ⚠ HCM stays resident across sessions, so leaving keyboard input disabled here would brick the
+		// game for the rest of the run with no UI left to undo it.
+		try
+		{
+			uintptr_t addr = 0;
+			if (mSaved.has_value() && mKeyboardEnabledFlag
+				&& mKeyboardEnabledFlag->resolve(&addr) && addr)
+			{
+				uint8_t now = 0;
+				if (h5SehRead8((const void*)addr, now) && now == 0)
+					h5SehWrite8((void*)addr, mSaved.value());
+			}
+		}
+		catch (...) {}
+	}
+};
+
+
 extern bool hostIsCampaignEvolved(); // defined in FreeMCCCursor.cpp
+extern bool hostIsHalo5Forge();      // defined in FreeMCCCursor.cpp
+
+// ⚠ Three titles, three mechanisms - MCC patches code, HaloCER hooks a raw-input WndProc, and Halo 5 writes
+// the engine's own keyboard-enable byte. Halo 5 used to fall through to the MCC implementation, which could
+// not find its pointer data, so blockGameInputService failed to construct and took its GUI rows with it.
+static std::shared_ptr<TokenSharedRequestProvider> makeBlockInputImpl(std::shared_ptr<PointerDataStore> ptr)
+{
+	if (hostIsHalo5Forge())
+		return std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<BlockGameInputH5Impl>(ptr));
+	if (hostIsCampaignEvolved())
+		return std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<BlockGameInputHCEImpl>(ptr));
+	return std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<BlockGameInputImpl>(ptr));
+}
 
 BlockGameInput::BlockGameInput(std::shared_ptr<PointerDataStore> ptr)
-	: pimpl(hostIsCampaignEvolved()
-		? std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<BlockGameInputHCEImpl>(ptr))
-		: std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<BlockGameInputImpl>(ptr))) {}
+	: pimpl(makeBlockInputImpl(ptr)) {}
 
 BlockGameInput::~BlockGameInput() = default;

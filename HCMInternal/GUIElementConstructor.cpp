@@ -284,6 +284,10 @@ private:
 							createNestedElement(GUIElementEnum::h5ForceLaunchSettingsSubheading),
 							createNestedElement(GUIElementEnum::h5AcrophobiaGUI),
 							createNestedElement(GUIElementEnum::h5InvincibilityGUI),
+							createNestedElement(GUIElementEnum::h5InfiniteAmmoGUI),
+							createNestedElement(GUIElementEnum::h5BottomlessClipGUI),
+							createNestedElement(GUIElementEnum::h5OneShotKillGUI),
+							createNestedElement(GUIElementEnum::h5OneShotKillMultiplierGUI),
 							createNestedElement(GUIElementEnum::h5PauseMenuFixGUI),
 							createNestedElement(GUIElementEnum::h5OutOfBoundsBypassGUI),
 							createNestedElement(GUIElementEnum::h5GameSpeedGUI),
@@ -572,6 +576,22 @@ private:
 				case GUIElementEnum::h5InvincibilityGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Player takes no damage and cannot be killed.\n\nSets the engine's own per-object damage flags (cannot_take_damage + cannot_die) rather than rewriting your health, so nothing fights it.\n\n\u26a0 Re-applied every tick, because the engine zeroes those flags when you respawn.\n\n\u26a0 Falling damage uses a separate system that has not been traced, and this is untested in multiplayer - treat it as campaign/Forge for now."), std::nullopt, "Invincibility##h5", settings->h5InvincibilityToggle));
+
+				case GUIElementEnum::h5InfiniteAmmoGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Weapons never run out of reserve ammo, AND grenades never run out.\n\nSets the engine's own per-unit \"infinite ammo\" property on your biped - the same switch the weapon code itself reads (weapon_has_infinite_ammo), not a health-bar style value rewrite.\n\nGrenades work differently: the engine has no infinite-grenade flag, so all three types (frag / plasma / splinter) are topped back up to your own carry limit as you throw them. The HUD keeps showing the normal number rather than something silly.\n\n⚠ Re-applied every frame, because respawning builds a NEW biped whose constructor turns it back off.\n\nYou will still reload - for that, use Bottomless Clip."), std::nullopt, "Infinite Ammo##h5", settings->h5InfiniteAmmoToggle));
+
+				case GUIElementEnum::h5BottomlessClipGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The magazine never empties, so you never reload. Grenades are kept topped up too.\n\nA separate engine property from Infinite Ammo, sitting right beside it. Turning both on is fine - this is the stronger of the two.\n\n⚠ Re-applied every frame; a respawn resets it."), std::nullopt, "Bottomless Clip##h5", settings->h5BottomlessClipToggle));
+
+				case GUIElementEnum::h5OneShotKillGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Multiplies the damage YOU DEAL, so anything dies in one hit.\n\nSets the engine's per-unit weapon, melee AND grenade damage scalars on your biped - all three, because they are independent and scaling only the weapon one would leave melee and nades stock.\n\n⚠ This is an OUTGOING multiplier and does not change what you take. Halo 5 keeps incoming damage in different fields entirely.\n\n⚠ Re-applied every frame; a respawn resets it."), std::nullopt, "One Shot Kill##h5", settings->h5OneShotKillToggle));
+
+				case GUIElementEnum::h5OneShotKillMultiplierGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1000.f)>>
+						(game, ToolTipCollection("Damage multiplier applied to weapon, melee and grenade damage you deal. 1.0 is normal.\n\nBelow 1.0 works too, if you want a harder run rather than an easier one."), "Damage Multiplier##h5", settings->h5OneShotKillMultiplier));
 
 				case GUIElementEnum::h5GameSpeedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>

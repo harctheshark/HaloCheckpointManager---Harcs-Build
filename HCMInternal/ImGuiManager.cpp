@@ -546,7 +546,12 @@ void ImGuiManager::synthesiseWindowlessInput(UINT backBufferWidth, UINT backBuff
 			sMinY = (std::min)(sMinY, cursor.y); sMaxY = (std::max)(sMaxY, cursor.y);
 		}
 		const uint32_t n = sInputFrames.fetch_add(1, std::memory_order_relaxed) + 1;
-		if (n <= 3 || (n % 120) == 0)
+		// ⚠ FIRST THREE FRAMES ONLY. This runs on the PRESENT THREAD and PLOG is a mutex plus synchronous
+		// file IO, so the old "every 120 frames, forever" arm was a recurring stall in the game's frame
+		// loop - and it additionally called GetClipCursor/GetCursorInfo each time. What this diagnostic is
+		// for (does GetCursorPos work, is the cursor clipped, is raw input live) is established in the
+		// first frames; repeating it all session only produced log volume. See the overlay-diag note.
+		if (n <= 3)
 		{
 			RECT clip{};
 			const BOOL gotClip = ::GetClipCursor(&clip);

@@ -22,12 +22,43 @@ namespace
 	int g_selection = 0;
 
 	// Caller must hold g_mutex.
+	// What the cached list was built from. See refreshLocked.
+	int32_t g_builtFromCount = -1;
+	std::string g_builtFromFirstName;
+
 	void refreshLocked()
 	{
-		if (!g_dirty && !g_names.empty()) return;
-
 		auto playerState = g_playerState.lock();
 		if (!playerState) { g_names.clear(); return; }
+
+		// ⚠⚠ DO NOT TRUST g_dirty ALONE. It is only ever set by onGameStateChanged, which is an **MCC**
+		// state event - Halo 5 does not report its level loads through it. So the list was read ONCE, at
+		// whatever was loaded when HCM attached, and cached forever: a user who started HCM at the main
+		// menu got that scenario's single zone set ("all") and still saw only that after loading a level
+		// with twelve. Measured live on w2_grotto: the game had 12 correctly-named zone sets while the
+		// dropdown showed one.
+		//
+		// So detect the change from the DATA rather than from an event that may never arrive. Count plus
+		// the first name is two cheap reads and distinguishes any two scenarios in practice; the GUI
+		// already rate-limits this to twice a second, so the cost is irrelevant either way.
+		int32_t countNow = 0;
+		std::string firstNow;
+		try
+		{
+			countNow = playerState->getZoneSetCount();
+			if (countNow > 0) firstNow = playerState->getZoneSetName(0);
+		}
+		catch (HCMRuntimeException&)
+		{
+			// No scenario loaded (menu / mid-load). Drop the list and stay dirty so we retry.
+			g_names.clear();
+			g_dirty = true;
+			return;
+		}
+
+		if (!g_dirty && !g_names.empty()
+			&& countNow == g_builtFromCount && firstNow == g_builtFromFirstName)
+			return;   // genuinely unchanged
 
 		std::vector<std::string> fresh;
 		try
@@ -51,7 +82,11 @@ namespace
 		}
 
 		g_names = std::move(fresh);
+		g_builtFromCount = countNow;
+		g_builtFromFirstName = firstNow;
 		g_dirty = false;
+		PLOG_DEBUG << "Halo 5 zone set list rebuilt: " << g_names.size() << " entries, first '"
+			<< firstNow << "'";
 	}
 }
 

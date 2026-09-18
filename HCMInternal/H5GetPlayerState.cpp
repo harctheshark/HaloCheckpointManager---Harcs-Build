@@ -206,9 +206,14 @@ namespace
 	constexpr uintptr_t kWorldProxyArray  = 0x118;       // -> character controller proxy array
 	constexpr uintptr_t kMsStride         = 0x90;
 	constexpr uintptr_t kMsTranslation    = 0x30;
-	constexpr uintptr_t kMsCentreX        = 0x0C;        // translation column of the 3x4 transform
-	constexpr uintptr_t kMsCentreY        = 0x1C;
-	constexpr uintptr_t kMsCentreZ        = 0x2C;
+	// ⚠⚠ kMsCentreX/Y/Z (body +0x0C/+0x1C/+0x2C) WERE HERE AND ARE DELIBERATELY GONE. That triple is the
+	// translation column of the body's 3x4 transform - a BODY-LOCAL vector. It happens to equal the
+	// world-space centre delta while the basis is near identity, which is why it looked right on an upright
+	// player, but on a body whose basis is flipped it comes back with an inverted axis: measured
+	// (0.0015, -0.0015, +0.2750) where the true delta was (-0.0022, 0.0000, -0.2750). Fed to the old
+	// distance matcher that produced a 0.55 residual against the CORRECT element - a refusal with nothing
+	// else within a kilometre. The centre offset is now measured as motionCentreOfMass - bodyTranslation,
+	// which is exact in every orientation. Do not put these back.
 	constexpr uintptr_t kProxyStride      = 0x80;
 	constexpr uintptr_t kProxyPosition    = 0x00;
 	// ⚠ THE VELOCITY THE CONTROLLER ACTUALLY INTEGRATES. Identified the same way obj+0x248 was - scoring
@@ -218,6 +223,10 @@ namespace
 	// gravity decaying the velocity 9.75 -> 0 -> negative - so this field is an INPUT, unlike obj+0x248
 	// which accepts writes and is never read by anything.
 	constexpr uintptr_t kProxyVelocity    = 0x40;
+	// ⚠ kMatchAccept / kMatchMinGap are GONE. They were the distance-scan tolerances: accept the
+	// nearest body within 0.25 wu, and refuse if the runner-up was within 0.10 wu of it. The resolve is
+	// an exact identity match now, so there is no tolerance to tune - and tuning them was never the fix.
+
 	constexpr uint32_t  kMaxArrayElements = 4096;
 
 	// ⚠⚠ MATCH THE NEAREST WITH A CLEAR MARGIN - DO NOT MATCH "EXACTLY ONE WITHIN A WINDOW".
@@ -227,7 +236,36 @@ namespace
 	// So: take the closest, require it to be essentially exact, and require the runner-up to be clearly
 	// farther. That is robust to a teammate standing next to you AND to the few milliseconds of movement
 	// between reading the player position and scanning the array.
-	constexpr float kMatchAccept     = 0.25f;   // the true residual is ~0; this only absorbs read skew
+	// ---- DETERMINISTIC PROXY RESOLUTION ---------------------------------------------------------------
+	// ⚠⚠ THESE REPLACED A DISTANCE SCAN. resolveCharacterProxy used to find the player's body by scanning
+	// both arrays for the element NEAREST to (objectPosition + centreOffset) and refusing when the runner-up
+	// was within 0.10 wu - which is why Force Teleport / Force Launch failed whenever anything was standing
+	// close to you, and why one day of logs held ~15,700 throws out of this function.
+	//
+	// The engine has an exact answer. hknp keeps a per-body property map on the world; key 0x2009 is a
+	// straight bodyId -> OWNING OBJECT DATUM array. So "which body is mine" becomes an integer equality test
+	// instead of a distance comparison, and a teammate, a dropped weapon or a vehicle can never be a
+	// candidate no matter how close they stand - they carry a different datum.
+	//
+	// Verified live, in a level, on a real player: exactly ONE body carried the player's datum (body 45,
+	// motion 27), the component back-reference matched, and motion+0x28 round-tripped to the body id.
+	constexpr uintptr_t kRvaHavokComponents = 0x05FB1E08; // -> blam data array of havok components
+	constexpr uintptr_t kHcElementStride    = 0x20;       // u32 element stride, in the array HEADER
+	constexpr uintptr_t kHcBound            = 0x4C;       // ⚠ i32 high-water bound. NOT +0x30 (max count) -
+	                                                      //   the engine's own data_try_get checks +0x4C.
+	constexpr uintptr_t kHcData             = 0x58;       // -> element storage
+	constexpr uintptr_t kObjectHavokComponent = 0x0330;   // u32 component datum on the object (~0 = none)
+	constexpr uintptr_t kComponentOwnerObject = 0x0030;   // u32 object datum on the component (back-ref)
+
+	constexpr uintptr_t kWorldPropTable  = 0x98;   // void** open-addressed table of per-body properties
+	constexpr uintptr_t kWorldPropMask   = 0xA4;   // i32 mask (table size - 1)
+	constexpr uint32_t  kPropBodyObject   = 0x2009; // bodyId -> object datum
+	constexpr uint32_t  kPropBodyComponent = 0x2001; // bodyId -> component datum (fallback)
+	constexpr uintptr_t kPropBitmap = 0x08, kPropSize = 0x18, kPropValues = 0x20;
+	constexpr uintptr_t kWorldBodyCount   = 0x2C;  // u32, masked with 0x3FFFFFFF
+	constexpr uintptr_t kBodyMotionId     = 0x68;  // u32; 0 means the body has no motion (static/keyframed)
+	constexpr uintptr_t kMotionAttachedBody = 0x28; // u32 back-reference to a body id
+
 	// ⚠⚠ THIS IS A **RELATIVE** GAP, NOT AN ABSOLUTE SEPARATION. The first version demanded the runner-up be
 	// at least 0.75 wu away, and in real play that refused constantly - the user: "getting a lot of errors
 	// when TP/launching that something is next to me, thats quite common". Of course it is: Blue Team follow
@@ -239,7 +277,6 @@ namespace
 	// rule threw them out. What actually makes a match ambiguous is two candidates being near-exact
 	// TOGETHER, so compare them to EACH OTHER: take the nearest, require it to be essentially exact, and
 	// require a clear gap to the runner-up.
-	constexpr float kMatchMinGap     = 0.10f;   // runner-up must be this much WORSE than the winner
 
 	// ⚠ IN-PROCESS, A READ PAST THE END OF THE ARRAY IS AN ACCESS VIOLATION, not a short read. The tools
 	// that found all this ran externally, where an over-long ReadProcessMemory simply fails. Bound every
@@ -656,103 +693,166 @@ public:
 	//
 	// ⚠ FAILS CLOSED. Anything ambiguous throws rather than guessing: a wrong element here teleports some
 	// other body (a dropped weapon, a teammate, a vehicle) instead of the player.
+	// hknp's per-body property map is open-addressed, 16-byte entries {u16 key; ...; void* value @ +0x08}.
+	// The hash is the engine's own (exe+0x00C9CAD0): ((key & 0xFFFF) >> 4) * 0x9E3779B1.
+	// ⚠ CALLED FRESH EVERY RESOLVE, ON PURPOSE. Caching the returned payload pointer would leave a dangling
+	// pointer the moment hknp reallocates the property array - and because HCM runs in-process, a reused
+	// allocation could even validate against a stale body id. The probe is at most 16 reads.
+	uintptr_t lookupBodyProperty(uintptr_t table, uint32_t mask, uint32_t key)
+	{
+		const uint32_t k16 = key & 0xFFFFu;
+		uint32_t i = (uint32_t)((k16 >> 4) * 0x9E3779B1u) & mask;
+		for (uint32_t probe = 0; probe <= mask; ++probe)
+		{
+			const uintptr_t e = table + (uintptr_t)i * 16;
+			uint32_t k = 0;
+			if (!readAt(e, k)) return 0;
+			k &= 0xFFFFu;
+			if (k == 0xFFFFu) return 0;          // empty slot - the key is genuinely absent
+			if (k == k16)
+			{
+				uintptr_t v = 0;
+				return readAt(e + 8, v) ? v : 0;
+			}
+			i = (i + 1) & mask;
+		}
+		return 0;
+	}
+
+	// Resolve the player's character-controller motion element, and the body-centre-to-object-origin delta.
+	//
+	// ⚠⚠ THIS IS AN IDENTITY MATCH, NOT A SEARCH. It used to scan both physics arrays for the element
+	// nearest to (objectPosition + centreOffset) and refuse when the runner-up was within 0.10 wu, which is
+	// why Force Teleport and Force Launch failed whenever anything stood close to you. hknp already knows
+	// which body belongs to which object; we just ask it. Nothing that belongs to somebody else can be a
+	// candidate now, at any distance.
 	uintptr_t resolveCharacterProxy(SimpleMath::Vector3& outCentreOffset)
 	{
 		const uintptr_t exeBase = getExeBase();
 		const uintptr_t object = getPlayerObject();
-
-		float playerPos[3]{};
-		if (!sehCopy(playerPos, (const void*)(object + kObjectPublishedPosition), sizeof(playerPos)))
-			throw HCMRuntimeException("Could not read the Halo 5 player position");
+		const uint32_t playerDatum = getPlayerDatum();
 
 		uintptr_t world = 0;
 		if (!readAt(exeBase + kRvaPhysicsWorld, world) || !world)
 			throw HCMRuntimeException("The Halo 5 physics world is not loaded");
 
-		// --- 1. the player's motion state, for the centre offset ---
-		uintptr_t msArray = 0;
-		if (!readAt(world + kWorldMsArray, msArray) || !msArray)
-			throw HCMRuntimeException("The Halo 5 motion state array is null");
+		// --- 1. the player's havok component, and its back-reference ---
+		uint32_t compDatum = 0;
+		if (!readAt(object + kObjectHavokComponent, compDatum) || compDatum == 0xFFFFFFFFu)
+			throw HCMRuntimeException("The player has no physics body right now. This is normal for a moment "
+				"after spawning, and while riding a vehicle.");
 
-		const size_t msBytes = readableBytesFrom(msArray, (size_t)kMaxArrayElements * kMsStride);
-		const uint32_t msCount = (uint32_t)(msBytes / kMsStride);
-		if (!msCount) throw HCMRuntimeException("The Halo 5 motion state array is not readable");
+		uintptr_t hc = 0;
+		if (!readAt(exeBase + kRvaHavokComponents, hc) || !hc)
+			throw HCMRuntimeException("The Halo 5 havok component array is not loaded");
 
-		uintptr_t msElement = 0;
-		float msBest = FLT_MAX, msSecond = FLT_MAX;
-		for (uint32_t i = 0; i < msCount; ++i)
+		uint32_t hcStride = 0; int32_t hcBound = 0; uintptr_t hcData = 0;
+		if (!readAt(hc + kHcElementStride, hcStride) || !hcStride
+			|| !readAt(hc + kHcBound, hcBound)
+			|| !readAt(hc + kHcData, hcData) || !hcData)
+			throw HCMRuntimeException("Could not read the Halo 5 havok component array");
+
+		const uint32_t hcIndex = compDatum & 0xFFFFu;
+		if (hcBound <= 0 || (int32_t)hcIndex >= hcBound)
+			throw HCMRuntimeException("The player's physics component index is out of range");
+
+		// ⚠ KEEP THIS CHECK. Component datums are recycled, so a stale one can land on a live component
+		// owned by something else. Requiring the component to point BACK at our object is what makes that
+		// harmless. It is two reads; do not drop it as redundant.
+		uint32_t owner = 0;
+		if (!readAt(hcData + (uintptr_t)hcIndex * hcStride + kComponentOwnerObject, owner))
+			throw HCMRuntimeException("Could not read the Halo 5 physics component");
+		if (owner != playerDatum)
+			throw HCMRuntimeException("The player's physics component does not point back at the player - it "
+				"has most likely just been recycled. Try again.");
+
+		// --- 2. ask hknp which body belongs to this object ---
+		uintptr_t propTable = 0; int32_t propMask = 0;
+		if (!readAt(world + kWorldPropTable, propTable) || !propTable
+			|| !readAt(world + kWorldPropMask, propMask) || propMask <= 0)
+			throw HCMRuntimeException("Could not read the Halo 5 physics property map");
+
+		uint32_t wantValue = playerDatum;
+		uintptr_t prop = lookupBodyProperty(propTable, (uint32_t)propMask, kPropBodyObject);
+		if (!prop)
 		{
-			const uintptr_t el = msArray + (uintptr_t)i * kMsStride;
-			float t[3]{};
-			if (!sehCopy(t, (const void*)(el + kMsTranslation), sizeof(t))) continue;
-			const float d = dist3(t, playerPos);
-			if (d < msBest) { msSecond = msBest; msBest = d; msElement = el; }
-			else if (d < msSecond) { msSecond = d; }
+			// Fall back to the component map - same shape, one more indirection, same guarantee.
+			prop = lookupBodyProperty(propTable, (uint32_t)propMask, kPropBodyComponent);
+			wantValue = compDatum;
 		}
-		// ⚠ NO AMBIGUITY CHECK HERE, DELIBERATELY - and it is not an oversight.
-		// All we want from the motion state is the CENTRE OFFSET, the body-centre-to-object-origin delta.
-		// That is a property of the BIPED, not of which biped: a teammate standing next to you is another
-		// Spartan with the same dimensions and therefore the same offset (measured 0.0017, -0.0018, 0.3625).
-		// Picking the wrong one of two adjacent Spartans changes the answer by nothing measurable, so
-		// demanding separation here only produced refusals with no safety benefit. The PROXY match below is
-		// the identity-critical one, and that one still fails closed.
-		if (!msElement || msBest > kMatchAccept)
-			throw HCMRuntimeException(std::format(
-				"Could not find the player's motion state (nearest {:.3f}). This is normal at a menu, during "
-				"a load, or while dead - try again once you are in control.",
-				msBest == FLT_MAX ? -1.f : msBest));
+		if (!prop)
+			throw HCMRuntimeException("Halo 5's physics body-to-owner map is missing");
 
-		float cx = 0.f, cy = 0.f, cz = 0.f;
-		if (!readAt(msElement + kMsCentreX, cx) || !readAt(msElement + kMsCentreY, cy)
-			|| !readAt(msElement + kMsCentreZ, cz))
+		uintptr_t bitmap = 0, values = 0, bodies = 0, motions = 0;
+		uint32_t propSize = 0, bodyCount = 0;
+		if (!readAt(prop + kPropBitmap, bitmap) || !bitmap
+			|| !readAt(prop + kPropValues, values) || !values
+			|| !readAt(prop + kPropSize, propSize)
+			|| !readAt(world + kWorldBodyCount, bodyCount)
+			|| !readAt(world + kWorldMsArray, bodies) || !bodies
+			|| !readAt(world + kWorldProxyArray, motions) || !motions)
+			throw HCMRuntimeException("Could not read the Halo 5 physics body tables");
+
+		bodyCount &= 0x3FFFFFFFu;
+		const uint32_t n = (propSize < bodyCount) ? propSize : bodyCount;
+		if (!n || n > kMaxArrayElements * 4u)
+			throw HCMRuntimeException("Halo 5's physics body count is out of range");
+
+		// Two bulk copies (~16KB) instead of a read per element - the old scan touched about 1MB per call,
+		// every frame, which is most of why this function showed up in the profile at all.
+		std::vector<uint8_t> bm((n + 7u) / 8u);
+		std::vector<uint32_t> vals(n);
+		if (!sehCopy(bm.data(), (const void*)bitmap, bm.size())
+			|| !sehCopy(vals.data(), (const void*)values, (size_t)n * sizeof(uint32_t)))
+			throw HCMRuntimeException("Could not read the Halo 5 physics body owner map");
+
+		uint32_t foundBody = 0, foundMotion = 0, matches = 0;
+		for (uint32_t b = 0; b < n; ++b)
+		{
+			if (!((bm[b >> 3] >> (b & 7)) & 1u)) continue;     // body slot not in use
+			if (vals[b] != wantValue) continue;                // belongs to someone else
+			uint32_t motionId = 0;
+			if (!readAt(bodies + (uintptr_t)b * kMsStride + kBodyMotionId, motionId)) continue;
+			if (!motionId) continue;                           // static / keyframed: nothing to move
+			++matches;
+			foundBody = b;
+			foundMotion = motionId;
+		}
+
+		// ⚠ STILL FAILS CLOSED - but the only possible ambiguity now is between the PLAYER'S OWN bodies
+		// (a ragdoll, say). A teammate, a dropped weapon or a vehicle can never reach this point.
+		if (matches == 0)
+			throw HCMRuntimeException("The player has no moveable physics body right now. This is normal "
+				"while dead, mid-spawn, or riding a vehicle.");
+		if (matches > 1)
+			throw HCMRuntimeException(std::format(
+				"The player has {} moveable physics bodies right now, so there is no single one to move.",
+				matches));
+
+		const uintptr_t body = bodies + (uintptr_t)foundBody * kMsStride;
+		const uintptr_t motion = motions + (uintptr_t)foundMotion * kProxyStride;
+
+		// hknp's own back-reference, so a stale motion index cannot slip through.
+		uint32_t attached = 0;
+		if (!readAt(motion + kMotionAttachedBody, attached) || attached != foundBody)
+			throw HCMRuntimeException("The player's physics body and motion disagree. Try again.");
+
+		// --- 3. the centre offset, MEASURED rather than inferred ---
+		// ⚠ NOT kMsCentreX/Y/Z. That triple is the translation column of the body's 3x4 transform - a
+		// BODY-LOCAL vector - and it only equals the world-space delta while the basis is near identity.
+		// Measured on a body with a flipped basis it comes back with an inverted axis, producing a 0.55
+		// residual against the correct element and a refusal with nothing else anywhere near the player.
+		// This subtraction is exact in every orientation.
+		float com[3]{}, tr[3]{};
+		if (!sehCopy(com, (const void*)(motion + kProxyPosition), sizeof(com))
+			|| !sehCopy(tr, (const void*)(body + kMsTranslation), sizeof(tr)))
 			throw HCMRuntimeException("Could not read the Halo 5 centre-of-mass offset");
+		for (int i = 0; i < 3; ++i)
+			if (!std::isfinite(com[i]) || !std::isfinite(tr[i]))
+				throw HCMRuntimeException("The Halo 5 centre-of-mass offset is not finite");
 
-		// Sanity-gate it anyway. A body-centre delta is a fraction of a biped's height; anything larger
-		// means we matched something that is not a character, and a wrong offset here would silently shift
-		// every teleport. Cheap insurance against the check we just removed.
-		if (!std::isfinite(cx) || !std::isfinite(cy) || !std::isfinite(cz)
-			|| std::abs(cx) > 2.f || std::abs(cy) > 2.f || std::abs(cz) > 2.f)
-			throw HCMRuntimeException(std::format(
-				"The Halo 5 centre-of-mass offset looks wrong ({:.3f}, {:.3f}, {:.3f})", cx, cy, cz));
-
-		outCentreOffset = { cx, cy, cz };
-
-		// --- 2. the proxy element whose position is exactly objectPosition + centreOffset ---
-		uintptr_t proxyArray = 0;
-		if (!readAt(world + kWorldProxyArray, proxyArray) || !proxyArray)
-			throw HCMRuntimeException("The Halo 5 character controller array is null");
-
-		const size_t pBytes = readableBytesFrom(proxyArray, (size_t)kMaxArrayElements * kProxyStride);
-		const uint32_t pCount = (uint32_t)(pBytes / kProxyStride);
-		if (!pCount) throw HCMRuntimeException("The Halo 5 character controller array is not readable");
-
-		const float want[3] = { playerPos[0] + cx, playerPos[1] + cy, playerPos[2] + cz };
-		uintptr_t proxy = 0;
-		float pBest = FLT_MAX, pSecond = FLT_MAX;
-		for (uint32_t k = 0; k < pCount; ++k)
-		{
-			const uintptr_t el = proxyArray + (uintptr_t)k * kProxyStride;
-			float p[3]{};
-			if (!sehCopy(p, (const void*)(el + kProxyPosition), sizeof(p))) continue;
-			const float d = dist3(p, want);
-			if (d < pBest) { pSecond = pBest; pBest = d; proxy = el; }
-			else if (d < pSecond) { pSecond = d; }
-		}
-		// Identity-critical: a wrong element here launches or teleports a teammate instead of you, so this
-		// one still fails closed. But on the RELATIVE test - see kMatchMinGap. Ours reads 0.000; a body
-		// 0.4 wu away reads 0.400, which is a clear win, not an ambiguity.
-		if (!proxy || pBest > kMatchAccept)
-			throw HCMRuntimeException(std::format(
-				"Could not find the player's character controller (nearest {:.3f}). This is normal at a menu, "
-				"during a load, or while dead - try again once you are in control.",
-				pBest == FLT_MAX ? -1.f : pBest));
-
-		if (pSecond - pBest < kMatchMinGap)
-			throw HCMRuntimeException(std::format(
-				"Two bodies are indistinguishably close to you ({:.3f} vs {:.3f}) - move a step and try "
-				"again.", pBest, pSecond == FLT_MAX ? -1.f : pSecond));
-
-		return proxy;
+		outCentreOffset = { com[0] - tr[0], com[1] - tr[1], com[2] - tr[2] };
+		return motion;
 	}
 
 	// FORCE TELEPORT. One 12-byte store into the physics authority - see the block at the top of this file.
@@ -851,6 +951,32 @@ public:
 		return { v[0], v[1], v[2] };
 	}
 
+	// ⚠ THE READOUT VARIANTS. Same values, but nullopt instead of an exception when the player is not
+	// currently resolvable. Anything that polls every frame and can simply show a dash should use these:
+	// an "expected" failure at a menu is not an error, and routing it through HCMRuntimeException costs a
+	// stack walk plus two disk writes EVERY FRAME (see the backoff note above for the measured damage).
+	// The throwing versions stay exactly as they are for Force Teleport / Force Launch, which must fail
+	// closed and must tell the user WHY.
+	std::optional<SimpleMath::Vector3> tryGetPlayerVelocity() noexcept
+	{
+		SimpleMath::Vector3 centreOffset{};
+		uintptr_t proxy = 0;
+		if (!tryProxyCachedOrResolve(centreOffset, proxy)) return std::nullopt;
+		float v[3]{};
+		if (!sehCopy(v, (const void*)(proxy + kProxyVelocity), sizeof(v))) return std::nullopt;
+		return SimpleMath::Vector3{ v[0], v[1], v[2] };
+	}
+
+	std::optional<SimpleMath::Vector3> tryGetProxyPosition() noexcept
+	{
+		SimpleMath::Vector3 centreOffset{};
+		uintptr_t proxy = 0;
+		if (!tryProxyCachedOrResolve(centreOffset, proxy)) return std::nullopt;
+		float p[3]{};
+		if (!sehCopy(p, (const void*)(proxy + kProxyPosition), sizeof(p))) return std::nullopt;
+		return SimpleMath::Vector3{ p[0] - centreOffset.x, p[1] - centreOffset.y, p[2] - centreOffset.z };
+	}
+
 	// Cached for the same reason as teleportPlayerTo - this is Force Launch's write path.
 	void setPlayerVelocity(SimpleMath::Vector3 velocity)
 	{
@@ -878,6 +1004,56 @@ public:
 	// just wrote to it and the container identity check below still has to pass.
 	std::chrono::steady_clock::time_point mCacheTrustedUntil{};
 	static constexpr std::chrono::milliseconds kCacheTrustWindow{ 2000 };
+
+	// ⚠⚠ FAILURE BACKOFF. NOT A LATCH - READ THIS BEFORE CHANGING IT.
+	//
+	// THE PROBLEM IT SOLVES. Whenever the player is unresolvable - at a menu, during a load, while dead,
+	// mid-revert - the cache revalidation fails, and every caller then ran a FULL re-resolve: two linear
+	// scans over ~1MB of physics arrays, which then threw at the very end. The 2D info overlay asks every
+	// frame, so that ran 60 times a second. Measured in one day of logs: 15,700 throws out of
+	// resolveCharacterProxy, 5,065 of them "Two bodies are indistinguishably close to you (0.000 vs
+	// 0.000)" - which is simply what the scan reports when the player position reads as zero because there
+	// is no player.
+	//
+	// AND EVERY ONE OF THOSE THROWS IS EXPENSIVE. HCMExceptionBase's constructor does
+	// std::to_string(std::stacktrace::current()) - a full stack walk and symbolisation, which takes
+	// dbghelp's global lock - and then writes two PLOG_ERROR lines to disk. Doing that 60 times a second
+	// from the render path is not "a noisy log", it is a per-frame stall.
+	//
+	// WHAT THIS DOES. After a failed resolve, wait a little before paying for another one. The wait grows
+	// with consecutive failures and is capped, so a long stay at a menu costs ~1 attempt a second instead
+	// of 60.
+	//
+	// ⚠⚠ IT MUST NEVER BECOME A DISABLE. The 2D info overlay is expected to come back BY ITSELF the moment
+	// the player is controllable again - a readout that needs a manual toggle to recover is useless. So:
+	// the backoff only ever delays a RETRY, never suppresses one permanently, and any success clears it
+	// instantly (see noteProxyResolveSucceeded). There is deliberately no "give up" state.
+	std::chrono::steady_clock::time_point mProxyRetryAfter{};
+	uint32_t mProxyFailureStreak = 0;
+	static constexpr std::chrono::milliseconds kProxyBackoffFirst{ 100 };
+	static constexpr std::chrono::milliseconds kProxyBackoffMax{ 1000 };
+
+	// True while we are inside the wait window after a failure. noexcept and free - two loads.
+	bool proxyResolveIsBackedOff() const noexcept
+	{
+		return mProxyFailureStreak != 0 && std::chrono::steady_clock::now() < mProxyRetryAfter;
+	}
+
+	void noteProxyResolveFailed() noexcept
+	{
+		if (mProxyFailureStreak < 32) ++mProxyFailureStreak;   // saturate; this only feeds the shift below
+		auto wait = kProxyBackoffFirst * (1u << (std::min)(mProxyFailureStreak - 1, 4u));
+		if (wait > kProxyBackoffMax) wait = kProxyBackoffMax;
+		mProxyRetryAfter = std::chrono::steady_clock::now() + wait;
+	}
+
+	// ⚠ Clears the backoff COMPLETELY, not partially. One good resolve means the player is back, so the
+	// next failure should get the short wait again rather than inheriting a long one from an old menu.
+	void noteProxyResolveSucceeded() noexcept
+	{
+		mProxyFailureStreak = 0;
+		mProxyRetryAfter = {};
+	}
 
 	// ⚠⚠ THE POSITION CHECK ALONE IS NOT A SAFE REVALIDATION ACROSS A BSP / ZONE SET SWITCH.
 	// Switching BSP tears down and rebuilds the physics world, so mCachedProxy is left pointing at freed
@@ -933,7 +1109,21 @@ public:
 			invalidateProxyCache();
 		}
 
-		mCachedProxy = resolveCharacterProxy(mCachedCentreOffset);
+		// Reaching here means a FULL re-resolve - the expensive path. Record the outcome so repeated
+		// failures back off (see mProxyRetryAfter). Note the cache is already 0 on every path that gets
+		// here after a failure, which is what lets tryProxyCachedOrResolve gate on "cache empty AND backed
+		// off" without ever skipping a cache that would have worked.
+		try
+		{
+			mCachedProxy = resolveCharacterProxy(mCachedCentreOffset);
+		}
+		catch (...)
+		{
+			mCachedProxy = 0;          // explicit: never leave a stale address behind a failed resolve
+			noteProxyResolveFailed();
+			throw;
+		}
+		noteProxyResolveSucceeded();
 		outCentreOffset = mCachedCentreOffset;
 
 		// Remember which array it came out of, so the next frame can prove the world has not been rebuilt.
@@ -943,6 +1133,152 @@ public:
 		mCachedProxyArray = proxyArray;
 
 		return mCachedProxy;
+	}
+
+	// ⚠ THE PER-FRAME ENTRY POINT. Use this, not proxyCachedOrResolve, from anything that runs every frame.
+	//
+	// Non-throwing in the caller's frame, and - crucially - it does not even ENTER the throwing path while
+	// backed off, so a player sitting at a menu costs two atomic-free comparisons per frame instead of a
+	// ~1MB scan plus a stack-walked, disk-logged exception.
+	//
+	// The gate is "cache is empty AND we are inside a backoff window". A populated cache always goes
+	// through, because revalidating it is two pointer reads and a 12-byte compare - there is nothing to
+	// throttle, and throttling it would make the readout stutter for no reason.
+	//
+	// ⚠ RECOVERY IS AUTOMATIC AND IMMEDIATE. Nothing here latches. The first frame after the backoff window
+	// expires attempts a real resolve, and a success clears the streak outright, so the overlay repopulates
+	// on its own within at most kProxyBackoffMax of the player becoming controllable again.
+	bool tryProxyCachedOrResolve(SimpleMath::Vector3& outCentreOffset, uintptr_t& outProxy) noexcept
+	{
+		if (!mCachedProxy && proxyResolveIsBackedOff())
+			return false;
+
+		try
+		{
+			outProxy = proxyCachedOrResolve(outCentreOffset);
+			return outProxy != 0;
+		}
+		catch (...)
+		{
+			// proxyCachedOrResolve already recorded the failure and armed the backoff.
+			return false;
+		}
+	}
+
+	// ================================================================================================
+	// MAP / SCENARIO INTERNAL NAME
+	//
+	// WHY THIS IS A SCAN AND NOT A POINTER CHAIN. There is no cheap path to it - all three obvious ones
+	// were tried against a live process and all three failed:
+	//   * zone set names do NOT carry the level prefix. w2_grotto's happen to be "w2_grotto_*", which
+	//     looks like a rule until you load w1_unconfirmed_reports and get "zs005_landing",
+	//     "zs010_chiefship", "cin090_bridge" - longest common prefix is the empty string.
+	//   * no qword anywhere in scenario globals[0x0000..0x4000] dereferences to level-ish ASCII.
+	//   * the "maps\<name>.map" string IS resident and unique, but every qword holding its address lives
+	//     in the same heap block as the string. Nothing inside the exe image points at it, so there is no
+	//     ASLR-stable RVA to put in InternalPointerData.xml.
+	// What is left is finding the string itself.
+	//
+	// ⚠⚠ SO IT RUNS EXACTLY ONCE PER LEVEL, ON A WORKER THREAD, NEVER ON THE RENDER PATH. getMapName() is
+	// called from the 2D overlay's ~30Hz update; it only ever reads the cache and, at most, kicks off a
+	// scan. It never blocks and never scans inline. Returning "" simply means "not known yet".
+	//
+	// ⚠ THE CACHE IS KEYED ON THE SCENARIO GLOBALS POINTER. That is what actually changes when a level is
+	// torn down and rebuilt, so it is the level identity. Do not key it on zone set or BSP state, both of
+	// which change WITHIN a level.
+	//
+	// ⚠ THE THREAD MUST NOT TOUCH `this`. HCM stays resident across sessions and this Impl can be
+	// destroyed while a scan is in flight, so everything the worker uses lives in a shared_ptr it owns a
+	// reference to. Do not "simplify" this by capturing the Impl.
+	struct MapNameState
+	{
+		std::mutex m;
+		std::string name;              // guarded by m
+		uintptr_t derivedFrom = 0;     // guarded by m - the scenario globals it was scanned for
+		std::atomic<bool> scanning{ false };
+	};
+	std::shared_ptr<MapNameState> mMapNameState = std::make_shared<MapNameState>();
+
+	static void scanForMapName(std::shared_ptr<MapNameState> state, uintptr_t forGlobals) noexcept
+	{
+		std::string found;
+		try
+		{
+			// "maps\" + name + ".map". Distinctive enough that one pass is enough, and short enough that
+			// a straight memmem over committed private memory is the whole algorithm.
+			static const char kPrefix[] = "maps\\";
+			MEMORY_BASIC_INFORMATION mbi{};
+			uintptr_t addr = 0;
+			std::vector<char> buf;
+			while (found.empty() && VirtualQuery((LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi))
+			{
+				const uintptr_t next = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+				const DWORD prot = mbi.Protect & 0xFF;
+				const bool readable = prot == PAGE_READONLY || prot == PAGE_READWRITE
+					|| prot == PAGE_EXECUTE_READ || prot == PAGE_EXECUTE_READWRITE;
+				// Private committed memory only - the map name is heap tag data, never image or mapped file.
+				if (mbi.State == MEM_COMMIT && readable && mbi.Type == MEM_PRIVATE
+					&& mbi.RegionSize <= 64u * 1024u * 1024u)
+				{
+					buf.resize(mbi.RegionSize);
+					SIZE_T got = 0;
+					if (ReadProcessMemory(GetCurrentProcess(), mbi.BaseAddress, buf.data(), mbi.RegionSize, &got) && got)
+					{
+						const char* b = buf.data();
+						const char* end = b + got;
+						for (const char* p = b; (p = (const char*)memchr(p, 'm', end - p)) != nullptr; ++p)
+						{
+							if ((size_t)(end - p) < sizeof(kPrefix)) break;
+							if (memcmp(p, kPrefix, sizeof(kPrefix) - 1) != 0) continue;
+							const char* n = p + sizeof(kPrefix) - 1;
+							const char* q = n;
+							// Explicit char classes rather than isalnum: no locale dependence, no extra header,
+							// and map names are only ever [a-z0-9_] in practice.
+							while (q < end && q - n < 64
+								&& ((*q >= 'a' && *q <= 'z') || (*q >= 'A' && *q <= 'Z')
+									|| (*q >= '0' && *q <= '9') || *q == '_')) ++q;
+							if (q > n && (size_t)(end - q) >= 4 && memcmp(q, ".map", 4) == 0)
+							{
+								found.assign(n, q - n);
+								break;
+							}
+						}
+					}
+				}
+				if (next <= addr) break;
+				addr = next;
+			}
+		}
+		catch (...) { found.clear(); }
+
+		{
+			std::scoped_lock lk(state->m);
+			state->name = found;
+			state->derivedFrom = forGlobals;   // record even on failure, so we do not rescan every frame
+		}
+		state->scanning.store(false, std::memory_order_release);
+	}
+
+	// Returns "" until the scan lands (or if it found nothing). Never blocks.
+	std::string getMapName() noexcept
+	{
+		uintptr_t globals = 0;
+		if (!readAt(getExeBase() + kRvaScenarioGlobals, globals) || !globals)
+			return {};
+
+		{
+			std::scoped_lock lk(mMapNameState->m);
+			if (mMapNameState->derivedFrom == globals)
+				return mMapNameState->name;      // may be "" if the scan genuinely found nothing
+		}
+
+		bool expected = false;
+		if (mMapNameState->scanning.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+		{
+			auto state = mMapNameState;
+			std::thread(&H5GetPlayerStateImpl::scanForMapName, state, globals).detach();
+		}
+		return {};
 	}
 
 	// Drop the cache so the next access does a full re-resolve. Cheap, and always safe to call.
@@ -998,6 +1334,7 @@ std::string H5GetPlayerState::getZoneSetName(int32_t index) { return pimpl->getZ
 bool H5GetPlayerState::isPreparingZoneSet() noexcept { return pimpl->isPreparingZoneSet(); }
 std::string H5GetPlayerState::getPreparedZoneSetName() noexcept { return pimpl->getPreparedZoneSetName(); }
 std::string H5GetPlayerState::getCommittedZoneSetName() { return pimpl->getCommittedZoneSetName(); }
+std::string H5GetPlayerState::getMapName() noexcept { return pimpl->getMapName(); }
 int32_t H5GetPlayerState::getCommittedZoneSetIndex() { return pimpl->getCommittedZoneSetIndex(); }
 void H5GetPlayerState::requestZoneSetSwitch(int32_t index) { pimpl->requestZoneSetSwitch(index); }
 void H5GetPlayerState::requestCheckpoint(uint32_t mode) { pimpl->requestCheckpoint(mode); }
@@ -1015,6 +1352,8 @@ SimpleMath::Vector3 H5GetPlayerState::teleportPlayerBy(SimpleMath::Vector3 offse
 }
 
 SimpleMath::Vector3 H5GetPlayerState::getPlayerVelocity() { return pimpl->getPlayerVelocity(); }
+std::optional<SimpleMath::Vector3> H5GetPlayerState::tryGetPlayerVelocity() noexcept { return pimpl->tryGetPlayerVelocity(); }
+std::optional<SimpleMath::Vector3> H5GetPlayerState::tryGetProxyPosition() noexcept { return pimpl->tryGetProxyPosition(); }
 void H5GetPlayerState::setPlayerVelocity(SimpleMath::Vector3 v) { pimpl->setPlayerVelocity(v); }
 void H5GetPlayerState::invalidateProxyCache() noexcept { pimpl->invalidateProxyCache(); }
 void H5GetPlayerState::modifyPlayerVelocity(const std::function<SimpleMath::Vector3(SimpleMath::Vector3)>& fn)

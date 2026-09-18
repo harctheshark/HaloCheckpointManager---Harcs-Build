@@ -3542,6 +3542,42 @@ public:
 			nameof(h5OutOfBoundsBypassToggle)
 		);
 
+	// ---- Halo 5: Infinite Ammo / Bottomless Clip, and One Shot Kill ------------------------------------
+	// Both write per-unit "malleable properties" on the player biped, NOT the player-traits struct - see the
+	// banner in H5UnitCheats.h for why the obvious target is a dead end.
+	//
+	// Two separate toggles rather than one tri-state picker, because the engine really does expose them as two
+	// adjacent properties (unit_weapon_infinite_ammo / unit_weapon_bottomless_clip) and they are independently
+	// meaningful: infinite ammo alone still makes you reload, bottomless clip alone still drains reserves.
+	std::shared_ptr<BinarySetting<bool>> h5InfiniteAmmoToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5InfiniteAmmoToggle)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> h5BottomlessClipToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5BottomlessClipToggle)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> h5OneShotKillToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h5OneShotKillToggle)
+		);
+
+	// The multiplier applied to weapon, melee AND grenade damage the player deals. 100x one-taps anything in
+	// the campaign with room to spare; the upper bound is deliberately generous rather than principled, and the
+	// lower bound allows going BELOW 1 so this doubles as a damage nerf if you want a harder run.
+	// ⚠ This is an OUTGOING multiplier - verified from the consumer, which takes an attacker record. Halo 5's
+	// incoming knobs are different fields entirely. Raising this does not make you take more damage.
+	std::shared_ptr<BinarySetting<float>> h5OneShotKillMultiplier = std::make_shared<BinarySetting<float>>
+		(100.f, [](float in) { return in >= 0.f && in <= 10000.f; }, nameof(h5OneShotKillMultiplier));
+
 	// ---- Halo 5 trigger overlay: colour by SCRIPT ACTIVITY instead of by category ------------------
 	// "Blue if a script can hit or wake it, red if inert." Derived statically from the compiled mission
 	// script corpus (see H5TriggerVolumeNames.h) plus the engine's own per-volume kill flag, so nothing
@@ -4020,6 +4056,7 @@ public:
 		h5TriggerOverlaySpeedrunOnly,
 		h5TriggerOverlayUseLiveActivity,
 		h5TriggerOverlayActivityWindowMs,
+		h5OneShotKillMultiplier,
 
 	};
 

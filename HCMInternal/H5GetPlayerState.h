@@ -117,6 +117,15 @@ public:
 	// stores -1 over that index, so once a switch finishes it holds nothing. See the .cpp for the four
 	// store sites and for how the committed global was identified.
 	std::string getCommittedZoneSetName();
+
+	// The map's internal name, e.g. "w1_unconfirmed_reports" - the scenario's own name, not a display title.
+	//
+	// ⚠ RETURNS "" UNTIL IT IS KNOWN, AND THAT IS NORMAL. There is no pointer chain to this string (zone
+	// set names do not carry the level prefix, nothing in the scenario globals points at it, and no
+	// ASLR-stable global holds its address), so it is recovered by one memory scan per level, run on a
+	// worker thread. Callers should show a placeholder while it is empty rather than treat it as an error.
+	// Never blocks; safe to call every frame.
+	std::string getMapName() noexcept;
 	int32_t     getCommittedZoneSetIndex();   // -1 when no zone set is active
 
 	// Request a switch to the given zone set. A PURE DATA WRITE - it sets the same three globals the
@@ -149,6 +158,19 @@ public:
 	// against measured d(position)/dt (0.150 vs 1.000 for everything else) and writing (0,0,12) to it
 	// produced a clean 12.7 wu ballistic arc.
 	SimpleMath::Vector3 getPlayerVelocity();
+
+	// ---- READOUT VARIANTS. nullopt instead of throwing. ----
+	// ⚠ USE THESE FROM ANYTHING THAT POLLS EVERY FRAME (the 2D info overlay). Being at a menu, dead or
+	// mid-load is an ordinary state, not an error, and reporting it via HCMRuntimeException costs a full
+	// stack walk (HCMExceptionBase's ctor calls std::stacktrace::current(), which takes dbghelp's global
+	// lock) plus two synchronous PLOG_ERROR writes - per frame. One day of logs contained 15,700 of them.
+	//
+	// ⚠ THEY SELF-HEAL AND NEVER LATCH OFF. Internally a failed resolve only delays the next ATTEMPT, and
+	// any success clears that instantly, so a caller that keeps asking every frame starts getting values
+	// again on its own as soon as the player is controllable. Do not add a "disabled" flag on top of this;
+	// the readout is expected to come back without the user touching anything.
+	std::optional<SimpleMath::Vector3> tryGetPlayerVelocity() noexcept;
+	std::optional<SimpleMath::Vector3> tryGetProxyPosition() noexcept;
 	void setPlayerVelocity(SimpleMath::Vector3 velocity);
 	// Read-modify-write with a SINGLE proxy resolution - use this for anything running per frame.
 	void modifyPlayerVelocity(const std::function<SimpleMath::Vector3(SimpleMath::Vector3)>& fn);

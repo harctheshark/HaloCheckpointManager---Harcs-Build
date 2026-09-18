@@ -199,6 +199,8 @@ H5GetTriggerData,\
 H5TriggerOverlay,\
 H5TriggerActivity,\
 H5Invincibility,\
+H5InfiniteAmmo,\
+H5OneShotKill,\
 H5GameSpeed,\
 H5OutOfBoundsBypass,\
 H5PauseMenuFix,\
