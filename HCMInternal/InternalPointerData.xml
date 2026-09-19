@@ -61,8 +61,21 @@
 	</SupportedGameVersions>
 
 
-	<!--Supported HCM Versions. User will be informed via message that a newer version is available, if the current HCM version isn't one of these.-->
-	<!--IMPORTANT! Must update in both External AND Internal xmls-->
+	<!--⚠ NO LONGER READ BY ANYTHING. Kept only so PointerDataParser's known-node list still has something to
+	    match, and so the shape survives if the check is ever wanted again.
+
+	    This used to drive the "a newer version of HCM exists" message: if the running HCM version was not
+	    listed here, App.h told the user to go to github.com/Burnt-o/HaloCheckpointManager/releases. Both
+	    halves were wrong for this fork - the list needed a hand edit on every version bump or it fired on a
+	    build that was already the newest (it did exactly that at 5.10.16, with 4.2.0.67 still the only entry),
+	    and the link points at a repository without the Halo 5 work. The check is gone; see App.h.
+
+	    ⚠ Do NOT re-add a warning keyed off this list without making it self-maintaining. The entry below is
+	    deliberately left at its historical value to make it obvious that nothing updates it.
+	    NOTE: the old "must update in both External AND Internal xmls" instruction was already untrue -
+	    ExternalPointerData.xml has no such block and no C# code reads one.
+
+	    (The neighbouring SupportedGameVersions / SupportedMCCVersions checks are UNRELATED and still live.)-->
 	<SupportedHCMVersions>
 		<Entry>4.2.0.67</Entry>
 	</SupportedHCMVersions>

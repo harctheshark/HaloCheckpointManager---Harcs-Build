@@ -293,29 +293,24 @@ public:
                 modalFailureWindowThread.detach();
             }
 
-            // Is this version of HCM up to date? We'll warn the user if not
-            auto currentHCMVersion = getHCMVersion();
-            if (!currentHCMVersion)
-            {
-                imes->addMessage(std::format("Could not determine own HCM version, error: {}\nSkipping check for newer HCM versions.\n", currentHCMVersion.error()));
-            }
-            else
-            {
+            // Record HCM's own version. LOG ONLY - nothing here talks to the user.
+            //
+            // The "a newer version of HCM exists" nag used to live here. It compared the running version
+            // against the hand-maintained <SupportedHCMVersions> allowlist in InternalPointerData.xml and, on
+            // a miss, pointed at github.com/Burnt-o/HaloCheckpointManager/releases. That is wrong for this
+            // fork twice over. The allowlist has to be edited by hand on every version bump or the warning
+            // fires on a build that IS the newest - which is exactly what happened at 5.10.16, where the only
+            // entry was still 4.2.0.67. And the link sends people to a repository that does not carry the
+            // Halo 5 work, so following the advice would downgrade them.
+            //
+            // Deleted rather than re-pointed at the fork: a version allowlist cannot answer "is something
+            // newer out" without checking somewhere it can't reach from in here, and a check that is wrong by
+            // construction is worse than no check. The build already identifies itself - the exe's product
+            // version carries the release's commit hash, and the version goes in the log line below.
+            if (auto currentHCMVersion = getHCMVersion(); currentHCMVersion)
                 PLOG_INFO << "Current HCM Version: " << currentHCMVersion.value();
-                if (auto suppV = PointerDataParser::parseSupportedHCMVersions(pointerXMLData); !suppV.has_value() || suppV.value().find(currentHCMVersion.value().operator std::string()) == suppV.value().end())
-                {
-                    if (suppV.has_value())
-                    {
-                        imes->addMessage("A newer version of HCM exists, probably with bugfixes or new features.\nFind it at github.com/Burnt-o/HaloCheckpointManager/releases\n");
-                        PLOG_DEBUG << "Supported versions:"; for (auto& v : suppV.value()) { PLOG_DEBUG << v; }
-                    }
-                    else
-                    {
-                        imes->addMessage(std::format("Failed to parse currently supported HCM versions, error: {}\nSkipping check for newer HCM versions.\n", suppV.error()));
-                    }
-
-                }
-            }
+            else
+                PLOG_ERROR << "Could not determine own HCM version, error: " << currentHCMVersion.error();
             
 
             sharedMem->setStatusFlag(HCMInternalStatus::AllGood);
