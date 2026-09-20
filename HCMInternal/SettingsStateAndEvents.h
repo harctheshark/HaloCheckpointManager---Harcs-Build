@@ -1057,6 +1057,13 @@ public:
 			nameof(display2DInfoShowRNG)
 		);
 
+	std::shared_ptr<BinarySetting<bool>> display2DInfoShowLevelLoadRNG = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(display2DInfoShowLevelLoadRNG)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> display2DInfoShowBSP = std::make_shared<BinarySetting<bool>>
 		(
 			true,
@@ -3802,6 +3809,7 @@ public:
 		display2DInfoShowGameTick,
 		display2DInfoShowAggro,
 		display2DInfoShowRNG,
+		display2DInfoShowLevelLoadRNG,
 		display2DInfoShowBSP,
 			display2DInfoShowBSPSet,
 		display2DInfoShowNextObjectDatum,

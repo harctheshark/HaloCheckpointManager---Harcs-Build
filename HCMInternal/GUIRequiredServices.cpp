@@ -924,6 +924,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 { OptionalCheatEnum::GetCurrentRNG}
 	},
 
+				{ GUIElementEnum::display2DInfoShowLevelLoadRNG,
+{ OptionalCheatEnum::GetCurrentRNG}
+	},
+
 
 		{ GUIElementEnum::display2DInfoShowBSP,
 { OptionalCheatEnum::GetCurrentBSP}

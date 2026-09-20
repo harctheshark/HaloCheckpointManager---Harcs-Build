@@ -259,6 +259,7 @@ private:
 	ScopedCallback<ToggleEvent> display2DInfoShowGameTickCallback; 
 	ScopedCallback<ToggleEvent> display2DInfoShowAggroCallback;
 	ScopedCallback<ToggleEvent> display2DInfoShowRNGCallback;
+	ScopedCallback<ToggleEvent> display2DInfoShowLevelLoadRNGCallback;
 	ScopedCallback<ToggleEvent> display2DInfoShowBSPCallback;
 	ScopedCallback<ToggleEvent> display2DInfoShowBSPSetCallback;
 	ScopedCallback<ToggleEvent> display2DInfoShowNextObjectDatumCallback;
@@ -299,6 +300,9 @@ private:
 			lockOrThrow(settingsWeak, settings);
 			getGameDataAsString.showGameTick = settings->display2DInfoShowGameTick->GetValue();
 			getGameDataAsString.getCurrentRNGOptionalWeak = settings->display2DInfoShowRNG->GetValue() ? this->getCurrentRNGOptionalWeak : std::nullopt;
+			// Same service, separate toggle - the level-load seed latches on game tick 0 and must be able to
+			// do that whether or not the live readout is on.
+			getGameDataAsString.getLevelLoadRNGOptionalWeak = settings->display2DInfoShowLevelLoadRNG->GetValue() ? this->getCurrentRNGOptionalWeak : std::nullopt;
 			getGameDataAsString.getCurrentBSPOptionalWeak = settings->display2DInfoShowBSP->GetValue() ? this->getCurrentBSPOptionalWeak : std::nullopt;
 			getGameDataAsString.getCurrentBSPSetOptionalWeak = settings->display2DInfoShowBSPSet->GetValue() ? this->getCurrentBSPSetOptionalWeak : std::nullopt;
 			getGameDataAsString.getAggroDataOptionalWeak = settings->display2DInfoShowAggro->GetValue() ? this->getAggroDataOptionalWeak : std::nullopt;
@@ -390,6 +394,7 @@ public:
 		setSettingCallback(display2DInfoShowGameTick, bool),
 		setSettingCallback(display2DInfoShowAggro, bool),
 		setSettingCallback(display2DInfoShowRNG, bool),
+		setSettingCallback(display2DInfoShowLevelLoadRNG, bool),
 		setSettingCallback(display2DInfoShowBSP, bool),
 		setSettingCallback(display2DInfoShowBSPSet, bool),
 		setSettingCallback(display2DInfoShowNextObjectDatum, bool),

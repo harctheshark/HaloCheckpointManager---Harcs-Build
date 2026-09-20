@@ -314,7 +314,7 @@
 	((display2DInfoSettingsInfoSubheading, (ALL_SUPPORTED_GAMES)))\
 			((display2DInfoShowGameTick, (ALL_SUPPORTED_GAMES)))\
 			((display2DInfoShowAggro, (Halo1)))\
-			((display2DInfoShowRNG, (Halo1)))\
+			((display2DInfoShowRNG, (Halo1, HaloReach)))\
 			((display2DInfoShowBSP, (Halo1, Halo2)))\
 			((display2DInfoShowBSPSet, (THIRD_GEN)))\
 			((display2DInfoShowNextObjectDatum, (Halo2)))\
@@ -732,7 +732,15 @@
 	   nowhere near the line you actually changed. Group 1 is at its ceiling of 217; this group is the
 	   emptiest. Declaration order has no effect on where the row appears - the menu layout comes entirely
 	   from the createNestedElement calls in GUIElementConstructor, where this one sits with its siblings. */\
-	((h5LuaConsoleGUI, (HALO5_ONLY)))
+	((h5LuaConsoleGUI, (HALO5_ONLY)))\
+	/* ⚠ ALSO EXILED HERE, and for the same reason - it belongs beside display2DInfoShowRNG in group 2.
+	   ⚠⚠ THE CEILING IS NOT PER-GROUP. The note above says "group 1 is at its ceiling of 217", and that
+	   reads as though the other groups have their own headroom. They do not: group 2 was at 206 when a
+	   single entry added to it produced the identical C1009 at GUIRequiredServices.cpp. Whatever the limit
+	   is counting, it spans the groups, so the only reliable move is to put new entries in the EMPTIEST
+	   one - which is still this one. Counting a group and concluding it has room is not a safe check;
+	   building is. */\
+	((display2DInfoShowLevelLoadRNG, (Halo1, HaloReach)))
 
 
 

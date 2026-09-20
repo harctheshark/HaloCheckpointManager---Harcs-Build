@@ -54,6 +54,23 @@ public:
 
 		}
 
+		// ⚠ SEPARATE `if` FROM THE LIVE SEED ABOVE, ON PURPOSE. getLevelLoadRNG latches on the tick it is
+		// given, so it only ever captures game tick 0 if it is called EVERY tick - which means it cannot be
+		// nested under the live-seed toggle. Either option works on its own.
+		if (getLevelLoadRNGOptionalWeak.has_value())
+		{
+			lockOrThrow(getLevelLoadRNGOptionalWeak.value(), getLevelLoadRNG);
+			const auto loadRNG = getLevelLoadRNG->getLevelLoadRNG((uint32_t)gameTick);
+			const auto latchedTick = getLevelLoadRNG->getLevelLoadRNGTick();
+
+			ss << "Level Load RNG Seed: " << loadRNG;
+			// Say so when this is NOT the true level start - HCM attached mid-level, or the game state was
+			// not readable on tick 0. Silently showing a tick-900 value as the level's seed would be a lie.
+			if (latchedTick != 0)
+				ss << std::noshowpos << std::dec << " (captured at tick " << latchedTick << ", not level start)" << std::showpos << std::hex;
+			ss << std::endl;
+		}
+
 		if (getCurrentBSPOptionalWeak.has_value())
 		{
 			lockOrThrow(getCurrentBSPOptionalWeak.value(), getCurrentBSP);
@@ -96,6 +113,9 @@ public:
 	std::optional<std::weak_ptr<GetAggroData>> getAggroDataOptionalWeak;
 	std::optional<std::weak_ptr<GetNextObjectDatum>> getNextObjectDatumOptionalWeak;
 	std::optional<std::weak_ptr<GetCurrentRNG>> getCurrentRNGOptionalWeak = std::nullopt;
+	// Same service as above, set independently: one toggle shows the live seed, the other the level's
+	// starting seed, and either can be on without the other.
+	std::optional<std::weak_ptr<GetCurrentRNG>> getLevelLoadRNGOptionalWeak = std::nullopt;
 	std::optional<std::weak_ptr<GetCurrentBSP>> getCurrentBSPOptionalWeak = std::nullopt;
 	std::optional<std::weak_ptr<GetCurrentBSPSet>> getCurrentBSPSetOptionalWeak = std::nullopt;
 	bool showGameTick = false;

@@ -1693,6 +1693,7 @@ private:
 							createNestedElement(GUIElementEnum::display2DInfoShowGameTick),
 							createNestedElement(GUIElementEnum::display2DInfoShowAggro),
 							createNestedElement(GUIElementEnum::display2DInfoShowRNG),
+							createNestedElement(GUIElementEnum::display2DInfoShowLevelLoadRNG),
 							createNestedElement(GUIElementEnum::display2DInfoShowBSP),
 							createNestedElement(GUIElementEnum::display2DInfoShowBSPSet),
 							createNestedElement(GUIElementEnum::display2DInfoShowNextObjectDatum),
@@ -1714,6 +1715,13 @@ private:
 					case GUIElementEnum::display2DInfoShowRNG:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 							(game, ToolTipCollection(""), std::nullopt, "Show RNG seed", settings->display2DInfoShowRNG));
+
+					case GUIElementEnum::display2DInfoShowLevelLoadRNG:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("The RNG seed as it was at the start of the level (game tick 0), "
+								"rather than the live value. Re-captured every time the level restarts; a checkpoint "
+								"revert deliberately does not change it."),
+								std::nullopt, "Show level load RNG seed", settings->display2DInfoShowLevelLoadRNG));
 
 
 					case GUIElementEnum::display2DInfoShowBSP:
