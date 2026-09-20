@@ -218,6 +218,9 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{GUIElementEnum::h5SwitchZoneSetGUI,
 			{OptionalCheatEnum::H5SwitchZoneSet}
 	},
+	{GUIElementEnum::h5LuaConsoleGUI,
+			{OptionalCheatEnum::H5LuaConsole}
+	},
 	{GUIElementEnum::h5TriggerOverlayToggleGUI,
 			{OptionalCheatEnum::H5TriggerOverlay}
 	},

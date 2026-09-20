@@ -27,6 +27,7 @@
 #include "H5UnitCheats.h"
 #include "H5PauseMenuFix.h"
 #include "H5TriggerActivity.h"
+#include "H5LuaConsole.h"
 #include "H5GameSpeed.h"
 #include "H5OutOfBoundsBypass.h"
 #include "H5GetHavokData.h"

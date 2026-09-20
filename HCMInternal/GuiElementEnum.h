@@ -151,8 +151,10 @@
 		((h5HavokOverlayFillAlpha, (HALO5_ONLY)))\
 		((h5HavokOverlayStaticColor, (HALO5_ONLY)))\
 		((h5HavokOverlayObjectColor, (HALO5_ONLY)))\
-	/* Sits with the other Halo 5 features rather than in a script heading like the HaloCER one: Halo 5 has
-	   no script console, and this is where everything else Halo-5 already lives. */\
+	/* Sits with the other Halo 5 features rather than in a script heading like the HaloCER one: this is where
+	   everything else Halo-5 already lives. (It used to say Halo 5 has no script console. It does now -
+	   h5LuaConsoleGUI - but that one had to be declared in GROUP 3, see the note there. Declaration order
+	   does not affect the menu; the layout comes from createNestedElement in GUIElementConstructor.) */\
 	((h5SwitchZoneSetGUI, (HALO5_ONLY)))\
 	((h5TriggerOverlayToggleGUI, (HALO5_ONLY)))\
 	((h5TriggerOverlaySettingsSubheading, (HALO5_ONLY)))\
@@ -723,7 +725,14 @@
 	((competitionModeRightFontSize, (Halo2)))\
 	((competitionModeRightColour, (Halo2)))\
 	((hceScriptHeadingGUI, (HALOCER_ONLY)))\
-			((hceInjectCheckpointRewriteIdentity, (HALOCER_ONLY)))
+			((hceInjectCheckpointRewriteIdentity, (HALOCER_ONLY)))\
+	/* ⚠ DECLARED HERE, NOT NEXT TO THE OTHER h5* ELEMENTS, PURELY BECAUSE GROUP 1 IS FULL.
+	   Adding a 218th entry to RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES1 does not give a useful diagnostic - it
+	   fails as `error C1009: compiler limit: macros nested too deeply` pointing at GUIRequiredServices.cpp,
+	   nowhere near the line you actually changed. Group 1 is at its ceiling of 217; this group is the
+	   emptiest. Declaration order has no effect on where the row appears - the menu layout comes entirely
+	   from the createNestedElement calls in GUIElementConstructor, where this one sits with its siblings. */\
+	((h5LuaConsoleGUI, (HALO5_ONLY)))
 
 
 

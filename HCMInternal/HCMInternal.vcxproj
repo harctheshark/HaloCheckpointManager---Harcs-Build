@@ -572,6 +572,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="H5UnitCheats.h" />
     <ClInclude Include="H5SpeedrunTriggers.h" />
     <ClInclude Include="H5TriggerActivity.h" />
+    <ClInclude Include="H5LuaConsole.h" />
     <ClInclude Include="H5GameSpeed.h" />
     <ClInclude Include="H5OutOfBoundsBypass.h" />
     <ClInclude Include="H5PauseMenuFix.h" />
@@ -614,6 +615,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="GUIHCESwitchZoneSet.h" />
     <ClInclude Include="GUIH5SwitchZoneSet.h" />
     <ClInclude Include="GUIHCEConsole.h" />
+    <ClInclude Include="GUIH5LuaConsole.h" />
     <ClInclude Include="HCEFreecamKeepPosition.h" />
     <ClInclude Include="HCEAISquadOverlay.h" />
     <ClInclude Include="Halo3TheaterInterp.h" />
@@ -933,6 +935,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="H5Invincibility.cpp" />
     <ClCompile Include="H5UnitCheats.cpp" />
     <ClCompile Include="H5TriggerActivity.cpp" />
+    <ClCompile Include="H5LuaConsole.cpp" />
     <ClCompile Include="H5GameSpeed.cpp" />
     <ClCompile Include="H5OutOfBoundsBypass.cpp" />
     <ClCompile Include="H5PauseMenuFix.cpp" />

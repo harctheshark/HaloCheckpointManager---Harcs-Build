@@ -13,6 +13,7 @@
 #include "GUISpeedhack.h"
 #include "GUIGameSpeed.h"
 #include "GUIHCEConsole.h"
+#include "GUIH5LuaConsole.h"
 #include "GUIHCESwitchZoneSet.h"
 #include "GUIH5SwitchZoneSet.h"
 #include "GUIInvulnerability.h"
@@ -295,6 +296,7 @@ private:
 							createNestedElement(GUIElementEnum::h5HavokOverlayToggleGUI),
 							createNestedElement(GUIElementEnum::h5HavokOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::h5SwitchZoneSetGUI),
+							createNestedElement(GUIElementEnum::h5LuaConsoleGUI),
 							createNestedElement(GUIElementEnum::h5TriggerOverlayToggleGUI),
 							createNestedElement(GUIElementEnum::h5TriggerOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::h5ForceRevertGUI),
@@ -3194,6 +3196,10 @@ private:
 				case GUIElementEnum::hceSwitchZoneSetGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHCESwitchZoneSet>
 						(game, ToolTipCollection("Switch to any zone set the CURRENT level declares.\n\nThe list is read straight out of the loaded scenario tag, so it is correct on every level with no shipped per-level table - pick one and press the button.\n\nA zone set controls which BSPs are resident. Switching is how the game itself moves you between the sections of a level, so this can load geometry you have not reached yet, or unload what you are standing on.\n\nThe entry marked <- current is the one the game is on. Note it updates as soon as the switch is REQUESTED, before the BSPs have finished loading.\n\nEvery level also ships one internal zone set with no name in the tag; it is listed for completeness but cannot be switched to, because HaloScript addresses zone sets BY NAME and it has none."), std::nullopt, "Switch Zone Set", settings->hceSwitchZoneSetEvent));
+
+				case GUIElementEnum::h5LuaConsoleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIH5LuaConsole>
+						(game, ToolTipCollection("Run Lua in Halo 5's own campaign script engine.\n\nHalo 5 scripts its campaign in Lua, not HaloScript, so anything the missions can call you can call - object_create, ai_place, volume_test_players and the rest - and the engine marshals the arguments itself.\n\nA bare name is run for you: \"game_save\" does the same as \"game_save()\". Anything taking arguments needs Lua syntax, so quoted strings and brackets - switch_zone_set(\"zs_04\"), not switch_zone_set zs_04. Names are case-sensitive.\n\nEnter runs it. Up and Down walk the command history. Tab or Right-arrow accepts the top suggestion. Autocomplete is the game's own globals table, so it lists exactly what this build can call.\n\nThe chunk is compiled and run on the simulation thread on the next tick; a level has to be loaded. Errors come back from the engine's own compiler, as console:LINE: message."), std::nullopt, settings));
 
 				case GUIElementEnum::hceConsoleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHCEConsole>
