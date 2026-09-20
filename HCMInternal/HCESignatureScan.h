@@ -25,7 +25,11 @@
 // ================================================================================================================
 namespace HCESignatureScan
 {
-	constexpr int kMaxSigBytes = 64;
+	// ⚠ RAISED FROM 64 TO 128 (2026-09-20). The HaloCER camera anchor matches a 77-byte CALLER pattern -
+	// FMinimalViewInfo::operator= has a byte-identical COMDAT twin, so nothing inside the function itself can
+	// ever be unique and the anchor has to come from the call graph instead. Every sim-side signature is well
+	// under 64, so nothing existing changes. See HCEExeAnchors.h.
+	constexpr int kMaxSigBytes = 128;
 
 	struct Pattern
 	{
@@ -43,6 +47,12 @@ namespace HCESignatureScan
 	}
 
 	// "48 8B 05 ?? ?? ?? ?? 3B 88" - hex bytes, ?? for a wildcard, whitespace ignored.
+	//
+	// ⚠ FAILS rather than truncating when the text holds more than kMaxSigBytes bytes. It used to stop at the
+	// limit and return true, which meant an over-long pattern quietly matched on its PREFIX - a scan that
+	// reports "exactly one match" while testing fewer bytes than its author wrote, which is precisely the kind
+	// of silent wrongness the whole anchor contract exists to avoid. A pattern that does not fit is a
+	// programming error, so say so and resolve nothing.
 	inline bool parsePattern(const char* text, Pattern& out)
 	{
 		out.length = 0;
@@ -65,6 +75,12 @@ namespace HCESignatureScan
 			++out.length;
 			text += 2;
 		}
+
+		// Anything left but whitespace means the pattern did not fit. See the note above - do NOT soften this
+		// into a truncation.
+		while (*text == ' ' || *text == '\t') ++text;
+		if (*text) return false;
+
 		return out.length > 0;
 	}
 

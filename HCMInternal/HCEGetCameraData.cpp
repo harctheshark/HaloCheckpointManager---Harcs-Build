@@ -5,6 +5,7 @@
 #include "MultilevelPointer.h"
 #include "ModuleHook.h"
 #include "HCEGameThreadTick.h"   // this hook is the game-thread tick every HCE cheat borrows
+#include "HCEExeAnchors.h"       // the camera function is scanned for, so this works on the Store exe too
 #include <atomic>
 #include <cmath>
 #include <mutex>
@@ -656,7 +657,22 @@ HCEGetCameraData::HCEGetCameraData(GameState game, IDIContainer& dicon)
 	// not run yet when cheats are constructed, and the sim dll may not even be loaded.
 	auto ptr = dicon.Resolve<PointerDataStore>().lock();
 	pimpl->mPovFovOffset = *ptr->getData<std::shared_ptr<int64_t>>(nameof(hceCameraManagerPovFovOffset), game);
-	pimpl->mCameraManagerFunction = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(hceCameraManagerUpdateFunction), game);
+	// ⚠ The stored RVA is correct on the STEAM exe only. The Microsoft Store build is a different compilation
+	// of the exe - the sim dll is byte-identical between the two stores, the exe is not - and
+	// FMinimalViewInfo::operator= lives at 0x5644390 there rather than 0x5AA79E0. This ONE address is why
+	// every HaloCER overlay is dead on the Store build while checkpoints and zone sets work: those are
+	// entirely sim-side, and this is not.
+	//
+	// The anchor cannot match operator= itself - it has a byte-identical COMDAT twin on both builds - so it
+	// matches APlayerCameraManager::DoUpdateCamera and follows the call. See HCEExeAnchors.cpp for the
+	// evidence that this is the copy on the render path rather than the Blueprint one.
+	pimpl->mCameraManagerFunction = HCEExeAnchors::preferAnchor(HCEExeAnchors::Anchor::CameraManagerUpdate,
+		ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(hceCameraManagerUpdateFunction), game),
+		"HCE Get Camera Data");
+
+	// ⚠ These 16 bytes are a PLAUSIBILITY CHECK, not a locator, and never were one - the same prologue occurs
+	// 538 times in the Steam .text alone. They are identical on both builds, so they still guard the Store
+	// address exactly as well (or as weakly) as they guard the Steam one.
 	pimpl->mCameraManagerOriginalBytes = ptr->getVectorData<byte>(nameof(hceCameraManagerUpdateOriginalBytes), game);
 
 	// startEnabled = false, and the hook is on the EXE (L"main"), not the sim dll. Nothing is patched until a

@@ -4491,9 +4491,29 @@
 		it on a LATER frame, by which time the assignment has completed: staleness is at most one frame, and we
 		never dereference a source temporary.
 
-		⚠ The first 238 bytes of this function are DUPLICATED at RVA 0x7ECC950 (verified against the shipped exe:
-		both start 48 89 5C 24 08 57 48 83 EC 20 48 8B FA 48 8B D9). A byte SIGNATURE therefore matches TWICE,
-		which is why this entry is a fixed RVA and must never be converted to a scan without a disambiguator.
+		⚠ THIS FUNCTION HAS A BYTE-IDENTICAL COMDAT TWIN, so it can never be matched on its own bytes.
+		(Corrected 2026-09-20. The previous note here said the twin was at RVA 0x7ECC950 and that the first 238
+		bytes were duplicated. Both were wrong: 0x7ECC950 does not even carry the prologue, the real Steam twin
+		is at 0x7ED2E10, and the duplication is the ENTIRE 430-byte body bar one rel32. A full-body normalised
+		sweep of every comparably sized .pdata function finds exactly two copies per build at 100% similarity
+		and no near misses.)
+
+		⚠ The 16 bytes in hceCameraManagerUpdateOriginalBytes below are a PLAUSIBILITY CHECK, never a locator:
+		that prologue occurs 538 times in the Steam .text alone. The old note's "a byte SIGNATURE matches
+		TWICE" understated it by two orders of magnitude.
+
+		THE OFFSET BELOW IS STEAM-ONLY, AND IS NO LONGER WHAT RESOLVES AT RUNTIME. Halo Campaign Evolved also
+		ships from the Microsoft Store, where the exe is a different compilation and this function lives at
+		0x5644390. (The SIM DLL is byte-identical between the two stores - one compilation packaged twice - so
+		every other HaloCER entry in this file is already correct on both. This is one of only three exe-side
+		entries, and all three are why overlays were dead on the Store build while checkpoints and zone sets
+		worked.)
+
+		HCEGetCameraData now resolves this through HCEExeAnchors, which matches the CALLER
+		(APlayerCameraManager::DoUpdateCamera) and follows its call - the disambiguator the old note said this
+		entry must never be converted to a scan without. The offset below remains as the fallback for when that
+		signature does not resolve. See HCEExeAnchors.h/.cpp for the evidence that 0x5644390 is the copy on the
+		render path rather than the Blueprint one.
 
 		⚠ operator= fires for EVERY FMinimalViewInfo assignment in the process, so this is last-write-wins and an
 		unrelated copy can poison it. The FOV range and finite checks in getUeCamera are what filter that - keep

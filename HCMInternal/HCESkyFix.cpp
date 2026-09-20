@@ -9,6 +9,7 @@
 #include "ModuleHook.h"
 #include "MultilevelPointer.h"
 #include "HCESignatureScan.h"   // AddOccupant is resolved by signature, never from XML - see resolveAddOccupant
+#include "HCEExeAnchors.h"      // RemoveOccupant likewise, so this works on the Microsoft Store exe too
 #include "HCEGameThreadTick.h"  // engine teardown may only run on the game thread
 #include "HCEGetCameraData.h"   // owns the only per-frame game-thread tick on this title
 #include <atomic>
@@ -756,7 +757,20 @@ public:
 
 		// Pure pointer-data lookups; no game memory is touched here.
 		auto ptr = dicon.Resolve<PointerDataStore>().lock();
-		mFunction = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(hceSkyFixRemoveOccupantFunction), mGame);
+
+		// ⚠ The stored RVA is correct on the STEAM exe only. The Microsoft Store build is a different
+		// compilation of the exe - the sim dll is byte-identical between the two stores, the exe is not -
+		// and RemoveOccupant lives at 0x8E0F160 there rather than 0x95B7890. preferAnchor scans for it and
+		// falls back to the stored address only if the signature does not resolve uniquely. See
+		// HCEExeAnchors.h for why a signature is allowed to override pointer data here but not in HCEAnchors.
+		mFunction = HCEExeAnchors::preferAnchor(HCEExeAnchors::Anchor::SkyFixRemoveOccupant,
+			ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(hceSkyFixRemoveOccupantFunction), mGame),
+			"HCE Sky Fix");
+
+		// Unchanged by the above: verifyOriginalBytes() still runs against whichever address won, and is still
+		// what stops a wrong one from being patched. These bytes accept the Store site too - the comparison
+		// already ignores rel32 displacements, and a displacement is the ONLY thing that differs between the
+		// two builds' copies of this function (3 bytes out of 198).
 		mExpectedBytes = ptr->getVectorData<byte>(nameof(hceSkyFixRemoveOccupantOriginalBytes), mGame);
 
 		// The hook is on the EXE (L"main"), not the sim dll. startEnabled = false.

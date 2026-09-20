@@ -4,6 +4,7 @@
 #include "MidhookFlagInterpreter.h"
 #include "MultilevelPointer.h"
 #include "ImGuiManager.h"   // HCE keeps the WndProc swallow as a SECOND layer, on top of the exe hook
+#include "HCEExeAnchors.h"  // the HCE WndProc is scanned for, so this works on the Microsoft Store exe too
 #include <atomic>
 #include <mutex>
 #include <vector>
@@ -279,7 +280,18 @@ public:
 		// null". GameState(Value) is a non-explicit constexpr ctor, so constructing one here is fine - it is only
 		// gameToCheck == GameState::Value::X *comparisons* that are C2666-ambiguous.
 		const GameState hce = GameState(GameState::Value::HaloCER);
-		mWndProcFunction = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(blockGameInputHCEWndProcFunction), hce);
+
+		// ⚠ The stored RVA is correct on the STEAM exe only. The Microsoft Store build is a different
+		// compilation of the exe - the sim dll is byte-identical between the two stores, the exe is not - and
+		// this WndProc lives at 0x3618BB0 there rather than 0x39FCCA0. preferAnchor scans for it and falls
+		// back to the stored address only if the signature does not resolve uniquely.
+		//
+		// The signature IS blockGameInputHCEWndProcOriginalBytes, unchanged and with no wildcards. All 28 of
+		// those bytes are position independent, which is what lets the same run of bytes serve as both the
+		// locator and the pre-patch guard; it matches exactly once in the ~177 MB .text of both builds.
+		mWndProcFunction = HCEExeAnchors::preferAnchor(HCEExeAnchors::Anchor::BlockGameInputWndProc,
+			ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(blockGameInputHCEWndProcFunction), hce),
+			"HaloCER Block Game Input");
 		mWndProcExpectedBytes = ptr->getVectorData<byte>(nameof(blockGameInputHCEWndProcOriginalBytes), hce);
 
 		// startEnabled = false: nothing is resolved and nothing is patched here. L"main" is only the
