@@ -321,12 +321,16 @@ private:
 			for (const auto& v : volumes)
 			{
 				if (v.index < 0) continue;                       // padding slot for a skipped volume
-				// Name / speedrun filter BEFORE the category toggles: an explicit list of names is the most
-				// specific thing the user can have asked for and must not be quietly overruled by a category
-				// toggle they forgot was off.
+				// ⚠ THE NAME FILTER AND THE CATEGORY TOGGLES COMPOSE - both must pass. This used to let an
+				// armed name filter bypass the category toggles entirely, on the theory that an explicit list
+				// of names is the most specific thing the user asked for. In practice that is backwards: it
+				// meant picking a type in the filter tab silently did nothing whenever the filter pop-out was
+				// armed, so the control the user had just touched was the one being ignored.
+				// HaloCER composes them (HCETriggerOverlay::shouldDrawVolume runs the name test and then
+				// still returns the category toggle), and the two overlays share the same filter settings, so
+				// they have to mean the same thing.
 				if (!passesNameFilter(v, nameFilter)) continue;
-				if (nameFilter.speedrunOnly || nameFilter.active) { /* filters win over categories */ }
-				else if (!categoryEnabled(settings, v.category)) continue;
+				if (!categoryEnabled(settings, v.category)) continue;
 				// Sectors now carry real decoded geometry, so both shapes draw from the same mesh.
 				if (v.meshVerts.empty() || v.meshTriangles.empty()) continue;
 
