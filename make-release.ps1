@@ -75,9 +75,13 @@ if (-not $msbuild) { Fail "MSBuild not found" }
 
 # ---- 1. native build -----------------------------------------------------------------------------
 if (-not $SkipBuild) {
-    Write-Host "[1/4] Building HCMInternal ..." -ForegroundColor Cyan
-    & $msbuild (Join-Path $repo 'HaloCheckpointManager.sln') /t:HCMInternal /p:Configuration=Release /p:Platform=x64 /m /nologo /v:minimal
-    if ($LASTEXITCODE -ne 0) { Fail "HCMInternal build failed" }
+    # ⚠ ALL THREE native targets, not just HCMInternal. A version bump edits every HCM*.rc, but a target
+    # that is not rebuilt keeps the OLD version resource - so V5.10.18 was about to ship with
+    # HCMInterproc.dll and HCMSpeedhack.dll still stamped 5.10.17 while their .rc files said 5.10.18.
+    # Caught by the version check below, which is why it exists.
+    Write-Host "[1/4] Building HCMInternal, HCMInterproc, HCMSpeedhack ..." -ForegroundColor Cyan
+    & $msbuild (Join-Path $repo 'HaloCheckpointManager.sln') /t:"HCMInternal;HCMInterproc;HCMSpeedhack" /p:Configuration=Release /p:Platform=x64 /m /nologo /v:minimal
+    if ($LASTEXITCODE -ne 0) { Fail "native build failed" }
 } else { Write-Host "[1/4] Skipping native build (-SkipBuild)" -ForegroundColor DarkGray }
 
 # ---- 2. THE STEP THAT GETS FORGOTTEN -------------------------------------------------------------
@@ -127,6 +131,31 @@ $staged   = Get-ChildItem $inner -Recurse
 $extra    = $staged | Where-Object { $expected -notcontains $_.Name }
 if ($extra) { Fail ("unexpected files staged: " + (($extra | ForEach-Object { $_.Name }) -join ', ')) }
 if ($staged.Count -ne $expected.Count) { Fail "staged $($staged.Count) files, expected $($expected.Count)" }
+
+# ---- EVERY SHIPPED BINARY MUST CARRY THE SAME VERSION ---------------------------------------------
+# Directory.Build.props is the single source of truth: it sets the managed exe's version directly, and
+# updateVersionInfo.ps1 rewrites FILEVERSION in every HCM*.rc from it. But an .rc edit only reaches the
+# binary when that target is REBUILT, so a partial build ships a mixed set - which is exactly what
+# happened when this script built HCMInternal alone. A user reporting a bug against "5.10.18" should not
+# be running three DLLs from two different releases.
+$propsFile = Join-Path $repo 'Directory.Build.props'
+if (-not (Test-Path $propsFile)) { Fail "Directory.Build.props not found - cannot verify versions" }
+$m = [regex]::Match((Get-Content $propsFile -Raw), '<VersionPrefix>\s*([0-9]+(?:\.[0-9]+){3})\s*</VersionPrefix>')
+if (-not $m.Success) { Fail "could not read a 4-part <VersionPrefix> from Directory.Build.props" }
+$wantVersion = $m.Groups[1].Value
+Write-Host ("      expected version: {0}" -f $wantVersion) -ForegroundColor DarkGray
+
+$versionMismatches = @()
+foreach ($f in (Get-ChildItem $inner -Recurse -Include *.exe, *.dll)) {
+    $vi  = [Diagnostics.FileVersionInfo]::GetVersionInfo($f.FullName)
+    $got = "$($vi.FileMajorPart).$($vi.FileMinorPart).$($vi.FileBuildPart).$($vi.FilePrivatePart)"
+    Write-Host ("        {0,-28} {1}" -f $f.Name, $got) -ForegroundColor DarkGray
+    if ($got -ne $wantVersion) { $versionMismatches += "$($f.Name) is $got" }
+}
+if ($versionMismatches) {
+    Fail ("these binaries do not carry version {0}: {1}. Their .rc was updated but the target was not " -f $wantVersion, ($versionMismatches -join ', ')) `
+        + "rebuilt - build HCMInternal, HCMInterproc AND HCMSpeedhack, or drop -SkipBuild."
+}
 
 Write-Host "[4/4] Zipping ..." -ForegroundColor Cyan
 $zip = Join-Path $stageRoot '1-HaloCheckpointManager_Harcs_Build_Windows-x64.zip'
