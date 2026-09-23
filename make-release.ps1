@@ -62,9 +62,18 @@ $FROM_REPO    = @('THIRD-PARTY-LICENSES.md')
 function Fail($msg) { Write-Host "`nRELEASE ABORTED: $msg" -ForegroundColor Red; exit 1 }
 
 # ---- 0. nothing may hold the outputs -------------------------------------------------------------
-$blockers = Get-Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.ProcessName -match 'halo|HCM|HaloCheckpoint|MCC' }
-if ($blockers) {
+# What locks the outputs is an HCM module LOADED in a process, not a game merely running: HCMInternal stays
+# resident in the game it was injected into, and HCM itself holds its own files. So HCM's processes always block,
+# and a game blocks only when an HCM*.dll is loaded in it - or when its module list cannot be read (fail safe).
+# (A running game WITHOUT HCM injected used to block too, which forced closing MCC for no reason.)
+$blockers = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match 'HCM|HaloCheckpoint' })
+foreach ($g in @(Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProcessName -match 'halo|MCC' -and $_.ProcessName -notmatch 'HCM|HaloCheckpoint' })) {
+    try {
+        if (@($g.Modules | Where-Object { $_.ModuleName -match '^HCM' }).Count -gt 0) { $blockers += $g }
+    } catch { $blockers += $g }
+}
+if ($blockers.Count -gt 0) {
     Fail ("close these first (they lock HCMInternal.dll): " + (($blockers | ForEach-Object { "$($_.ProcessName)($($_.Id))" }) -join ', '))
 }
 
