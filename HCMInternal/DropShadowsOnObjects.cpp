@@ -35,9 +35,22 @@ private:
 
 	// writes the instruction bytes; throws if the site isn't resolvable yet (e.g. halo2.dll not loaded at the
 	// MCC menu). protectedMemory = true: target is executable .text, so this goes through VirtualProtect.
+	// Suspends the other threads around the write only: the render thread runs this instruction every shadow frame
+	// and the write is multi-byte, so it could execute a half-written instruction. The site is resolved FIRST,
+	// unsuspended, because the failure path allocates and locks (module-cache backfill via GetModuleHandleW, error
+	// text), and the exception is built AFTER the suspend window because HCMRuntimeException's ctor formats, captures
+	// a stacktrace and logs. A frozen thread holding any of those locks would deadlock us. (See ScopedThreadSuspender.)
 	void writePatch(const std::array<uint8_t, 3>& bytes)
 	{
-		if (!dropShadowsOnObjectsPatch->writeArrayData(const_cast<uint8_t*>(bytes.data()), bytes.size(), true))
+		bool written = false;
+		uintptr_t site;
+		if (dropShadowsOnObjectsPatch->resolve(&site))
+		{
+			ScopedThreadSuspender suspend;
+			// re-resolves under suspension so an unload can't race the write; now a cache hit, no allocation
+			written = dropShadowsOnObjectsPatch->writeArrayData(const_cast<uint8_t*>(bytes.data()), bytes.size(), true);
+		}
+		if (!written)
 			throw HCMRuntimeException(std::format("Failed to write DropShadowsOnObjects patch: {}", MultilevelPointer::GetLastError()));
 	}
 
@@ -45,9 +58,8 @@ private:
 	{
 		lockOrThrow(settingsWeak, settings);
 		const auto& bytes = settings->dropShadowsOnObjectsToggle->GetValue() ? kOnBytes : kOffBytes;
-		// suspend the render thread while writing this per-frame shadow .text (the write is multi-byte, so it can
-		// tear under the running thread) - matches the destructor's own guard. Only the memory write is inside.
-		ScopedThreadSuspender suspend;
+		// writePatch suspends the render thread while writing this per-frame shadow .text (the write is multi-byte,
+		// so it can tear under the running thread). Only the memory write is inside.
 		writePatch(bytes);
 	}
 
@@ -56,9 +68,9 @@ private:
 		PLOG_DEBUG << "DropShadowsOnObjects onToggle, newValue: " << newValue;
 
 		// the patch is read per shadow-render frame, so it takes effect live. if halo2.dll isn't loaded yet
-		// (e.g. toggled at the MCC menu) it'll be applied on the next Halo 2 load via onMCCStateChanged. Suspend the
-		// render thread around the multi-byte write so it can't execute a half-written instruction (same as the dtor).
-		try { ScopedThreadSuspender suspend; writePatch(newValue ? kOnBytes : kOffBytes); }
+		// (e.g. toggled at the MCC menu) it'll be applied on the next Halo 2 load via onMCCStateChanged. writePatch
+		// suspends the render thread around the multi-byte write so it can't execute a half-written instruction.
+		try { writePatch(newValue ? kOnBytes : kOffBytes); }
 		catch (HCMRuntimeException& ex) { PLOG_DEBUG << "DropShadowsOnObjects: patch deferred (" << ex.what() << ")"; }
 
 		try
@@ -77,8 +89,8 @@ private:
 		if (newState.currentGameState != mGame) return; // not Halo 2 (dll may be unloaded) - nothing to touch
 		if (newState.currentPlayState != PlayState::Ingame)
 		{
-			// force stock during teardown/menu, suspended (multi-byte write can tear under the render thread)
-			try { ScopedThreadSuspender suspend; writePatch(kOffBytes); }
+			// force stock during teardown/menu, suspended inside writePatch (multi-byte write can tear under the render thread)
+			try { writePatch(kOffBytes); }
 			catch (HCMRuntimeException&) {} // halo2.dll gone / not resolvable -> nothing to revert
 			return;
 		}
@@ -101,10 +113,10 @@ public:
 	// restore stock behaviour so we never leave the game patched after HCM unloads
 	~DropShadowsOnObjectsImpl()
 	{
-		// Suspend other threads while restoring this .text patch: the render thread runs this
+		// writePatch suspends other threads while restoring this .text patch: the render thread runs this
 		// instruction every shadow frame, so reverting it underneath the running thread can crash
 		// the game. Only the memory write happens inside the suspend window. (See ScopedThreadSuspender.)
-		try { ScopedThreadSuspender suspend; writePatch(kOffBytes); }
+		try { writePatch(kOffBytes); }
 		catch (HCMRuntimeException& ex) { PLOG_ERROR << ex.what(); }
 	}
 };

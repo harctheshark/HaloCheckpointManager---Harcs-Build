@@ -105,7 +105,27 @@ public:
 		// Suspend other threads while restoring this .text patch: the render thread runs this
 		// instruction every light-render frame, so reverting it underneath the running thread can
 		// crash the game. Only the memory write happens inside the suspend window. (See ScopedThreadSuspender.)
-		try { ScopedThreadSuspender suspend; writePatch(kOffBytes); }
+		try
+		{
+			// This is writePatch(kOffBytes) split around the suspender. Resolution runs BEFORE suspending: on a miss
+			// (e.g. halo2.dll already unloaded at the MCC menu) it backfills the module cache and builds error text,
+			// and HCMRuntimeException's constructor formats, captures a stacktrace and logs - all of which allocate
+			// or take locks a frozen thread may hold. A failure inside the window is only flagged, and thrown (with
+			// the message writeArrayData would have produced) after the threads resume. (See ScopedThreadSuspender.)
+			uintptr_t address;
+			if (!sphereSpecularForcePatch->resolve(&address))
+				throw HCMRuntimeException(std::format("Failed to write SphereSpecularForce patch: {}", MultilevelPointer::GetLastError()));
+
+			bool siteReadable;
+			{
+				ScopedThreadSuspender suspend;
+				siteReadable = !IsBadReadPtr((void*)address, kOffBytes.size());
+				if (siteReadable)
+					patch_memory((void*)address, const_cast<uint8_t*>(kOffBytes.data()), kOffBytes.size());
+			}
+			if (!siteReadable)
+				throw HCMRuntimeException(std::format("Failed to write SphereSpecularForce patch: Bad read address at 0x{:X}, size: 0x{:X}\n", address, kOffBytes.size()));
+		}
 		catch (HCMRuntimeException& ex) { PLOG_ERROR << ex.what(); }
 	}
 };

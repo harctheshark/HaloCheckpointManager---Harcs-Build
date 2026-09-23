@@ -116,16 +116,18 @@ namespace
 		void commitWrites()
 		{
 			if (pending.empty()) return;
-			ScopedThreadSuspender suspend;
-			for (auto& pw : pending)
 			{
-				uintptr_t addr = pw.first; const std::vector<uint8_t>& bytes = pw.second;
-				DWORD o; VirtualProtect((void*)addr, bytes.size(), PAGE_EXECUTE_READWRITE, &o);
-				memcpy((void*)addr, bytes.data(), bytes.size());
-				VirtualProtect((void*)addr, bytes.size(), o, &o);
-				FlushInstructionCache(GetCurrentProcess(), (void*)addr, bytes.size());
+				ScopedThreadSuspender suspend;
+				for (auto& pw : pending)
+				{
+					uintptr_t addr = pw.first; const std::vector<uint8_t>& bytes = pw.second;
+					DWORD o; VirtualProtect((void*)addr, bytes.size(), PAGE_EXECUTE_READWRITE, &o);
+					memcpy((void*)addr, bytes.data(), bytes.size());
+					VirtualProtect((void*)addr, bytes.size(), o, &o);
+					FlushInstructionCache(GetCurrentProcess(), (void*)addr, bytes.size());
+				}
 			}
-			pending.clear();
+			pending.clear(); // frees each queued byte-vector (heap), so it must run after the threads resume. (See ScopedThreadSuspender.)
 		}
 
 		bool verify()

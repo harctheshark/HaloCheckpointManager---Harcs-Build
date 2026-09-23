@@ -127,11 +127,13 @@ namespace
 			return nullptr;
 		}
 
-		void writeSaved(uintptr_t addr, const uint8_t* data, size_t len)
+		// Copies the original bytes at s.addr into s.orig, then writes `data` over them (len = s.orig.size()).
+		// Allocation-free because it runs with other threads suspended: the caller pre-sizes s.orig and records s
+		// in `saves` OUTSIDE the suspended scope - see apply(). (See ScopedThreadSuspender.)
+		static void writeSaved(Save& s, const uint8_t* data)
 		{
-			Save s; s.addr = addr; s.orig.resize(len);
+			const uintptr_t addr = s.addr; const size_t len = s.orig.size();
 			memcpy(s.orig.data(), (void*)addr, len);
-			saves.push_back(std::move(s));
 			DWORD o; VirtualProtect((void*)addr, len, PAGE_EXECUTE_READWRITE, &o);
 			memcpy((void*)addr, data, len);
 			VirtualProtect((void*)addr, len, o, &o);
@@ -206,12 +208,21 @@ namespace
 			int32_t rel = (int32_t)(caveCodeVA - (base + kHookRVA + 5));
 			memcpy(hook + 1, &rel, 4);
 
+			// The Save records heap-allocate (their orig vectors, and saves' growth), so they are sized and saves is
+			// reserved BEFORE freezing, and recorded into saves after (the reserve makes those push_backs non-throwing).
+			// Only the byte copies + patch writes happen inside the suspend window. (See ScopedThreadSuspender.)
+			Save tuckSave{ base + kTuckRVA, std::vector<uint8_t>(sizeof(tuck)) };
+			Save hookSave{ base + kHookRVA, std::vector<uint8_t>(sizeof(hook)) };
+			saves.reserve(saves.size() + 2);
+
 			// install .text patches with other threads frozen (the FP path runs per-frame; no torn instruction)
 			{
 				ScopedThreadSuspender suspend;
-				writeSaved(base + kTuckRVA, tuck, sizeof(tuck)); // tuck first (cave ready) ...
-				writeSaved(base + kHookRVA, hook, sizeof(hook)); // ... then arm the hook last
+				writeSaved(tuckSave, tuck); // tuck first (cave ready) ...
+				writeSaved(hookSave, hook); // ... then arm the hook last
 			}
+			saves.push_back(std::move(tuckSave)); // same order as before: revert() undoes hook first, then tuck
+			saves.push_back(std::move(hookSave));
 
 			applied = true;
 			return true;
