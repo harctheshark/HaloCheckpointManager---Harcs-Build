@@ -1661,6 +1661,8 @@ private:
 							createNestedElement(GUIElementEnum::hceAISquadOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::hceBspOverlayToggleGUI),
 							createNestedElement(GUIElementEnum::hceBspOverlaySettingsSubheading),
+							createNestedElement(GUIElementEnum::hceInvisibleGeometryOverlayToggleGUI),
+							createNestedElement(GUIElementEnum::hceInvisibleGeometryOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::hceSoftCeilingOverlayToggleGUI),
 							createNestedElement(GUIElementEnum::hceSoftCeilingOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::softCeilingOverlayToggle),
@@ -3128,6 +3130,46 @@ private:
 				case GUIElementEnum::hceSoftCeilingOverlayWireframeTransparency:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
 						(game, ToolTipCollection("How opaque the wireframe is, from 0 (off entirely) to 1 (solid). Barriers are drawn triangle by triangle, so a dense barrier's wireframe is dense - turn this down if it reads as a solid block."), "Barrier Wireframe Opacity", settings->softCeilingOverlayWireframeTransparency));
+
+				case GUIElementEnum::hceInvisibleGeometryOverlayToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Draws the INVISIBLE instanced collision geometry - blockers that stop you but are never rendered, such as the collision shells around props and the tube inside a50's gravity lift. Uses the collision surface's own INVISIBLE flag (verified across every level: it marks exactly the collision-only pieces), plus a guarded cross-check for pieces with no render mesh. Instanced geometry only - the structure BSP is the BSP Overlay's job. The log lists every invisible piece by name on each rebuild."), std::nullopt, "Invisible Geometry Overlay", settings->hceInvisibleGeometryOverlayToggle));
+
+				case GUIElementEnum::hceInvisibleGeometryOverlaySettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Settings for the Invisible Geometry overlay"), "Invisible Geometry Overlay Settings", headerChildElements
+							{
+								createNestedElement(GUIElementEnum::hceInvisibleGeometryOverlayRenderStyle),
+								createNestedElement(GUIElementEnum::hceInvisibleGeometryOverlayRenderDistance),
+								createNestedElement(GUIElementEnum::hceInvisibleGeometryOverlayWireframeColour),
+								createNestedElement(GUIElementEnum::hceInvisibleGeometryOverlayWireframeAlpha),
+								createNestedElement(GUIElementEnum::hceInvisibleGeometryOverlayColour),
+								createNestedElement(GUIElementEnum::hceInvisibleGeometryOverlayAlpha),
+							}));
+
+				case GUIElementEnum::hceInvisibleGeometryOverlayRenderStyle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::TriggerRenderStyle, 150.f>>
+						(game, ToolTipCollection("How to draw invisible geometry. Wireframe (default) outlines each piece; Solid adds a translucent fill. Nothing is hidden by walls."), "Render invisible geometry as: ", settings->hceInvisibleGeometryOverlayRenderStyle));
+
+				case GUIElementEnum::hceInvisibleGeometryOverlayRenderDistance:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 2000.f)>>
+						(game, ToolTipCollection("How far away invisible geometry is still drawn, in WORLD UNITS (1 world unit = 10 feet). Nearest pieces are drawn first."), "Invisible Geometry Render Distance (world units)", settings->hceInvisibleGeometryOverlayRenderDistance));
+
+				case GUIElementEnum::hceInvisibleGeometryOverlayColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Fill colour, used when the render style includes Solid."), "Invisible Geometry Fill Color", settings->hceInvisibleGeometryOverlayColor));
+
+				case GUIElementEnum::hceInvisibleGeometryOverlayAlpha:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("How opaque the fill is."), "Invisible Geometry Fill Opacity", settings->hceInvisibleGeometryOverlayAlpha));
+
+				case GUIElementEnum::hceInvisibleGeometryOverlayWireframeColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of the outlines."), "Invisible Geometry Wireframe Color", settings->hceInvisibleGeometryOverlayWireframeColor));
+
+				case GUIElementEnum::hceInvisibleGeometryOverlayWireframeAlpha:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("How opaque the outlines are."), "Invisible Geometry Wireframe Opacity", settings->hceInvisibleGeometryOverlayWireframeAlpha));
 
 				case GUIElementEnum::hceBspOverlayInvisibleOnly:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>

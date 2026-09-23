@@ -160,6 +160,7 @@ HCEForceLaunch,\
 HCEFreecam,\
 HCETriggerOverlay,\
 HCEBspOverlay,\
+HCEInvisibleGeometryOverlay,\
 HCEAISquadOverlay,\
 Halo3TheaterInterp,\
 HCETriggerActivity,\

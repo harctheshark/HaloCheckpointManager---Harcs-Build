@@ -1049,6 +1049,12 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{ GUIElementEnum::hceBspOverlaySettingsSubheading,
 {OptionalCheatEnum::HCEBspOverlay}
 	},
+	{ GUIElementEnum::hceInvisibleGeometryOverlayToggleGUI,
+{OptionalCheatEnum::HCEInvisibleGeometryOverlay}
+	},
+	{ GUIElementEnum::hceInvisibleGeometryOverlaySettingsSubheading,
+{OptionalCheatEnum::HCEInvisibleGeometryOverlay}
+	},
 
 	// Soft ceiling overlay. Same reasoning as the two above: the MCC softCeilingOverlayToggle element is keyed
 	// to the MCC SoftCeilingOverlay cheat, whose whole data path (GetSoftCeilingData -> TagBlockReader ->

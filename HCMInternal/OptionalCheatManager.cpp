@@ -44,6 +44,7 @@
 #include "HCEFreecam.h"
 #include "HCETriggerOverlay.h"
 #include "HCEBspOverlay.h"
+#include "HCEInvisibleGeometryOverlay.h"
 #include "HCEAISquadOverlay.h"
 #include "Halo3TheaterInterp.h"
 #include "HCETriggerActivity.h"

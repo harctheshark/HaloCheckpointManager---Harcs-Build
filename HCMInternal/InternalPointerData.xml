@@ -5053,6 +5053,144 @@
 	</VersionedEntry>
 
 	<!--=====================================================================================================
+	    INVISIBLE INSTANCED GEOMETRY (HCEInvisibleGeometryOverlay). Every struct WALKED from this build's own tag
+	    struct definitions and CLOSED on its declared size: structure_bsp (rec 0x1809C7E90, 0x308),
+	    resource_interface at +0x2E4 (rec 0x1809C8FF0, 32; 'use resource items' at its +0x1C = 0x300),
+	    structure_bsp_resource_struct (rec 0x1809C9450, 36; definitions block at +0x18),
+	    structure_instanced_geometry_definition (rec 0x180A1F3B0, 324; collision bsp INLINE at +0x08, small
+	    layout, so hceCollisionSurfacesBlock / EdgesBlock / VerticesBlock apply under it; mesh index +0x140),
+	    structure_instanced_geometry_instance_with_name (rec 0x180A1E1B0, 148), render geometry (rec 0x180A26E00,
+	    132; meshes block at its +0x04 = bsp+0x264), s_mesh (rec 0x180A25050, 60; parts block at +0x00).
+	    Placement transform world = position + scale * (x*forward + y*left + z*up), proven from the engine's
+	    world-to-local code in its instanced ray test.
+	=====================================================================================================-->
+	<VersionedEntry Name="hceStructureBspInstancedGeometryInstancesBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x1FC</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstanceStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x94</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstanceScaleOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x0</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstanceForwardOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x4</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstanceLeftOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x10</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstanceUpOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x1C</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstancePositionOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x28</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstanceDefinitionIndexOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x34</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstanceFlagsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x36</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstanceSphereCenterOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x64</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstanceSphereRadiusOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x70</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstanceNameOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x90</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryInstancePhysicsBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x84</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceStructureBspUseResourceItemsOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x300</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceResourceInstancedGeometryBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x18</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryDefinitionStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x144</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryDefinitionCollisionBsp" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x8</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceInstancedGeometryDefinitionMeshIndexOffset" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x140</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceStructureBspRenderGeometryMeshesBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x264</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceRenderGeometryMeshStride" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x3C</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="hceRenderGeometryMeshPartsBlock" Type="int64_t">
+		<Version Version="0.0.0.0" Game="HaloCER">
+			<Offset>0x0</Offset>
+		</Version>
+	</VersionedEntry>
+
+	<!--=====================================================================================================
 	    SOFT CEILINGS (HCESoftCeilingOverlay). NOTHING HERE IS GUESSED - every offset, every enum option and
 	    every flag bit below was WALKED OUT OF THE BINARY'S OWN TAG STRUCT DEFINITIONS, using the method in the
 	    hce-tag-struct-definition-walk notes (find "sizeof(struct X)", take its single data xref = rec+0x30,

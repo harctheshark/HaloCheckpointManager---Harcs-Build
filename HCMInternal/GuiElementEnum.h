@@ -683,6 +683,14 @@
 			((hceBspOverlayFaceShading, (HALOCER_ONLY)))\
 			((hceBspOverlayShadingStrength, (HALOCER_ONLY)))\
 			((hceBspOverlaySurfaceVariation, (HALOCER_ONLY)))\
+	((hceInvisibleGeometryOverlayToggleGUI, (HALOCER_ONLY)))\
+	((hceInvisibleGeometryOverlaySettingsSubheading, (HALOCER_ONLY)))\
+			((hceInvisibleGeometryOverlayRenderStyle, (HALOCER_ONLY)))\
+			((hceInvisibleGeometryOverlayRenderDistance, (HALOCER_ONLY)))\
+			((hceInvisibleGeometryOverlayColour, (HALOCER_ONLY)))\
+			((hceInvisibleGeometryOverlayAlpha, (HALOCER_ONLY)))\
+			((hceInvisibleGeometryOverlayWireframeColour, (HALOCER_ONLY)))\
+			((hceInvisibleGeometryOverlayWireframeAlpha, (HALOCER_ONLY)))\
 	((hceSoftCeilingOverlayToggleGUI, (HALOCER_ONLY)))\
 	((hceSoftCeilingOverlaySettingsSubheading, (HALOCER_ONLY)))\
 			((hceSoftCeilingOverlayRenderTypes, (HALOCER_ONLY)))\

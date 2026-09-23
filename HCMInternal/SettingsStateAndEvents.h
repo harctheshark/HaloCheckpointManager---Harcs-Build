@@ -1889,6 +1889,60 @@ public:
 			nameof(hceBspOverlayInsideAlpha)
 		);
 
+	// ---- Halo Campaign Evolved INVISIBLE instanced geometry overlay. See HCEInvisibleGeometryOverlay.h.
+	// The toggle is deliberately NOT persisted (see the BSP overlay's note in allSerialisableOptions).
+	std::shared_ptr<BinarySetting<bool>> hceInvisibleGeometryOverlayToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceInvisibleGeometryOverlayToggle)
+		);
+
+	// Wireframe by default: the ask is outlines of the invisible pieces.
+	std::shared_ptr<BinarySetting<SettingsEnums::TriggerRenderStyle>> hceInvisibleGeometryOverlayRenderStyle = std::make_shared<BinarySetting<SettingsEnums::TriggerRenderStyle>>
+		(
+			SettingsEnums::TriggerRenderStyle::Wireframe,
+			[](SettingsEnums::TriggerRenderStyle in) { return true; },
+			nameof(hceInvisibleGeometryOverlayRenderStyle)
+		);
+
+	// WORLD units (1 world unit = 10 feet), same scale as the other HCE overlays.
+	std::shared_ptr<BinarySetting<float>> hceInvisibleGeometryOverlayRenderDistance = std::make_shared<BinarySetting<float>>
+		(
+			150.f,
+			[](float in) { return in >= 1.f && in <= 2000.f; },
+			nameof(hceInvisibleGeometryOverlayRenderDistance)
+		);
+
+	// .w stays 1 on every colour: GUIColourPicker edits RGB only; opacity is the separate alpha setting.
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceInvisibleGeometryOverlayColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(1.f, 0.f, 1.f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceInvisibleGeometryOverlayColor)
+		);
+
+	std::shared_ptr<BinarySetting<float>> hceInvisibleGeometryOverlayAlpha = std::make_shared<BinarySetting<float>>
+		(
+			0.25f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(hceInvisibleGeometryOverlayAlpha)
+		);
+
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceInvisibleGeometryOverlayWireframeColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(1.f, 0.35f, 1.f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceInvisibleGeometryOverlayWireframeColor)
+		);
+
+	std::shared_ptr<BinarySetting<float>> hceInvisibleGeometryOverlayWireframeAlpha = std::make_shared<BinarySetting<float>>
+		(
+			0.9f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(hceInvisibleGeometryOverlayWireframeAlpha)
+		);
+
 	// Show ONLY the volumes a speedrun has to hit (the community completion-requirement lists).
 	std::shared_ptr<BinarySetting<bool>> hceTriggerOverlaySpeedrunOnly = std::make_shared<BinarySetting<bool>>
 		(
@@ -3951,6 +4005,13 @@ public:
 		hceBspOverlayLayerCompensation,
 		hceBspOverlayShadingStrength,
 		hceBspOverlaySurfaceVariation,
+		// hceInvisibleGeometryOverlayToggle deliberately absent, for the same reason as hceBspOverlayToggle.
+		hceInvisibleGeometryOverlayRenderStyle,
+		hceInvisibleGeometryOverlayRenderDistance,
+		hceInvisibleGeometryOverlayColor,
+		hceInvisibleGeometryOverlayAlpha,
+		hceInvisibleGeometryOverlayWireframeColor,
+		hceInvisibleGeometryOverlayWireframeAlpha,
 		editPlayerViewAngleVec2,
 		editPlayerViewAngleAdjustFactor,
 		editPlayerViewAngleIDInt,
