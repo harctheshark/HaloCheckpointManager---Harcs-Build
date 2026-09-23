@@ -314,7 +314,9 @@
 	((display2DInfoSettingsInfoSubheading, (ALL_SUPPORTED_GAMES)))\
 			((display2DInfoShowGameTick, (ALL_SUPPORTED_GAMES)))\
 			((display2DInfoShowAggro, (Halo1)))\
-			((display2DInfoShowRNG, (Halo1, HaloReach)))\
+			/* Every MCC game except Halo 2, whose seed pair sits behind a two-level pointer and is ordered
+			   opposite to Halo 1's - it needs deriving and verifying on its own before being added. */\
+			((display2DInfoShowRNG, (Halo1, Halo3, Halo3ODST, HaloReach, Halo4)))\
 			((display2DInfoShowBSP, (Halo1, Halo2)))\
 			((display2DInfoShowBSPSet, (THIRD_GEN)))\
 			((display2DInfoShowNextObjectDatum, (Halo2)))\
@@ -740,7 +742,7 @@
 	   is counting, it spans the groups, so the only reliable move is to put new entries in the EMPTIEST
 	   one - which is still this one. Counting a group and concluding it has room is not a safe check;
 	   building is. */\
-	((display2DInfoShowLevelLoadRNG, (Halo1, HaloReach)))
+	((display2DInfoShowLevelLoadRNG, (Halo1, Halo3, Halo3ODST, HaloReach, Halo4)))
 
 
 

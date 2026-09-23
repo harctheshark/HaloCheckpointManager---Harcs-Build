@@ -71,13 +71,41 @@ namespace
 
 	// Games whose deterministic seed is behind TLS rather than a module global. A game absent from here
 	// resolves through pointer data instead (Halo 1), and a game in neither place simply has no viewer.
-	// ⚠ Only Reach is shipped. Halo 3 / ODST / Halo 4 use the same shape but their slots are NOT assumed -
-	// each needs deriving and verifying against its own binary before being added here.
+	//
+	// ⚠⚠ THE SLOT IS THE ONLY PER-GAME NUMBER, AND EVERY ONE WAS DERIVED FROM ITS OWN BINARY. None is
+	// assumed from a neighbour - they are all different (0x550 / 0x588 / 0x658 / 0x650 / 0x4B0), so guessing
+	// would have been wrong four times out of four. _tls_index is NOT listed because it is read from each
+	// module's PE TLS directory at runtime, which is the loader's own contract and cannot drift.
+	//
+	// ★ THE DECISIVE EVIDENCE, identical in all five games: each engine has a `game_state_data_new` call
+	// registering a block literally named "random math", and the instruction immediately after it stores the
+	// block pointer into the TLS slot and const-initialises the seed:
+	//
+	//     mov  eax, <SLOT>
+	//     mov  qword ptr [rax + r8], rcx      ; TLSBLOCK + SLOT = the block pointer
+	//     mov  dword ptr [rcx], 0x78A8        ; <-- the seed, CONST-initialised
+	//
+	// That 0x78A8 is byte-identical across Halo 3, ODST, Reach, Halo 4 AND Campaign Evolved. A CONSTANT is
+	// what makes this seed deterministic and checkpoint-restorable; the sibling seed listed below each entry
+	// is initialised from rand() / _time64 / QueryPerformanceCounter instead and is worthless across runs.
+	// Reading that initialiser is the test that tells the two apart - not site counts, not adjacency.
+	//
+	// Each of these was additionally re-derived by an independent second pass that tried to refute it, and
+	// every method was required to reproduce Reach's already-confirmed 0x658 before being trusted elsewhere.
 	constexpr bool tlsSeedLayoutFor(GameState::Value g, TlsSeedLayout& out)
 	{
 		switch (g)
 		{
-		case GameState::Value::HaloReach: out = { L"haloreach.dll", 0x658, 0x00 }; return true;
+		// local sibling globals, for reference only - do NOT display these: they are clock-seeded.
+		case GameState::Value::Halo3:     out = { L"halo3.dll",     0x550, 0x00 }; return true;  // local: 0x02D6731C
+		case GameState::Value::Halo3ODST: out = { L"halo3odst.dll", 0x588, 0x00 }; return true;  // local: 0x02DA75D8
+		case GameState::Value::HaloReach: out = { L"haloreach.dll", 0x658, 0x00 }; return true;  // local: 0x02D533EC
+		case GameState::Value::Halo4:     out = { L"halo4.dll",     0x650, 0x00 }; return true;  // local: 0x0496A4C4
+			// ⚠ Campaign Evolved is a UE5 title whose Blam simulation lives in this dll, so the slot is an
+			// offset into ITS TLS block, not the exe's. Corroborated independently: the _tls_index this
+			// derivation found (rva 0xD72730) is the exact value HCM already ships as hceTlsIndex.
+			// ⚠ The Steam and Microsoft Store copies of this dll are byte-identical, so this covers both.
+		case GameState::Value::HaloCER:   out = { L"HaloSimulation_tag_release.dll", 0x4B0, 0x00 }; return true;  // local: 0x0183134C
 		default:                          return false;
 		}
 	}
