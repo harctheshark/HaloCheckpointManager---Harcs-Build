@@ -66,6 +66,9 @@ public:
 
 		revertHook.reset();
 
+		// HCMInternal stays resident and re-runs sessions: without this the next session's constructor still sees
+		// the destroyed object here and throws "Cannot have more than one" (GameTickEventHookTemplated does the same).
+		instance = nullptr;
 	}
 
 	std::shared_ptr<ObservedEvent<ActionEvent>> getRevertEvent()
@@ -84,6 +87,8 @@ RevertEventHook::RevertEventHook(GameState game, IDIContainer& dicon)
 	case GameState::Value::Halo3ODST: pimpl = std::make_unique<RevertEventHookTemplated<GameState::Value::Halo3ODST>>(game, dicon); break;
 	case GameState::Value::HaloReach: pimpl = std::make_unique<RevertEventHookTemplated<GameState::Value::HaloReach>>(game, dicon); break;
 	case GameState::Value::Halo4: pimpl = std::make_unique<RevertEventHookTemplated<GameState::Value::Halo4>>(game, dicon); break;
+	// Without a default an unlisted game left pimpl NULL and the first use was a null dereference.
+	default: throw HCMInitException(std::format("RevertEventHook not impl for this game: {}", game.toString()));
 	}
 }
 RevertEventHook::~RevertEventHook() = default;

@@ -933,6 +933,11 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 { OptionalCheatEnum::GetCurrentBSP}
 		},
 
+		// Zone set index row (Halo 2 Anniversary MP only for now - see GUI GROUP 4 in GuiElementEnum.h).
+		{ GUIElementEnum::display2DInfoShowZoneSet,
+{ OptionalCheatEnum::GetCurrentZoneSet}
+		},
+
 				{ GUIElementEnum::display2DInfoShowNextObjectDatum,
 { OptionalCheatEnum::GetNextObjectDatum}
 	},
@@ -1054,6 +1059,12 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	},
 	{ GUIElementEnum::hceInvisibleGeometryOverlaySettingsSubheading,
 {OptionalCheatEnum::HCEInvisibleGeometryOverlay}
+	},
+	{ GUIElementEnum::hceVisibleGeometryOverlayToggleGUI,
+{OptionalCheatEnum::HCEVisibleGeometryOverlay}
+	},
+	{ GUIElementEnum::hceVisibleGeometryOverlaySettingsSubheading,
+{OptionalCheatEnum::HCEVisibleGeometryOverlay}
 	},
 
 	// Soft ceiling overlay. Same reasoning as the two above: the MCC softCeilingOverlayToggle element is keyed
@@ -1259,6 +1270,7 @@ const std::map<GUIElementEnum, std::set<GameState>> GUIRequiredServices::support
 	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES1)
 	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES2)
 	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES3)
+	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES4)
 #ifdef HCM_DEBUG
 	MAKE_ALL_MAPSET(DEBUGGUIELEMENTS_ANDSUPPORTEDGAMES)
 #endif

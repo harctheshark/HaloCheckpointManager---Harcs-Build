@@ -88,7 +88,7 @@ namespace Halo3TheaterInterp_Detail
 	// published entry j+256 (count - j > 255) the slot may be torn -> STALE -> no change.
 	// Ring diagnostics (u32): 0x23C match at depth 0, 0x240 match at depth > 0, 0x244 STALE, 0x248 depth sum,
 	// 0x24C depth max since arm. (0x230..0x23B belong to cave1; do not move these.)
-	inline constexpr uint32_t kKnobLegFix   = 0x4768270;   // LegAttach MODE (1 = fix)
+	inline constexpr uint32_t kKnobLegFix   = 0x4768270;   // LegAttach MODE (1 = fix; HCM arms it as 0 since v2.4)
 	inline constexpr uint32_t kLegFixHits   = 0x4768274;   // diagnostic: increments once per LegAttach entry
 
 	// ── v2: RENDER-TIME RE-TIMING (pages 3-4, 2026-09-23) ─────────────────────────────────────────────────────

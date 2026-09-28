@@ -63,6 +63,19 @@ void MCCStateHook::updateMCCState()
 		ex.prepend("An error occured while evaluating new MCC state: \n");
 		runtimeExceptions->handleMessage(ex);
 	}
+	// This runs inside a safetyhook midhook on MCC's own thread, and ~60 subscribers run inside the
+	// MCCStateChangedEvent call above (eventpp does not catch). Any std:: exception from any of them used to
+	// escape into MCC and kill it - that is exactly how the Halo 2 Anniversary MP (groundhog) crash happened
+	// (std::out_of_range from a map .at(game)). Contain everything here.
+	catch (const std::exception& e)
+	{
+		HCMRuntimeException converted(std::format("MCC state change subscriber threw {}: {}", typeid(e).name(), e.what()));
+		runtimeExceptions->handleMessage(converted);
+	}
+	catch (...)
+	{
+		PLOG_ERROR << "Unknown (non std::exception) exception while evaluating new MCC state - swallowed so it cannot take MCC down";
+	}
 }
 
 

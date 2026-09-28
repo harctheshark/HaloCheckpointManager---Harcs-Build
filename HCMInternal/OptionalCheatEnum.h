@@ -161,6 +161,7 @@ HCEFreecam,\
 HCETriggerOverlay,\
 HCEBspOverlay,\
 HCEInvisibleGeometryOverlay,\
+HCEVisibleGeometryOverlay,\
 HCEAISquadOverlay,\
 Halo3TheaterInterp,\
 HCETriggerActivity,\

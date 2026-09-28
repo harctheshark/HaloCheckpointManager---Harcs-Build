@@ -612,18 +612,23 @@ private:
 		SimpleMath::Vector3 position, forward, right, up;
 		float focalPixels = 0.f;
 		SimpleMath::Vector2 screenCentre;
+		SimpleMath::Vector2 viewMin, viewMax;   // the game's picture: the whole screen unless letterboxed
 	};
 	static constexpr float kNearPlane = 0.01f;
 
-	static Camera makeCameraFromUe(const SimpleMath::Vector3& positionBlam, float pitchDeg, float yawDeg,
-		float rollDeg, const SimpleMath::Vector2& screenSize, float horizontalFovDegrees)
+	static Camera makeCameraFromUe(const HCEGetCameraData::UeCamera& ue, const SimpleMath::Vector2& screenSize)
 	{
 		Camera camera;
-		camera.position = positionBlam;
-		HCEGetCameraData::ueRotationToBlamBasis(pitchDeg, yawDeg, rollDeg, camera.forward, camera.right, camera.up);
-		const float fov = DirectX::XMConvertToRadians(std::clamp(horizontalFovDegrees, 10.f, 170.f));
-		camera.focalPixels = screenSize.x / (2.f * std::tan(fov * 0.5f));
-		camera.screenCentre = SimpleMath::Vector2(screenSize.x * 0.5f, screenSize.y * 0.5f);
+		camera.position = ue.positionBlam;
+		HCEGetCameraData::ueRotationToBlamBasis(ue.pitchDegrees, ue.yawDegrees, ue.rollDegrees,
+			camera.forward, camera.right, camera.up);
+		// The engine's projection (the UE FOV is horizontal only at the camera's reference aspect).
+		const HCEGetCameraData::UeProjection projection = HCEGetCameraData::ueProjection(ue, screenSize.x, screenSize.y);
+		camera.focalPixels = (projection.viewHeight * 0.5f) / std::tan(projection.verticalFovRadians * 0.5f);
+		camera.screenCentre = SimpleMath::Vector2(projection.viewX + projection.viewWidth * 0.5f,
+			projection.viewY + projection.viewHeight * 0.5f);
+		camera.viewMin = SimpleMath::Vector2(projection.viewX, projection.viewY);
+		camera.viewMax = SimpleMath::Vector2(projection.viewX + projection.viewWidth, projection.viewY + projection.viewHeight);
 		return camera;
 	}
 
@@ -703,8 +708,7 @@ private:
 			HCEGetCameraData::UeCamera ue;
 			if (!cameraData->getUeCamera(ue)) return;
 
-			const Camera camera = makeCameraFromUe(ue.positionBlam, ue.pitchDegrees, ue.yawDegrees,
-				ue.rollDegrees, screenSize, ue.horizontalFovDegrees);
+			const Camera camera = makeCameraFromUe(ue, screenSize);
 
 			const float labelScale = settings->hceAISquadOverlayLabelScale->GetValue();
 			const float renderDistance = settings->hceAISquadOverlayRenderDistance->GetValue();
@@ -739,7 +743,9 @@ private:
 				const float scale = camera.focalPixels / cameraSpace.z;
 				const SimpleMath::Vector2 screen(camera.screenCentre.x + cameraSpace.x * scale,
 					camera.screenCentre.y - cameraSpace.y * scale);
-				if (screen.x < 0 || screen.y < 0 || screen.x > screenSize.x || screen.y > screenSize.y) continue;
+				// The game's picture, not the whole screen: a letterboxed camera has no image in the bars.
+				if (screen.x < camera.viewMin.x || screen.y < camera.viewMin.y
+					|| screen.x > camera.viewMax.x || screen.y > camera.viewMax.y) continue;
 
 				// Shrink distant labels so a crowded fight stays readable rather than becoming a wall of text.
 				float sizeScale = std::clamp(3.f / std::max(cameraSpace.z, 0.5f), 0.35f, 1.f);

@@ -91,6 +91,30 @@ public:
 			return "error not set";
 	}
 
+	// True when every page in [address, address + size) is committed and writable WITHOUT a protection change.
+	// IsBadReadPtr only proves the memory is readable; a plain memcpy into a read-only page (a wrong pointer
+	// landing in .rdata or code) is an access violation on whatever thread made the write - render, hotkey or
+	// game tick - and none of those can catch it. Only used for the non-protectedMemory path, which never
+	// changes page protection, so a page this rejects could never have been written successfully anyway.
+	static bool isWritableRange(uintptr_t address, size_t size)
+	{
+		uintptr_t current = address;
+		const uintptr_t end = address + size;
+		while (current < end)
+		{
+			MEMORY_BASIC_INFORMATION mbi{};
+			if (VirtualQuery((LPCVOID)current, &mbi, sizeof(mbi)) == 0) return false;
+			if (mbi.State != MEM_COMMIT) return false;
+			if (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) return false;
+			const DWORD baseProtect = mbi.Protect & 0xFF;
+			if (baseProtect != PAGE_READWRITE && baseProtect != PAGE_WRITECOPY && baseProtect != PAGE_EXECUTE_READWRITE && baseProtect != PAGE_EXECUTE_WRITECOPY) return false;
+			const uintptr_t regionEnd = (uintptr_t)mbi.BaseAddress + mbi.RegionSize;
+			if (regionEnd <= current) return false; // defensive: never loop forever on a bogus region
+			current = regionEnd;
+		}
+		return true;
+	}
+
 	template<typename T>
 	bool writeData(T* dataIn, bool protectedMemory = false)
 	{
@@ -103,6 +127,12 @@ public:
 		if (IsBadReadPtr((void*)address, sizeof(T)))
 		{
 			*SetLastErrorByRef() << std::format("Bad read address at 0x{:X}, size: 0x{:X}", address, sizeof(T)) << std::endl;
+			return false;
+		}
+
+		if (!protectedMemory && !isWritableRange(address, sizeof(T)))
+		{
+			*SetLastErrorByRef() << std::format("Address 0x{:X} (size 0x{:X}) is not writable memory - refusing to write (wrong pointer data?)", address, sizeof(T)) << std::endl;
 			return false;
 		}
 
@@ -137,6 +167,12 @@ public:
 		if (IsBadReadPtr((void*)address, arraySize))
 		{
 			*SetLastErrorByRef() << std::format("Bad read address at 0x{:X}, size: 0x{:X}", address, arraySize) << std::endl;
+			return false;
+		}
+
+		if (!protectedMemory && !isWritableRange(address, arraySize))
+		{
+			*SetLastErrorByRef() << std::format("Address 0x{:X} (size 0x{:X}) is not writable memory - refusing to write (wrong pointer data?)", address, arraySize) << std::endl;
 			return false;
 		}
 

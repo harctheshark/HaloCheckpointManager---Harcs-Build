@@ -102,14 +102,15 @@ private:
 			if (settings->injectCoreVersionCheck->GetValue())
 			{
 				// check if wrong game version
-				if (getMCCVer->getMCCVersionAsString() != currentCheckpoint.selectedCheckpointGameVersion && currentCheckpoint.selectedCheckpointGameVersion.size() == 10)
+				// Compare against the game DLL's build (what dumps record), not the exe's - they differ on a mixed downpatch.
+				if (getMCCVer->getGameDataVersionAsString(mGame) != currentCheckpoint.selectedCheckpointGameVersion && currentCheckpoint.selectedCheckpointGameVersion.size() == 10)
 				{
 					// no match! warn the user. This is a blocking call until they choose an option.
 					auto continueWithInject = modalDialogs->showReturningDialog(ModalDialogFactory::makeInjectionWarningDialog("Injection: incorrect game version warning!", std::format(
 						"Warning! The core save you are injecting appears to be from a different version of MCC than the one you are currently playing\n{}\nCheckpoint MCC ver: {}\nCurrent MCC ver: {}",
 						"Core saves from different versions sometimes are, and sometimes aren't, compatible with eachother. Continue anyway?",
 						currentCheckpoint.selectedCheckpointGameVersion,
-						getMCCVer->getMCCVersionAsString()
+						getMCCVer->getGameDataVersionAsString(mGame)
 					)));
 
 					if (!continueWithInject) return;

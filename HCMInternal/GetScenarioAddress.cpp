@@ -67,6 +67,10 @@ GetScenarioAddress::GetScenarioAddress(GameState gameImpl, IDIContainer& dicon)
 		pimpl = std::make_unique<GetScenarioAddressPointerImpl<GameState::Value::Halo4>>(gameImpl, dicon);
 		break;
 
+	case GameState::Value::Halo2MP:
+		pimpl = std::make_unique<GetScenarioAddressPointerImpl<GameState::Value::Halo2MP>>(gameImpl, dicon);
+		break;
+
 	default:
 		throw HCMInitException("Not impl yet");
 	}

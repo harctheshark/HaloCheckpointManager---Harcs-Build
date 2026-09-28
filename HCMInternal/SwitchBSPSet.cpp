@@ -9,6 +9,19 @@
 #include "IMessagesGUI.h"
 #include "SettingsStateAndEvents.h"
 #include <bitset>
+
+namespace
+{
+	// An empty set has no '1', and substr(npos) throws std::out_of_range - which escapes the handlers here (they only
+	// catch HCMRuntimeException) and kills MCC. Same guard as GetGameDataAsString.h.
+	template <size_t N> std::string bspSetToString(const std::bitset<N>& set)
+	{
+		const auto bits = set.to_string();
+		const auto first = bits.find('1');
+		return first == std::string::npos ? std::string("none") : bits.substr(first);
+	}
+}
+
 class SwitchBSPSet::SwitchBSPSetImpl
 {
 private:
@@ -145,7 +158,7 @@ public:
 		BSPSetChangeEvent->operator()(getCurrentBSPSet->getCurrentBSPSet());
 
 		lockOrThrow(messagesGUIWeak, messages);
-		messages->addMessage(std::format("Loaded BSP Set: {}", bspSet.to_string().substr(bspSet.to_string().find('1'))));
+		messages->addMessage(std::format("Loaded BSP Set: {}", bspSetToString(bspSet)));
 		
 	}
 	void UnloadBSPByIndex(int BSPindex)
@@ -174,7 +187,7 @@ public:
 		BSPSetChangeEvent->operator()(getCurrentBSPSet->getCurrentBSPSet());
 
 		lockOrThrow(messagesGUIWeak, messages);
-		messages->addMessage(std::format("Loaded BSP Set: {}", bspSet.to_string().substr(bspSet.to_string().find('1'))));
+		messages->addMessage(std::format("Loaded BSP Set: {}", bspSetToString(bspSet)));
 	}
 	void LoadBSPByIndex(int BSPindex)
 	{
@@ -202,7 +215,7 @@ public:
 		BSPSetChangeEvent->operator()(getCurrentBSPSet->getCurrentBSPSet());
 
 		lockOrThrow(messagesGUIWeak, messages);
-		messages->addMessage(std::format("Loaded BSP Set: {}", bspSet.to_string().substr(bspSet.to_string().find('1'))));
+		messages->addMessage(std::format("Loaded BSP Set: {}", bspSetToString(bspSet)));
 	}
 
 	std::shared_ptr<eventpp::CallbackList<void(BSPSet)>> getBSPSetChangeEvent()

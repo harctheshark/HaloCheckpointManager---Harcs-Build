@@ -110,6 +110,9 @@ Medusa::Medusa(GameState gameImpl, IDIContainer& dicon)
 		pimpl = std::make_unique <MedusaImpl<GameState::Value::Halo4>>(gameImpl, dicon);
 		break;
 
+	// Without a default an unlisted game left pimpl NULL and the first use was a null dereference.
+	default:
+		throw HCMInitException(std::format("Medusa not impl for this game: {}", gameImpl.toString()));
 	}
 
 }

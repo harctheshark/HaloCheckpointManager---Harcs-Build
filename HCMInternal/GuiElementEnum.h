@@ -37,6 +37,19 @@
 #define THIRD_GEN Halo3, Halo3ODST, HaloReach, Halo4
 #define ABILITY_GAMES HaloReach, Halo4
 
+// Halo 2 Anniversary MP (groundhog.dll, GameState::Halo2MP) - opted in ROW BY ROW, never via ALL_SUPPORTED_GAMES.
+// Putting Halo2MP into ALL_SUPPORTED_GAMES would opt it into ~200 rows (advanceTicks, forceFutureCheckpoint, the
+// trigger overlay ...) that have no groundhog pointer data - a wall of failed services, and some of those cheats
+// had null-pimpl crash paths. Only the rows whose whole dependency chain has verified groundhog data use these:
+// Display 2D Info (NOT the health / shield / cooldown / vehicle-health rows - groundhog biped health offsets are
+// tag-dependent and unverified), Force Teleport, Force Launch, Force Checkpoint / Revert / Double Revert, their
+// three headings, and the Control heading + its hotkey / "show service failures" rows.
+// !! Headings must stay in sync with TOPGUIELEMENTS_RELEASE in GUIRequiredServices.h.
+#define ALL_SUPPORTED_GAMES_AND_H2MP Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, Halo2MP
+#define ALL_SUPPORTED_GAMES_AND_HALOCER_AND_H2MP Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER, Halo2MP
+#define ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5_AND_H2MP Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER, Halo5Forge, Halo2MP
+#define ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, NoGame, HaloCER, Halo2MP
+
 // interpolator macro for freecamera
 #define defFreeCameraInterpolator(name)\
 ((freeCamera##name##Interpolator, (FREE_CAMERA_SUPPORT)))\
@@ -77,11 +90,11 @@
 ((presetsHeadingGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((presetSaveButton, (ALL_GAMES_AND_MAINMENU)))\
 	((presetLoadButton, (ALL_GAMES_AND_MAINMENU)))\
-((controlHeadingGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+((controlHeadingGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
 	/* HaloCER: NOT cosmetic. hideWatermarkHideMessages defaults true, so hiding the watermark also hides the
 	   message log - without this rebind row a user can erase every visible trace of HCM and have nothing on
 	   screen telling them which key brings it back. (The key itself works on CER already.) */\
-	((toggleGUIHotkeyGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+	((toggleGUIHotkeyGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
 	((messagesFontSize, (ALL_GAMES_AND_MAINMENU)))\
 	((messagesFontColor, (ALL_GAMES_AND_MAINMENU)))\
 	((GUISettingsSubheading, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
@@ -93,7 +106,7 @@
 		((advanceTicksGUI, (ALL_SUPPORTED_GAMES)))\
 		((pauseAlsoFreesCursorGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 		((pauseAlsoBlocksInputGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
-	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
 	/* HaloCER: the bypass works there now - OBS picks d3d11/d3d10/d3d12_capture behind ONE shared Present hook,
 	   so D3D12Hook::setOBSBypass does the same job against Present and Present1. The backend was wired before
 	   this row was widened, so the feature existed with no way to switch it on. */\
@@ -102,8 +115,8 @@
 	   only these rows were gated off. */\
 	((HideWatermarkGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((HideWatermarkIncludeMessagesGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
-((saveManagementHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5)))\
-	((forceCheckpointGUI, (ALL_SUPPORTED_GAMES)))\
+((saveManagementHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5_AND_H2MP)))\
+	((forceCheckpointGUI, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
 	((hceForceCheckpointGUI, (HALOCER_ONLY)))\
 	((h5ForceCheckpointGUI, (HALO5_ONLY)))\
 	((h5ForceRevertGUI, (HALO5_ONLY)))\
@@ -176,8 +189,8 @@
 		((h5TriggerOverlayAlpha, (HALO5_ONLY)))\
 		((h5TriggerOverlayWireframeAlpha, (HALO5_ONLY)))\
 		((h5TriggerOverlayRenderDistance, (HALO5_ONLY)))\
-	((forceRevertGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
-	((forceDoubleRevertGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER)))\
+	((forceRevertGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER_AND_H2MP)))\
+	((forceDoubleRevertGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER, Halo2MP)))\
 	((forceCoreSaveGUI, (Halo1)))\
 	((forceCoreLoadGUI, (Halo1)))\
 	((injectCheckpointGUI, (ALL_SUPPORTED_GAMES)))\
@@ -215,7 +228,7 @@
 		((replayLoadFileGUI, (Halo2)))\
 		((replayPlayGUI, (Halo2)))\
 		((replayStopPlaybackGUI, (Halo2)))\
-((cheatsHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
+((cheatsHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER_AND_H2MP)))\
 	((speedhackGUI, (ALL_SUPPORTED_GAMES)))\
 	((invulnGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((invulnerabilitySettingsSubheading, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
@@ -252,29 +265,29 @@
 	((masterTickrateCustomGUI, (Halo2, Halo3, Halo3ODST, Halo4, HaloReach, HaloCER)))\
 	((aiFreezeGUI, (ALL_SUPPORTED_GAMES)))\
 	((medusaGUI, (Halo1, Halo2)))\
-	((forceTeleportGUI, (ALL_SUPPORTED_GAMES)))\
-	((forceTeleportSettingsSubheading, (ALL_SUPPORTED_GAMES)))\
-		((forceTeleportApplyToPlayer, (ALL_SUPPORTED_GAMES)))\
-			((forceTeleportCustomObject, (ALL_SUPPORTED_GAMES)))\
-		((forceTeleportSettingsRadioGroup, (ALL_SUPPORTED_GAMES)))\
-		((forceTeleportForward, (ALL_SUPPORTED_GAMES)))\
-			((forceTeleportRelativeVec3, (ALL_SUPPORTED_GAMES)))\
-			((forceTeleportForwardIgnoreZ, (ALL_SUPPORTED_GAMES)))\
-		((forceTeleportManual, (ALL_SUPPORTED_GAMES)))\
-			((forceTeleportAbsoluteVec3, (ALL_SUPPORTED_GAMES)))\
-			((forceTeleportAbsoluteFillCurrent, (ALL_SUPPORTED_GAMES)))\
-			((forceTeleportAbsoluteCopy, (ALL_SUPPORTED_GAMES)))\
-			((forceTeleportAbsolutePaste, (ALL_SUPPORTED_GAMES)))\
-	((forceLaunchGUI, (ALL_SUPPORTED_GAMES)))\
-	((forceLaunchSettingsSubheading, (ALL_SUPPORTED_GAMES)))\
-		((forceLaunchApplyToPlayer, (ALL_SUPPORTED_GAMES)))\
-			((forceLaunchCustomObject, (ALL_SUPPORTED_GAMES)))\
-		((forceLaunchSettingsRadioGroup, (ALL_SUPPORTED_GAMES)))\
-		((forceLaunchForward, (ALL_SUPPORTED_GAMES)))\
-			((forceLaunchRelativeVec3, (ALL_SUPPORTED_GAMES)))\
-			((forceLaunchForwardIgnoreZ, (ALL_SUPPORTED_GAMES)))\
-		((forceLaunchManual, (ALL_SUPPORTED_GAMES)))\
-			((forceLaunchAbsoluteVec3, (ALL_SUPPORTED_GAMES)))\
+	((forceTeleportGUI, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+	((forceTeleportSettingsSubheading, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+		((forceTeleportApplyToPlayer, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((forceTeleportCustomObject, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+		((forceTeleportSettingsRadioGroup, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+		((forceTeleportForward, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((forceTeleportRelativeVec3, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((forceTeleportForwardIgnoreZ, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+		((forceTeleportManual, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((forceTeleportAbsoluteVec3, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((forceTeleportAbsoluteFillCurrent, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((forceTeleportAbsoluteCopy, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((forceTeleportAbsolutePaste, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+	((forceLaunchGUI, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+	((forceLaunchSettingsSubheading, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+		((forceLaunchApplyToPlayer, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((forceLaunchCustomObject, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+		((forceLaunchSettingsRadioGroup, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+		((forceLaunchForward, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((forceLaunchRelativeVec3, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((forceLaunchForwardIgnoreZ, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+		((forceLaunchManual, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((forceLaunchAbsoluteVec3, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
 	((switchBSPGUI, (Halo1, Halo2)))\
 	((switchBSPSetGUI, (THIRD_GEN)))\
 		((switchBSPSetLoadSet, (THIRD_GEN)))\
@@ -308,48 +321,48 @@
 
 
 #define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES2 \
-((overlaysHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5)))\
+((overlaysHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5_AND_H2MP)))\
 	((renderDistance3DGUI, (ALL_SUPPORTED_GAMES)))\
-	((display2DInfoToggleGUI, (ALL_SUPPORTED_GAMES)))\
-	((display2DInfoSettingsInfoSubheading, (ALL_SUPPORTED_GAMES)))\
-			((display2DInfoShowGameTick, (ALL_SUPPORTED_GAMES)))\
+	((display2DInfoToggleGUI, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+	((display2DInfoSettingsInfoSubheading, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((display2DInfoShowGameTick, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
 			((display2DInfoShowAggro, (Halo1)))\
 			/* Every MCC game except Halo 2, whose seed pair sits behind a two-level pointer and is ordered
 			   opposite to Halo 1's - it needs deriving and verifying on its own before being added. */\
 			((display2DInfoShowRNG, (Halo1, Halo3, Halo3ODST, HaloReach, Halo4)))\
 			((display2DInfoShowBSP, (Halo1, Halo2)))\
-			((display2DInfoShowBSPSet, (THIRD_GEN)))\
+			((display2DInfoShowBSPSet, (Halo3, Halo3ODST, HaloReach, Halo4, Halo2MP)))\
 			((display2DInfoShowNextObjectDatum, (Halo2)))\
-			((display2DInfoTrackPlayer, (ALL_SUPPORTED_GAMES)))\
-				((display2DInfoShowPlayerViewAngle, (ALL_SUPPORTED_GAMES)))\
-				((display2DInfoShowPlayerViewAngleID, (ALL_SUPPORTED_GAMES)))\
-				((display2DInfoShowPlayerPosition, (ALL_SUPPORTED_GAMES)))\
-				((display2DInfoShowPlayerVelocity, (ALL_SUPPORTED_GAMES)))\
-					((display2DInfoShowPlayerVelocityAbs, (ALL_SUPPORTED_GAMES)))\
-					((display2DInfoShowPlayerVelocityXY, (ALL_SUPPORTED_GAMES)))\
-					((display2DInfoShowPlayerVelocityXYZ, (ALL_SUPPORTED_GAMES)))\
+			((display2DInfoTrackPlayer, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+				((display2DInfoShowPlayerViewAngle, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+				((display2DInfoShowPlayerViewAngleID, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+				((display2DInfoShowPlayerPosition, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+				((display2DInfoShowPlayerVelocity, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+					((display2DInfoShowPlayerVelocityAbs, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+					((display2DInfoShowPlayerVelocityXY, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+					((display2DInfoShowPlayerVelocityXYZ, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
 				((display2DInfoShowPlayerHealth, (ALL_SUPPORTED_GAMES)))\
 					((display2DInfoShowPlayerRechargeCooldown, (ALL_SUPPORTED_GAMES)))\
 					((display2DInfoShowPlayerVehicleHealth, (ALL_SUPPORTED_GAMES)))\
-			((display2DInfoTrackCustomObject, (ALL_SUPPORTED_GAMES)))\
-				((display2DInfoCustomObjectDatum, (ALL_SUPPORTED_GAMES)))\
-				((display2DInfoShowEntityObjectType, (ALL_SUPPORTED_GAMES)))\
-				((display2DInfoShowEntityTagName, (ALL_SUPPORTED_GAMES)))\
-				((display2DInfoShowEntityPosition, (ALL_SUPPORTED_GAMES)))\
-				((display2DInfoShowEntityVelocity, (ALL_SUPPORTED_GAMES)))\
-					((display2DInfoShowEntityVelocityAbs, (ALL_SUPPORTED_GAMES)))\
-					((display2DInfoShowEntityVelocityXY, (ALL_SUPPORTED_GAMES)))\
-					((display2DInfoShowEntityVelocityXYZ, (ALL_SUPPORTED_GAMES)))\
+			((display2DInfoTrackCustomObject, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+				((display2DInfoCustomObjectDatum, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+				((display2DInfoShowEntityObjectType, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+				((display2DInfoShowEntityTagName, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+				((display2DInfoShowEntityPosition, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+				((display2DInfoShowEntityVelocity, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+					((display2DInfoShowEntityVelocityAbs, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+					((display2DInfoShowEntityVelocityXY, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+					((display2DInfoShowEntityVelocityXYZ, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
 				((display2DInfoShowEntityHealth, (ALL_SUPPORTED_GAMES)))\
 					((display2DInfoShowEntityRechargeCooldown, (ALL_SUPPORTED_GAMES)))\
 					((display2DInfoShowEntityVehicleHealth, (ALL_SUPPORTED_GAMES)))\
-	((display2DInfoSettingsVisualSubheading, (ALL_SUPPORTED_GAMES)))\
-			((display2DInfoAnchorCorner, (ALL_SUPPORTED_GAMES)))\
-			((display2DInfoScreenOffset, (ALL_SUPPORTED_GAMES)))\
-			((display2DInfoFontSize, (ALL_SUPPORTED_GAMES)))\
-			((display2DInfoFontColour, (ALL_SUPPORTED_GAMES)))\
-			((display2DInfoFloatPrecision, (ALL_SUPPORTED_GAMES)))\
-			((display2DInfoOutline, (ALL_SUPPORTED_GAMES)))\
+	((display2DInfoSettingsVisualSubheading, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((display2DInfoAnchorCorner, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((display2DInfoScreenOffset, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((display2DInfoFontSize, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((display2DInfoFontColour, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((display2DInfoFloatPrecision, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
+			((display2DInfoOutline, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
 	((waypoint3DGUIToggle, (ALL_SUPPORTED_GAMES)))\
 	((waypoint3DGUIList, (ALL_SUPPORTED_GAMES)))\
 	((waypoint3DGUISettings, (ALL_SUPPORTED_GAMES)))\
@@ -753,6 +766,22 @@
 	((display2DInfoShowLevelLoadRNG, (Halo1, Halo3, Halo3ODST, HaloReach, Halo4)))
 
 
+/* GROUP 4 exists so no earlier group has to grow toward MSVC's C1009 "macros nested too deeply" (see the notes
+   above and in pch.h - building is the only reliable check). Declaration order has no effect on where a row appears;
+   the menu layout comes from the createNestedElement calls in GUIElementConstructor. */
+#define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES4 \
+	((hceVisibleGeometryOverlayToggleGUI, (HALOCER_ONLY)))\
+	((hceVisibleGeometryOverlaySettingsSubheading, (HALOCER_ONLY)))\
+			((hceVisibleGeometryOverlayRadius, (HALOCER_ONLY)))\
+			((hceVisibleGeometryOverlayTriangleBudget, (HALOCER_ONLY)))\
+			((hceVisibleGeometryOverlayRefreshMs, (HALOCER_ONLY)))\
+			((hceVisibleGeometryOverlayColour, (HALOCER_ONLY)))\
+			((hceVisibleGeometryOverlayWireAlpha, (HALOCER_ONLY)))\
+			((hceVisibleGeometryOverlayFillAlpha, (HALOCER_ONLY)))\
+			((hceVisibleGeometryOverlayHideHiddenLines, (HALOCER_ONLY)))\
+			((display2DInfoShowZoneSet, (Halo2MP)))
+
+
 
 #define DEBUGGUIELEMENTS_ANDSUPPORTEDGAMES \
 ((HCMDebugHeadingGUI, (ALL_SUPPORTED_GAMES)))\
@@ -780,12 +809,14 @@
 
 #define ALLGUIELEMENTS2 MAKE_ALL_FIRSTOFPAIR(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES2)
 #define ALLGUIELEMENTS3 MAKE_ALL_FIRSTOFPAIR(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES3)
+#define ALLGUIELEMENTS4 MAKE_ALL_FIRSTOFPAIR(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES4)
 #define ALLGUIELEMENTSDEBUG MAKE_ALL_FIRSTOFPAIR(DEBUGGUIELEMENTS_ANDSUPPORTEDGAMES)
 
 enum class GUIElementEnum {
 	ALLGUIELEMENTS1
 	ALLGUIELEMENTS2
 	ALLGUIELEMENTS3
+	ALLGUIELEMENTS4
 #ifdef HCM_DEBUG
 	ALLGUIELEMENTSDEBUG
 #endif

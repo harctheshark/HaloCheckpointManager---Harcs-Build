@@ -33,8 +33,26 @@ namespace
 	// completely different fixes. One relaxed increment per frame is free.
 	std::atomic<uint64_t> gCameraManagerHookFires{ 0 };
 
-	// The POV payload, exactly as FMinimalViewInfo lays out its first 0x34 bytes.
-	struct PovSnapshot { double location[3]; double rotation[3]; float fov; };
+	// FMinimalViewInfo's first 0x34 bytes, verbatim.
+	struct PovHead { double location[3]; double rotation[3]; float fov; };
+
+	// The rest of FMinimalViewInfo that its PROJECTION depends on (offsets from the exe's reflection records and the
+	// projection code at 0x5D5AD90), plus APlayerCameraManager::LockedFOV. See ueProjection() in the header.
+	constexpr size_t kPovAspectRatio = 0x5C;                // float
+	constexpr size_t kPovAxisConstraintValue = 0x60;        // TOptional<EAspectRatioAxisConstraint> value
+	constexpr size_t kPovAxisConstraintIsSet = 0x64;        //   ... and its is-set byte
+	constexpr size_t kPovFlagBits = 0x68;                   // bit0 = bConstrainAspectRatio
+	constexpr int64_t kCameraManagerLockedFov = 0x2F4;      // float; > 0 overrides the POV FOV (GetFOVAngle 0x64B5D80)
+
+	struct PovSnapshot
+	{
+		PovHead head;
+		float aspectRatio = 0.f;
+		uint8_t axisConstraint = 0;
+		bool axisConstraintSet = false;
+		bool constrainAspectRatio = false;
+		float lockedFov = 0.f;   // 0 = not locked, or not read (only readable when the destination is the validated PCM)
+	};
 
 	// SNAPSHOT, NOT A POINTER. Two earlier designs both failed in game and both failed the same way - by leaving
 	// the VALUES to be fetched later, on a frame of our choosing rather than the game's:
@@ -53,6 +71,8 @@ namespace
 	// data, whereas the source is the camera being assigned right now.
 	std::atomic<uint32_t> gPovSequence{ 0 };   // even = stable, odd = mid-write. 0 = nothing captured yet.
 	PovSnapshot gPovSnapshot{};
+	// The last LockedFOV read off the validated PCM (0 = not locked). Atomic: operator= fires on more than one thread.
+	std::atomic<float> gLastLockedFov{ 0.f };
 
 	// ---- Which assignment is OUR camera -------------------------------------------------------------------
 	// Validating the VALUES fixed the constant flicker, but not a residual one every 10-15 seconds: an occasional
@@ -260,16 +280,21 @@ namespace
 		// origin and skipped the frame, so the overlay switched itself off for seconds at a time and came back
 		// when the real camera happened to win a window. Rejecting bad candidates at the CONSUMER is too late -
 		// by then they have already displaced the good one. They must never enter the tally.
-		const PovSnapshot* candidateSource = reinterpret_cast<const PovSnapshot*>(ctx.rdx);
+		const uint8_t* candidateSource = reinterpret_cast<const uint8_t*>(ctx.rdx);
 		if (candidateSource == nullptr) return;
-		const PovSnapshot candidate = *candidateSource;
+		PovSnapshot candidate{};
+		memcpy(&candidate.head, candidateSource, sizeof(candidate.head));
+		memcpy(&candidate.aspectRatio, candidateSource + kPovAspectRatio, sizeof(candidate.aspectRatio));
+		candidate.axisConstraint = candidateSource[kPovAxisConstraintValue];
+		candidate.axisConstraintSet = candidateSource[kPovAxisConstraintIsSet] != 0;
+		candidate.constrainAspectRatio = (candidateSource[kPovFlagBits] & 1u) != 0;
 
-		if (!std::isfinite(candidate.fov) || candidate.fov <= 10.f || candidate.fov >= 170.f) return;
-		for (double d : candidate.location) if (!std::isfinite(d)) return;
-		for (double d : candidate.rotation) if (!std::isfinite(d)) return;
+		if (!std::isfinite(candidate.head.fov) || candidate.head.fov <= 10.f || candidate.head.fov >= 170.f) return;
+		for (double d : candidate.head.location) if (!std::isfinite(d)) return;
+		for (double d : candidate.head.rotation) if (!std::isfinite(d)) return;
 
 		// Exactly the world origin is never a real camera in a loaded level - it is an unset/default view info.
-		if (candidate.location[0] == 0.0 && candidate.location[1] == 0.0 && candidate.location[2] == 0.0) return;
+		if (candidate.head.location[0] == 0.0 && candidate.head.location[1] == 0.0 && candidate.head.location[2] == 0.0) return;
 
 		// ---- validation path: adopt the destination that IS a camera manager POV, and ignore the rest --------
 		//
@@ -420,6 +445,20 @@ namespace
 			adoptPreferredDestination(destination);
 		}
 
+		// LockedFOV lives on the camera MANAGER, so it can only be READ when this destination is the validated
+		// PCM POV; an election-fallback destination (a stack FMinimalViewInfo) has no manager behind it. But the
+		// engine keeps rendering with the lock while we are unlatched (those windows have lasted minutes), so the
+		// last validated value carries over until a validated read says the lock is off.
+		if (destination == gValidatedDestination.load(std::memory_order_acquire))
+		{
+			float locked = 0.f;
+			const bool read = HCEGetPlayerState::tryReadRaw(destination - (uintptr_t)HCEGetCameraData::kPovInCameraManagerOffset
+				+ (uintptr_t)kCameraManagerLockedFov, &locked, sizeof(locked));
+			if (read) gLastLockedFov.store((std::isfinite(locked) && locked > 10.f && locked < 170.f) ? locked : 0.f,
+				std::memory_order_relaxed);
+		}
+		candidate.lockedFov = gLastLockedFov.load(std::memory_order_relaxed);
+
 		// Seqlock: readers retry if they catch a torn write. Cheaper than a mutex on a per-frame game-thread
 		// path, and a hook callback must never block.
 		gPovSequence.fetch_add(1, std::memory_order_acq_rel);
@@ -568,6 +607,18 @@ public:
 	// Last FOV that read back as plausible. Seeded with a sane default so a consumer still draws on the very
 	// first frames, before DoUpdateCamera has run even once.
 	std::atomic<float> mLastGoodFov{ 78.f };
+	// The rest of the last good projection parameters, for the same fallbacks. ⚠ NOT seeded with 0: to ueProjection 0
+	// is UE's legacy "the FOV is VERTICAL" case, which would turn the 78 seed into a 0.56x overlay. 16:9 is the
+	// camera-component default (exe 0x5D50394) and is what the old horizontal-across-the-screen maths was exact for.
+	std::atomic<float> mLastGoodReferenceAspect{ 16.f / 9.f };
+	std::atomic<int> mLastGoodAxisConstraintOverride{ -1 };
+	std::atomic<bool> mLastGoodConstrainAspect{ false };
+
+	// What the projection parameters were when they were last logged, so a change is reported once, not per frame.
+	std::atomic<uint64_t> mLoggedProjectionKey{ ~0ull };
+	std::atomic<uint32_t> mLoggedProjectionFov{ ~0u };
+	std::atomic<uint32_t> mLastProjectionLogTick{ 0 };
+	static constexpr uint32_t kProjectionLogMinIntervalMs = 3000;
 
 	// CALLER MUST HOLD mHookMutex.
 	void applyHookState()
@@ -706,6 +757,61 @@ float HCEGetCameraData::getLastGoodHorizontalFov() const
 	return pimpl->mLastGoodFov.load(std::memory_order_acquire);
 }
 
+HCEGetCameraData::UeCamera HCEGetCameraData::getLastGoodProjectionParameters() const
+{
+	UeCamera out;
+	out.horizontalFovDegrees = pimpl->mLastGoodFov.load(std::memory_order_acquire);
+	out.referenceAspectRatio = pimpl->mLastGoodReferenceAspect.load(std::memory_order_acquire);
+	out.axisConstraintOverride = pimpl->mLastGoodAxisConstraintOverride.load(std::memory_order_acquire);
+	out.constrainAspectRatio = pimpl->mLastGoodConstrainAspect.load(std::memory_order_acquire);
+	return out;
+}
+
+// static
+HCEGetCameraData::UeProjection HCEGetCameraData::ueProjection(const UeCamera& camera, float screenWidth, float screenHeight)
+{
+	UeProjection out;
+	out.viewWidth = std::max(screenWidth, 1.f);
+	out.viewHeight = std::max(screenHeight, 1.f);
+	const float reference = (std::isfinite(camera.referenceAspectRatio) && camera.referenceAspectRatio > 0.1f
+		&& camera.referenceAspectRatio < 10.f) ? camera.referenceAspectRatio : 0.f;
+
+	// bConstrainAspectRatio: UE letterboxes/pillarboxes the view to the camera's own aspect, centred, in whole
+	// pixels (exe 0x6761A10: bars of RoundToInt(0.5 * (current - new)), none within 0.01 of the screen aspect).
+	if (camera.constrainAspectRatio && reference > 0.f && std::abs(reference - out.viewWidth / out.viewHeight) > 0.01f)
+	{
+		if (out.viewWidth / out.viewHeight > reference)
+		{
+			const float bar = std::round(0.5f * (out.viewWidth - out.viewHeight * reference));
+			out.viewX = bar;
+			out.viewWidth -= 2.f * bar;
+		}
+		else
+		{
+			const float bar = std::round(0.5f * (out.viewHeight - out.viewWidth / reference));
+			out.viewY = bar;
+			out.viewHeight -= 2.f * bar;
+		}
+	}
+	out.aspectRatio = out.viewWidth / out.viewHeight;
+
+	// 0x5D5B2A9: the POV's own constraint override wins over the LocalPlayer's; MaintainX for MaintainXFOV, or
+	// MajorAxisFOV on a landscape view.
+	const int constraint = camera.axisConstraintOverride >= 0 ? camera.axisConstraintOverride : kLocalPlayerAxisConstraint;
+	const bool maintainX = constraint == kMaintainXFov || (constraint == kMajorAxisFov && out.viewWidth > out.viewHeight);
+
+	const float halfFov = DirectX::XMConvertToRadians(std::clamp(camera.horizontalFovDegrees, 10.f, 170.f)) * 0.5f;
+	float halfVertical;
+	if (maintainX)
+		halfVertical = std::atan(std::tan(halfFov) / out.aspectRatio);   // horizontal across the view rect
+	else if (reference > 0.f)
+		halfVertical = std::atan(std::tan(halfFov) / reference);         // 0x5D5B431: horizontal at the reference aspect
+	else
+		halfVertical = halfFov;                                          // legacy MaintainYFOV: the FOV is vertical
+	out.verticalFovRadians = 2.f * halfVertical;
+	return out;
+}
+
 // The elected FMinimalViewInfo, and the APlayerCameraManager that contains it. Pure arithmetic on an atomic -
 // nothing is dereferenced here, so these are safe to call from anywhere and cannot throw. See the header for why
 // a WRITER gets a pointer when every reader deliberately gets values instead.
@@ -807,16 +913,43 @@ bool HCEGetCameraData::getUeCamera(UeCamera& out) const
 			<< gCameraManagerHookFires.load(std::memory_order_relaxed) << ")";
 
 	out.positionBlam = SimpleMath::Vector3(
-		(float)(raw.location[0] / kUeCmPerWorldUnit),
-		-(float)(raw.location[1] / kUeCmPerWorldUnit),   // UE +Y is RIGHT, Blam +Y is LEFT
-		(float)(raw.location[2] / kUeCmPerWorldUnit));
+		(float)(raw.head.location[0] / kUeCmPerWorldUnit),
+		-(float)(raw.head.location[1] / kUeCmPerWorldUnit),   // UE +Y is RIGHT, Blam +Y is LEFT
+		(float)(raw.head.location[2] / kUeCmPerWorldUnit));
 
-	out.pitchDegrees = (float)raw.rotation[0];
-	out.yawDegrees = (float)raw.rotation[1];
-	out.rollDegrees = (float)raw.rotation[2];
-	out.horizontalFovDegrees = raw.fov;
+	out.pitchDegrees = (float)raw.head.rotation[0];
+	out.yawDegrees = (float)raw.head.rotation[1];
+	out.rollDegrees = (float)raw.head.rotation[2];
+	out.horizontalFovDegrees = raw.lockedFov > 0.f ? raw.lockedFov : raw.head.fov;   // GetFOVAngle's rule
+	out.referenceAspectRatio = (std::isfinite(raw.aspectRatio) && raw.aspectRatio > 0.f) ? raw.aspectRatio : 0.f;
+	out.axisConstraintOverride = (raw.axisConstraintSet && raw.axisConstraint <= kMajorAxisFov) ? (int)raw.axisConstraint : -1;
+	out.constrainAspectRatio = raw.constrainAspectRatio;
 
-	pimpl->mLastGoodFov.store(raw.fov, std::memory_order_release);
+	pimpl->mLastGoodFov.store(out.horizontalFovDegrees, std::memory_order_release);
+	pimpl->mLastGoodReferenceAspect.store(out.referenceAspectRatio, std::memory_order_release);
+	pimpl->mLastGoodAxisConstraintOverride.store(out.axisConstraintOverride, std::memory_order_release);
+	pimpl->mLastGoodConstrainAspect.store(out.constrainAspectRatio, std::memory_order_release);
+
+	// Report the projection inputs - the line that says which projection case a user's machine is in. The DISCRETE
+	// inputs (aspect, axis override, letterbox, lock on/off) log as soon as they change; the FOV alone moves every
+	// frame during a zoom or while HCM's FOV hotkey is held, so a change of FOV only logs once per interval.
+	const std::string_view fovSource = raw.lockedFov > 0.f ? "LockedFOV" : "POV";
+	const uint64_t discreteKey = ((uint64_t)(uint32_t)std::lround(std::clamp(out.referenceAspectRatio, 0.f, 100.f) * 10000.f) << 8)
+		^ ((uint64_t)(out.axisConstraintOverride + 1) << 2) ^ (uint64_t)(out.constrainAspectRatio ? 1 : 0)
+		^ ((uint64_t)(raw.lockedFov > 0.f ? 1 : 0) << 1);
+	const uint32_t fovKey = (uint32_t)std::lround(std::clamp(out.horizontalFovDegrees, 0.f, 360.f) * 10.f);
+	const uint32_t nowTick = GetTickCount();
+	const bool discreteChanged = pimpl->mLoggedProjectionKey.exchange(discreteKey, std::memory_order_relaxed) != discreteKey;
+	const bool fovChanged = pimpl->mLoggedProjectionFov.load(std::memory_order_relaxed) != fovKey;
+	const uint32_t lastLog = pimpl->mLastProjectionLogTick.load(std::memory_order_relaxed);
+	if (discreteChanged || (fovChanged && (nowTick - lastLog) >= HCEGetCameraDataImpl::kProjectionLogMinIntervalMs))
+	{
+		pimpl->mLoggedProjectionFov.store(fovKey, std::memory_order_relaxed);
+		pimpl->mLastProjectionLogTick.store(nowTick, std::memory_order_relaxed);
+		PLOG_INFO << std::format("HCEGetCameraData: projection inputs - FOV {:.2f} ({}), POV aspect {:.4f}, POV axis "
+			"override {}, constrained {} (LocalPlayer constraint MaintainYFOV): the vertical FOV is atan(tan(FOV/2)/aspect)",
+			out.horizontalFovDegrees, fovSource, out.referenceAspectRatio, out.axisConstraintOverride, out.constrainAspectRatio);
+	}
 	return true;
 }
 
@@ -888,9 +1021,10 @@ void HCEGetCameraData::ueRotationToBlamBasis(float pitchDegrees, float yawDegree
 
 	if (std::abs(roll) > 1e-6f)
 	{
+		// UE's FRotationMatrix rows: M[1] = cR*right0 - sR*up0, M[2] = cR*up0 + sR*right0.
 		const float cosRoll = std::cos(roll), sinRoll = std::sin(roll);
-		const SimpleMath::Vector3 rolledRight = rightUe * cosRoll + upUe * sinRoll;
-		const SimpleMath::Vector3 rolledUp = upUe * cosRoll - rightUe * sinRoll;
+		const SimpleMath::Vector3 rolledRight = rightUe * cosRoll - upUe * sinRoll;
+		const SimpleMath::Vector3 rolledUp = upUe * cosRoll + rightUe * sinRoll;
 		rightUe = rolledRight;
 		upUe = rolledUp;
 	}

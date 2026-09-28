@@ -80,7 +80,26 @@ void HCMInternalGUI::onImGuiRenderEvent(SimpleMath::Vector2 screenSize)
 
 	if (!m_HCMInternalGUIinitialized)
 	{
-		onGameStateChange(mccStateHook->getCurrentMCCState());
+		// This is the Present/render thread: a throw here is unhandled and takes the game down (it did, for every
+		// Halo 2 Anniversary MP session, via GUIElementStore's .at(game)). Contain it and fall back to the
+		// NoGame menu so the overlay still comes up.
+		try
+		{
+			onGameStateChange(mccStateHook->getCurrentMCCState());
+		}
+		catch (const std::exception& ex)
+		{
+			PLOG_ERROR << "onGameStateChange threw on first frame (" << typeid(ex).name() << "): " << ex.what() << " - falling back to the NoGame menu";
+			try
+			{
+				std::unique_lock<std::mutex> fallbackLock(currentGameGUIElementsMutex);
+				p_currentGameGUIElements = &mGUIStore->getTopLevelGUIElements(GameState::Value::NoGame);
+			}
+			catch (const std::exception& ex2)
+			{
+				PLOG_ERROR << "NoGame menu fallback also failed: " << ex2.what() << " - keeping the previous menu";
+			}
+		}
 
 		PLOG_INFO << "Initializing HCMInternalGUI";
 		try

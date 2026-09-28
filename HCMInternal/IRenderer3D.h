@@ -25,6 +25,11 @@ enum class DepthMode
 {
 	TestOnly,           // depth-tested, writes no depth. The default and what every MCC caller wants.
 	DepthOnlyPrepass,   // writes depth, writes NO colour. First half of a two-pass translucent shell.
+	// Writes depth pushed ~1 px of depth slope AWAY from the camera, no colour: the pre-pass for a HIDDEN-LINE
+	// wireframe. Edges lying on these triangles then pass LESS_EQUAL and edges behind them fail. Unbiased, an edge
+	// on its own pre-passed triangle z-fights: 27-51% of its pixels were measured dropped (WARP and an RTX 4090
+	// agree), so the wireframe comes out dashed. Bias on the LINE pipeline does nothing - it must be on the triangles.
+	DepthOnlyPrepassBiased,
 };
 
 /// <summary>
@@ -179,6 +184,14 @@ public:
 	/// <param name="worldCellSize">Checker cell size in world units. Zero or less disables the pattern.</param>
 	/// <param name="contrast">0..1. How far each parity brightens/darkens from the chosen colour.</param>
 	virtual void setSurfacePattern(float worldCellSize, float contrast) {}
+
+	/// <summary>
+	/// Clears the overlay's OWN depth buffer mid-frame. Every Render3DEvent subscriber shares one clear at the top of
+	/// the frame, so depth one overlay's pre-pass writes would otherwise hide or dash the lines of every overlay
+	/// drawn after it, depending on toggle order. An overlay that writes depth for its own occlusion clears before
+	/// and after. Defaults to a NO-OP; only the D3D12 path implements it (the D3D11 path ignores depthMode anyway).
+	/// </summary>
+	virtual void clearDepth() {}
 
 	/// <summary>
 	/// Draws an edge (line of the specified colour at the specified position.

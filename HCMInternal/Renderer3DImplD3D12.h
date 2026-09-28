@@ -52,8 +52,10 @@
 // xaxis = cross(up, eye-at) = forward x up, which at yaw 0 is (0,-1,0), i.e. Blam's RIGHT. Do not swap in an LH
 // builder "because D3D12"; a sign error here mirrors the whole overlay and has already happened once.
 //
-// FOV: the UE camera reports a HORIZONTAL field of view. XMMatrixPerspectiveFovRH wants a VERTICAL one.
-// vfov = 2*atan(tan(hfov/2) * height/width). Feeding it the horizontal value directly is a real, silent bug.
+// FOV: the UE camera's FOV is horizontal only at the CAMERA's reference aspect (MaintainYFOV), and
+// XMMatrixPerspectiveFovRH wants a VERTICAL one. HCEGetCameraData::ueProjection() is the only correct conversion;
+// converting with the back-buffer aspect (the old code here) drew every overlay ~1.34x too large about the centre
+// at 3440x1440. Feeding the horizontal value in directly is a bug of its own.
 //
 // NOT IMPLEMENTED - TEXTURES AND SPRITES
 // --------------------------------------
@@ -114,6 +116,7 @@ public:
 	void drawTriangle(const std::array<SimpleMath::Vector3, 3>& vertexPositions, const SimpleMath::Vector4& color, CullingOption cullingOption, std::optional<TextureEnum> texture) override;
 	void drawTriangleCollection(const IModelTriangles* model, const SimpleMath::Vector4& color, CullingOption cullingOption, std::optional<TextureEnum> texture, DepthMode depthMode) override;
 	void setSurfacePattern(float worldCellSize, float contrast) override;
+	void clearDepth() override;
 	void drawEdge(const SimpleMath::Vector3& edgeStart, const SimpleMath::Vector3& edgeEnd, const SimpleMath::Vector4& color) override;
 	void drawEdgeCollection(const IModelEdges* model, const SimpleMath::Vector4& color) override;
 
@@ -121,7 +124,7 @@ private:
 	template <typename T> using ComPtr = Microsoft::WRL::ComPtr<T>;
 
 	// ---- pipeline variants -------------------------------------------------------------------------------
-	// Ten PSOs, all built up front so nothing is ever created on the render thread.
+	// Twelve PSOs, all built up front so nothing is ever created on the render thread.
 	//
 	// Blend/depth pairs mirror what DirectXTK does on the MCC path:
 	//   * "Alpha"  = alpha blend + DepthRead   (DepthEnable, WriteMask ZERO, LESS_EQUAL). Every triangle and
@@ -154,6 +157,8 @@ private:
 		WireframeOpaque,
 		LineAlpha,
 		LineOpaque,
+		// DEPTH ONLY, biased away from the camera: the hidden-line pre-pass (DepthMode::DepthOnlyPrepassBiased).
+		TriangleCullNoneDepthOnlyBiased,
 		Count
 	};
 
@@ -269,7 +274,11 @@ private:
 	SimpleMath::Matrix mProjectionMatrix;
 	SimpleMath::Matrix mViewProjectionMatrix;
 	SimpleMath::Vector2 mScreenSize{ 0.f, 0.f };
-	SimpleMath::Vector2 mScreenCenter{ 0.f, 0.f };
+	SimpleMath::Vector2 mScreenCenter{ 0.f, 0.f };   // centre of the VIEW RECT, not necessarily of the screen
+	// Where the game's picture is on the back buffer: the whole screen, except when a HaloCER camera constrains its
+	// aspect (letterbox/pillarbox). The viewport, scissor and world-to-screen maths all use it.
+	SimpleMath::Vector2 mViewOrigin{ 0.f, 0.f };
+	SimpleMath::Vector2 mViewSize{ 0.f, 0.f };
 	DirectX::BoundingFrustum mFrustumViewWorld;
 
 	// A unit sphere (radius 0.5, i.e. diameter 1) so renderSphere matches GeometricPrimitive::CreateSphere's

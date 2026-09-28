@@ -1012,6 +1012,12 @@ private:
 			// (setSurfacePattern), which needs no texture, no descriptor heap and no SRV.
 			const SettingsEnums::TriggerInteriorStyle interiorStyle = settings->hceBspOverlayInteriorStyle->GetValue();
 
+			// Our pre-pass writes into the depth buffer every overlay shares this frame. Start clean, and clear again
+			// after the wireframe, so walls neither get hidden by an earlier overlay's depth nor hide the trigger
+			// volumes / instanced geometry drawn after us - which one won used to depend on toggle order.
+			const bool writesDepth = wantSolid && occludeFarSurfaces;
+			if (writesDepth) renderer->clearDepth();
+
 			if (wantSolid)
 				for (const BspBatch* batch : mVisibleBatches)
 				{
@@ -1113,8 +1119,10 @@ private:
 					// DEPTH PRE-PASS, then colour. This is what makes a closed shell readable.
 					//
 					// Pass 1 draws the WHOLE shell writing depth and no colour. Pass 2 draws the two sides
-					// blending with depth writes OFF, so only fragments at the nearest depth survive: exactly
-					// ONE translucent layer per pixel, and the result does not depend on submission order.
+					// blending with depth writes OFF, so only fragments at the nearest depth survive: ONE
+					// translucent layer per pixel, and the result does not depend on submission order. (Since the
+					// pre-pass is BIASED - see below - a surface within ~1 px of depth slope behind the nearest one
+					// also passes, so concave creases and silhouettes can show a thin second layer.)
 					//
 					// ⚠ The previous attempt - blending AND writing depth in a single pass - was wrong. Whichever
 					// translucent surface happened to be submitted first won the depth test while the ones behind
@@ -1128,9 +1136,12 @@ private:
 					{
 						// Colour is irrelevant here - this pass writes depth only, with the render target write
 						// mask at 0 - but the signature wants one.
+						// ⚠ BIASED: the wireframe drawn later lies exactly on these triangles, and an unbiased
+						// pre-pass z-fights it away - 27-51% of edge pixels measured dropped on an RTX 4090, so the
+						// lines came out dashed. The bias (~1 px of depth slope) removes that and hides nothing real.
 						const BspBatchModel whole(*batch);
 						renderer->drawTriangleCollection(&whole, facingColour, CullingOption::CullNone,
-							std::nullopt, DepthMode::DepthOnlyPrepass);
+							std::nullopt, DepthMode::DepthOnlyPrepassBiased);
 					}
 
 
@@ -1244,6 +1255,8 @@ private:
 					const BspEdgeSubsetModel model(batch->renderVertices, mFrontEdges);
 					renderer->drawEdgeCollection(&model, wireColour);
 				}
+
+			if (writesDepth) renderer->clearDepth();   // do not leak our depth into the overlays drawn after us
 		}
 		catch (HCMRuntimeException)
 		{

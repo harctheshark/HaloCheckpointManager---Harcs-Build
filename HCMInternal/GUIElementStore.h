@@ -13,12 +13,13 @@ private:
 	{
 	{GameState::Value::Halo1, {}},
 	{GameState::Value::Halo2, {}},
+	{GameState::Value::Halo2MP, {}},   // was MISSING: entering Halo 2 Anniversary MP threw std::out_of_range and killed MCC
 	{GameState::Value::Halo3, {}},
 	{GameState::Value::Halo3ODST, {}},
 	{GameState::Value::HaloReach, {}},
 	{GameState::Value::Halo4, {}},
-	{GameState::Value::HaloCER, {}},   // REQUIRED: getTopLevelGUIElements does an unguarded .at(game)
-	{GameState::Value::Halo5Forge, {}},// REQUIRED, same reason
+	{GameState::Value::HaloCER, {}},
+	{GameState::Value::Halo5Forge, {}},
 	{GameState::Value::NoGame, {}},
 	};
 
@@ -26,15 +27,20 @@ private:
 	std::map<GameState, std::vector<std::shared_ptr<IGUIElement>>>& getTopLevelGUIElementsMutable() { return allTopLevelGUIElements; };
 	
 public:
+	// ⚠ Called from HCMInternalGUI::onGameStateChange on the RENDER thread, where a throw is unhandled and takes the
+	// game down (it did, for every Halo 2 Anniversary MP session, until Halo2MP was added above). A game missing from
+	// the map gets NoGame's empty list instead - an empty menu, never a crash.
 	const std::vector<std::shared_ptr<IGUIElement>>& getTopLevelGUIElements(GameState game)
 	{
-		return allTopLevelGUIElements.at(game);
+		auto found = allTopLevelGUIElements.find(game);
+		return found != allTopLevelGUIElements.end() ? found->second : allTopLevelGUIElements.at(GameState::Value::NoGame);
 	}
 
 	std::map<GameState, std::set<GUIElementEnum>> mapOfSuccessfullyConstructedGUIElements // used in unit testing
 	{
 		{GameState::Value::Halo1, std::set<GUIElementEnum>{}},
 		{ GameState::Value::Halo2, std::set<GUIElementEnum>{} },
+		{ GameState::Value::Halo2MP, std::set<GUIElementEnum>{} },
 		{ GameState::Value::Halo3, std::set<GUIElementEnum>{} },
 		{ GameState::Value::Halo3ODST, std::set<GUIElementEnum>{} },
 		{ GameState::Value::HaloReach, std::set<GUIElementEnum>{} },

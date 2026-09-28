@@ -417,6 +417,12 @@ GetObjectPhysics::GetObjectPhysics(GameState game, IDIContainer& dicon)
 	case GameState::Value::Halo3ODST: pimpl = std::make_unique<GetObjectPhysicsHavokVisualObject>(game, dicon); break;
 	case GameState::Value::HaloReach: pimpl = std::make_unique<GetObjectPhysicsHavokVisualObject>(game, dicon); break;
 	case GameState::Value::Halo4: pimpl = std::make_unique<GetObjectPhysicsHavokVisualObject>(game, dicon); break;
+	// Halo 2 Anniversary MP (groundhog.dll): object, havok-component and rigid-body accessors are
+	// instruction-identical to Halo 4's, and every physics offset carried over unchanged.
+	case GameState::Value::Halo2MP: pimpl = std::make_unique<GetObjectPhysicsHavokVisualObject>(game, dicon); break;
+	// !! REQUIRED. Without it an unlisted game left pimpl NULL, construction "succeeded", and the first
+	// teleport/launch press or position/velocity readout dereferenced null - an uncatchable access violation.
+	default: throw HCMInitException(std::format("GetObjectPhysics not impl for this game: {}", game.toString()));
 	}
 }
 

@@ -48,6 +48,7 @@
 		<Entry>1.2904.0.0</Entry> 
 		<Entry>1.3272.0.0</Entry>
 		<Entry>1.3385.0.0</Entry>
+		<Entry>1.3495.0.0</Entry> <!--Halo 3 only so far. Its halo3.dll is the same build as 1.3528's (one code byte differs), and the MCC exe keeps 1.3528's layout.-->
 		<Entry>1.3528.0.0</Entry>
 		<!--Halo Campaign Evolved. HaloSimulation_tag_release.dll carries NO version resource (reads 0.0.0.0),
 		    so HCM uses that as HCE's synthetic version key. See GetMCCVersion::evalVersion.-->
@@ -132,6 +133,13 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x4001A98</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x4001A98</Offset>
@@ -198,6 +206,14 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x03FB4E98</Offset>
+				<Offset>0x0</Offset>
+				<Offset>0x40</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x03FB4E98</Offset>
@@ -259,6 +275,14 @@
 		<Version Version="1.3385.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x3FB0CB8</Offset>
+				<Offset>0x0</Offset>
+				<Offset>0x68</Offset>
+			</Offsets>
+		</Version>
+
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x03FB4E98</Offset>
 				<Offset>0x0</Offset>
 				<Offset>0x68</Offset>
 			</Offsets>
@@ -339,6 +363,13 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x04000BC8</Offset>
+				<Offset>0x2BFE8</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x04000BC8</Offset>
@@ -395,6 +426,13 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x1EFD9E</Offset>
+				<!--old: 1EB6CE-->
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x1EFD9E</Offset>
@@ -442,6 +480,12 @@
 				<Offset>0x3FFCA94</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x4000B8C</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x4000B8C</Offset>
@@ -487,6 +531,12 @@
 				<Offset>0x3FFCAA5</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x4000B9D</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x4000B9D</Offset>
@@ -542,6 +592,13 @@
 				<Offset>0x78</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x4001658</Offset>
+				<Offset>0x78</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x4001658</Offset>
@@ -591,6 +648,12 @@
 				<Offset>0x1EAB9D</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x1EF276</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x1EF276</Offset>
@@ -636,6 +699,12 @@
 				<Offset>0x4A68AE</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x4ACA2F</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x4ACA2F</Offset>
@@ -681,6 +750,12 @@
 				<Offset>0x1EB505</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x1EFBD5</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x1EFBD5</Offset>
@@ -732,6 +807,12 @@
 				<Offset>0x1F4E89</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x1F96F1</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x1F96F1</Offset>
@@ -885,6 +966,13 @@
 				<Offset>0x3FC</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x03E3F388</Offset>
+				<Offset>0x3FC</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x03E3F388</Offset>
@@ -941,6 +1029,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x87CEC8</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x87CEC8</Offset>
@@ -977,6 +1071,10 @@
 		</Version>
 
 		<Version Version="1.3385.0.0" ProcessType="Steam">
+			<Data>0x48, 0x31, 0xD2</Data>
+		</Version>
+
+		<Version Version="1.3495.0.0" ProcessType="Steam">
 			<Data>0x48, 0x31, 0xD2</Data>
 		</Version>
 
@@ -1031,6 +1129,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x87CE30</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x87CE30</Offset>
@@ -1069,6 +1173,10 @@
 		</Version>
 
 		<Version Version="1.3385.0.0" ProcessType="Steam">
+			<Data>0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90</Data>
+		</Version>
+
+		<Version Version="1.3495.0.0" ProcessType="Steam">
 			<Data>0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90</Data>
 		</Version>
 
@@ -1121,6 +1229,12 @@
 		<Version Version="1.3385.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x87A39D</Offset>
+			</Offsets>
+		</Version>
+
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x87CD5D</Offset>
 			</Offsets>
 		</Version>
 
@@ -1187,6 +1301,12 @@
 				<Offset>0x87A8F1</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x87D2B1</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x87D2B1</Offset>
@@ -1358,6 +1478,13 @@
 				<Offset>0x36222</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x36222</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -1729,6 +1856,13 @@
 				<Offset>0x560F57</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x561198</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -1841,6 +1975,13 @@
 				<Offset>0x9A6F6</Offset>
 			</Offsets>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): lea rax,[rip+..] right after the per-tick tickCounter store at 0x3BCA26, inside sub_1803BC8A4 (the copy moved out of the tick function vs Halo4 0x9A6F6). Fires under the sim-update gate, so in MP too -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x3BCA2C</Offset>
+			</Offsets>
+		</Version>
 	</VersionedEntry>
 
 	<!--confirm that it works on all levels. runs in cutscenes. reverts on all reverts.-->
@@ -1908,6 +2049,15 @@
 				<Offset>0x150</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x012C0340</Offset>
+				<!--+1080-->
+				<Offset>0x150</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -1984,6 +2134,13 @@
 			<Module>halo4.dll</Module>
 			<Offsets>
 				<Offset>0x487C6F0</Offset>
+			</Offsets>
+		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): u32 module-global copy of game_time_globals(TLS+0x90)+0xC, written every tick at 0x3BCA26 -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x32EF130</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -2105,6 +2262,13 @@
 				<Offset>0x20B86AC</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x20B96AC</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -2216,6 +2380,13 @@
 				<Offset>0x293DEAF</Offset>
 			</Offsets>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): main loop sub_180060518 tests it then saves (checkpoint save); natural setter 0x193FD8. Byte write only, 0x1364C40 is a separate flag -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x1364C3F</Offset>
+			</Offsets>
+		</Version>
 
 	</VersionedEntry>
 	<!-- #endregion forceCheckpointFlag-->
@@ -2320,6 +2491,13 @@
 				<Offset>0x20B86AA</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x20B96AA</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -2429,6 +2607,13 @@
 			<Module>halo4.dll</Module>
 			<Offsets>
 				<Offset>0x293DEAB</Offset>
+			</Offsets>
+		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): byte 3 of dword 0x1364C38; main loop revert branch calls load sub_1800487D4 (checkpoint load) -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x1364C3B</Offset>
 			</Offsets>
 		</Version>
 
@@ -2579,6 +2764,13 @@
 				<Offset>0x202F328</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x2030328</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -2688,6 +2880,13 @@
 			<Module>halo4.dll</Module>
 			<Offsets>
 				<Offset>0x27C607C</Offset>
+			</Offsets>
+		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): current checkpoint slot index (DWORD1 of 0x11ECDE8), (idx+1) mod 2 in save sub_180048584. MP save semantics unverified live -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x11ECDEC</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -2929,6 +3128,13 @@
 				<Offset>0x20A8144</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x20A9144</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -3076,6 +3282,13 @@
 				<Offset>0x9C</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x4001658</Offset>
+				<Offset>0x9C</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x4001658</Offset>
@@ -3226,6 +3439,13 @@
 				<Offset>0xA4827</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0xA4B47</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -3433,6 +3653,13 @@
 				<Offset>0x1C8F38</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x1C9288</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -5638,6 +5865,10 @@
 		<Version Version="1.3385.0.0" Game="Halo3">
 			<Offset>0x970000</Offset>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Offset>0x970000</Offset>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Offset>0x970000</Offset>
 		</Version>
@@ -5901,6 +6132,14 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x021BE4F0</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -5953,6 +6192,14 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x021BE4E0</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -6495,6 +6742,13 @@
 				<Offset>0x204ECB8</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x204FCB8</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -6540,6 +6794,13 @@
 				<Offset>0x203EFC8</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x203FFC8</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -7647,6 +7908,13 @@
 				<Offset>0x36FD11</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x370101</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -7933,6 +8201,14 @@
 				<Offset>0x2664</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x012C0340</Offset>
+				<Offset>0x2664</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -8104,6 +8380,14 @@
 				<Offset>0x272C</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x012BF340</Offset>
+				<Offset>0x272C</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -8395,6 +8679,14 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x01045ADC</Offset>
+				<Offset>0x160</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -8466,6 +8758,15 @@
 			<Offsets>
 				<Offset>0x018014D0</Offset>
 				<Offset>0x170</Offset>
+			</Offsets>
+		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): [game-state section 4 base global] + object data-array header (S4+0x1988A0) +0x50 = elements pointer. Groundhog has no Halo4-style checkpoint copy buffer -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x11ECCE0</Offset>
+				<Offset>0x1988F0</Offset>
+				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>
@@ -8614,6 +8915,10 @@
 		<Version Version="All" Game="Halo4">
 			<Offset>0x18</Offset>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): object data array esz 0x18 (datum_get uses [hdr+0x20]) -->
+		<Version Version="All" Game="Halo2MP">
+			<Offset>0x18</Offset>
+		</Version>
 	</VersionedEntry>
 
 	<VersionedEntry Name="objectTypeOffset" Type="int64_t">
@@ -8640,6 +8945,10 @@
 		<Version Version="All" Game="Halo4">
 			<Offset>0x4</Offset>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): getObjectAddress 0x5DBFEC: movzx eax,byte [rax+4] -->
+		<Version Version="All" Game="Halo2MP">
+			<Offset>0x4</Offset>
+		</Version>
 	</VersionedEntry>
 
 	<VersionedEntry Name="objectOffsetOffset" Type="int64_t">
@@ -8664,6 +8973,10 @@
 		</Version>
 
 		<Version Version="All" Game="Halo4">
+			<Offset>0x10</Offset>
+		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): getObjectAddress 0x5DBFEC returns [entry+0x10] -->
+		<Version Version="All" Game="Halo2MP">
 			<Offset>0x10</Offset>
 		</Version>
 	</VersionedEntry>
@@ -8761,6 +9074,13 @@
 				<Offset>0x34639C</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x34674C</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -8914,6 +9234,14 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x046B7710</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -8987,6 +9315,14 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): havok components data array global, created in sub_1800EDA64 (cnt 0x5DC, esz 0xE0) -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x10B0860</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 	</VersionedEntry>
 
 
@@ -9014,6 +9350,10 @@
 		<Version Version="All" Game="Halo4">
 			<tableOffset>0x60</tableOffset>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): data-array header +0x60 = elements - header (sub_18004315C) -->
+		<Version Version="All" Game="Halo2MP">
+			<tableOffset>0x60</tableOffset>
+		</Version>
 
 	</VersionedEntry>
 
@@ -9036,6 +9376,10 @@
 		</Version>
 
 		<Version Version="All" Game="Halo4">
+			<Offset>0xE0</Offset>
+		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): havok components esz 224 -->
+		<Version Version="All" Game="Halo2MP">
 			<Offset>0xE0</Offset>
 		</Version>
 	</VersionedEntry>
@@ -9091,6 +9435,14 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Offsets>
+				<Offset>0x20</Offset>
+				<Offset>0x50</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Offsets>
 				<Offset>0x20</Offset>
@@ -9158,6 +9510,14 @@
 			</Offsets>
 		</Version>
 		<Version Version="1.3528.0.0" Game="Halo4">
+			<Offsets>
+				<Offset>0x30</Offset>
+				<Offset>0x40</Offset>
+				<Offset>0x1C0</Offset>
+			</Offsets>
+		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): component+0x30 rigid-body array, element+0x40 hkpRigidBody, +0x1C0 motion; same Havok SDK build (hk_2011.3.1) as Halo4 -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
 			<Offsets>
 				<Offset>0x30</Offset>
 				<Offset>0x40</Offset>
@@ -9273,6 +9633,14 @@
 				<Offset>0x28</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x00FC4E6C</Offset>
+				<Offset>0x28</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -9392,6 +9760,14 @@
 				<Offset>0xA4</Offset>
 			</Offsets>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): static per-local-user Hud Audio element pointer array; element0+0xA4 is rewritten every tick (sub_1803C80A4) with the unit of the player mapped to local user 0, so it is MP-correct. No static equivalent of the Halo4 checkpoint-buffer chain exists -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x33DC660</Offset>
+				<Offset>0xA4</Offset>
+			</Offsets>
+		</Version>
 
 	</VersionedEntry>
 	<!-- #endregion playerDatum-->
@@ -9483,6 +9859,14 @@
 				<Offset>0x34C</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x00FC4E74</Offset>
+				<Offset>0x34C</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -9556,6 +9940,14 @@
 				<Offset>0x39C</Offset>
 			</Offsets>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): [section 4 base] + player control globals (S4+0x3D520) + user0 yaw/pitch +0x138 (per-user stride 0x200 here, 0x1F0 in Halo4) -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x11ECCE0</Offset>
+				<Offset>0x3D658</Offset>
+			</Offsets>
+		</Version>
 	</VersionedEntry>
 
 
@@ -9621,6 +10013,11 @@
 			<havokComponentDatum>0xF0</havokComponentDatum>
 			<visualPosition>0x64</visualPosition>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): object+0xF0 havok component index, +0x64 world position (unchanged from Halo4) -->
+		<Version Version="All" Game="Halo2MP">
+			<havokComponentDatum>0xF0</havokComponentDatum>
+			<visualPosition>0x64</visualPosition>
+		</Version>
 	</VersionedEntry>
 
 	<VersionedEntry Name="havokAnchorDataFields" Type="DynStructOffsetInfo">
@@ -9646,6 +10043,11 @@
 		</Version>
 
 		<Version Version="All" Game="Halo4">
+			<position>0x0</position>
+			<velocity>0x70</velocity>
+		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): Havok SDK motion layout, identical SDK build to Halo4 -->
+		<Version Version="All" Game="Halo2MP">
 			<position>0x0</position>
 			<velocity>0x70</velocity>
 		</Version>
@@ -9770,6 +10172,13 @@
 			<equipmentDatum>0x664</equipmentDatum>
 			<heroAssistDatum>0xD40</heroAssistDatum>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): fixed object fields only -->
+		<Version Version="All" Game="Halo2MP">
+			<!-- health/shields/healthCooldown/shieldCooldown DELIBERATELY OMITTED: groundhog keeps them in a damage block placed at obj + u16[obj+0x1D2], so the Halo4 values are tag-dependent and unverified. Omitting them makes GetObjectHealth fail cleanly for Halo2MP. -->
+			<currentVehicleDatum>0x24</currentVehicleDatum>
+			<position>0x64</position>
+			<velocity>0x88</velocity>
+		</Version>
 	</VersionedEntry>
 
 	<VersionedEntry Name="healthCooldownDataFields" Type="DynStructOffsetInfo">
@@ -9867,6 +10276,10 @@
 		<Version Version="All" Game="Halo4">
 			<tagDatum>0x8</tagDatum>
 			<!--actually not zero, go figure-->
+		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): object+0x8 tag index (sub_1805E7D20) -->
+		<Version Version="All" Game="Halo2MP">
+			<tagDatum>0x8</tagDatum>
 		</Version>
 
 	</VersionedEntry>
@@ -10045,6 +10458,15 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x20AD058</Offset>
+				<Offset>0x18</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -10144,6 +10566,14 @@
 				<Offset>0x10</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x20AD058</Offset>
+				<Offset>0x10</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -10215,6 +10645,15 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x20AD058</Offset>
+				<Offset>0x8</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -10359,6 +10798,12 @@
 			<magic>0x48</magic>
 			<!--safety check, should always read "sgat-->
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): only the fields the groundhog tags-header validator sub_18005BB70 reads -->
+		<Version Version="All" Game="Halo2MP">
+			<numberOfTags>0x10</numberOfTags>
+			<tagTableAddress>0x18</tagTableAddress>
+			<magic>0x48</magic>
+		</Version>
 
 	</VersionedEntry>
 
@@ -10452,6 +10897,14 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x20AD058</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -10535,6 +10988,15 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): tag cache {count, entries} 0x12E3AC8, entries ptr at +8; entry+0x2F0 = tags header (magic tags at +0x48) -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x12E3AD0</Offset>
+				<Offset>0x2F0</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 	</VersionedEntry>
 
 
@@ -10583,6 +11045,14 @@
 				<Offset>0x20000</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0xA49148</Offset>
+				<Offset>0x20000</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -10656,6 +11126,14 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): string buffer 0x12E3AF0 + 0x410E8 per-string pointer array (loader sub_18005C3B8) -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x1324BD8</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 	</VersionedEntry>
 
 	<VersionedEntry Name="stringMetaTable" Type="MultilevelPointer::ModuleOffset">
@@ -10703,6 +11181,14 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0xA49148</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -10776,6 +11262,14 @@
 			<Module>halo4.dll</Module>
 			<Offsets>
 				<Offset>0x028BCD30</Offset>
+				<Offset>0x1E0C8</Offset>
+			</Offsets>
+		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): cache entry +0x1E0C8 (same entry layout as Halo4) -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x12E3AD0</Offset>
 				<Offset>0x1E0C8</Offset>
 			</Offsets>
 		</Version>
@@ -10922,6 +11416,13 @@
 				<Offset>0x1FCE4C8</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x1FCF4C8</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -11045,6 +11546,13 @@
 				<Offset>0x56C115</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x56C4EE</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -11567,6 +12075,13 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x04000BA0</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x04000BA0</Offset>
@@ -11660,6 +12175,13 @@
 				<Offset>0x103D74</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x1040C4</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -11784,6 +12306,13 @@
 				<Offset>0x1027B9</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x102B09</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -11859,6 +12388,12 @@
 				<pOutputString>rdi+0</pOutputString>
 			</Parameters>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Parameters>
+				<pOutputString>rdi+0</pOutputString>
+			</Parameters>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Parameters>
 				<pOutputString>rdi+0</pOutputString>
@@ -12050,6 +12585,13 @@
 				<Offset>0x131840</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x131B90</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -12325,6 +12867,13 @@
 				<Offset>0x2D20E7</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x2D2497</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -12484,6 +13033,10 @@
 		<Version Version="1.3385.0.0" Game="Halo3">
 			<Data>0x90, 0x90</Data>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Data>0x90, 0x90</Data>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Data>0x90, 0x90</Data>
 		</Version>
@@ -12625,6 +13178,13 @@
 				<!--<Offset>0x1805BD</Offset>-->
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x17E70C</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -12725,6 +13285,14 @@
 				<Offset>0x824</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x0125CB24</Offset>
+				<Offset>0x824</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -12871,6 +13439,13 @@
 				<Offset>0x2D2E6B0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x2D2F6B0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -12954,6 +13529,13 @@
 				<Offset>0x18037B</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x1806CB</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -12994,6 +13576,10 @@
 		<Version Version="1.3385.0.0" Game="Halo3">
 			<Data>0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90</Data>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Data>0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90</Data>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Data>0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90</Data>
 		</Version>
@@ -13067,6 +13653,12 @@
 				<Offset>0x3FB0EBC</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x3FB508C</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x3FB508C</Offset>
@@ -13180,6 +13772,13 @@
 				<Offset>0x2229050</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x222A050</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -13278,6 +13877,13 @@
 				<Offset>0x222904C</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x222A04C</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -13378,6 +13984,13 @@
 				<Offset>0x2229054</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x222A054</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -13476,6 +14089,13 @@
 				<Offset>0x2229058</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x222A058</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -13574,6 +14194,13 @@
 				<Offset>0x2229054</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x222A054</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -13672,6 +14299,13 @@
 				<Offset>0x2229058</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x222A058</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -13772,6 +14406,13 @@
 				<Offset>0x2229064</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x222A064</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -13968,6 +14609,13 @@
 				<Offset>0xB2783</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0xB2AA3</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -14020,6 +14668,10 @@
 		<Version Version="1.3385.0.0" Game="Halo3">
 			<Data>0x90, 0x90, 0x90, 0x90, 0x90</Data>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Data>0x90, 0x90, 0x90, 0x90, 0x90</Data>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Data>0x90, 0x90, 0x90, 0x90, 0x90</Data>
 		</Version>
@@ -14107,6 +14759,20 @@
 	<!-- Halo 3 placement-search validity tests (for PlacementPointsOverlay V2). surfaceTest sets a u16 surface ref -->
 	<!-- (0xFFFF = none) for a world position; used to colour candidate respawn/vehicle-exit points valid/invalid.   -->
 	<VersionedEntry Name="placementSurfaceTestFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3385.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x9B958</Offset>
+			</Offsets>
+		</Version>
+
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x9BC78</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -14129,6 +14795,20 @@
 
 	<!-- BSP-validity test sub_1801FCAC0(flags, &pos, unitDatum, -1, 0) -> nonzero = point is blocked/in-solid. -->
 	<VersionedEntry Name="placementBspValidityFunction" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3385.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x1FC718</Offset>
+			</Offsets>
+		</Version>
+
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x1FCAC0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -14151,6 +14831,20 @@
 
 	<!-- collision-BSP flags global (arg a1 to the BSP-validity test); resolves to the address, read the qword there. -->
 	<VersionedEntry Name="placementBspFlagsGlobal" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3385.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x22853C0</Offset>
+			</Offsets>
+		</Version>
+
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x22863C0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -14235,6 +14929,13 @@
 				<Offset>0xB3228</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0xB3548</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -14361,6 +15062,13 @@
 				<Offset>0x89BAE4</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x89CAD8</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -14433,6 +15141,13 @@
 				<Offset>0x46B60A8</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x46B70A8</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -14477,6 +15192,13 @@
 				<Offset>0x4967A18</Offset>
 			</Offsets>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): u32 loaded-BSP mask, written by the zone-set switch sub_180044E0C at 0x44E4A -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x33DA4E0</Offset>
+			</Offsets>
+		</Version>
 	</VersionedEntry>
 
 	<VersionedEntry Name="BSPSetChangeFunction" Type="MultilevelPointer::ModuleOffset">
@@ -14486,6 +15208,13 @@
 				<Offset>0x9C1C8</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x9C4E8</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -14553,6 +15282,13 @@
 		</Version>
 		<Version Version="1.3528.0.0" Game="Halo4">
 			<Module>halo4.dll</Module>
+			<Offsets>
+				<Offset>0xE5BB50</Offset>
+			</Offsets>
+		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): active zone set index (same RVA as Halo4), written at 0x44E43, -1 when no scenario -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
 			<Offsets>
 				<Offset>0xE5BB50</Offset>
 			</Offsets>
@@ -14673,6 +15409,15 @@
 			</Offsets>
 			<BitOffset>0</BitOffset>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x2030288</Offset>
+				<Offset>0xFDEC</Offset>
+			</Offsets>
+			<BitOffset>0</BitOffset>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -15914,6 +16659,13 @@
 				<Offset>0x16F20C</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x16F55C</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -16036,6 +16788,12 @@
 				<Offset>0x87A479</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" ProcessType="Steam">
+			<Offsets>
+				<Offset>0x87CE43</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" ProcessType="Steam">
 			<Offsets>
 				<Offset>0x87CE43</Offset>
@@ -16150,6 +16908,14 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0xA46A08</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -16202,6 +16968,14 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<!-- Halo 2 Anniversary MP (groundhog.dll): scenario tag data pointer, stored at 0x5D8F4 by the scnr tag lookup -->
+		<Version Version="1.3528.0.0" Game="Halo2MP">
+			<Module>groundhog.dll</Module>
+			<Offsets>
+				<Offset>0x33DA4F8</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 	</VersionedEntry>
 
 
@@ -16246,9 +17020,16 @@
 		<Version Version="1.3385.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
-				<Offset>0x89BAE4</Offset>
+				<Offset>0x89BAE8</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x89CAE4</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -16695,6 +17476,13 @@
 				<Offset>0x1BB051</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x1BB3A1</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -16748,6 +17536,10 @@
 		<Version Version="1.3385.0.0" Game="Halo3">
 			<Data>0xEB, 0x61</Data>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Data>0xEB, 0x61</Data>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Data>0xEB, 0x61</Data>
 		</Version>
@@ -16816,6 +17608,13 @@
 				<Offset>0x278AEE</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x278E9E</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -16828,6 +17627,10 @@
 		<Version Version="1.3385.0.0" Game="Halo3">
 			<Data>0x11</Data>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Data>0x11</Data>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Data>0x11</Data>
 		</Version>
@@ -16840,6 +17643,13 @@
 				<Offset>0x278B06</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x278EB6</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -16887,6 +17697,13 @@
 				<Offset>0x1C52DB</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3495.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0x1C562B</Offset>
+			</Offsets>
+		</Version>
+
 		<Version Version="1.3528.0.0" Game="Halo3">
 			<Module>halo3.dll</Module>
 			<Offsets>
@@ -16956,6 +17773,10 @@
 		</Version>
 
 		<Version Version="1.3385.0.0" Game="Halo3">
+			<Data>0xE9, 0x1E, 0x02, 0x00, 0x00</Data>
+		</Version>
+
+		<Version Version="1.3495.0.0" Game="Halo3">
 			<Data>0xE9, 0x1E, 0x02, 0x00, 0x00</Data>
 		</Version>
 

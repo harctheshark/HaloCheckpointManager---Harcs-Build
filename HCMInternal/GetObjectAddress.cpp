@@ -288,6 +288,13 @@ GetObjectAddress::GetObjectAddress(GameState game, IDIContainer& dicon)
 		pimpl = std::make_unique<GetObjectAddressDirectPointer<Halo4ObjectType>>(game, dicon);
 		break;
 
+	// Halo 2 Anniversary MP (groundhog, Halo 4 engine lineage): getObjectAddress and datum_get are
+	// instruction-identical to Halo 4's and the object type table has the same 16 types in the same order
+	// (biped 0, vehicle 1 ...), so Halo 4's object type enum applies.
+	case GameState::Value::Halo2MP:
+		pimpl = std::make_unique<GetObjectAddressDirectPointer<Halo4ObjectType>>(game, dicon);
+		break;
+
 
 	default: throw HCMInitException("not impl yet");
 	}

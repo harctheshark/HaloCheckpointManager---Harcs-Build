@@ -411,12 +411,17 @@ private:
 		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobFpCode - Halo3TheaterInterp_Detail::kCaveRva)) = 3;
 		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobEnable - Halo3TheaterInterp_Detail::kCaveRva)) = 1;
 		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobObsPos - Halo3TheaterInterp_Detail::kCaveRva)) = 0;
-		// Our own knob (not from the blob): the LegAttach MODE. 1 = fix. Poke live to A/B without touching
-		// the camera fix: 0 = diagnostics only (stock legs), 4 = the fix with its sign flipped, which MUST look
-		// worse - if 1 and 4 look the same, the correction is not reaching the screen. kLegFixHits counts
+		// Our own knob (not from the blob): the LegAttach MODE. Poke live to A/B without touching the camera
+		// fix: 0 = diagnostics only (the engine's legs), 1 = fix, 4 = the fix with its sign flipped, which MUST
+		// look worse - if 1 and 4 look the same, the correction is not reaching the screen. kLegFixHits counts
 		// entries, so a stuck-at-0 counter means the hook never fired, not that the fix did nothing. Full
 		// readout table in Halo3TheaterInterpCave.h.
-		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobLegFix - Halo3TheaterInterp_Detail::kCaveRva)) = 1;
+		// ⚠ v2.4: 0, NOT 1. Since v2.2 the eye follows the smoothed aim and the engine already draws the legs
+		// with that same smoothed camera, so they stay attached on their own. With the fix on, spin-jumps made
+		// the legs judder back and forth at 30 Hz (the jump animation moves the pelvis off the eye's pivot and
+		// the fix re-imposed the per-tick leg position). Live A/B 2026-09-23: 0 = jumps improved, standing and
+		// walking unchanged.
+		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kKnobLegFix - Halo3TheaterInterp_Detail::kCaveRva)) = 0;
 		*(uint32_t*)(mCave + (Halo3TheaterInterp_Detail::kLegFixHits - Halo3TheaterInterp_Detail::kCaveRva)) = 0;
 		setCrouchKnob(currentCrouchSetting());
 

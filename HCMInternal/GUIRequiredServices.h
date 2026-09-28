@@ -4,10 +4,10 @@
 // A sequence of pairs, where the first element of a pair is the GUIElementEnum name, and the second element is a tuple of supported games for that GUIElementEnum
 #define TOPGUIELEMENTS_RELEASE \
 ((presetsHeadingGUI,(ALL_GAMES_AND_MAINMENU)))\
-((controlHeadingGUI,(ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
-((saveManagementHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5)))\
-((cheatsHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER)))\
-((overlaysHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5)))\
+((controlHeadingGUI,(ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
+((saveManagementHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5_AND_H2MP)))\
+((cheatsHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER_AND_H2MP)))\
+((overlaysHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5_AND_H2MP)))\
 ((cameraHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 ((theaterHeadingGUI,(Halo3,Halo3ODST,HaloReach,Halo4)))\
 ((debugHeadingGUI, (ALL_SUPPORTED_GAMES)))\

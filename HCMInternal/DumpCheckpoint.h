@@ -124,13 +124,14 @@ private:
 			if (err) throw HCMRuntimeException(std::format("error storing checkpointData from memory! code: {}", err));
 
 			// add version information to last 10 bytes of file
-			std::string versionString = getMCCVer->getMCCVersionAsString().data();
+			// The game DLL's build, not the exe's - it is what defines the checkpoint format (they differ on a mixed downpatch).
+			std::string versionString(getMCCVer->getGameDataVersionAsString(mImplGame));
 			if (versionString.size() != 10) throw HCMRuntimeException(std::format("Version string was the wrong size somehow?! Expected: 10, Actual: {}", versionString.size()));
 			std::copy(std::begin(versionString), std::end(versionString), std::end(checkpointData) - 10);
 
 
 			// setup file stream and write
-			std::ofstream dumpFile(str_to_wstr(dumpPath), std::ios::binary); // convert to wstr to handle unicode characters like 'á' etc
+			std::ofstream dumpFile(str_to_wstr(dumpPath), std::ios::binary); // convert to wstr to handle unicode characters like 'ï¿½' etc
 			dumpFile.exceptions(std::ofstream::badbit); // we want exceptions
 
 			if (!dumpFile) throw HCMRuntimeException(std::format("Could not create file at location: {},\nare there naughty characters in your checkpoint name?", dumpPath));

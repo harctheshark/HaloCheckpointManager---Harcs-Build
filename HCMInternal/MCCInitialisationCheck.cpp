@@ -11,6 +11,7 @@ std::expected<uintptr_t, std::string> getInitFlagAddress(HMODULE dllHandle)
 	const std::map< std::string, uintptr_t> steamOffsetMap =
 	{
 		{ "1.3528.0.0", 0x4000B10 },
+		{ "1.3495.0.0", 0x4000B10 }, // same layout as 1.3528 (signature-transferred, 2/2 references agree)
 		{ "1.3385.0.0", 0x3FFCA18 },
 		{ "1.3272.0.0", 0x3FFDA28 },
 		{ "1.2904.0.0", 0x3F7B848 },

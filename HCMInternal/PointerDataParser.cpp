@@ -87,6 +87,8 @@ namespace PointerDataParser
 
         xml_node root = doc.child("root");
 
+        // Must run before the loop below: entryIsCorrectMCCVersion consults the per-game choice it makes.
+        selectGameDataVersions(root, getMCCVer);
 
         for (xml_node entry = root.first_child(); entry; entry = entry.next_sibling())
         {
@@ -164,11 +166,108 @@ namespace PointerDataParser
         bool entryIsCorrectMCCVersion(VersionEntry entry, std::shared_ptr<IGetMCCVersion> getMCCVer)
         {
             std::string versionEntryMCCVersion = entry.attribute("Version").value();
-            bool out = versionEntryMCCVersion == "All" || versionEntryMCCVersion == getMCCVer->getMCCVersionAsString();
+            if (versionEntryMCCVersion == "All") return true;
+
+            // Game-specific entries follow that game's data version (its DLL's, on a mixed downpatch); exe-level
+            // entries (no Game attribute) always follow the exe.
+            std::string_view wanted = getMCCVer->getMCCVersionAsString();
+            // ⚠ Never let a bad Game attribute escape from here: this runs OUTSIDE the per-entry try in
+            // parseVersionedData, so a throw would abort HCM startup for everyone. Fall back to the exe version;
+            // processVersionedEntry still reports the bad name as an ordinary parse error.
+            try
+            {
+                if (auto game = getEntryGame(entry); game.has_value())
+                    wanted = getMCCVer->getGameDataVersionAsString(game.value());
+            }
+            catch (const HCMInitException&) {}
+
+            bool out = versionEntryMCCVersion == wanted;
 
             if (!out)
                 PLOG_DEBUG << "Version mismatch: " << versionEntryMCCVersion;
             return out;
+        }
+
+        std::optional<std::string> readGameDllVersionFromDisk(GameState game)
+        {
+            // Steam layout: <root>\mcc\binaries\win64\MCC-Win64-Shipping.exe and <root>\<folder>\<folder>.dll, where
+            // the folder is the module name without ".dll" (halo3\halo3.dll, groundhog\groundhog.dll, ...). Read from
+            // disk because the game DLLs are not loaded yet when HCM initialises.
+            char exePath[MAX_PATH] = {};
+            if (!GetModuleFileNameA(GetModuleHandle(NULL), exePath, sizeof(exePath))) return std::nullopt;
+
+            std::filesystem::path win64 = std::filesystem::path(exePath).parent_path();
+            std::filesystem::path binaries = win64.parent_path();
+            std::filesystem::path mcc = binaries.parent_path();
+            if (!boost::iequals(win64.filename().string(), "win64") || !boost::iequals(binaries.filename().string(), "binaries")
+                || !boost::iequals(mcc.filename().string(), "mcc"))
+            {
+                PLOG_DEBUG << "readGameDllVersionFromDisk: unexpected install layout for " << exePath;
+                return std::nullopt;
+            }
+
+            std::filesystem::path module(game.toModuleName());
+            std::filesystem::path dllPath = mcc.parent_path() / module.stem() / module;
+            std::error_code ec;
+            if (!std::filesystem::exists(dllPath, ec)) return std::nullopt;
+
+            try
+            {
+                std::stringstream ss;
+                ss << getFileVersion(dllPath.string().c_str());
+                return ss.str();
+            }
+            catch (...)
+            {
+                PLOG_DEBUG << "readGameDllVersionFromDisk: no version resource in " << dllPath.string();
+                return std::nullopt;
+            }
+        }
+
+        void selectGameDataVersions(pugi::xml_node root, std::shared_ptr<IGetMCCVersion> getMCCVer)
+        {
+            // Only Steam can be downpatched (and only Steam has this install layout). WinStore, HCE and Halo 5 key
+            // their data off a single synthetic or forced version.
+            if (getMCCVer->getMCCProcessType() != MCCProcessType::Steam) return;
+
+            // How many entries apply to each (version, game), honouring the same ProcessType filter the main loop uses.
+            std::map<std::pair<std::string, std::string>, int> counts;
+            for (pugi::xml_node entry = root.child("VersionedEntry"); entry; entry = entry.next_sibling("VersionedEntry"))
+            {
+                for (VersionEntry versionEntry = entry.child("Version"); versionEntry; versionEntry = versionEntry.next_sibling("Version"))
+                {
+                    if (versionEntry.attribute("Game").empty() || !entryIsCorrectProcessType(versionEntry, getMCCVer)) continue;
+                    counts[{ versionEntry.attribute("Version").value(), versionEntry.attribute("Game").value() }]++;
+                }
+            }
+
+            const std::string exeVersion(getMCCVer->getMCCVersionAsString());
+            for (GameState game : { GameState::Value::Halo1, GameState::Value::Halo2, GameState::Value::Halo2MP, GameState::Value::Halo3,
+                                    GameState::Value::Halo3ODST, GameState::Value::HaloReach, GameState::Value::Halo4 })
+            {
+                auto dllVersion = readGameDllVersionFromDisk(game);
+                if (!dllVersion.has_value() || dllVersion.value() == exeVersion) continue;
+
+                const int dllCount = counts[{ dllVersion.value(), game.toString() }];
+                const int exeCount = counts[{ exeVersion, game.toString() }];
+
+                // ⚠ A version can hold a few entries without being a usable set: 1.3495 has two Halo 2 checkpoint-format
+                // rows and nothing else. Switching Halo 2 to that would throw away ~100 working entries, so demand a set
+                // at least 90% the size of the exe version's (and never fewer than 10) before trusting it.
+                if (dllCount >= std::max(10, exeCount * 9 / 10))
+                {
+                    getMCCVer->setGameDataVersion(game, dllVersion.value());
+                    PLOG_INFO << "Mixed downpatch: " << game.toString() << "'s DLL on disk is " << dllVersion.value()
+                        << " (MCC exe is " << exeVersion << "), so HCM uses the " << dllVersion.value() << " data for it ("
+                        << dllCount << " entries)";
+                }
+                else
+                {
+                    PLOG_WARNING << "Mixed downpatch: " << game.toString() << "'s DLL on disk is " << dllVersion.value()
+                        << " but HCM has no complete data for that build (" << dllCount << " entries vs " << exeCount
+                        << " for " << exeVersion << "). Using the " << exeVersion << " data, which may not match that DLL.";
+                }
+            }
         }
 
         bool entryIsCorrectProcessType(VersionEntry entry, std::shared_ptr<IGetMCCVersion> getMCCVer)

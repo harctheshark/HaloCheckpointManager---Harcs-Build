@@ -45,6 +45,7 @@
 #include "HCETriggerOverlay.h"
 #include "HCEBspOverlay.h"
 #include "HCEInvisibleGeometryOverlay.h"
+#include "HCEVisibleGeometryOverlay.h"
 #include "HCEAISquadOverlay.h"
 #include "Halo3TheaterInterp.h"
 #include "HCETriggerActivity.h"
@@ -338,6 +339,20 @@ public:
 				{
 					// Cheat constructors ought to be catching bad_weak_ptr on their own but juuuuust in case
 					HCMInitException converted(std::format("std::bad_weak_ptr exception! {}", ex.what()));
+					info->setInfo(gameCheatPair, { converted });
+				}
+				// Anything else escaping a std::thread calls std::terminate and kills MCC at injection - in EVERY
+				// game, not just the one whose cheat threw. A new game's cheat constructor (e.g. std::out_of_range
+				// from a map .at()) must become a recorded service failure instead. This also covers the nested
+				// getOrMakeCheat path: a dependency's throw propagates up to here.
+				catch (const std::exception& ex)
+				{
+					HCMInitException converted(std::format("{}: {}", typeid(ex).name(), ex.what()));
+					info->setInfo(gameCheatPair, { converted });
+				}
+				catch (...)
+				{
+					HCMInitException converted("Unknown (non std::exception) exception while constructing cheat");
 					info->setInfo(gameCheatPair, { converted });
 				}
 				}));

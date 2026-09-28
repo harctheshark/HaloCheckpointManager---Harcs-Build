@@ -1078,6 +1078,15 @@ public:
 			nameof(display2DInfoShowBSPSet)
 		);
 
+	// Active zone set index in the Display 2D Info overlay (row currently offered for Halo 2 Anniversary MP only).
+	// Declared ABOVE allSerialisableOptions on purpose: that vector is a member initialised in declaration order.
+	std::shared_ptr<BinarySetting<bool>> display2DInfoShowZoneSet = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(display2DInfoShowZoneSet)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> display2DInfoTrackPlayer = std::make_shared<BinarySetting<bool>>
 		(
 			true,
@@ -1941,6 +1950,71 @@ public:
 			0.9f,
 			[](float in) { return in >= 0.f && in <= 1.f; },
 			nameof(hceInvisibleGeometryOverlayWireframeAlpha)
+		);
+
+	// ---- Halo Campaign Evolved VISIBLE instanced geometry overlay. See HCEVisibleGeometryOverlay.h.
+	// The toggle is deliberately NOT persisted (see the BSP overlay's note in allSerialisableOptions).
+	// Radius, budget, refresh and the two opacities are Halo 5's Havok overlay defaults and ranges (h5HavokOverlay*).
+	std::shared_ptr<BinarySetting<bool>> hceVisibleGeometryOverlayToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(hceVisibleGeometryOverlayToggle)
+		);
+
+	// WORLD units (1 world unit = 10 feet). 32767 is far larger than any level, so it effectively means no cull.
+	std::shared_ptr<BinarySetting<float>> hceVisibleGeometryOverlayRadius = std::make_shared<BinarySetting<float>>
+		(
+			25.f,
+			[](float in) { return in >= 1.f && in <= 32767.f; },
+			nameof(hceVisibleGeometryOverlayRadius)
+		);
+
+	// A hard stop, nearest first, so a large radius degrades into "draws less" instead of stalling.
+	std::shared_ptr<BinarySetting<float>> hceVisibleGeometryOverlayTriangleBudget = std::make_shared<BinarySetting<float>>
+		(
+			40000.f,
+			[](float in) { return in >= 1000.f && in <= 400000.f; },
+			nameof(hceVisibleGeometryOverlayTriangleBudget)
+		);
+
+	std::shared_ptr<BinarySetting<float>> hceVisibleGeometryOverlayRefreshMs = std::make_shared<BinarySetting<float>>
+		(
+			250.f,
+			[](float in) { return in >= 16.f && in <= 5000.f; },
+			nameof(hceVisibleGeometryOverlayRefreshMs)
+		);
+
+	// Cyan: distinct from the BSP overlay's green and the invisible overlay's magenta. .w stays 1 (GUIColourPicker
+	// edits RGB only); opacity is the two alpha settings below.
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> hceVisibleGeometryOverlayColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4(0.2f, 0.8f, 1.f, 1.f),
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(hceVisibleGeometryOverlayColor)
+		);
+
+	// Wireframe by default: solid collision is an opaque wall.
+	std::shared_ptr<BinarySetting<float>> hceVisibleGeometryOverlayWireAlpha = std::make_shared<BinarySetting<float>>
+		(
+			0.85f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(hceVisibleGeometryOverlayWireAlpha)
+		);
+
+	std::shared_ptr<BinarySetting<float>> hceVisibleGeometryOverlayFillAlpha = std::make_shared<BinarySetting<float>>
+		(
+			0.f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(hceVisibleGeometryOverlayFillAlpha)
+		);
+
+	// Hidden-line wireframe: a biased depth pre-pass of the collision, so only the nearest surface's edges draw.
+	std::shared_ptr<BinarySetting<bool>> hceVisibleGeometryOverlayHideHiddenLines = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(hceVisibleGeometryOverlayHideHiddenLines)
 		);
 
 	// Show ONLY the volumes a speedrun has to hit (the community completion-requirement lists).
@@ -3866,6 +3940,7 @@ public:
 		display2DInfoShowLevelLoadRNG,
 		display2DInfoShowBSP,
 			display2DInfoShowBSPSet,
+		display2DInfoShowZoneSet,
 		display2DInfoShowNextObjectDatum,
 		display2DInfoTrackPlayer,
 		display2DInfoShowPlayerViewAngle,
@@ -4012,6 +4087,14 @@ public:
 		hceInvisibleGeometryOverlayAlpha,
 		hceInvisibleGeometryOverlayWireframeColor,
 		hceInvisibleGeometryOverlayWireframeAlpha,
+		// hceVisibleGeometryOverlayToggle deliberately absent, for the same reason as hceBspOverlayToggle.
+		hceVisibleGeometryOverlayRadius,
+		hceVisibleGeometryOverlayTriangleBudget,
+		hceVisibleGeometryOverlayRefreshMs,
+		hceVisibleGeometryOverlayColor,
+		hceVisibleGeometryOverlayWireAlpha,
+		hceVisibleGeometryOverlayFillAlpha,
+		hceVisibleGeometryOverlayHideHiddenLines,
 		editPlayerViewAngleVec2,
 		editPlayerViewAngleAdjustFactor,
 		editPlayerViewAngleIDInt,

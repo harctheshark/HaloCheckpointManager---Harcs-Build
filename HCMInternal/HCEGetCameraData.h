@@ -22,10 +22,18 @@
 //     from it so all three stay in lockstep if the struct ever moves.
 //   * NOT FMinimalViewInfo::operator= (RVA 0x5AA7BB0), which the external CER tool hooks: its first 238 bytes are
 //     DUPLICATED at RVA 0x7ECC950, so a byte signature matches twice. DoUpdateCamera has no twin.
-//   * The FOV is HORIZONTAL. FMinimalViewInfo::CalculateProjectionMatrixGivenViewRectangle uses
-//     XAxisMultiplier = 1.0 under MaintainXFOV (the live default), so focal = width / (2*tan(FOV/2)) is the
-//     engine's own projection, not an approximation. Anything building a projection MATRIX from it must convert:
-//     vfov = 2*atan(tan(hfov/2) * height/width).
+//   * ⚠⚠ THE FOV IS HORIZONTAL ONLY AT THE CAMERA'S OWN ASPECT RATIO, NOT ACROSS THE SCREEN. (Corrected
+//     2026-09-23; this used to say "horizontal, MaintainXFOV is the live default" - that premise came from a
+//     movie-render-pipeline function, not the game viewport, and it made every HaloCER overlay too large about
+//     the screen centre on any non-16:9 display: ~1.34x at 3440x1440, exact at the crosshair.) The game runs
+//     ULocalPlayer::AspectRatioAxisConstraint = MaintainYFOV (shipped BaseEngine.ini, no override anywhere), and
+//     FMinimalViewInfo::CalculateProjectionMatrixGivenViewRectangle (exe 0x5D5AD90, non-legacy path at
+//     0x5D5B431) turns that into halfVertical = atan(tan(FOV/2) / POV.AspectRatio). The game's own UI maths at
+//     0x7C83E40 does the same "Hor+" widening. ueProjection() below replicates it; nothing else may build a
+//     projection from the FOV by hand.
+//   * The FOV the frame is rendered with is APlayerCameraManager::GetFOVAngle(): LockedFOV (PCM+0x2F4) when it
+//     is > 0 - which is exactly what HCM's own FOV lock writes - else the cached POV FOV. The cache never sees
+//     LockedFOV, so the snapshot reads it separately.
 //
 // COORDINATE FRAME - READ BEFORE TOUCHING ueRotationToBlamBasis()
 // --------------------------------------------------------------
@@ -58,8 +66,28 @@ public:
 		float pitchDegrees = 0.f;
 		float yawDegrees = 0.f;
 		float rollDegrees = 0.f;
+		// The FOV the frame is RENDERED with (LockedFOV when set, else the POV's). Horizontal only at
+		// referenceAspectRatio - never convert it by hand, use ueProjection().
 		float horizontalFovDegrees = 0.f;
+		float referenceAspectRatio = 0.f;   // FMinimalViewInfo::AspectRatio (+0x5C); 0 = not known
+		int axisConstraintOverride = -1;    // the POV's own EAspectRatioAxisConstraint override (+0x60 if +0x64), -1 = none
+		bool constrainAspectRatio = false;  // FMinimalViewInfo::bConstrainAspectRatio (+0x68 bit0): letterboxed view
 	};
+
+	// EAspectRatioAxisConstraint, and the value this game's ULocalPlayer uses (BaseEngine.ini, never overridden).
+	static constexpr int kMaintainYFov = 0, kMaintainXFov = 1, kMajorAxisFov = 2;
+	static constexpr int kLocalPlayerAxisConstraint = kMaintainYFov;
+
+	// Where UE puts the picture on a screenWidth x screenHeight back buffer, and the vertical FOV it projects with.
+	// The view rect is the whole screen unless the camera constrains its aspect (cinematic letterbox/pillarbox).
+	struct UeProjection
+	{
+		float verticalFovRadians = 0.f;
+		float aspectRatio = 1.f;   // of the view rect
+		float viewX = 0.f, viewY = 0.f, viewWidth = 0.f, viewHeight = 0.f;
+	};
+	// Pure maths replicating FMinimalViewInfo::CalculateProjectionMatrixGivenViewRectangle. Never throws.
+	static UeProjection ueProjection(const UeCamera& camera, float screenWidth, float screenHeight);
 
 	HCEGetCameraData(GameState game, IDIContainer& dicon);
 	~HCEGetCameraData();
@@ -99,6 +127,10 @@ public:
 	// usable on the very first frames (and while falling back to the sim's player camera, which has no FOV).
 	float getLastGoodHorizontalFov() const;
 
+	// The last good camera's PROJECTION parameters (FOV, reference aspect, constraint, letterbox) with no position
+	// or rotation - for fallbacks that aim with the sim's player camera but must still project the way UE does.
+	UeCamera getLastGoodProjectionParameters() const;
+
 	// ---- the elected camera OBJECT, for consumers that need to WRITE it -------------------------------------
 	//
 	// Everything above deliberately hands out VALUES captured at assignment time, because reading a latched
@@ -135,7 +167,9 @@ public:
 	static std::string getElectionDiagnostics();
 
 	// UE Pitch/Yaw/Roll (DEGREES) -> a Blam-frame orthonormal basis. Roll is applied about the forward axis
-	// (the external CER tool reads roll and then silently ignores it; that is a bug there, not here).
+	// (the external CER tool reads roll and then silently ignores it; that is a bug there, not here), with UE's
+	// FRotationMatrix sign: right = cosR*right0 - sinR*up0, up = cosR*up0 + sinR*right0. (It used the opposite sign
+	// until 2026-09-23, which turned the overlay by twice the roll the wrong way whenever the camera was tilted.)
 	static void ueRotationToBlamBasis(float pitchDegrees, float yawDegrees, float rollDegrees,
 		SimpleMath::Vector3& outForward, SimpleMath::Vector3& outRight, SimpleMath::Vector3& outUp);
 

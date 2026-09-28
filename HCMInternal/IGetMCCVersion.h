@@ -1,4 +1,5 @@
 #pragma once
+#include "GameState.h"
 enum class MCCProcessType
 {
 	Steam,
@@ -25,5 +26,14 @@ public:
 	virtual std::string_view getMCCVersionAsString() = 0;
 	virtual MCCProcessType getMCCProcessType() = 0;
 	virtual std::string_view getMCCProcessTypeAsString() = 0;
+
+	// The version whose pointer data applies to `game`. Normally the MCC (exe) version. It differs only for a MIXED
+	// downpatch: that game's DLL on disk comes from another MCC build (e.g. a 1.3385 halo3.dll under the 1.3495 or
+	// 1.3528 exe) AND the pointer data holds a complete set for the DLL's version. Chosen once, by
+	// PointerDataParser::parseVersionedData, before any pointer data is handed out.
+	// Not pure, so implementations that never see a mixed install (the test mock) need not care.
+	virtual std::string_view getGameDataVersionAsString(GameState game) { return getMCCVersionAsString(); }
+	virtual void setGameDataVersion(GameState game, std::string version) {}
+
 	virtual ~IGetMCCVersion() = default;
 };

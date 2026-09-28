@@ -1663,6 +1663,8 @@ private:
 							createNestedElement(GUIElementEnum::hceBspOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::hceInvisibleGeometryOverlayToggleGUI),
 							createNestedElement(GUIElementEnum::hceInvisibleGeometryOverlaySettingsSubheading),
+							createNestedElement(GUIElementEnum::hceVisibleGeometryOverlayToggleGUI),
+							createNestedElement(GUIElementEnum::hceVisibleGeometryOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::hceSoftCeilingOverlayToggleGUI),
 							createNestedElement(GUIElementEnum::hceSoftCeilingOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::softCeilingOverlayToggle),
@@ -1698,6 +1700,7 @@ private:
 							createNestedElement(GUIElementEnum::display2DInfoShowLevelLoadRNG),
 							createNestedElement(GUIElementEnum::display2DInfoShowBSP),
 							createNestedElement(GUIElementEnum::display2DInfoShowBSPSet),
+							createNestedElement(GUIElementEnum::display2DInfoShowZoneSet),
 							createNestedElement(GUIElementEnum::display2DInfoShowNextObjectDatum),
 							createNestedElement(GUIElementEnum::display2DInfoTrackPlayer),
 							createNestedElement(GUIElementEnum::display2DInfoTrackCustomObject),
@@ -1737,6 +1740,13 @@ private:
 							(game, ToolTipCollection(""), std::nullopt,
 								("Show BSP Set"),
 								settings->display2DInfoShowBSPSet));
+
+					// Declared in GUI GROUP 4 (GuiElementEnum.h) - groups 1-3 are at the MSVC C1009 ceiling.
+					case GUIElementEnum::display2DInfoShowZoneSet:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("Shows the index of the active zone set (as listed in the scenario's zone set block). -1 while no scenario is loaded."), std::nullopt,
+								("Show Zone Set"),
+								settings->display2DInfoShowZoneSet));
 
 
 					case GUIElementEnum::display2DInfoShowNextObjectDatum:
@@ -2919,7 +2929,7 @@ private:
 
 				case GUIElementEnum::halo3TheaterInterpToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("EXPERIMENTAL - see below. Smooths Theater playback. Halo 3 renders Theater straight off the tick stream, and while the engine interpolates object POSITION it rebuilds the camera ORIENTATION from raw per-tick aiming - so the moment the player you are watching turns, the whole world steps. This interpolates it, and also fixes the object/shadow de-render that the naive fix causes. Gameplay is unaffected (there the camera already follows live input at frame rate).\n\nWhy experimental: this installs four hand-written code hooks into Halo 3's render path. The newest interpolates the first-person leg anchor and has NOT been proven in game - if anything looks wrong or the game becomes unstable, turn this off first. Everything it patches is restored when you do.\n\nFirst-person legs: they were never interpolated at all, which only became visible once the camera was smoothed. That newest hook is the attempt at fixing it."), std::nullopt, "Theater Interpolation Fix (Experimental)", settings->halo3TheaterInterpToggle));
+						(game, ToolTipCollection("EXPERIMENTAL - see below. Smooths Theater playback. Halo 3 renders Theater straight off the tick stream, and while the engine interpolates object POSITION it rebuilds the camera ORIENTATION from raw per-tick aiming - so the moment the player you are watching turns, the whole world steps. This interpolates it, and also fixes the object/shadow de-render that the naive fix causes. Gameplay is unaffected (there the camera already follows live input at frame rate).\n\nWhy experimental: this installs hand-written code hooks into Halo 3's render path - if anything looks wrong or the game becomes unstable, turn this off first. Everything it patches is restored when you do.\n\nFirst-person legs: the eye follows the smoothed aim and the game draws the legs with that same smoothed camera, so they stay attached on their own. The leg hook now only collects diagnostics - its old correction made jumps judder and is switched off."), std::nullopt, "Theater Interpolation Fix (Experimental)", settings->halo3TheaterInterpToggle));
 
 				case GUIElementEnum::halo3TheaterInterpCrouchGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -3170,6 +3180,51 @@ private:
 				case GUIElementEnum::hceInvisibleGeometryOverlayWireframeAlpha:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
 						(game, ToolTipCollection("How opaque the outlines are."), "Invisible Geometry Wireframe Opacity", settings->hceInvisibleGeometryOverlayWireframeAlpha));
+
+				case GUIElementEnum::hceVisibleGeometryOverlayToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Draws the collision of the VISIBLE instanced geometry - the rocks, trees, crates, pipes and other placed props the game actually renders - so you can see where their collision really is. The complement of the Invisible Geometry Overlay: every solid instanced piece is in exactly one of the two. Instanced geometry only - the structure BSP is the BSP Overlay's job. Same budget as Halo 5's Havok overlay: only pieces within the radius are drawn, nearest first, until the triangle budget is reached."), std::nullopt, "Visible Geometry Overlay", settings->hceVisibleGeometryOverlayToggle));
+
+				case GUIElementEnum::hceVisibleGeometryOverlaySettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Settings for the Visible Geometry overlay"), "Visible Geometry Overlay Settings", headerChildElements
+							{
+								createNestedElement(GUIElementEnum::hceVisibleGeometryOverlayRadius),
+								createNestedElement(GUIElementEnum::hceVisibleGeometryOverlayTriangleBudget),
+								createNestedElement(GUIElementEnum::hceVisibleGeometryOverlayRefreshMs),
+								createNestedElement(GUIElementEnum::hceVisibleGeometryOverlayHideHiddenLines),
+								createNestedElement(GUIElementEnum::hceVisibleGeometryOverlayColour),
+								createNestedElement(GUIElementEnum::hceVisibleGeometryOverlayWireAlpha),
+								createNestedElement(GUIElementEnum::hceVisibleGeometryOverlayFillAlpha),
+							}));
+
+				case GUIElementEnum::hceVisibleGeometryOverlayRadius:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 32767.f)>>
+						(game, ToolTipCollection("Only collision within this many WORLD UNITS of the camera is drawn (1 world unit = 10 feet); pieces are cut at the radius, triangle by triangle. Same default as Halo 5's Havok overlay.\n\nThe maximum, 32767, is far larger than any level, so it effectively means \"no distance limit\" - then the TRIANGLE BUDGET below is what limits what you see.\n\nThe slider is very coarse over this range - ctrl+click it to type an exact value."), "Radius (world units)##hcevis", settings->hceVisibleGeometryOverlayRadius));
+
+				case GUIElementEnum::hceVisibleGeometryOverlayTriangleBudget:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1000.f, 400000.f)>>
+						(game, ToolTipCollection("Hard cap on collision triangles drawn. Pieces are taken nearest first and selection STOPS at this number, so a large radius draws an incomplete picture of the far end instead of stalling.\n\nInstanced collision is dense: on a50 a typical piece has 270-750 triangles and a rock cliff over 5,000, so the default draws roughly the nearest 50-150 pieces. If the far end of the radius is empty, raise this, not the radius. The log says when the budget was reached."), "Triangle Budget##hcevis", settings->hceVisibleGeometryOverlayTriangleBudget));
+
+				case GUIElementEnum::hceVisibleGeometryOverlayRefreshMs:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(16.f, 5000.f)>>
+						(game, ToolTipCollection("How often the pieces around the camera are re-selected, in milliseconds - and only when the camera has moved. Collision does not move, so doing it every frame would burn CPU for an identical picture. It runs on a background thread, never the render thread."), "Refresh (ms)##hcevis", settings->hceVisibleGeometryOverlayRefreshMs));
+
+				case GUIElementEnum::hceVisibleGeometryOverlayHideHiddenLines:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("ON (default): only the nearest collision surface's lines are drawn - edges on the far side of a rock, or behind another piece, are hidden, so the wireframe sits on the geometry you can see. OFF: every edge is drawn, including the ones behind other collision.\n\nOnly COLLISION hides collision: lines behind the level's own walls and terrain still show, because HCM cannot see the game's depth."), std::nullopt, "Hide Lines Behind Collision##hcevis", settings->hceVisibleGeometryOverlayHideHiddenLines));
+
+				case GUIElementEnum::hceVisibleGeometryOverlayColour:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
+						(game, ToolTipCollection("Colour of the visible geometry's collision."), "Visible Geometry Color##hcevis", settings->hceVisibleGeometryOverlayColor));
+
+				case GUIElementEnum::hceVisibleGeometryOverlayWireAlpha:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("Opacity of the collision wireframe."), "Wireframe Opacity##hcevis", settings->hceVisibleGeometryOverlayWireAlpha));
+
+				case GUIElementEnum::hceVisibleGeometryOverlayFillAlpha:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("Opacity of filled collision faces. Zero (the default) draws wireframe only - solid collision is an opaque wall."), "Fill Opacity##hcevis", settings->hceVisibleGeometryOverlayFillAlpha));
 
 				case GUIElementEnum::hceBspOverlayInvisibleOnly:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>

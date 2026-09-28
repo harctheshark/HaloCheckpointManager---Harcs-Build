@@ -18,6 +18,7 @@ public:
 		{
 			{GameState::Value::Halo1, {{}, 0} },
 			{GameState::Value::Halo2, {{}, 0}  },
+			{GameState::Value::Halo2MP, {{}, 0}  }, // Halo 2 Anniversary MP (groundhog) - without a bucket its failures were silently dropped
 			{GameState::Value::Halo3, {{}, 0}  },
 			{GameState::Value::Halo3ODST, {{}, 0}  },
 			{GameState::Value::HaloReach, {{}, 0}  },

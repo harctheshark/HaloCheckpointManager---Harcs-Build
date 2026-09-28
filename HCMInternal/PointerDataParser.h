@@ -36,6 +36,11 @@ namespace PointerDataParser
 		bool entryIsCorrectProcessType(VersionEntry versionEntry, std::shared_ptr<IGetMCCVersion> getMCCVer);
 		std::optional<GameState> getEntryGame(VersionEntry versionEntry);
 
+		// Mixed-downpatch support: read each MCC game DLL's own FileVersion from disk and, where it differs from the
+		// exe's and the document holds a complete data set for it, tell getMCCVer to use it for that game.
+		void selectGameDataVersions(pugi::xml_node root, std::shared_ptr<IGetMCCVersion> getMCCVer);
+		std::optional<std::string> readGameDllVersionFromDisk(GameState game);
+
 		// put an object into the data map
 		template <typename T> void emplaceData(T& data, VersionEntry versionEntry, DataStoreRef dataStore);
 

@@ -6,6 +6,7 @@
 #include "GetCurrentRNG.h"
 #include "GetCurrentBSP.h"
 #include "GetCurrentBSPSet.h"
+#include "GetCurrentZoneSet.h"
 
 template <GameState::Value gameT>
 class GetGameDataAsString
@@ -84,8 +85,25 @@ public:
 			const auto currentBSPSet = getCurrentBSPSet->getCurrentBSPSet();
 
 
-			ss << "BSP Set: " << currentBSPSet.to_string().substr(currentBSPSet.to_string().find('1')) << std::endl;
+			// An empty set (0 - e.g. mid zone-set load, or before the first BSP is up) has no '1' to find: find()
+			// returns npos and substr(npos) throws std::out_of_range, which used to escape the tick midhook and
+			// kill MCC. Print "none" instead.
+			const auto bspSetBits = currentBSPSet.to_string();
+			const auto firstSetBit = bspSetBits.find('1');
+			ss << "BSP Set: " << (firstSetBit == std::string::npos ? std::string("none") : bspSetBits.substr(firstSetBit)) << std::endl;
 
+		}
+
+		// Active zone set index (as indexed into the scenario's zone set block). The engine writes -1 while no
+		// scenario is loaded, so print it signed and in decimal, then put the stream flags back exactly as they
+		// were so the lines below keep whatever formatting they had before this row existed.
+		if (getCurrentZoneSetOptionalWeak.has_value())
+		{
+			lockOrThrow(getCurrentZoneSetOptionalWeak.value(), getCurrentZoneSet);
+			const auto currentZoneSet = (int32_t)getCurrentZoneSet->getCurrentZoneSet();
+			const auto savedFlags = ss.flags();
+			ss << std::noshowpos << std::dec << "Zone Set: " << currentZoneSet << std::endl;
+			ss.flags(savedFlags);
 		}
 
 		if (getNextObjectDatumOptionalWeak.has_value())
@@ -118,6 +136,7 @@ public:
 	std::optional<std::weak_ptr<GetCurrentRNG>> getLevelLoadRNGOptionalWeak = std::nullopt;
 	std::optional<std::weak_ptr<GetCurrentBSP>> getCurrentBSPOptionalWeak = std::nullopt;
 	std::optional<std::weak_ptr<GetCurrentBSPSet>> getCurrentBSPSetOptionalWeak = std::nullopt;
+	std::optional<std::weak_ptr<GetCurrentZoneSet>> getCurrentZoneSetOptionalWeak = std::nullopt;
 	bool showGameTick = false;
 };
 

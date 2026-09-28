@@ -103,6 +103,11 @@ GetPlayerDatum::GetPlayerDatum(GameState game, IDIContainer& dicon)
 	case GameState::Value::Halo3ODST:
 	case GameState::Value::HaloReach:
 	case GameState::Value::Halo4:
+	// Halo 2 Anniversary MP (groundhog): the simple single-pointer read IS multiplayer-correct here, unlike
+	// classic Halo 2 above. groundhog's "playerDatum" is element 0 of the per-LOCAL-USER Hud Audio array
+	// (static pointer array groundhog.dll+0x33DC660), whose +0xA4 the engine rewrites every tick with the
+	// unit of the player mapped to local user 0 - so it follows the local player's network slot by itself.
+	case GameState::Value::Halo2MP:
 		pimpl = std::make_unique<SimpleGetPlayerDatum>(game, dicon);
 		return;
 

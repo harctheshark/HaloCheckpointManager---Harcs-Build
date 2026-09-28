@@ -22,6 +22,7 @@
 #include "GetCurrentRNG.h"
 #include "GetCurrentBSP.h"
 #include "GetCurrentBSPSet.h"
+#include "GetCurrentZoneSet.h"
 
 #include "GetGameDataAsString.h"
 #include "GetPlayerDataAsString.h"
@@ -126,6 +127,17 @@ private:
 				mTickReadFailing = true;
 			}
 		}
+		// This runs on the game's simulation thread inside the tick midhook. A plain std:: exception (the BSP Set
+		// line's substr(npos) was one) must not escape into the game - treat it like any other transient failure.
+		catch (const std::exception& stdEx)
+		{
+			if (!mTickReadFailing)
+			{
+				HCMRuntimeException ex(std::format("Display 2D Info: {} while updating ({}) - pausing updates until it recovers.", typeid(stdEx).name(), stdEx.what()));
+				runtimeExceptions->handleSilent(ex);
+				mTickReadFailing = true;
+			}
+		}
 	}
 
 	// fires every frame, render dataString if isActive.
@@ -205,6 +217,13 @@ private:
 			isActive = false;
 			runtimeExceptions->handleMessage(ex);
 		}
+		// render thread: nothing may escape
+		catch (const std::exception& stdEx)
+		{
+			isActive = false;
+			HCMRuntimeException ex(std::format("Display 2D Info render failed: {}: {}", typeid(stdEx).name(), stdEx.what()));
+			runtimeExceptions->handleMessage(ex);
+		}
 
 
 	}
@@ -262,6 +281,7 @@ private:
 	ScopedCallback<ToggleEvent> display2DInfoShowLevelLoadRNGCallback;
 	ScopedCallback<ToggleEvent> display2DInfoShowBSPCallback;
 	ScopedCallback<ToggleEvent> display2DInfoShowBSPSetCallback;
+	ScopedCallback<ToggleEvent> display2DInfoShowZoneSetCallback;
 	ScopedCallback<ToggleEvent> display2DInfoShowNextObjectDatumCallback;
 	ScopedCallback<ToggleEvent> display2DInfoTrackPlayerCallback;
 	ScopedCallback<ToggleEvent> display2DInfoShowPlayerViewAngleCallback;
@@ -305,6 +325,7 @@ private:
 			getGameDataAsString.getLevelLoadRNGOptionalWeak = settings->display2DInfoShowLevelLoadRNG->GetValue() ? this->getCurrentRNGOptionalWeak : std::nullopt;
 			getGameDataAsString.getCurrentBSPOptionalWeak = settings->display2DInfoShowBSP->GetValue() ? this->getCurrentBSPOptionalWeak : std::nullopt;
 			getGameDataAsString.getCurrentBSPSetOptionalWeak = settings->display2DInfoShowBSPSet->GetValue() ? this->getCurrentBSPSetOptionalWeak : std::nullopt;
+			getGameDataAsString.getCurrentZoneSetOptionalWeak = settings->display2DInfoShowZoneSet->GetValue() ? this->getCurrentZoneSetOptionalWeak : std::nullopt;
 			getGameDataAsString.getAggroDataOptionalWeak = settings->display2DInfoShowAggro->GetValue() ? this->getAggroDataOptionalWeak : std::nullopt;
 			getGameDataAsString.getNextObjectDatumOptionalWeak = settings->display2DInfoShowNextObjectDatum->GetValue() ? this->getNextObjectDatumOptionalWeak : std::nullopt;
 			getGameDataAsString.ss << std::setprecision(settings->display2DInfoFloatPrecision->GetValue());
@@ -366,6 +387,7 @@ private:
 	std::optional<std::weak_ptr<GetCurrentRNG>> getCurrentRNGOptionalWeak;
 	std::optional<std::weak_ptr<GetCurrentBSP>> getCurrentBSPOptionalWeak;
 	std::optional<std::weak_ptr<GetCurrentBSPSet>> getCurrentBSPSetOptionalWeak;
+	std::optional<std::weak_ptr<GetCurrentZoneSet>> getCurrentZoneSetOptionalWeak;
 
 	float fontSize;
 	ImFont* displayInfoFont = nullptr;
@@ -397,6 +419,7 @@ public:
 		setSettingCallback(display2DInfoShowLevelLoadRNG, bool),
 		setSettingCallback(display2DInfoShowBSP, bool),
 		setSettingCallback(display2DInfoShowBSPSet, bool),
+		setSettingCallback(display2DInfoShowZoneSet, bool),
 		setSettingCallback(display2DInfoShowNextObjectDatum, bool),
 		setSettingCallback(display2DInfoTrackPlayer, bool),
 		setSettingCallback(display2DInfoShowPlayerViewAngle, bool),
@@ -437,8 +460,12 @@ public:
 		catch (HCMInitException ex)							\
 		{													\
 			PLOG_ERROR << "DisplayPlayerInfoImpl could not resolve optional service: " << nameof(varName) << ", error: " << ex.what();				\
+		}													\
+		catch (const std::exception& stdEx)					\
+		{													\
+			PLOG_ERROR << "DisplayPlayerInfoImpl could not resolve optional service: " << nameof(varName) << ", non-HCM error " << typeid(stdEx).name() << ": " << stdEx.what();				\
 		}
-		
+
 
 		resolveOptionalDisplayInfoService(getObjectPhysicsOptionalWeak, GetObjectPhysics);
 		resolveOptionalDisplayInfoService(getPlayerViewAngleOptionalWeak, GetPlayerViewAngle);
@@ -451,6 +478,13 @@ public:
 		resolveOptionalDisplayInfoService(getCurrentRNGOptionalWeak, GetCurrentRNG);
 		resolveOptionalDisplayInfoService(getCurrentBSPOptionalWeak, GetCurrentBSP);
 		resolveOptionalDisplayInfoService(getCurrentBSPSetOptionalWeak, GetCurrentBSPSet);
+		// Only for the games whose "Show Zone Set" row exists (GUI GROUP 4: Halo2MP). Halo Reach and Halo 4 also
+		// have currentZoneSet pointer data, so resolving it unconditionally would add a "Zone Set" line to their
+		// overlay with no row to switch it off. Widen this together with the row's game tuple.
+		if constexpr (gameT == GameState::Value::Halo2MP)
+		{
+			resolveOptionalDisplayInfoService(getCurrentZoneSetOptionalWeak, GetCurrentZoneSet);
+		}
 
 		if (atLeastOneServiceIsWorking == false) throw HCMInitException("DisplayPlayerInfoImpl could not resolve any optional services for getting data!");
 
@@ -498,6 +532,14 @@ DisplayPlayerInfo::DisplayPlayerInfo(GameState gameImpl, IDIContainer& dicon)
 
 	case GameState::Value::Halo4:
 		pimpl = std::make_unique<DisplayPlayerInfoImpl<GameState::Value::Halo4>>(gameImpl, dicon);
+		break;
+
+	// Halo 2 Anniversary MP (groundhog.dll, Halo 4 engine lineage). Its own instantiation so gameT is honest;
+	// every gameT-specific branch in the formatters treats it like Halo 4 EXCEPT the health-cooldown line, which
+	// stays off because groundhog's biped health/shield offsets are tag-dependent and unverified (the health rows
+	// are not offered for Halo2MP at all - see GuiElementEnum.h).
+	case GameState::Value::Halo2MP:
+		pimpl = std::make_unique<DisplayPlayerInfoImpl<GameState::Value::Halo2MP>>(gameImpl, dicon);
 		break;
 	default:
 		throw HCMInitException("Not impl yet");

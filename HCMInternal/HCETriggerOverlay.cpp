@@ -1570,12 +1570,27 @@ private:
 		SimpleMath::Vector3 position, forward, right, up;
 		float focalPixels = 0.f;
 		SimpleMath::Vector2 screenCentre{};
+		SimpleMath::Vector2 viewMin{}, viewMax{};   // the game's picture: the whole screen unless letterboxed
 	};
 
 	static constexpr float kNearPlane = 0.01f;   // world units; 1 world unit = 10 feet
 
+	// Focal length and centre from the ENGINE's projection (HCEGetCameraData::ueProjection): the UE FOV is
+	// horizontal only at the camera's reference aspect, so width/(2 tan(FOV/2)) was ~1.34x too long at 3440x1440.
+	static void applyUeProjection(Camera& camera, const HCEGetCameraData::UeCamera& projectionParameters,
+		const SimpleMath::Vector2& screenSize)
+	{
+		const HCEGetCameraData::UeProjection projection = HCEGetCameraData::ueProjection(projectionParameters,
+			screenSize.x, screenSize.y);
+		camera.focalPixels = (projection.viewHeight * 0.5f) / std::tan(projection.verticalFovRadians * 0.5f);
+		camera.screenCentre = SimpleMath::Vector2(projection.viewX + projection.viewWidth * 0.5f,
+			projection.viewY + projection.viewHeight * 0.5f);
+		camera.viewMin = SimpleMath::Vector2(projection.viewX, projection.viewY);
+		camera.viewMax = SimpleMath::Vector2(projection.viewX + projection.viewWidth, projection.viewY + projection.viewHeight);
+	}
+
 	static Camera makeCamera(const SimpleMath::Vector3& position, const SimpleMath::Vector2& viewAngle,
-		const SimpleMath::Vector2& screenSize, float horizontalFovDegrees)
+		const SimpleMath::Vector2& screenSize, const HCEGetCameraData::UeCamera& projectionParameters)
 	{
 		Camera camera;
 		camera.position = position;
@@ -1583,10 +1598,7 @@ private:
 		// It is the SAME code, verbatim - including the (sin, -cos, 0) right vector whose sign is the whole
 		// difference from the external CER tool.
 		HCEGetCameraData::simViewAngleToBlamBasis(viewAngle, camera.forward, camera.right, camera.up);
-
-		const float fov = DirectX::XMConvertToRadians(std::clamp(horizontalFovDegrees, 10.f, 170.f));
-		camera.focalPixels = screenSize.x / (2.f * std::tan(fov * 0.5f));
-		camera.screenCentre = SimpleMath::Vector2(screenSize.x * 0.5f, screenSize.y * 0.5f);
+		applyUeProjection(camera, projectionParameters, screenSize);
 		return camera;
 	}
 
@@ -1601,18 +1613,15 @@ private:
 	//
 	// Roll is applied about the forward axis. The reference tool reads roll and then silently ignores it, so
 	// rolled cameras are wrong there; they are not wrong here.
-	static Camera makeCameraFromUe(const SimpleMath::Vector3& positionBlam, float pitchDeg, float yawDeg,
-		float rollDeg, const SimpleMath::Vector2& screenSize, float horizontalFovDegrees)
+	static Camera makeCameraFromUe(const HCEGetCameraData::UeCamera& ue, const SimpleMath::Vector2& screenSize)
 	{
 		Camera camera;
-		camera.position = positionBlam;
+		camera.position = ue.positionBlam;
 		// Again, the basis maths lives in HCEGetCameraData now - moved verbatim, including the single Y negation
 		// that IS the UE->Blam handedness change, and the roll about the forward axis the reference tool drops.
-		HCEGetCameraData::ueRotationToBlamBasis(pitchDeg, yawDeg, rollDeg, camera.forward, camera.right, camera.up);
-
-		const float fov = DirectX::XMConvertToRadians(std::clamp(horizontalFovDegrees, 10.f, 170.f));
-		camera.focalPixels = screenSize.x / (2.f * std::tan(fov * 0.5f));
-		camera.screenCentre = SimpleMath::Vector2(screenSize.x * 0.5f, screenSize.y * 0.5f);
+		HCEGetCameraData::ueRotationToBlamBasis(ue.pitchDegrees, ue.yawDegrees, ue.rollDegrees,
+			camera.forward, camera.right, camera.up);
+		applyUeProjection(camera, ue, screenSize);
 		return camera;
 	}
 
@@ -1657,30 +1666,24 @@ private:
 	//
 	// The finite/range checks that make a wrong offset or a changed build FAIL SOFT live in
 	// HCEGetCameraData::getUeCamera now; this is a thin adapter onto the shape the drawing code below wants.
-	bool readUeCamera(SimpleMath::Vector3& outPositionBlam, float& outPitchDeg, float& outYawDeg,
-		float& outRollDeg, float& outFovDeg)
+	bool readUeCamera(HCEGetCameraData::UeCamera& out)
 	{
 		if (!mCameraDataOptionalWeak.has_value()) return false;
 		auto cameraData = mCameraDataOptionalWeak.value().lock();
 		if (!cameraData) return false;
-
-		HCEGetCameraData::UeCamera camera;
-		if (!cameraData->getUeCamera(camera)) return false;
-
-		outPositionBlam = camera.positionBlam;
-		outPitchDeg = camera.pitchDegrees;
-		outYawDeg = camera.yawDegrees;
-		outRollDeg = camera.rollDegrees;
-		outFovDeg = camera.horizontalFovDegrees;
-		return true;
+		return cameraData->getUeCamera(out);
 	}
 
-	float lastGoodFov() const
+	// FOV, reference aspect and constraint of the last good UE camera, for the sim-aim fallback.
+	HCEGetCameraData::UeCamera lastGoodProjection() const
 	{
 		if (mCameraDataOptionalWeak.has_value())
 			if (auto cameraData = mCameraDataOptionalWeak.value().lock())
-				return cameraData->getLastGoodHorizontalFov();
-		return 78.f;
+				return cameraData->getLastGoodProjectionParameters();
+		HCEGetCameraData::UeCamera fallback;
+		fallback.horizontalFovDegrees = 78.f;
+		fallback.referenceAspectRatio = 16.f / 9.f;   // NOT 0: that is UE's vertical-FOV case (see HCEGetCameraData)
+		return fallback;
 	}
 
 	// Refuse to hook a build we do not recognise. HCEGetCameraData owns the byte verification and the reference
@@ -1780,19 +1783,19 @@ private:
 			// read ever stops being plausible; it tracks the player rather than the render camera, so the
 			// overlay will drift in a vehicle or a cutscene while it is in use.
 			SimpleMath::Vector3 cameraPosition;
-			float pitchDeg = 0.f, yawDeg = 0.f, rollDeg = 0.f, fovDeg = 0.f;
+			HCEGetCameraData::UeCamera ueCamera;
 
 			Camera camera;
-			if (readUeCamera(cameraPosition, pitchDeg, yawDeg, rollDeg, fovDeg))
+			if (readUeCamera(ueCamera))
 			{
-				camera = makeCameraFromUe(cameraPosition, pitchDeg, yawDeg, rollDeg, screenSize, fovDeg);
+				cameraPosition = ueCamera.positionBlam;
+				camera = makeCameraFromUe(ueCamera, screenSize);
 			}
 			else
 			{
 				SimpleMath::Vector2 viewAngle;
 				playerState->getCameraView(cameraPosition, viewAngle);   // ONE tls walk for both
-				camera = makeCamera(cameraPosition, viewAngle, screenSize,
-					lastGoodFov());
+				camera = makeCamera(cameraPosition, viewAngle, screenSize, lastGoodProjection());
 			}
 
 			// EXACTLY the world origin means whichever source we used handed back a zeroed/unresolved position
@@ -1852,6 +1855,11 @@ private:
 
 			ImDrawList* drawList = ImGui::GetBackgroundDrawList();
 			if (!drawList) return;
+			// Clip to the game's picture, as the D3D12 path's scissor does: a letterboxed camera has no image in the
+			// bars. RAII so a throw below cannot leave the clip rect pushed on the shared background list.
+			struct ClipRectGuard { ImDrawList* list; ~ClipRectGuard() { list->PopClipRect(); } };
+			drawList->PushClipRect(ImVec2(camera.viewMin.x, camera.viewMin.y), ImVec2(camera.viewMax.x, camera.viewMax.y), true);
+			const ClipRectGuard clipRectGuard{ drawList };
 
 			for (const HceTriggerVolume& volume : mVolumes)
 			{

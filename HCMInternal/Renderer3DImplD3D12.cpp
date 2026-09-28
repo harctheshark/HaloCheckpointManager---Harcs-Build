@@ -107,6 +107,14 @@ float4 PSMain(PSInput input) : SV_TARGET
 	// keeping it identical keeps the depth behaviour identical.
 	constexpr DXGI_FORMAT kDepthFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
 
+	// The hidden-line pre-pass bias (Pso::TriangleCullNoneDepthOnlyBiased). Measured with HCM's own shader, depth
+	// format, near/far and LESS_EQUAL, on WARP and on an RTX 4090 (they agree to ~0.5 points): slope 1.0 + 2 drops
+	// 0.00% of front-edge pixels from 3 to 300 wu and at grazing floor angles, leaking <= 1.75% hidden-line pixels
+	// at silhouettes. Slope 0.75 still dropped 0.29%, 0.5 dropped 3.5%; +16/4.0 leaked 7.7%. The error is slope-
+	// dominated, which is why a constant bias alone (+8) still dropped 36-40%.
+	constexpr INT kHiddenLineDepthBias = 2;
+	constexpr float kHiddenLineSlopeScaledDepthBias = 1.0f;
+
 	constexpr UINT64 kInitialVertexBytes = 64 * 1024;
 	constexpr UINT64 kInitialIndexBytes = 32 * 1024;
 	constexpr UINT64 kMaxUploadBytes = 32 * 1024 * 1024;   // refuse absurd geometry rather than exhaust the heap
@@ -404,6 +412,8 @@ bool Renderer3DImplD3D12::createPipelineStates(DXGI_FORMAT backBufferFormat)
 		bool alphaBlended;   // false => blend off (DirectXTK's "Opaque")
 		bool depthWrite;     // stated independently of blending - the two are NOT the same axis
 		bool colourWrite;    // false => depth-only pass (render target write mask 0)
+		INT depthBias = 0;                 // omitted by every row but the hidden-line pre-pass (zero-filled)
+		float slopeScaledDepthBias = 0.f;
 	};
 
 	static const Variant variants[] =
@@ -420,6 +430,9 @@ bool Renderer3DImplD3D12::createPipelineStates(DXGI_FORMAT backBufferFormat)
 		{ Pso::WireframeOpaque,              D3D12_FILL_MODE_WIREFRAME, D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, true,  true  },
 		{ Pso::LineAlpha,                    D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE,     true,  false, true  },
 		{ Pso::LineOpaque,                   D3D12_FILL_MODE_SOLID,     D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE,     false, true,  true  },
+		// Depth-only, pushed away from the camera so the edges drawn on these triangles are not z-fought away.
+		{ Pso::TriangleCullNoneDepthOnlyBiased, D3D12_FILL_MODE_SOLID,  D3D12_CULL_MODE_NONE,  D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE, false, true,  false,
+			kHiddenLineDepthBias, kHiddenLineSlopeScaledDepthBias },
 	};
 
 	for (const Variant& variant : variants)
@@ -451,9 +464,9 @@ bool Renderer3DImplD3D12::createPipelineStates(DXGI_FORMAT backBufferFormat)
 		// FALSE, matching D3D's default and DirectXTK's - which is the entire reason CullClockwise maps to
 		// CULL_FRONT (see the Pso enum comment).
 		desc.RasterizerState.FrontCounterClockwise = FALSE;
-		desc.RasterizerState.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
+		desc.RasterizerState.DepthBias = variant.depthBias;                        // 0 (the D3D default) for all but one
 		desc.RasterizerState.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
-		desc.RasterizerState.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
+		desc.RasterizerState.SlopeScaledDepthBias = variant.slopeScaledDepthBias;
 		desc.RasterizerState.DepthClipEnable = TRUE;
 		desc.RasterizerState.MultisampleEnable = FALSE;
 		desc.RasterizerState.AntialiasedLineEnable = FALSE;
@@ -886,6 +899,8 @@ bool Renderer3DImplD3D12::updateCamera(SimpleMath::Vector2 screenSize)
 		mViewProjectionMatrix = mViewMatrix * mProjectionMatrix;
 		mScreenSize = screenSize;
 		mScreenCenter = { screenSize.x / 2.f, screenSize.y / 2.f };
+		mViewOrigin = { 0.f, 0.f };
+		mViewSize = screenSize;
 		DirectX::BoundingFrustum::CreateFromMatrix(mFrustumViewWorld, mProjectionMatrix, true);
 		mFrustumViewWorld.Transform(mFrustumViewWorld, mViewMatrix.Invert());
 		return true;
@@ -899,12 +914,14 @@ bool Renderer3DImplD3D12::updateCamera(SimpleMath::Vector2 screenSize)
 	}
 
 	HCEGetCameraData::UeCamera ueCamera;
+	HCEGetCameraData::UeCamera projectionParameters;   // FOV + aspect + constraint, whichever source aims the camera
 	if (cameraData->getUeCamera(ueCamera))
 	{
 		position = ueCamera.positionBlam;
 		HCEGetCameraData::ueRotationToBlamBasis(ueCamera.pitchDegrees, ueCamera.yawDegrees, ueCamera.rollDegrees,
 			forward, right, up);
 		horizontalFovDegrees = ueCamera.horizontalFovDegrees;
+		projectionParameters = ueCamera;
 		logCameraSourceIfChanged(CameraSource::UePov, position, horizontalFovDegrees);
 	}
 	else if (mPlayerStateOptionalWeak.has_value())
@@ -954,7 +971,8 @@ bool Renderer3DImplD3D12::updateCamera(SimpleMath::Vector2 screenSize)
 			}
 
 			HCEGetCameraData::simViewAngleToBlamBasis(viewAngle, forward, right, up);
-			horizontalFovDegrees = cameraData->getLastGoodHorizontalFov();
+			projectionParameters = cameraData->getLastGoodProjectionParameters();
+			horizontalFovDegrees = projectionParameters.horizontalFovDegrees;
 			logCameraSourceIfChanged(CameraSource::SimFallback, position, horizontalFovDegrees);
 		}
 		catch (HCMRuntimeException)
@@ -986,11 +1004,14 @@ bool Renderer3DImplD3D12::updateCamera(SimpleMath::Vector2 screenSize)
 		return false;
 	}
 
-	// THE UE CAMERA REPORTS A HORIZONTAL FOV. XMMatrixPerspectiveFovRH wants a VERTICAL one.
-	const float horizontalFov = DirectX::XMConvertToRadians(std::clamp(horizontalFovDegrees, 10.f, 170.f));
-	const float aspectRatio = screenSize.x / screenSize.y;   // width / height
-	const float verticalFov = 2.f * std::atan(std::tan(horizontalFov * 0.5f) / aspectRatio);
-	if (!std::isfinite(verticalFov) || verticalFov <= 0.0001f) return false;
+	// ⚠ The UE FOV is horizontal only at the CAMERA's reference aspect (MaintainYFOV), not across this screen.
+	// Converting it with the back-buffer aspect made everything ~1.34x too large about the centre at 3440x1440.
+	// ueProjection() is the engine's own rule, including the letterboxed view rect of a constrained camera.
+	const HCEGetCameraData::UeProjection projection = HCEGetCameraData::ueProjection(projectionParameters,
+		screenSize.x, screenSize.y);
+	const float aspectRatio = projection.aspectRatio;
+	const float verticalFov = projection.verticalFovRadians;
+	if (!std::isfinite(verticalFov) || verticalFov <= 0.0001f || !std::isfinite(aspectRatio) || aspectRatio <= 0.f) return false;
 
 	mCameraPosition = position;
 	mCameraForward = forward;
@@ -1004,7 +1025,9 @@ bool Renderer3DImplD3D12::updateCamera(SimpleMath::Vector2 screenSize)
 	mViewProjectionMatrix = mViewMatrix * mProjectionMatrix;
 
 	mScreenSize = screenSize;
-	mScreenCenter = { screenSize.x / 2.f, screenSize.y / 2.f };
+	mViewOrigin = { projection.viewX, projection.viewY };
+	mViewSize = { projection.viewWidth, projection.viewHeight };
+	mScreenCenter = { projection.viewX + projection.viewWidth / 2.f, projection.viewY + projection.viewHeight / 2.f };
 
 	DirectX::BoundingFrustum::CreateFromMatrix(mFrustumViewWorld, mProjectionMatrix, true); // view space
 	mFrustumViewWorld.Transform(mFrustumViewWorld, mViewMatrix.Invert());                   // -> world space
@@ -1069,16 +1092,20 @@ bool Renderer3DImplD3D12::beginFrame(ID3D12Device* pDevice, ID3D12GraphicsComman
 		// ---- record this frame's setup ------------------------------------------------------------------
 		// D3D12Hook has already reset this list, transitioned the back buffer to RENDER_TARGET, bound the RTV
 		// and bound its SRV heap. It does NOT set a viewport or scissor (imgui sets its own), so we set ours.
+		// The VIEW RECT from updateCamera: the whole screen, or the letterboxed picture of a constrained camera.
 		D3D12_VIEWPORT viewport{};
-		viewport.TopLeftX = 0.f;
-		viewport.TopLeftY = 0.f;
-		viewport.Width = screenSize.x;
-		viewport.Height = screenSize.y;
+		viewport.TopLeftX = mViewOrigin.x;
+		viewport.TopLeftY = mViewOrigin.y;
+		viewport.Width = mViewSize.x;
+		viewport.Height = mViewSize.y;
 		viewport.MinDepth = 0.f;
 		viewport.MaxDepth = 1.f;
 		pCommandList->RSSetViewports(1, &viewport);
 
-		D3D12_RECT scissor{ 0, 0, (LONG)width, (LONG)height };
+		// floor/ceil so a fractional letterbox edge never cuts a row whose pixel centre is inside the viewport.
+		D3D12_RECT scissor{ (LONG)std::floor(mViewOrigin.x), (LONG)std::floor(mViewOrigin.y),
+			(LONG)std::min<float>(std::ceil(mViewOrigin.x + mViewSize.x), (float)width),
+			(LONG)std::min<float>(std::ceil(mViewOrigin.y + mViewSize.y), (float)height) };
 		pCommandList->RSSetScissorRects(1, &scissor);
 
 		// Bind OUR depth buffer alongside the game's back buffer, then clear it. This is the D3D12 equivalent
@@ -1150,6 +1177,12 @@ void Renderer3DImplD3D12::setSurfacePattern(float worldCellSize, float contrast)
 {
 	mPatternCellSize = (worldCellSize > 0.f) ? worldCellSize : 0.f;
 	mPatternContrast = std::clamp(contrast, 0.f, 1.f);
+}
+
+void Renderer3DImplD3D12::clearDepth()
+{
+	// Only between beginFrame and endFrame, while our depth buffer is the one bound (beginFrame binds and clears it).
+	if (mCommandList) mCommandList->ClearDepthStencilView(mDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.f, 0, 0, nullptr);
 }
 
 bool Renderer3DImplD3D12::beginDraw(Pso pso, const SimpleMath::Matrix& worldViewProjection, const SimpleMath::Vector4& color)
@@ -1237,9 +1270,11 @@ void Renderer3DImplD3D12::drawTriangleCollection(const IModelTriangles* model, c
 	const IndexCollection& indices = model->getTriangleIndices();
 	// The depth-only variant is CullNone only - it exists for closed shells, which are drawn CullNone by
 	// definition. Anything else falls through to the normal selection rather than silently changing culling.
-	const Pso pso = (depthMode == DepthMode::DepthOnlyPrepass && cullingOption == CullingOption::CullNone)
-		? Pso::TriangleCullNoneDepthOnly
-		: trianglePsoFor(cullingOption);
+	Pso pso = trianglePsoFor(cullingOption);
+	if (cullingOption == CullingOption::CullNone && depthMode == DepthMode::DepthOnlyPrepass)
+		pso = Pso::TriangleCullNoneDepthOnly;
+	else if (cullingOption == CullingOption::CullNone && depthMode == DepthMode::DepthOnlyPrepassBiased)
+		pso = Pso::TriangleCullNoneDepthOnlyBiased;
 	drawIndexed(pso, mViewProjectionMatrix, color,
 		vertices.data(), vertices.size(), indices.data(), indices.size(), D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 }
@@ -1322,10 +1357,11 @@ SimpleMath::Vector3 Renderer3DImplD3D12::worldPointToScreenPosition(SimpleMath::
 		clipSpace.y *= -1.f;
 	}
 
+	// Into the VIEW RECT (the whole screen unless a HaloCER camera letterboxes its picture).
 	return SimpleMath::Vector3
 	(
-		(1.f + clipSpace.x) * 0.5f * mScreenSize.x,
-		(1.f - clipSpace.y) * 0.5f * mScreenSize.y,
+		mViewOrigin.x + (1.f + clipSpace.x) * 0.5f * mViewSize.x,
+		mViewOrigin.y + (1.f - clipSpace.y) * 0.5f * mViewSize.y,
 		clipSpace.z
 	);
 }

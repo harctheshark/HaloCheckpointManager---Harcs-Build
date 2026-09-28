@@ -593,6 +593,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="HCEExeAnchors.h" />
     <ClInclude Include="HCEBspOverlay.h" />
     <ClInclude Include="HCEInvisibleGeometryOverlay.h" />
+    <ClInclude Include="HCEVisibleGeometryOverlay.h" />
     <ClInclude Include="HCESoftCeilingOverlay.h" />
     <ClInclude Include="CompetitionMode.h" />
     <ClInclude Include="H2CompetitionData.h" />
@@ -958,6 +959,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="Halo3TheaterInterp.cpp" />
     <ClCompile Include="HCEBspOverlay.cpp" />
     <ClCompile Include="HCEInvisibleGeometryOverlay.cpp" />
+    <ClCompile Include="HCEVisibleGeometryOverlay.cpp" />
     <ClCompile Include="HCESoftCeilingOverlay.cpp" />
     <ClCompile Include="CompetitionMode.cpp" />
     <ClCompile Include="HCETriggerActivity.cpp" />

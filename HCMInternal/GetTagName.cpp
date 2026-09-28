@@ -268,12 +268,21 @@ public:
 			metaHeaderDataStruct->currentBaseAddress = pMetaHeader;
 
 			LOG_ONCE_CAPTURE(PLOG_DEBUG << "metaHeader resolved as: " << std::hex << pmh, pmh = pMetaHeader);
+			// This runs from the Display 2D Info game-tick midhook, on the game's own thread, where an access
+			// violation cannot be caught. Every raw read below is therefore probed first and turned into an
+			// HCMRuntimeException (which the overlay treats as transient) if the memory is not readable - this is
+			// what stands between a wrong/new game's pointer data (e.g. Halo 2 Anniversary MP) and a dead game.
+			auto* pObservedMagic = metaHeaderDataStruct->field<MagicString>(metaHeaderDataFields::magic);
+			if (IsBadReadPtr((void*)pObservedMagic, sizeof(MagicString))) throw HCMRuntimeException(std::format("metaHeaderTable magic not readable at {:X}", (uintptr_t)pObservedMagic));
+
 			// validate magic
-			MagicString observedMagic = *metaHeaderDataStruct->field<MagicString>(metaHeaderDataFields::magic);
+			MagicString observedMagic = *pObservedMagic;
 			if (observedMagic != expectedMagic) throw HCMRuntimeException(std::format("metaHeaderTable magic mismatch! Expected: {}, observed: {} at address {:X}", expectedMagic.getString(), observedMagic.getString(), (uintptr_t)metaHeaderDataStruct->field<MagicString>(metaHeaderDataFields::magic)));
 
 			// resolve tag count
-			cachedTagCount = *metaHeaderDataStruct->field<int32_t>(metaHeaderDataFields::numberOfTags);
+			auto* pTagCount = metaHeaderDataStruct->field<int32_t>(metaHeaderDataFields::numberOfTags);
+			if (IsBadReadPtr((void*)pTagCount, sizeof(int32_t))) throw HCMRuntimeException(std::format("metaHeaderTable tag count not readable at {:X}", (uintptr_t)pTagCount));
+			cachedTagCount = *pTagCount;
 			LOG_ONCE_CAPTURE(PLOG_DEBUG << "cached tag count: " << tc, tc = cachedTagCount);
 
 			// resolve string table
@@ -289,9 +298,26 @@ public:
 
 		uint32_t* pStringOffset = (uint32_t*)(cachedStringMetaTable + (4 * tagDatum.index));
 		LOG_ONCE_CAPTURE(PLOG_DEBUG << "reading string offset at " << std::hex << pso, pso = (uintptr_t)pStringOffset);
+		if (IsBadReadPtr((void*)pStringOffset, sizeof(uint32_t))) throw HCMRuntimeException(std::format("tag string offset not readable at {:X}", (uintptr_t)pStringOffset));
 		uint32_t stringOffset = *pStringOffset;
 		LOG_ONCE_CAPTURE(PLOG_DEBUG << "string offset is " << std::hex << so, so = stringOffset);
-		return (const char*)(cachedStringTable + stringOffset);
+		const char* tagName = (const char*)(cachedStringTable + stringOffset);
+		// Bounded: the caller streams this string (strlen) on the game tick thread, so a wrong offset must not let
+		// that walk off the end of a committed region. Require a NUL within the READABLE part of the first 256
+		// bytes, measured page by page - demanding all 256 bytes up front rejected genuine short names that sit
+		// near the end of their region.
+		constexpr size_t kMaxTagName = 256;
+		size_t readable = 0;
+		while (readable < kMaxTagName)
+		{
+			const uintptr_t at = (uintptr_t)tagName + readable;
+			const size_t chunk = (std::min)((size_t)(0x1000 - (at & 0xFFF)), kMaxTagName - readable);
+			if (IsBadReadPtr((void*)at, chunk)) break;
+			readable += chunk;
+		}
+		if (readable == 0) throw HCMRuntimeException(std::format("tag name string not readable at {:X}", (uintptr_t)tagName));
+		if (strnlen(tagName, readable) == readable) throw HCMRuntimeException(std::format("tag name at {:X} is not terminated within {} readable bytes", (uintptr_t)tagName, readable));
+		return tagName;
 	}
 };
 
@@ -321,7 +347,12 @@ GetTagName::GetTagName(GameState gameImpl, IDIContainer& dicon)
 		break;
 
 	case GameState::Value::Halo4:
-		pimpl = std::make_unique<GetTagNameImplStringMetaTableAddOffset>(gameImpl, dicon); 
+		pimpl = std::make_unique<GetTagNameImplStringMetaTableAddOffset>(gameImpl, dicon);
+		break;
+
+	// Halo 2 Anniversary MP (groundhog): the tag cache / string loader code matches Halo 4's strictly.
+	case GameState::Value::Halo2MP:
+		pimpl = std::make_unique<GetTagNameImplStringMetaTableAddOffset>(gameImpl, dicon);
 		break;
 
 	default:
