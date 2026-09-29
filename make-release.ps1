@@ -141,6 +141,35 @@ $extra    = $staged | Where-Object { $expected -notcontains $_.Name }
 if ($extra) { Fail ("unexpected files staged: " + (($extra | ForEach-Object { $_.Name }) -join ', ')) }
 if ($staged.Count -ne $expected.Count) { Fail "staged $($staged.Count) files, expected $($expected.Count)" }
 
+# ---- THE SHIPPED CONFIG MUST NOT SWITCH ON EXPERIMENTAL FEATURES -----------------------------------
+# HCMInternalConfig.xml is copied from the build folder - i.e. the developer's OWN saved settings. V5.10.19 and
+# V5.10.20 shipped halo3TheaterInterpToggle=1 that way, so everyone who downloaded them got the experimental,
+# halo3.dll-patching Theater Interpolation Fix switched on. Force the listed keys off in the STAGED copy only (the
+# run folder keeps the developer's settings), and warn about any other feature toggle that is on in the staged
+# config while its code default is off, so it is a decision rather than an accident.
+$SHIP_OFF = @('halo3TheaterInterpToggle')
+$cfgPath  = Join-Path $inner 'HCMInternalConfig.xml'
+$cfgBytes = [IO.File]::ReadAllBytes($cfgPath)
+$cfgBom   = $cfgBytes.Length -ge 3 -and $cfgBytes[0] -eq 0xEF -and $cfgBytes[1] -eq 0xBB -and $cfgBytes[2] -eq 0xBF
+$cfgText  = [IO.File]::ReadAllText($cfgPath)
+foreach ($k in $SHIP_OFF) {
+    if ($cfgText -match "<$k>1</$k>") {
+        $cfgText = $cfgText.Replace("<$k>1</$k>", "<$k>0</$k>")
+        Write-Host "      shipped config: forced $k off" -ForegroundColor Yellow
+    }
+}
+[IO.File]::WriteAllText($cfgPath, $cfgText, (New-Object System.Text.UTF8Encoding($cfgBom)))
+foreach ($k in $SHIP_OFF) {
+    if ([IO.File]::ReadAllText($cfgPath) -match "<$k>1</$k>") { Fail "shipped config still enables $k" }
+}
+$settingsSrc = Get-Content (Join-Path $repo 'HCMInternal\SettingsStateAndEvents.h') -Raw
+$defaultOff  = [regex]::Matches($settingsSrc, 'BinarySetting<bool>>\s+(\w+Toggle)\s*=\s*std::make_shared<BinarySetting<bool>>\s*\(\s*false') |
+    ForEach-Object { $_.Groups[1].Value }
+$onAnyway = @($defaultOff | Where-Object { $cfgText -match "<$_>1</$_>" })
+if ($onAnyway) {
+    Write-Host ("      NOTE: shipped config turns ON these default-off toggles (your saved settings): " + ($onAnyway -join ', ')) -ForegroundColor Yellow
+}
+
 # ---- EVERY SHIPPED BINARY MUST CARRY THE SAME VERSION ---------------------------------------------
 # Directory.Build.props is the single source of truth: it sets the managed exe's version directly, and
 # updateVersionInfo.ps1 rewrites FILEVERSION in every HCM*.rc from it. But an .rc edit only reaches the

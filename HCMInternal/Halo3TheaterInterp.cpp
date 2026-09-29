@@ -353,6 +353,25 @@ private:
 		if (!mBase)
 			throw HCMRuntimeException("halo3.dll is not loaded yet - load a level first");
 
+		// ⚠ BUILD GATE. Every RVA here (8 hook sites, 31 cave fixup targets, the cave's own layout) was derived on
+		// halo3.dll 1.3528. 1.3495's halo3.dll is the same build (one unrelated code byte differs, at 0x1ECB1), so it is
+		// allowed too. Other builds are refused outright: verifySites alone would catch today's older builds (1.3385
+		// matches 0 of 8 sites), but a build that happened to match all 8 sites while the fixup targets had moved would
+		// otherwise be armed into wrong code. With the mixed-downpatch support the exe version says nothing about
+		// halo3.dll, so read the DLL's own FileVersion.
+		{
+			char dllPath[MAX_PATH] = {};
+			std::string dllVersion = "unknown";
+			if (GetModuleFileNameA((HMODULE)mBase, dllPath, sizeof(dllPath)))
+			{
+				try { std::stringstream ss; ss << getFileVersion(dllPath); dllVersion = ss.str(); }
+				catch (...) {}
+			}
+			if (dllVersion != "1.3528.0.0" && dllVersion != "1.3495.0.0")
+				throw HCMRuntimeException(std::format("Theater Interpolation Fix: only supports halo3.dll builds 1.3528 and "
+					"1.3495 (this halo3.dll is {}). Its addresses do not match this build, so nothing was patched.", dllVersion));
+		}
+
 		std::string why;
 		if (!verifySites(why))
 			throw HCMRuntimeException("Theater Interpolation Fix: " + why);
