@@ -759,7 +759,7 @@ private:
 				// it to its storage provider - press Force Checkpoint first if you want a fresh one.
 				case GUIElementEnum::hceDumpCheckpointGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Dumps the checkpoint you're currently on to <HCM folder>\\HaloCER Checkpoints\\ for later use. Does NOT create a checkpoint - it writes the last one the game actually made. The file is a byte-for-byte copy of that checkpoint."), RebindableHotkeyEnum::dumpCheckpoint, "Dump Checkpoint##hce", settings->dumpCheckpointEvent));
+						(game, ToolTipCollection("Dumps the checkpoint you're currently on into the save folder selected on HCMExternal's Halo Campaign Evolved tab (whichever tab HCMExternal is showing), or into <HCM folder>\\HaloCER Checkpoints\\ if HCMExternal has no usable folder for it. Does NOT create a checkpoint - it writes the last one the game actually made. The file is a byte-for-byte copy of that checkpoint."), RebindableHotkeyEnum::dumpCheckpoint, "Dump Checkpoint##hce", settings->dumpCheckpointEvent));
 
 				case GUIElementEnum::hceDumpCheckpointSettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -784,14 +784,15 @@ private:
 				// the existing injectCheckpoint hotkey) and MCC's three warning settings - HaloCER and the MCC games
 				// can never coexist in one process, so exactly one listener exists at a time. "##hce" keeps the
 				// visible label but gives imgui a unique ID. The file is picked with a normal Windows file dialog
-				// rather than in HCMExternal, which has no Halo Campaign Evolved tab. See HCEInjectCheckpoint.h.
+				// unless HCMExternal is SHOWING its Halo Campaign Evolved tab with a usable checkpoint selected - unlike the
+				// dump folder, the checkpoint selection is still one visible-tab slot. See HCEInjectCheckpoint.h.
 				//
 				// There is no "ignore checkpoint checksum" element here, and there cannot be: the revert calls the
 				// verifier with a2 = 0 (19DBB8: xor edx, edx), so the 0xBB x 20 bypass sentinel is unreachable. HCM
 				// recomputes the digest on every injection instead.
 				case GUIElementEnum::hceInjectCheckpointGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Replaces the game's current checkpoint with one you dumped earlier, so your next revert loads it. Opens a file browser starting in <HCM folder>\\HaloCER Checkpoints\\. HCM re-checksums the file and checks it against your current level, difficulty and game build before writing anything."), RebindableHotkeyEnum::injectCheckpoint, "Inject Checkpoint##hce", settings->injectCheckpointEvent));
+						(game, ToolTipCollection("Replaces the game's current checkpoint with one you dumped earlier, so your next revert loads it. Uses the checkpoint selected on HCMExternal's Halo Campaign Evolved tab while that tab is the one showing; otherwise opens a file browser in that tab's save folder (or in <HCM folder>\\HaloCER Checkpoints\\ while your older dumps are only there). HCM re-checksums the file and checks it against your current level, difficulty and game build before writing anything."), RebindableHotkeyEnum::injectCheckpoint, "Inject Checkpoint##hce", settings->injectCheckpointEvent));
 
 				case GUIElementEnum::hceInjectCheckpointSettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -2929,7 +2930,7 @@ private:
 
 				case GUIElementEnum::halo3TheaterInterpToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("EXPERIMENTAL - see below. Smooths Theater playback. Halo 3 renders Theater straight off the tick stream, and while the engine interpolates object POSITION it rebuilds the camera ORIENTATION from raw per-tick aiming - so the moment the player you are watching turns, the whole world steps. This interpolates it, and also fixes the object/shadow de-render that the naive fix causes. Gameplay is unaffected (there the camera already follows live input at frame rate).\n\nWhy experimental: this installs hand-written code hooks into Halo 3's render path - if anything looks wrong or the game becomes unstable, turn this off first. Everything it patches is restored when you do. Off by default. Only for halo3.dll builds 1.3528 and 1.3495 - on any other build it refuses and patches nothing.\n\nFirst-person legs: the eye follows the smoothed aim and the game draws the legs with that same smoothed camera, so they stay attached on their own. The leg hook now only collects diagnostics - its old correction made jumps judder and is switched off."), std::nullopt, "Theater Interpolation Fix (Experimental)", settings->halo3TheaterInterpToggle));
+						(game, ToolTipCollection("EXPERIMENTAL - see below. Smooths Theater playback. Halo 3 renders Theater straight off the tick stream, and while the engine interpolates object POSITION it rebuilds the camera ORIENTATION from raw per-tick aiming - so the moment the player you are watching turns, the whole world steps. This interpolates it, and also fixes the object/shadow de-render that the naive fix causes. Gameplay is unaffected (there the camera already follows live input at frame rate).\n\nWhy experimental: this installs hand-written code hooks into Halo 3's render path - if anything looks wrong or the game becomes unstable, turn this off first. Everything it patches is restored when you do. Off by default. Only for halo3.dll builds 1.3528, 1.3495 and 1.3385 - on any other build it refuses and patches nothing.\n\nFirst-person legs: the eye follows the smoothed aim and the game draws the legs with that same smoothed camera, so they stay attached on their own. The leg hook now only collects diagnostics - its old correction made jumps judder and is switched off."), std::nullopt, "Theater Interpolation Fix (Experimental)", settings->halo3TheaterInterpToggle));
 
 				case GUIElementEnum::halo3TheaterInterpCrouchGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>

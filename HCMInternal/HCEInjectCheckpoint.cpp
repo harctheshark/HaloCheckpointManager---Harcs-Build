@@ -115,8 +115,8 @@ private:
 	// deleted since it was selected - all of them land on the dialog, which is exactly today's behaviour.
 	// ============================================================================================================
 
-	// The save folder the HaloCER tab currently has selected. getDumpInfo THROWS when another game's tab is
-	// selected (that is its entire job - see SharedMemoryInternal.cpp), which is the common case and not an error.
+	// The save folder the HaloCER tab has selected - published whichever tab HCMExternal is showing, so this works
+	// with an MCC tab open too. getDumpInfo THROWS when there is no usable HaloCER folder, which is not an error here.
 	std::optional<std::filesystem::path> externalSaveFolder()
 	{
 		try
@@ -134,8 +134,8 @@ private:
 		}
 		catch (HCMRuntimeException& ex)
 		{
-			// Overwhelmingly "wrong game tab selected". DEBUG, not ERROR - it is the normal state of the world
-			// while the user is looking at Halo 2.
+			// No HaloCER folder published, or it no longer exists. DEBUG, not ERROR - the dialog simply opens on
+			// the legacy folder instead.
 			PLOG_DEBUG << "No HaloCER save folder from HCMExternal (" << ex.what() << ")";
 			return std::nullopt;
 		}

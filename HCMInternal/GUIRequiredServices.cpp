@@ -370,7 +370,8 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	// Halo Campaign Evolved's dump is its own cheat: MCC's DumpCheckpoint needs an IGetMCCVersion version stamp
 	// HaloCER has none of (and must never carry), plus a checkpointLocation pointer into an in-process buffer the
 	// shipped game does not have. It DOES use ISharedMemory::getDumpInfo now that HCMExternal has a HaloCER tab -
-	// dumps go to the save folder that tab has selected, falling back to <HCM dir>\HaloCER Checkpoints\.
+	// dumps go to the save folder that tab has selected (whichever tab is on screen), falling back to
+	// <HCM dir>\HaloCER Checkpoints\.
 	// See HCEDumpCheckpoint.h.
 	// Both HaloCER dump and inject additionally need HCECheckpointDetours: the shipped game keeps its checkpoints
 	// OUTSIDE this process, so the only way to reach a blob is to intercept the hand-off to the storage provider

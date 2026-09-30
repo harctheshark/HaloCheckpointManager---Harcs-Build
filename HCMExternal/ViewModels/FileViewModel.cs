@@ -67,6 +67,7 @@ namespace HCMExternal.ViewModels
                 _selectedSaveFolder = value;
                 OnPropertyChanged(nameof(SelectedSaveFolder));
                 _interprocService.UpdateSharedMemSaveFolder(SelectedGame, SelectedSaveFolder);
+                PublishDumpFolder(SelectedGame, _selectedSaveFolder.SaveFolderPath);
 
                 // serialise
                 // ⚠ GROW it, never replace it. This collection is indexed by (int)HaloGame, so the moment a game is
@@ -262,6 +263,110 @@ namespace HCMExternal.ViewModels
         }
 
 
+
+
+        // ⚠ HCMINTERNAL DUMPS THE RUNNING GAME, NOT THE VISIBLE TAB. It used to demand that the visible tab matched the
+        // game being played ("Wrong game tab selected in external window!"), because the selected-folder slot in shared
+        // memory holds one folder for whichever tab is showing. So EVERY game's folder is published as well, and
+        // HCMInternal picks the running game's. Call after initializeSharedMemory (anything earlier is dropped) and
+        // whenever the Saves\ tree changes, so a remembered folder deleted in Explorer falls back to the root.
+        public void PublishDumpFoldersForAllGames()
+        {
+            foreach (HaloGame game in Enum.GetValues(typeof(HaloGame)))
+            {
+                // The visible tab: exactly what it has selected. Every other game: what its tab WOULD select if it
+                // were opened now, so the dump shows up there when the user switches to it.
+                string path = game == SelectedGame && SelectedSaveFolder != null
+                    ? SelectedSaveFolder.SaveFolderPath
+                    : ResolveRememberedDumpFolder(game);
+                PublishDumpFolder(game, path);
+            }
+        }
+
+        private void PublishDumpFolder(HaloGame game, string folderPath)
+        {
+            // HCMInternal never dumps for Cartographer, and its internal index (7) is not a GameState at all.
+            if (game == HaloGame.ProjectCartographer)
+            {
+                return;
+            }
+            _interprocService.UpdateSharedMemGameDumpFolder(game, DumpFolderLabel(folderPath), folderPath);
+        }
+
+        // Mirrors UpdateSaveFolderCollection's restore without building a tree (and without its "root folder missing"
+        // MessageBox): the remembered folder if it still exists and is inside this game's root, otherwise the root.
+        // LastSelectedFolder is indexed by the TAB index ((int)game) - that is how the SelectedSaveFolder setter stores it.
+        private static string ResolveRememberedDumpFolder(HaloGame game)
+        {
+            string root = Path.GetFullPath(Path.Combine("Saves", game.ToRootFolderPath()));
+            StringCollection? remembered = Properties.Settings.Default.LastSelectedFolder;
+            string? last = remembered != null && remembered.Count > (int)game ? remembered[(int)game] : null;
+
+            // Ordinal, like the tree match (sf.SaveFolderPath == lastSelectedFolder): both sides are DirectoryInfo.FullName.
+            if (!string.IsNullOrEmpty(last)
+                && (last == root || last.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                && ExistsWithTreeCase(root, last))
+            {
+                return last;
+            }
+            return root;
+        }
+
+        // ⚠ NOT Directory.Exists, which ignores case. The tab's restore only matches a node whose path is built from the
+        // ENUMERATED directory names, compared ordinally - so after a case-only rename ("speedrun" -> "Speedrun") the tab
+        // opens on the root. Accepting the old casing here would dump into a folder the tab does not open on.
+        private static bool ExistsWithTreeCase(string root, string path)
+        {
+            try
+            {
+                if (!Directory.Exists(root))
+                {
+                    return false;
+                }
+                if (path == root)
+                {
+                    return true;
+                }
+                string current = root;
+                foreach (string segment in path.Substring(root.Length + 1).Split(Path.DirectorySeparatorChar))
+                {
+                    string? match = Directory.EnumerateDirectories(current)
+                        .FirstOrDefault(d => string.Equals(Path.GetFileName(d), segment, StringComparison.Ordinal));
+                    if (match == null)
+                    {
+                        return false;
+                    }
+                    current = match;
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("ExistsWithTreeCase: " + ex.Message);
+                return false;
+            }
+        }
+
+        // How HCMInternal names the folder in its "Dumped checkpoint" message: the path below Saves\, e.g.
+        // "Halo 3\Speedrun". It names the GAME as well as the folder, which matters now that a dump can land in a tab
+        // that is not on screen.
+        private static string DumpFolderLabel(string folderPath)
+        {
+            try
+            {
+                string relative = Path.GetRelativePath(Path.GetFullPath("Saves"), folderPath);
+                if (!Path.IsPathRooted(relative) && relative != ".."
+                    && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                {
+                    return relative;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Debug("DumpFolderLabel: " + ex.Message);
+            }
+            return Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar));
+        }
 
 
         public void TreeFolderChanged(object sender, RoutedPropertyChangedEventArgs<object> e)

@@ -215,6 +215,8 @@ namespace HCMExternal.ViewModels
             {
                 FileViewModel.UpdateSaveFolderCollection();
                 FileViewModel.UpdateCheckpointCollection();
+                // The hidden tabs too: a remembered folder renamed/deleted in Explorer must stop being a dump target.
+                FileViewModel.PublishDumpFoldersForAllGames();
             });
         }
 

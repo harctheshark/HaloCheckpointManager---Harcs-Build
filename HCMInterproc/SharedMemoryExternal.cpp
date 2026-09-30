@@ -40,6 +40,54 @@ static std::string narrowForLog(const std::wstring& w)
 //
 // We can fix it because we are still the OWNER of that directory, and an owner always retains READ_CONTROL
 // and WRITE_DAC even when the DACL grants them nothing. So: put Everyone back.
+// One game's dump folder - see dumpFolderPathByGame in the header.
+// ⚠ Under the segment's own lock, which HCMInternal's getDumpInfo also takes around its copy: an assign can
+// reallocate the string's buffer, and a reader copying it at that moment would get a torn path.
+// ⚠⚠ TRY-LOCK, NEVER atomic_func. On Windows boost emulates that lock as a spin lock with NO owner-death recovery, and
+// HCMInternal takes it (every segment.find) about 100 times a second. If the game dies or is frozen by a debugger at
+// the wrong microsecond the lock is never released, and a blocking lock here would hang HCMExternal's UI thread - this
+// runs on every folder click and tab switch - forever. Give up after ~100 ms instead; the slot keeps its old value.
+void SharedMemoryExternal::setDumpFolderForGame(int game, const char* name, const char* path) noexcept
+{
+	if (!dumpFolderNameByGame || !dumpFolderPathByGame) return;
+	if (game < 0 || game >= kDumpFolderSlots)
+	{
+		PLOG_ERROR << "setDumpFolderForGame: game index out of range: " << game;
+		return;
+	}
+	try
+	{
+		auto write = [&]()
+			{
+				dumpFolderNameByGame[game].assign(name ? name : "");
+				dumpFolderPathByGame[game].assign(path ? path : "");
+			};
+		// Retry densely: HCMInternal holds the lock for microseconds at a time, so a plain Sleep(1) backoff (~15 ms at
+		// the default timer resolution) gets only a handful of attempts per 100 ms and could give up on a merely busy
+		// lock. Yield between tries and only sleep every 64th.
+		const ULONGLONG deadline = GetTickCount64() + 100;
+		for (unsigned tries = 1; !segment.try_atomic_func(write); ++tries)
+		{
+			if (GetTickCount64() >= deadline)
+			{
+				PLOG_ERROR << "setDumpFolderForGame(" << game << "): shared memory lock unavailable for 100 ms (its owner "
+					"is frozen or died holding it) - dump folder not updated";
+				return;
+			}
+			if (tries % 64 == 0) Sleep(1); else SwitchToThread();
+		}
+	}
+	catch (const std::exception& ex)
+	{
+		PLOG_ERROR << "setDumpFolderForGame(" << game << ") failed: " << ex.what();
+	}
+	catch (...)
+	{
+		PLOG_ERROR << "setDumpFolderForGame(" << game << ") failed: unknown error";
+	}
+}
+
+
 // See the note on pendingConfigXml in the header. Returns true once per generation bump.
 bool SharedMemoryExternal::takePendingConfigSave(std::string& out) noexcept
 {
@@ -397,6 +445,11 @@ SharedMemoryExternal::SharedMemoryExternal(bool CPnullData,
 		selectedFolderName->assign(SFname);
 		selectedFolderPath = segment.construct<shm_string>("selectedFolderPath")(sa);
 		selectedFolderPath->assign(SFpath);
+
+		// Per-game dump folders - see the header. Constructed EMPTY: HCMExternal publishes every game right after
+		// initialiseInterproc returns, and until then HCMInternal falls back to the triple above (the old behaviour).
+		dumpFolderNameByGame = segment.construct<shm_string>("dumpFolderNameByGame")[kDumpFolderSlots](sa);
+		dumpFolderPathByGame = segment.construct<shm_string>("dumpFolderPathByGame")[kDumpFolderSlots](sa);
 
 	}
 	// ⚠ CATCH EVERYTHING, NOT JUST interprocess_exception. Anything that escaped this constructor left the

@@ -30,6 +30,9 @@ namespace HCMExternal.Services.Interproc.Impl
         private static partial void updateSelectedFolder(int SFgame, string SFname, string SFpath);
 
         [LibraryImport("HCMInterproc.DLL", StringMarshallingCustomType = typeof(Utf8StringMarshaller))]
+        private static partial void updateGameDumpFolder(int game, string name, string path);
+
+        [LibraryImport("HCMInterproc.DLL", StringMarshallingCustomType = typeof(Utf8StringMarshaller))]
         private static partial ushort initialiseInterproc(
             [MarshalAs(UnmanagedType.Bool)] bool CPnullData,
             int CPgame, string CPname, string CPpath, string CPlevelcode, string CPgameVersion, int CPdifficulty,
@@ -83,6 +86,13 @@ namespace HCMExternal.Services.Interproc.Impl
         public void UpdateSharedMemSaveFolder(HaloGame game, SaveFolder sf)
         {
             updateSelectedFolder(game.ToInternalIndex(), sf.SaveFolderName, sf.SaveFolderPath);
+        }
+
+        // ⚠ ToInternalIndex, never (int)game: the slot is HCMInternal's GameState, and the tab index differs for
+        // ODST, Reach and Halo 4.
+        public void UpdateSharedMemGameDumpFolder(HaloGame game, string displayName, string folderPath)
+        {
+            updateGameDumpFolder(game.ToInternalIndex(), displayName, folderPath);
         }
 
 

@@ -114,6 +114,9 @@ namespace HCMExternal
             mainWindow.Show();
 
             interproc.initializeSharedMemory(mainViewModel.FileViewModel.SelectedCheckpoint, mainViewModel.FileViewModel.SelectedSaveFolder, mainViewModel.FileViewModel.SelectedGame);
+            // Every game's dump folder, not just the visible tab's - HCMInternal dumps the running game wherever the
+            // user is looking. Must come after initializeSharedMemory: publishes before it are dropped.
+            mainViewModel.FileViewModel.PublishDumpFoldersForAllGames();
 
         }
 

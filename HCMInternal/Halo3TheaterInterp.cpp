@@ -62,6 +62,7 @@ private:
 	std::shared_ptr<RuntimeExceptionHandler> runtimeExceptions;
 
 	uintptr_t mBase = 0;
+	const Halo3TheaterInterp_Detail::Build* mBuild = nullptr;   // set by apply()'s build gate, before any site is read
 	uint8_t*  mCave = nullptr;
 	bool      mApplied = false;
 
@@ -107,7 +108,7 @@ private:
 	{
 		for (size_t i = 0; i < Halo3TheaterInterp_Detail::kHookCount; ++i)
 		{
-			const auto& h = Halo3TheaterInterp_Detail::kHooks[i];
+			const auto& h = mBuild->hooks[i];
 			uint8_t actual[16]{};
 			if (!readBytes(mBase + h.rva, actual, h.stolen))
 			{
@@ -353,12 +354,11 @@ private:
 		if (!mBase)
 			throw HCMRuntimeException("halo3.dll is not loaded yet - load a level first");
 
-		// ⚠ BUILD GATE. Every RVA here (8 hook sites, 31 cave fixup targets, the cave's own layout) was derived on
-		// halo3.dll 1.3528. 1.3495's halo3.dll is the same build (one unrelated code byte differs, at 0x1ECB1), so it is
-		// allowed too. Other builds are refused outright: verifySites alone would catch today's older builds (1.3385
-		// matches 0 of 8 sites), but a build that happened to match all 8 sites while the fixup targets had moved would
-		// otherwise be armed into wrong code. With the mixed-downpatch support the exe version says nothing about
-		// halo3.dll, so read the DLL's own FileVersion.
+		// ⚠ BUILD GATE. The cave is linked for halo3.dll 1.3528; each supported build (kBuilds) carries its own 8 hook
+		// sites and a remap of all 23 fixup targets. 1.3495's halo3.dll is the same build as 1.3528; 1.3385 was ported
+		// (see kHooks1385). Other builds are refused outright: verifySites alone is not enough, because a build that
+		// happened to match all 8 sites while the fixup targets had moved would otherwise be armed into wrong code. With
+		// the mixed-downpatch support the exe version says nothing about halo3.dll, so read the DLL's own FileVersion.
 		{
 			char dllPath[MAX_PATH] = {};
 			std::string dllVersion = "unknown";
@@ -367,9 +367,13 @@ private:
 				try { std::stringstream ss; ss << getFileVersion(dllPath); dllVersion = ss.str(); }
 				catch (...) {}
 			}
-			if (dllVersion != "1.3528.0.0" && dllVersion != "1.3495.0.0")
-				throw HCMRuntimeException(std::format("Theater Interpolation Fix: only supports halo3.dll builds 1.3528 and "
-					"1.3495 (this halo3.dll is {}). Its addresses do not match this build, so nothing was patched.", dllVersion));
+			mBuild = nullptr;
+			for (const auto& b : Halo3TheaterInterp_Detail::kBuilds)
+				if (dllVersion == b.fileVersion) { mBuild = &b; break; }
+			if (!mBuild)
+				throw HCMRuntimeException(std::format("Theater Interpolation Fix: only supports halo3.dll builds 1.3528, "
+					"1.3495 and 1.3385 (this halo3.dll is {}). Its addresses do not match this build, so nothing was patched.",
+					dllVersion));
 		}
 
 		std::string why;
@@ -381,10 +385,10 @@ private:
 		for (uint8_t* p : mPendingFree) VirtualFree(p, 0, MEM_RELEASE);
 		mPendingFree.clear();
 
-		// PREFER moduleBase + kCaveRva - there the cave is byte-identical to the recovered blob and no
-		// fixups apply at all. But that page is one past halo3.dll's image end (SizeOfImage is exactly
-		// 0x4768000), so it is unowned space anything can take, and something did. Fall back to any slot
-		// within +/-2GB and relocate; only refuse if nothing in rel32 range is free.
+		// Try moduleBase + kCaveRva first (there, on 1.3528/1.3495, every fixup is a no-op). ⚠ In practice this NEVER
+		// succeeds: MEM_RESERVE rounds the address DOWN to the 64KB allocation granularity, and kCaveRva (0x4768000) is
+		// not 64KB-aligned, so the request overlaps halo3.dll's own image and fails. Every logged arm since 2026-09-22 was
+		// relocated - allocNearModule + relocateCave IS the path that runs. Only refuse if nothing in rel32 range is free.
 		const uintptr_t want = mBase + Halo3TheaterInterp_Detail::kCaveRva;
 		mCave = (uint8_t*)VirtualAlloc((void*)want, Halo3TheaterInterp_Detail::kCaveSize,
 			MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
@@ -403,24 +407,25 @@ private:
 
 		memcpy(mCave, Halo3TheaterInterp_Detail::kCave, Halo3TheaterInterp_Detail::kCaveSize);
 
-		if (relocated)
+		// ⚠ ALWAYS, not only when relocated: on a remapped build (1.3385) the blob's linked targets are 1.3528's, so the
+		// fixups are live even at the preferred address. On 1.3528/1.3495 at the preferred address they rewrite each
+		// field with the value it already holds.
+		// A wrong fixup would send the cave's `jmp rax` into arbitrary memory, so prove it rather
+		// than assume it: relocate, then re-derive every game address the way the cave will and
+		// require it to match. Anything short of an exact match frees the page and refuses.
+		if (!Halo3TheaterInterp_Detail::relocateCave(mCave, (uintptr_t)mCave, mBase, *mBuild)
+			|| !Halo3TheaterInterp_Detail::verifyRelocation(mCave, (uintptr_t)mCave, mBase, *mBuild))
 		{
-			// A wrong fixup would send the cave's `jmp rax` into arbitrary memory, so prove it rather
-			// than assume it: relocate, then re-derive every game address the way the cave will and
-			// require it to match. Anything short of an exact match frees the page and refuses.
-			if (!Halo3TheaterInterp_Detail::relocateCave(mCave, (uintptr_t)mCave, mBase)
-				|| !Halo3TheaterInterp_Detail::verifyRelocation(mCave, (uintptr_t)mCave, mBase))
-			{
-				VirtualFree(mCave, 0, MEM_RELEASE); mCave = nullptr;
-				throw HCMRuntimeException(
-					"Theater Interpolation Fix: the cave was placed away from its preferred address and "
-					"the relocation did not verify. Refusing to arm.");
-			}
-			PLOG_INFO << "Halo3TheaterInterp: cave relocated to " << (void*)mCave
-				<< " (preferred halo3.dll+0x" << std::hex << Halo3TheaterInterp_Detail::kCaveRva
-				<< " was taken); " << std::dec << Halo3TheaterInterp_Detail::kAbsFixupCount
-				<< " absolute + " << Halo3TheaterInterp_Detail::kRelFixupCount << " rel32 fixups verified";
+			VirtualFree(mCave, 0, MEM_RELEASE); mCave = nullptr;
+			throw HCMRuntimeException(std::format(
+				"Theater Interpolation Fix: the cave's fixups for halo3.dll {} did not verify{}. Refusing to arm.",
+				mBuild->fileVersion, relocated ? " (it was placed away from its preferred address)" : ""));
 		}
+		PLOG_INFO << "Halo3TheaterInterp: halo3.dll " << mBuild->fileVersion << ", cave at " << (void*)mCave
+			<< (relocated ? " (relocated; halo3.dll+0x" : " (at halo3.dll+0x")
+			<< std::hex << Halo3TheaterInterp_Detail::kCaveRva << (relocated ? " not reservable)" : ")")
+			<< "; " << std::dec << Halo3TheaterInterp_Detail::kAbsFixupCount
+			<< " absolute + " << Halo3TheaterInterp_Detail::kRelFixupCount << " rel32 fixups verified";
 
 		// Knob values. ⚠ Write ONLY what we mean to change - every knob already holds the value the
 		// recovered (working) blob shipped, so a stray write is a behaviour change, not a no-op. HCM
@@ -459,7 +464,7 @@ private:
 		mSaves.reserve(mSaves.size() + Halo3TheaterInterp_Detail::kHookCount);
 		for (size_t i = 0; i < Halo3TheaterInterp_Detail::kHookCount; ++i)
 		{
-			const auto& h = Halo3TheaterInterp_Detail::kHooks[i];
+			const auto& h = mBuild->hooks[i];
 			Patch& p = patches[i];
 			p.addr = mBase + h.rva;
 			p.len = h.stolen;

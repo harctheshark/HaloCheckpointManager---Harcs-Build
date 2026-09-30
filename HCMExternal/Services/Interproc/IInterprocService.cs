@@ -32,6 +32,10 @@ namespace HCMExternal.Services.Interproc
 
         public void UpdateSharedMemCheckpoint(HaloGame game, Checkpoint? checkpoint);
         public void UpdateSharedMemSaveFolder(HaloGame game, SaveFolder checkpoint);
+
+        // One game's dump folder, whichever tab is visible - HCMInternal dumps the RUNNING game into its own slot.
+        // See FileViewModel.PublishDumpFoldersForAllGames.
+        public void UpdateSharedMemGameDumpFolder(HaloGame game, string displayName, string folderPath);
         public void UpdateSharedMemQueueInjectCommand();
     }
 }

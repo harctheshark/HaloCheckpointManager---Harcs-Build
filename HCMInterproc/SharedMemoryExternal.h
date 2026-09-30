@@ -42,6 +42,22 @@ public:
 	shm_string* selectedFolderName = nullptr;
 	shm_string* selectedFolderPath = nullptr;
 
+	// ⚠ PER-GAME DUMP FOLDERS - what HCMInternal actually dumps into. The selectedFolder* triple above is ONE slot
+	// holding whichever TAB is visible, so dumping Halo 3 while HCMExternal showed the Halo 1 tab used to fail with
+	// "Wrong game tab selected". HCMInternal already knows which game is running, so HCMExternal publishes EVERY
+	// game's folder here (FileViewModel.PublishDumpFoldersForAllGames) and HCMInternal reads the running game's slot.
+	// The triple is still written for the visible tab exactly as before.
+	//
+	// Indexed by HCMInternal's GameState int == HaloGame.ToInternalIndex() on the C# side - ⚠ NOT the tab index,
+	// which differs for ODST/Reach/Halo 4. Slots 4 (Halo2MP), 7 (Cartographer - not a GameState at all) and 9
+	// (Halo5Forge) stay empty: none of them has a dump. Name = a display label ("Halo 3\Speedrun"), path = absolute.
+	// Written only through setDumpFolderForGame, under the segment lock that HCMInternal's reader takes too (a bounded
+	// try-lock on this side - see there). HCMExternal never publishes slot 7 (FileViewModel.PublishDumpFolder skips it).
+	static constexpr int kDumpFolderSlots = 10;
+	shm_string* dumpFolderNameByGame = nullptr;   // [kDumpFolderSlots]
+	shm_string* dumpFolderPathByGame = nullptr;   // [kDumpFolderSlots]
+	void setDumpFolderForGame(int game, const char* name, const char* path) noexcept;
+
 	// ---- config save forwarding -----------------------------------------------------------------
 	// ⚠⚠ HALO 5: FORGE CANNOT WRITE ITS OWN SETTINGS FILE. HCMInternal lives inside the game process,
 	// and for a UWP title that process is an AppContainer. Measured on the HCM install directory:

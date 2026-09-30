@@ -13,8 +13,8 @@
 // <HCM dir>\Saves\Halo Campaign Evolved\... - the same ISharedMemory::getDumpInfo convention the six MCC tabs use,
 // so dumps show up in the tab (and in its subfolders) the moment they are written. It falls back to
 // <HCM dir>\HaloCER Checkpoints\ - where this feature wrote unconditionally before that tab existed - whenever
-// getDumpInfo is unusable: no shared memory, HCMExternal sitting on another game's tab (getDumpInfo throws exactly
-// that), or an older HCMExternal with no HaloCER tab at all. ⚠ Files already in the legacy folder are NOT migrated;
+// getDumpInfo is unusable: no shared memory, or no existing HaloCER folder published. Which tab HCMExternal is
+// SHOWING no longer matters - it publishes every game's folder and getDumpInfo reads the running game's. ⚠ Files already in the legacy folder are NOT migrated;
 // they stay valid and HCEInjectCheckpoint's browse dialog still opens there while they are the only dumps around.
 //
 // Why this is still a separate class rather than a HaloCER branch inside DumpCheckpoint.h: that one depends on

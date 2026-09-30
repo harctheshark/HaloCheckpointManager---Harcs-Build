@@ -25,9 +25,10 @@ namespace
 {
 	// THE FALLBACK folder, and where dumps used to go unconditionally. Dumps now land in the save folder
 	// HCMExternal's Halo Campaign Evolved tab has selected - <HCM dir>\Saves\Halo Campaign Evolved\... - which is
-	// the same convention all six MCC tabs use and, more to the point, the only folder the tab actually lists. HCM
-	// falls back here whenever that folder is unavailable (no shared memory, HCMExternal on another game's tab, an
-	// older HCMExternal with no HaloCER tab at all), which is exactly what this feature did before the tab existed.
+	// the same convention all six MCC tabs use and, more to the point, the only folder the tab actually lists. It is
+	// used whichever tab HCMExternal is showing (getDumpInfo reads the running game's own folder). HCM falls back here
+	// only when that folder is unavailable (no shared memory / HCMExternal closed, or the folder does not exist),
+	// which is exactly what this feature did before the tab existed.
 	//
 	// ⚠ EXISTING FILES ARE NOT MIGRATED. Anything already in this folder stays here, stays valid, and stays
 	// injectable - HCEInjectCheckpoint's browse dialog deliberately opens here while it still holds .bin files and
@@ -183,19 +184,20 @@ private:
 	//
 	// The save folder HCMExternal's Halo Campaign Evolved tab has selected, so the dump appears in the tab the
 	// instant it is written (HCMExternal watches Saves\ with a FileSystemWatcher) and subfolders work exactly like
-	// they do for the MCC games. Falls back to <HCM dir>\HaloCER Checkpoints\ - what this feature used
-	// unconditionally before the tab existed - for every reason the tab's folder is unavailable.
+	// they do for the MCC games. HCMExternal publishes that folder for every game whichever tab is on screen, so this
+	// no longer depends on the HaloCER tab being the visible one. Falls back to <HCM dir>\HaloCER Checkpoints\ -
+	// what this feature used unconditionally before the tab existed - for every reason that folder is unavailable.
 	//
-	// ⚠ getDumpInfo THROWS when a different game's tab is selected. That is its job, not a bug, and it is the
-	// common case when the user is looking at Halo 2 with HaloCER running. Catching it and falling back is what
-	// makes this an improvement rather than a new way for a dump to fail.
+	// getDumpInfo THROWS when it has no usable folder (no HaloCER folder published, or the folder is gone). Catching
+	// it and falling back is what keeps a dump from failing outright.
 	// ============================================================================================================
 	// outUsedLegacyFolder tells the caller to SAY SO in the dump message. Without that, a dump that fell back is
 	// indistinguishable from one that worked right up until the user goes looking for it on the tab and it is not
 	// there - which is the whole reason this used to be a fixed folder.
-	std::filesystem::path resolveDumpFolder(bool& outUsedLegacyFolder)
+	std::filesystem::path resolveDumpFolder(bool& outUsedLegacyFolder, std::string& outFolderLabel)
 	{
 		outUsedLegacyFolder = true;
+		outFolderLabel = kLegacyDumpSubfolder;
 		try
 		{
 			auto sharedMem = sharedMemWeak.lock();
@@ -210,6 +212,7 @@ private:
 					{
 						PLOG_DEBUG << "Dumping into HCMExternal's selected save folder: " << path.string();
 						outUsedLegacyFolder = false;
+						outFolderLabel = folder.selectedFolderName;   // "Halo Campaign Evolved\<subfolder>"
 						return path;
 					}
 					PLOG_WARNING << "HCMExternal's selected save folder does not exist: " << path.string();
@@ -332,7 +335,8 @@ private:
 			}
 
 			bool usedLegacyFolder = false;
-			const std::filesystem::path dumpFolder = resolveDumpFolder(usedLegacyFolder);
+			std::string folderLabel;
+			const std::filesystem::path dumpFolder = resolveDumpFolder(usedLegacyFolder, folderLabel);
 			const std::filesystem::path dumpPath = dumpFolder / (checkpointName + ".bin");
 
 			std::error_code ec;
@@ -361,9 +365,10 @@ private:
 			}
 
 			// Identical on both storage paths now: nothing was forced and the player's checkpoint did not move.
-			// The only thing that varies is WHERE it went, and the user is told when that is not the tab.
-			messagesGUI->addMessage(std::format("Dumped checkpoint: {}.bin{}", checkpointName,
-				usedLegacyFolder ? " (to HaloCER Checkpoints - open HCM's Halo Campaign Evolved tab to dump there instead)" : ""));
+			// The only thing that varies is WHERE it went, so say where - and say so loudly when it is not the tab.
+			messagesGUI->addMessage(usedLegacyFolder
+				? std::format("Dumped checkpoint: {}.bin to HaloCER Checkpoints (HCMExternal had no usable Halo Campaign Evolved save folder)", checkpointName)
+				: std::format("Dumped checkpoint: {}.bin to {}", checkpointName, folderLabel));
 
 			PLOG_INFO << std::format(
 				"Dumped a HaloCER checkpoint ({}), 0x{:X} bytes, to {}",

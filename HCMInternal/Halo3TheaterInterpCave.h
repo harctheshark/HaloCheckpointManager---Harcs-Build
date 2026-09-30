@@ -178,6 +178,32 @@ namespace Halo3TheaterInterp_Detail
 	};
 	inline constexpr size_t kHookCount = sizeof(kHooks) / sizeof(kHooks[0]);
 
+	// halo3.dll 1.3385 (port 2026-09-28, proof: Documents\Halo Mod And Tools\Halo3 Theater Port\PORT_PROOF.md).
+	// Same 8 instructions, same stolen lengths, same cave entries - only the site RVAs moved. 5 of 8 are byte-identical;
+	// RenderRetime / EyeAim1 / EyeAim2 differ only in their disp32/rel32 operand. Each host function pairs 1:1 with its
+	// 1.3528 twin (equal instruction counts, Hex-Rays-identical after address normalisation).
+	inline constexpr HookSite kHooks1385[] =
+	{
+		{ 0x02A5F26, 0x4768280, 16, "FpTurn", "render-packet forward, sub_1802A5EDC",
+		  { 0xF2, 0x0F, 0x10, 0x47, 0x28, 0xF2, 0x0F, 0x11, 0x43, 0x0C, 0x8B, 0x47, 0x30, 0x89, 0x43, 0x14 } },
+		{ 0x017E3AA, 0x4768900,  9, "DeRender", "observer fwd+up publish loop OBS+0x144/0x150",
+		  { 0xFF, 0xC3, 0x48, 0x81, 0xC7, 0xD0, 0x03, 0x00, 0x00 } },
+		{ 0x037C0DE, 0x4768E10,  8, "Crouch", "crouch fraction unit+0x384, eye reader sub_18037BFA4",
+		  { 0xF3, 0x0F, 0x10, 0xBF, 0x84, 0x03, 0x00, 0x00 } },
+		{ 0x02C0F13, 0x47687B0,  7, "LegAttach", "FP legs emit predicate, sub_1802C0970",
+		  { 0xF6, 0xD8, 0x48, 0x89, 0x5C, 0x24, 0x38 } },
+		// mov byte [rip->0x8ACB70],r12b + mov esi,r14d - the cave replays the store through its (remapped) fixup.
+		{ 0x01853EB, 0x476A400, 10, "RenderRetime", "render frame after slot acquire, sub_1801851EC",
+		  { 0x44, 0x88, 0x25, 0x7E, 0x77, 0x72, 0x00, 0x41, 0x8B, 0xF6 } },
+		{ 0x037C2F1, 0x476B062,  5, "EyeAim1", "eye-build aim read, sub_18037BFA4 (out [rsp+40h])",
+		  { 0xE8, 0x52, 0xB0, 0xD7, 0xFF } },
+		{ 0x037AD7A, 0x476B0B8,  5, "EyeAim2", "eye-build aim read, sub_18037AC60 (out [rbp-79h])",
+		  { 0xE8, 0xC9, 0xC5, 0xD7, 0xFF } },
+		{ 0x037C3C3, 0x476B0EE,  5, "EyeCC", "look-down eye offset call, sub_18037BFA4",
+		  { 0xE8, 0x74, 0x04, 0x00, 0x00 } },
+	};
+	static_assert(sizeof(kHooks1385) / sizeof(kHooks1385[0]) == kHookCount, "one 1.3385 site per hook");
+
 	// ── RELOCATION ──────────────────────────────────────────────────────────────────────────────
 	// Derived by recursive-descent disassembly of the blob from its three entry points (0x280, 0x900,
 	// 0xE10 -> 434 reachable instructions), NOT by scanning for byte patterns: a naive qword scan for
@@ -255,44 +281,120 @@ namespace Halo3TheaterInterp_Detail
 	};
 	inline constexpr size_t kRelFixupCount = sizeof(kRelFixups) / sizeof(kRelFixups[0]);
 
-	// Rewrite a kCaveSize copy of kCave so it runs correctly at caveBase. False (leaving `image`
+	// ── PER-BUILD TARGETS ───────────────────────────────────────────────────────────────────────
+	// The fixup tables above name 1.3528 RVAs (the build the blob is LINKED for). Another build supplies a remap
+	// {1.3528 rva -> its rva} for EVERY distinct target, and relocateCave() writes the remapped address. So on such a
+	// build the fixups are NOT a no-op at the preferred address - apply() must always run them (it does, for every build).
+	// Shifts are not uniform: most data moved -0x1000, but 0x8ADB60 -> 0x8ACB70 and the current-view pointer
+	// 0x46BB978 -> 0x46BA960, and code moved by -0x34C..-0x3F0 depending on the section. Never derive these by offset.
+	struct TargetRemap { uint32_t from; uint32_t to; };
+	inline constexpr TargetRemap kRemap1385[] =
+	{
+		{ 0x2D2F688, 0x2D2E688 },   // FpTurn observer/global compare
+		{ 0x0A39F9C, 0x0A38F9C },   // _tls_index
+		{ 0x02A62E6, 0x02A5F36 },   // FpTurn return (site + 16)
+		{ 0x00F01A0, 0x00EFE54 },   // call sub_1800F01A0
+		{ 0x017E703, 0x017E3B3 },   // DeRender jmp back (site + 9)
+		{ 0x037C4D6, 0x037C0E6 },   // Crouch jmp back (site + 8)
+		{ 0x46BB978, 0x46BA960 },   // LegAttach current view
+		{ 0x02C12CA, 0x02C0F1A },   // LegAttach jmp back (site + 7)
+		{ 0x08ADB60, 0x08ACB70 },   // RT G_ADB60 (decoded from the 1.3385 stolen instruction itself)
+		{ 0x06FA0C8, 0x06F90C8 },   // RT G_QPC (IAT QueryPerformanceCounter)
+		{ 0x466B238, 0x466A238 },   // RT G_FREQ
+		{ 0x089CC5C, 0x089BC5C },   // RT G_CC5C
+		{ 0x21B5D28, 0x21B4D28 },   // RT G_LIVEDESC
+		{ 0x21B5D40, 0x21B4D40 },   // RT G_SIZE
+		{ 0x08A2E71, 0x08A1E71 },   // RT G_INTERPON
+		{ 0x2D67538, 0x2D66538 },   // RT G_FILMW
+		{ 0x46B70A8, 0x46B60A8 },   // RT G_B70A8
+		{ 0x0185745, 0x01853F5 },   // RT G_RESUME (site + 10)
+		{ 0x00F7694, 0x00F7348 },   // RT G_AIMGET
+		{ 0x037C6E6, 0x037C2F6 },   // RT G_EA1RES (site + 5)
+		{ 0x037B16F, 0x037AD7F },   // RT G_EA2RES (site + 5)
+		{ 0x037CC2C, 0x037C83C },   // RT G_CC2C
+		{ 0x037C7B8, 0x037C3C8 },   // RT G_CCRES (site + 5)
+	};
+
+	// One supported halo3.dll build, selected by its FileVersion. remap == nullptr means the 1.3528 targets as-is.
+	struct Build
+	{
+		const char*        fileVersion;
+		const HookSite*    hooks;         // kHookCount entries
+		const TargetRemap* remap;
+		size_t             remapCount;
+	};
+	inline constexpr Build kBuilds[] =
+	{
+		{ "1.3528.0.0", kHooks,     nullptr,    0 },
+		// 1.3495's halo3.dll is the same build as 1.3528 (one unrelated code byte differs, at 0x1ECB1).
+		{ "1.3495.0.0", kHooks,     nullptr,    0 },
+		{ "1.3385.0.0", kHooks1385, kRemap1385, sizeof(kRemap1385) / sizeof(kRemap1385[0]) },
+	};
+
+	// 0 = not in the remap. Callers treat that as fatal for a remapped build (see the static_asserts below).
+	constexpr uint32_t remapTarget(const Build& b, uint32_t rva)
+	{
+		if (!b.remap) return rva;
+		for (size_t i = 0; i < b.remapCount; ++i)
+			if (b.remap[i].from == rva) return b.remap[i].to;
+		return 0;
+	}
+
+	// Compile-time proof that a build's tables are complete and agree with each other: every fixup target has a
+	// mapping, and every hook's jmp-back/resume target maps to THAT build's site + stolen. A remap that drifted from
+	// kHooks1385 (or a new fixup added without a 1.3385 target) fails the build instead of corrupting the game.
+	constexpr bool buildTablesConsistent(const Build& b)
+	{
+		for (size_t i = 0; i < kAbsFixupCount; ++i) if (!remapTarget(b, kAbsFixups[i].targetRva)) return false;
+		for (size_t i = 0; i < kRelFixupCount; ++i) if (!remapTarget(b, kRelFixups[i].targetRva)) return false;
+		for (size_t i = 0; i < kHookCount; ++i)
+		{
+			if (b.hooks[i].caveRva != kHooks[i].caveRva || b.hooks[i].stolen != kHooks[i].stolen) return false;
+			if (remapTarget(b, kHooks[i].rva + kHooks[i].stolen) != b.hooks[i].rva + b.hooks[i].stolen) return false;
+		}
+		return true;
+	}
+	static_assert(buildTablesConsistent(kBuilds[0]) && buildTablesConsistent(kBuilds[1]) && buildTablesConsistent(kBuilds[2]),
+		"halo3.dll per-build Theater tables are incomplete or disagree with their hook sites");
+
+	// Rewrite a kCaveSize copy of kCave so it runs correctly at caveBase against build `b`. False (leaving `image`
 	// UNTOUCHED) if caveBase is too far from the module for the rel32 branches to reach - the range
 	// check runs over every site before a single byte is written, so a refusal is never half-applied.
-	inline bool relocateCave(uint8_t* image, uintptr_t caveBase, uintptr_t moduleBase)
+	inline bool relocateCave(uint8_t* image, uintptr_t caveBase, uintptr_t moduleBase, const Build& b)
 	{
 		for (size_t i = 0; i < kRelFixupCount; ++i)
 		{
-			const int64_t d = (int64_t)(moduleBase + kRelFixups[i].targetRva)
+			const int64_t d = (int64_t)(moduleBase + remapTarget(b, kRelFixups[i].targetRva))
 				- (int64_t)(caveBase + kRelFixups[i].dispOffset + 4);
 			if (d > INT32_MAX || d < INT32_MIN) return false;
 		}
 		const int64_t slide = (int64_t)caveBase - (int64_t)kLinkedCaveVA;   // what the cave derives itself
 		for (size_t i = 0; i < kAbsFixupCount; ++i)
 			*(uint64_t*)(image + kAbsFixups[i].immOffset) =
-				(uint64_t)((int64_t)(moduleBase + kAbsFixups[i].targetRva) - slide);
+				(uint64_t)((int64_t)(moduleBase + remapTarget(b, kAbsFixups[i].targetRva)) - slide);
 		for (size_t i = 0; i < kRelFixupCount; ++i)
 			*(int32_t*)(image + kRelFixups[i].dispOffset) =
-				(int32_t)((int64_t)(moduleBase + kRelFixups[i].targetRva)
+				(int32_t)((int64_t)(moduleBase + remapTarget(b, kRelFixups[i].targetRva))
 					- (int64_t)(caveBase + kRelFixups[i].dispOffset + 4));
 		return true;
 	}
 
 	// Read back what the relocated image will actually resolve to, so apply() can prove the fixups
 	// landed instead of trusting them. Mirrors the cave's own arithmetic.
-	inline bool verifyRelocation(const uint8_t* image, uintptr_t caveBase, uintptr_t moduleBase)
+	inline bool verifyRelocation(const uint8_t* image, uintptr_t caveBase, uintptr_t moduleBase, const Build& b)
 	{
 		const int64_t slide = (int64_t)caveBase - (int64_t)kLinkedCaveVA;
 		for (size_t i = 0; i < kAbsFixupCount; ++i)
 		{
 			const uint64_t imm = *(const uint64_t*)(image + kAbsFixups[i].immOffset);
-			if ((uint64_t)((int64_t)imm + slide) != (uint64_t)(moduleBase + kAbsFixups[i].targetRva))
+			if ((uint64_t)((int64_t)imm + slide) != (uint64_t)(moduleBase + remapTarget(b, kAbsFixups[i].targetRva)))
 				return false;
 		}
 		for (size_t i = 0; i < kRelFixupCount; ++i)
 		{
 			const int32_t d = *(const int32_t*)(image + kRelFixups[i].dispOffset);
 			if ((uint64_t)(caveBase + kRelFixups[i].dispOffset + 4 + d)
-				!= (uint64_t)(moduleBase + kRelFixups[i].targetRva))
+				!= (uint64_t)(moduleBase + remapTarget(b, kRelFixups[i].targetRva)))
 				return false;
 		}
 		return true;

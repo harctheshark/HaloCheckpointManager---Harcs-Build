@@ -61,6 +61,9 @@ private:
 			if (!mccStateHook->isGameCurrentlyPlaying(mImplGame)) return;
 			PLOG_DEBUG << "onDump called " << mImplGame.toString();
 
+			// Fail BEFORE the name dialog and the forced checkpoint if there is nowhere to dump to, not after the user
+			// has typed a name. Read again below: they may pick another folder in HCMExternal while the dialog is up.
+			sharedMem->getDumpInfo(mImplGame);
 
 			// generate a default checkpoint name
 			SYSTEMTIME t;
@@ -145,6 +148,8 @@ private:
 				throw HCMRuntimeException(std::format("Failed to write checkpoint file to location {}: error: {}", dumpPath, e.what()));
 			}
 
+			// The folder label is "Halo 3\Speedrun" (see getDumpInfo): the dump goes to the RUNNING game's folder whatever
+			// tab HCMExternal shows, so a bare folder name would not say where to look.
 			messagesGUI->addMessage(std::format("Dumped checkpoint: {}.bin to {}", checkpointName, currentSaveFolder.selectedFolderName));
 
 			PLOG_INFO << std::format("successfully dumped checkpoint from 0x{:X} to path: {}", (uint64_t)checkpointLoc, dumpPath);

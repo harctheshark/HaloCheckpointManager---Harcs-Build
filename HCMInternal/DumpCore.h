@@ -49,6 +49,9 @@ private:
 			if (mccStateHook->isGameCurrentlyPlaying(mGame) == false) return;
 			PLOG_DEBUG << "onDump called " << mGame.toString();
 
+			// Fail BEFORE the name dialog and the forced core save if there is nowhere to dump to (see DumpCheckpoint.h).
+			sharedMem->getDumpInfo(mGame);
+
 
 
 
