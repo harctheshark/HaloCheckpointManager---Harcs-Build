@@ -147,7 +147,7 @@ if ($staged.Count -ne $expected.Count) { Fail "staged $($staged.Count) files, ex
 # halo3.dll-patching Theater Interpolation Fix switched on. Force the listed keys off in the STAGED copy only (the
 # run folder keeps the developer's settings), and warn about any other feature toggle that is on in the staged
 # config while its code default is off, so it is a decision rather than an accident.
-$SHIP_OFF = @('halo3TheaterInterpToggle')
+$SHIP_OFF = @('halo3TheaterInterpToggle', 'uncapRenderSectionsToggle', 'havokBroadphaseBypassToggle')
 $cfgPath  = Join-Path $inner 'HCMInternalConfig.xml'
 $cfgBytes = [IO.File]::ReadAllBytes($cfgPath)
 $cfgBom   = $cfgBytes.Length -ge 3 -and $cfgBytes[0] -eq 0xEF -and $cfgBytes[1] -eq 0xBB -and $cfgBytes[2] -eq 0xBF

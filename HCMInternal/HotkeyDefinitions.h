@@ -282,8 +282,8 @@ private:
 			mSettings->switchBSPEvent,
 			vsk{}),
 
-		initEventOnPressHotkey(switchBSPSet,
-			mSettings->switchBSPSetLoadSetEvent,
+		initEventOnPressHotkey(switchZoneSet,
+			mSettings->switchZoneSetEvent,
 			vsk{}),
 
 			

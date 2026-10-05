@@ -7,6 +7,7 @@
 #include "GetCurrentBSP.h"
 #include "GetCurrentBSPSet.h"
 #include "GetCurrentZoneSet.h"
+#include "MCCZoneSets.h"
 
 template <GameState::Value gameT>
 class GetGameDataAsString
@@ -97,7 +98,17 @@ public:
 		// Active zone set index (as indexed into the scenario's zone set block). The engine writes -1 while no
 		// scenario is loaded, so print it signed and in decimal, then put the stream flags back exactly as they
 		// were so the lines below keep whatever formatting they had before this row existed.
-		if (getCurrentZoneSetOptionalWeak.has_value())
+		// Halo 3 / ODST / Reach / Halo 4: index + NAME, with " (loading)" while the switch is still streaming in.
+		// Preferred over the bare index below whenever the name service came up for this build.
+		if (getZoneSetsOptionalWeak.has_value())
+		{
+			lockOrThrow(getZoneSetsOptionalWeak.value(), zoneSets);
+			std::string text;
+			try { text = zoneSets->describeCurrentZoneSet(); }
+			catch (HCMRuntimeException&) { text = "none"; }   // no level loaded
+			ss << "Zone Set: " << text << std::endl;
+		}
+		else if (getCurrentZoneSetOptionalWeak.has_value())
 		{
 			lockOrThrow(getCurrentZoneSetOptionalWeak.value(), getCurrentZoneSet);
 			const auto currentZoneSet = (int32_t)getCurrentZoneSet->getCurrentZoneSet();
@@ -137,6 +148,7 @@ public:
 	std::optional<std::weak_ptr<GetCurrentBSP>> getCurrentBSPOptionalWeak = std::nullopt;
 	std::optional<std::weak_ptr<GetCurrentBSPSet>> getCurrentBSPSetOptionalWeak = std::nullopt;
 	std::optional<std::weak_ptr<GetCurrentZoneSet>> getCurrentZoneSetOptionalWeak = std::nullopt;
+	std::optional<std::weak_ptr<MCCZoneSets>> getZoneSetsOptionalWeak = std::nullopt;
 	bool showGameTick = false;
 };
 

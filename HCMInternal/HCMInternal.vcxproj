@@ -383,7 +383,10 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="SoftCeilingData.h" />
     <ClInclude Include="SoftCeilingOverlay.h" />
     <ClInclude Include="PlacementPointsOverlay.h" />
-    <ClInclude Include="SwitchBSPSet.h" />
+    <ClInclude Include="MCCZoneSets.h" />
+    <ClInclude Include="MCCSwitchZoneSet.h" />
+    <ClInclude Include="HavokBroadphaseBypass.h" />
+    <ClInclude Include="GUIMCCSwitchZoneSet.h" />
     <ClInclude Include="TagBlock.h" />
     <ClInclude Include="TagBlockReader.h" />
     <ClInclude Include="TagInfo.h" />
@@ -420,6 +423,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="H2ArmorColour.h" />
     <ClInclude Include="UncapVisibilityLimits.h" />
     <ClInclude Include="UncapClusterLimit.h" />
+    <ClInclude Include="UncapRenderSections.h" />
+    <ClInclude Include="UncapRenderSectionsTable.h" />
     <ClInclude Include="FarClipDistance.h" />
     <ClInclude Include="HavokDebugger.h" />
     <ClInclude Include="HavokDebuggerBridge.h" />
@@ -793,7 +798,9 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="SkullToggler.cpp" />
     <ClCompile Include="SoftCeilingOverlay.cpp" />
     <ClCompile Include="PlacementPointsOverlay.cpp" />
-    <ClCompile Include="SwitchBSPSet.cpp" />
+    <ClCompile Include="MCCZoneSets.cpp" />
+    <ClCompile Include="MCCSwitchZoneSet.cpp" />
+    <ClCompile Include="HavokBroadphaseBypass.cpp" />
     <ClCompile Include="TagBlockReader.cpp" />
     <ClCompile Include="TagReferenceReader.cpp" />
     <ClCompile Include="TagTableRange.cpp" />
@@ -821,6 +828,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="H2ArmorColour.cpp" />
     <ClCompile Include="UncapVisibilityLimits.cpp" />
     <ClCompile Include="UncapClusterLimit.cpp" />
+    <ClCompile Include="UncapRenderSections.cpp" />
     <ClCompile Include="FarClipDistance.cpp" />
     <ClCompile Include="HavokDebugger.cpp" />
     <ClCompile Include="HavokDebuggerImpl.cpp">

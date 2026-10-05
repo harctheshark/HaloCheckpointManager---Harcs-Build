@@ -326,6 +326,7 @@ private:
 			getGameDataAsString.getCurrentBSPOptionalWeak = settings->display2DInfoShowBSP->GetValue() ? this->getCurrentBSPOptionalWeak : std::nullopt;
 			getGameDataAsString.getCurrentBSPSetOptionalWeak = settings->display2DInfoShowBSPSet->GetValue() ? this->getCurrentBSPSetOptionalWeak : std::nullopt;
 			getGameDataAsString.getCurrentZoneSetOptionalWeak = settings->display2DInfoShowZoneSet->GetValue() ? this->getCurrentZoneSetOptionalWeak : std::nullopt;
+			getGameDataAsString.getZoneSetsOptionalWeak = settings->display2DInfoShowZoneSet->GetValue() ? this->getZoneSetsOptionalWeak : std::nullopt;
 			getGameDataAsString.getAggroDataOptionalWeak = settings->display2DInfoShowAggro->GetValue() ? this->getAggroDataOptionalWeak : std::nullopt;
 			getGameDataAsString.getNextObjectDatumOptionalWeak = settings->display2DInfoShowNextObjectDatum->GetValue() ? this->getNextObjectDatumOptionalWeak : std::nullopt;
 			getGameDataAsString.ss << std::setprecision(settings->display2DInfoFloatPrecision->GetValue());
@@ -388,6 +389,7 @@ private:
 	std::optional<std::weak_ptr<GetCurrentBSP>> getCurrentBSPOptionalWeak;
 	std::optional<std::weak_ptr<GetCurrentBSPSet>> getCurrentBSPSetOptionalWeak;
 	std::optional<std::weak_ptr<GetCurrentZoneSet>> getCurrentZoneSetOptionalWeak;
+	std::optional<std::weak_ptr<MCCZoneSets>> getZoneSetsOptionalWeak;
 
 	float fontSize;
 	ImFont* displayInfoFont = nullptr;
@@ -478,12 +480,19 @@ public:
 		resolveOptionalDisplayInfoService(getCurrentRNGOptionalWeak, GetCurrentRNG);
 		resolveOptionalDisplayInfoService(getCurrentBSPOptionalWeak, GetCurrentBSP);
 		resolveOptionalDisplayInfoService(getCurrentBSPSetOptionalWeak, GetCurrentBSPSet);
-		// Only for the games whose "Show Zone Set" row exists (GUI GROUP 4: Halo2MP). Halo Reach and Halo 4 also
-		// have currentZoneSet pointer data, so resolving it unconditionally would add a "Zone Set" line to their
-		// overlay with no row to switch it off. Widen this together with the row's game tuple.
-		if constexpr (gameT == GameState::Value::Halo2MP)
+		// Only for the games whose "Show Current Zone Set" row exists (GUI GROUP 4). Widen this together with the
+		// row's game tuple, or a "Zone Set" line appears in an overlay with no row to switch it off.
+		// Third gen also gets the NAME service; the bare index stays as the fallback for builds where it cannot
+		// construct (GetGameDataAsString prefers the name when both resolved).
+		if constexpr (gameT == GameState::Value::Halo2MP || gameT == GameState::Value::Halo3 || gameT == GameState::Value::Halo3ODST
+			|| gameT == GameState::Value::HaloReach || gameT == GameState::Value::Halo4)
 		{
 			resolveOptionalDisplayInfoService(getCurrentZoneSetOptionalWeak, GetCurrentZoneSet);
+		}
+		if constexpr (gameT == GameState::Value::Halo3 || gameT == GameState::Value::Halo3ODST
+			|| gameT == GameState::Value::HaloReach || gameT == GameState::Value::Halo4)
+		{
+			resolveOptionalDisplayInfoService(getZoneSetsOptionalWeak, MCCZoneSets);
 		}
 
 		if (atLeastOneServiceIsWorking == false) throw HCMInitException("DisplayPlayerInfoImpl could not resolve any optional services for getting data!");

@@ -289,11 +289,7 @@
 		((forceLaunchManual, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
 			((forceLaunchAbsoluteVec3, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
 	((switchBSPGUI, (Halo1, Halo2)))\
-	((switchBSPSetGUI, (THIRD_GEN)))\
-		((switchBSPSetLoadSet, (THIRD_GEN)))\
-		((switchBSPSetFillCurrent, (THIRD_GEN)))\
-		((switchBSPSetLoadIndex, (THIRD_GEN)))\
-		((switchBSPSetUnloadIndex, (THIRD_GEN)))\
+	((mccSwitchZoneSetGUI, (THIRD_GEN)))\
 	((setPlayerHealthSubheadingGUI, (ALL_SUPPORTED_GAMES)))\
 		((setPlayerHealthGUI, (ALL_SUPPORTED_GAMES)))\
 		((setPlayerHealthValueGUI, (ALL_SUPPORTED_GAMES)))\
@@ -779,7 +775,9 @@
 			((hceVisibleGeometryOverlayWireAlpha, (HALOCER_ONLY)))\
 			((hceVisibleGeometryOverlayFillAlpha, (HALOCER_ONLY)))\
 			((hceVisibleGeometryOverlayHideHiddenLines, (HALOCER_ONLY)))\
-			((display2DInfoShowZoneSet, (Halo2MP)))
+			((display2DInfoShowZoneSet, (Halo3, Halo3ODST, HaloReach, Halo4, Halo2MP)))\
+	((havokBroadphaseBypassGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4, Halo2MP, HaloCER)))\
+	((uncapRenderSectionsToggle, (Halo2)))
 
 
 

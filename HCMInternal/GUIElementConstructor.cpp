@@ -16,6 +16,7 @@
 #include "GUIH5LuaConsole.h"
 #include "GUIHCESwitchZoneSet.h"
 #include "GUIH5SwitchZoneSet.h"
+#include "GUIMCCSwitchZoneSet.h"
 #include "GUIInvulnerability.h"
 #include "GUIHeading.h"
 #include "GUISubHeading.h"
@@ -988,7 +989,7 @@ private:
 							createNestedElement(GUIElementEnum::hceForceTeleportGUI),
 							createNestedElement(GUIElementEnum::hceForceTeleportSettingsSubheading),
 							createNestedElement(GUIElementEnum::switchBSPGUI),
-							createNestedElement(GUIElementEnum::switchBSPSetGUI),
+							createNestedElement(GUIElementEnum::mccSwitchZoneSetGUI),
 							createNestedElement(GUIElementEnum::setPlayerHealthSubheadingGUI),
 							createNestedElement(GUIElementEnum::skullToggleGUI),
 							createNestedElement(GUIElementEnum::hceSkullToggleGUI),
@@ -997,6 +998,7 @@ private:
 							createNestedElement(GUIElementEnum::consoleCommandSettings),
 							createNestedElement(GUIElementEnum::disableBarriersToggle),
 							createNestedElement(GUIElementEnum::hceDisableBarriersGUI),
+							createNestedElement(GUIElementEnum::havokBroadphaseBypassGUI),
 							createNestedElement(GUIElementEnum::hceSkyFixGUI),
 							createNestedElement(GUIElementEnum::hceDisableFadeFromBlackGUI),
 							createNestedElement(GUIElementEnum::soundClassGainAdjusterToggle),
@@ -1008,6 +1010,7 @@ private:
 							createNestedElement(GUIElementEnum::uncapDropShadowsToggle),
 							createNestedElement(GUIElementEnum::uncapVisibilityLimitsToggle),
 							createNestedElement(GUIElementEnum::uncapClusterLimitToggle),
+							createNestedElement(GUIElementEnum::uncapRenderSectionsToggle),
 							createNestedElement(GUIElementEnum::h2ShadowResolutionCombo),
 							createNestedElement(GUIElementEnum::h2ArmorColourToggle),
 							createNestedElement(GUIElementEnum::h2ArmorColourPrimaryPicker),
@@ -1088,6 +1091,11 @@ private:
 				case GUIElementEnum::uncapClusterLimitToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Halo 2: beats the 128 region-clusters-per-region wall that makes chunks of large maps stop rendering from a high vantage (\"overflowed region clusters during region building\"). Raises the cap to 255 - relocates the region buffer's index/volume arrays into slack, relocates + enlarges the subpart-mask pool, widens the per-region cluster bitvector 128->256 bits, makes the cluster index map unsigned, and grows the clusters submit sub-collection. Pairs with Uncap Visibility Limits for very dense views. Toggle-off drains in a crash-safe order. Offline only. Build 1.3528 only."), std::nullopt, "Uncap Cluster Limit", settings->uncapClusterLimitToggle
+						));
+
+				case GUIElementEnum::uncapRenderSectionsToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: fixes the player model and far scenery/instances flickering in and out when you move fast on big maps (e.g. Metropolis). The engine stops accepting render sections at 850 per frame and objects are added last, so they are what gets dropped; this raises the limit to 4096 by moving the per-section arrays into a bigger block. Applies live (it waits a moment for the renderer to pause; if it never does, nothing is changed and it says so) and stays on across level loads; turning it off restores the stock 850 (the cap drops at once; if the renderer is too busy to move the arrays back, that part finishes by itself at the next level load). Works alongside the baked halo2.dll builds - a baked dll that already includes this uncap is detected and left alone. Offline only. Halo 2 build 1.3528 only."), std::nullopt, "Uncap Render Sections", settings->uncapRenderSectionsToggle
 						));
 
 				case GUIElementEnum::h2ArmorColourToggle:
@@ -1457,42 +1465,17 @@ private:
 							"Index",
 							settings->switchBSPIndex, settings->switchBSPEvent));
 
-				case GUIElementEnum::switchBSPSetGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
-						(game, ToolTipCollection(""), "Switch BSP Set", headerChildElements
-							{
-								createNestedElement(GUIElementEnum::switchBSPSetLoadSet),
-								createNestedElement(GUIElementEnum::switchBSPSetFillCurrent),
-								createNestedElement(GUIElementEnum::switchBSPSetLoadIndex),
-								createNestedElement(GUIElementEnum::switchBSPSetUnloadIndex),
-							}));
+				// Halo 2 / H3 / ODST / Reach / H4 / H2A MP / HaloCER. See HavokBroadphaseBypass.h.
+				case GUIElementEnum::havokBroadphaseBypassGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Stops the game DELETING an object whose physics body leaves the Havok broadphase - the physics world's bounding box. Without this, a physics object that leaves it (a crate, a vehicle, a ragdoll, and in most games you) can be removed from the game as soon as it crosses out.\n\nOnly this deletion is disabled. The separate 'went outside of the world' death timer still applies, as do kill volumes. In Halo 2, anything past +/-32768 world units is still erased, and so are AI units that reach terminal velocity outside the world. Bodies the engine moves itself (keyframed/fixed) were never deleted this way. Outside the broadphase an object collides with nothing until it comes back inside.\n\nPatches one instruction in the game, found by a byte signature and checked before writing; turning it off restores the original bytes."),
+							std::nullopt, "Havok Broadphase Bypass", settings->havokBroadphaseBypassToggle));
 
-				case GUIElementEnum::switchBSPSetLoadSet:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIButtonAndBinaryInt<true>>
-						(game, ToolTipCollection("Loads a set of BSPs by binary index"), RebindableHotkeyEnum::switchBSPSet,
-							 "Switch BSP Binary Set",
-							"Set",
-							settings->switchBSPSetLoadSet, settings->switchBSPSetLoadSetEvent));
-
-				case GUIElementEnum::switchBSPSetFillCurrent:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-						(game, ToolTipCollection("Fills the above field with the binary value of the currently loaded BSPs"), std::nullopt,
-							"Fill With Current BSP Set",
-							settings->switchBSPSetFillCurrent));
-
-				case GUIElementEnum::switchBSPSetLoadIndex:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIButtonAndInt<false>>
-						(game, ToolTipCollection("Loads a BSP by index"), std::nullopt,
-							"Load BSP index",
-							"Index",
-							settings->switchBSPSetLoadIndex, settings->switchBSPLoadIndexEvent));
-
-				case GUIElementEnum::switchBSPSetUnloadIndex:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIButtonAndInt<false>>
-						(game, ToolTipCollection("Unloads a BSP by index"), std::nullopt,
-							"Unload BSP index",
-							"Index",
-							settings->switchBSPSetUnloadIndex, settings->switchBSPUnloadIndexEvent));
+				// Halo 3 / ODST / Reach / Halo 4. Replaced "Switch BSP Set" (a raw binary BSP mask). See MCCSwitchZoneSet.h.
+				case GUIElementEnum::mccSwitchZoneSetGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIMCCSwitchZoneSet>
+						(game, ToolTipCollection("Switch to any zone set the CURRENT level declares.\n\nThe list is read straight out of the loaded scenario tag, so it is correct on every level with no shipped per-level table - pick one and press the button. The one the game is on is marked '<- current'.\n\nA zone set controls which BSPs and designer zones are resident. Switching is how the game itself moves you between the sections of a level: this asks the game to do exactly what a switch_zone_set script command does, so it loads/unloads geometry and AI zones the normal way. Expect a short hitch while it loads.\n\nA revert or level load cancels a switch that has not run yet."),
+							RebindableHotkeyEnum::switchZoneSet, "Switch Zone Set", settings->switchZoneSetEvent));
 
 
 				case GUIElementEnum::setPlayerHealthSubheadingGUI:
@@ -1745,8 +1728,8 @@ private:
 					// Declared in GUI GROUP 4 (GuiElementEnum.h) - groups 1-3 are at the MSVC C1009 ceiling.
 					case GUIElementEnum::display2DInfoShowZoneSet:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Shows the index of the active zone set (as listed in the scenario's zone set block). -1 while no scenario is loaded."), std::nullopt,
-								("Show Zone Set"),
+							(game, ToolTipCollection("Shows the zone set the game is currently on - its index in the level's zone set list and, in Halo 3, ODST, Reach and Halo 4, its name.\n\n\"(loading)\" is appended while the game is still switching to it, i.e. not every BSP it needs is resident yet. The engine publishes the new index the moment a switch STARTS, so without that suffix the row would claim you are already in the new zone set.\n\nShows the index alone when the name cannot be read on this game build. -1 / none while no level is loaded."), std::nullopt,
+								("Show Current Zone Set"),
 								settings->display2DInfoShowZoneSet));
 
 

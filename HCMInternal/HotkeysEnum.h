@@ -48,7 +48,7 @@ editPlayerViewAngleIDSet,\
 editPlayerViewAngleIDAdjustNegative,\
 editPlayerViewAngleIDAdjustPositive,\
 switchBSP,\
-switchBSPSet,\
+switchZoneSet,\
 hideHUDToggle,\
 setPlayerHealth,\
 toggleWaypoint3D,\

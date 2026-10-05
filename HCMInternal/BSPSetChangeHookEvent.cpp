@@ -5,7 +5,6 @@
 #include "PointerDataStore.h"
 #include "GetCurrentBSPSet.h"
 #include "IMakeOrGetCheat.h"
-#include "SwitchBSPSet.h"
 
 
 template<GameState::Value gameT>
@@ -19,7 +18,6 @@ private:
 	std::shared_ptr<ObservedEvent<eventpp::CallbackList<void(BSPSet)>>> BSPSetChangeEvent;
 
 
-	std::unique_ptr<ScopedCallback< eventpp::CallbackList<void(BSPSet)>>> forceBSPSetChangeEvent;
 
 
 	void onCallbackListChanged()
@@ -57,19 +55,9 @@ public:
 		auto BSPSetChangeFunction = ptr->getData < std::shared_ptr<MultilevelPointer>>(nameof(BSPSetChangeFunction), game);
 		BSPSetChangeHook = ModuleMidHook::make(game.toModuleName(), BSPSetChangeFunction, BSPSetChangeHookFunction);
 		instance = this;
-
-
-		// subscribe to SwitchBSPSet event that it fires when the user forces a BSP set change
-		try
-		{
-			auto SwitchBSPSetLock = resolveDependentCheat(SwitchBSPSet);
-			forceBSPSetChangeEvent = std::make_unique<ScopedCallback< eventpp::CallbackList<void(BSPSet)>>>(SwitchBSPSetLock->getBSPSetChangeEvent(), [this](BSPSet n) { BSPSetChangeEvent->fireEvent(n); });
-		}
-		catch (HCMInitException ex)
-		{
-			PLOG_ERROR << "Failed to resolve SwitchBSPSet, contuining anyway";
-		}
-
+		// (There used to be a subscription here to the old SwitchBSPSet, which wrote the BSP mask directly and so had to
+		// fire this event itself. Its replacement, MCCSwitchZoneSet, asks the ENGINE to switch, so the switch goes
+		// through the hooked commit and fires this event like any other.)
 	}
 
 	std::shared_ptr<ObservedEvent<eventpp::CallbackList<void(BSPSet)>>> getBSPSetChangeEvent() {

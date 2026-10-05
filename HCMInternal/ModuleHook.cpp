@@ -226,17 +226,24 @@ void ModulePatch::attach()
 	PLOG_VERBOSE << " ModulePatch::attach()";
 #define logErrorReturn(x, y) if (x) { PLOG_ERROR << y; return; }
 
-	uintptr_t addy;
-	mOriginalFunction->resolve(&addy);
+	// Every game's patches live for the whole HCM session and shared toggles attach them all, so attach() routinely runs
+	// for a game whose dll is not loaded. That must be a clean no-op: postModuleLoad_UpdateHooks attaches once it loads.
+	// (Previously addy was left uninitialised - holding the previous attach's address from the stack, which passed the
+	// read check - and mOriginalBytes was committed as zeros before the read failed, so the patch never applied again.)
+	uintptr_t addy = 0;
+	if (!mOriginalFunction->resolve(&addy))
+	{
+		PLOG_DEBUG << "ModulePatch::attach deferred, cannot resolve: " << MultilevelPointer::GetLastError();
+		return;
+	}
 	logErrorReturn(IsBadReadPtr((void*)addy, mPatchedBytes.size()), std::format("Bad read ptr at {:x}", addy));
-	//PLOG_DEBUG << "mOriginalFunction loc: " << std::hex << (uint64_t)addy;
-	//PLOG_DEBUG << "mPatchedBytes size: " << mPatchedBytes.size();
 
 
 	if (mOriginalBytes.empty())
 	{
-		mOriginalBytes.resize(mPatchedBytes.size());
-		logErrorReturn(mOriginalFunction->readArrayData(mOriginalBytes.data(), mPatchedBytes.size()) == false, std::format("Could not resolve original function: {}", MultilevelPointer::GetLastError()));
+		std::vector<byte> original(mPatchedBytes.size());
+		logErrorReturn(mOriginalFunction->readArrayData(original.data(), original.size()) == false, std::format("Could not resolve original function: {}", MultilevelPointer::GetLastError()));
+		mOriginalBytes = std::move(original);   // commit only after a successful read
 	}
 
 	std::vector<byte> currentBytes;
@@ -332,7 +339,8 @@ bool ModuleMidHook::isHookInstalled() const
 
 bool ModulePatch::isHookInstalled() const
 {
-	std::vector<byte> currentBytes;
-	if (!mOriginalFunction->readArrayData(&currentBytes, mOriginalBytes.size())) return false;
+	if (mOriginalBytes.empty()) return false;   // never attached
+	std::vector<byte> currentBytes(mPatchedBytes.size());
+	if (!mOriginalFunction->readArrayData(currentBytes.data(), currentBytes.size())) return false;
 	return currentBytes == mPatchedBytes;
 }

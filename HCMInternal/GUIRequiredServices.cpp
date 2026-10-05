@@ -635,6 +635,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::UncapClusterLimit}
 	},
 
+	{ GUIElementEnum::uncapRenderSectionsToggle,
+		{OptionalCheatEnum::UncapRenderSections}
+	},
+
 	{ GUIElementEnum::h2ShadowResolutionCombo,
 		{OptionalCheatEnum::H2ShadowResolution}
 	},
@@ -1118,21 +1122,16 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 {OptionalCheatEnum::SwitchBSP}
 	},
 
-			{ GUIElementEnum::switchBSPSetLoadSet,
-{OptionalCheatEnum::SwitchBSPSet}
-			},
+	// Halo 3 / ODST / Reach / Halo 4 zone set dropdown + switch button. MCCSwitchZoneSet only constructs on builds
+	// whose switch-request globals are in InternalPointerData.xml, so the row is absent rather than broken elsewhere.
+	{ GUIElementEnum::mccSwitchZoneSetGUI,
+{OptionalCheatEnum::MCCSwitchZoneSet}
+	},
 
-						{ GUIElementEnum::switchBSPSetFillCurrent,
-{OptionalCheatEnum::SwitchBSPSet}
-			},
-
-						{ GUIElementEnum::switchBSPSetLoadIndex,
-{OptionalCheatEnum::SwitchBSPSet}
-			},
-
-		{ GUIElementEnum::switchBSPSetUnloadIndex,
-{OptionalCheatEnum::SwitchBSPSet}
-		},
+	// Every game whose engine deletes objects leaving the Havok broadphase (Halo 5 has its own H5OutOfBoundsBypass).
+	{ GUIElementEnum::havokBroadphaseBypassGUI,
+{OptionalCheatEnum::HavokBroadphaseBypass}
+	},
 
 				{ GUIElementEnum::hideHUDToggle,
 {OptionalCheatEnum::HideHUD}

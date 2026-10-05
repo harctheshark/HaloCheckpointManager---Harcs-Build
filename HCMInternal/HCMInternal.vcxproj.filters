@@ -871,7 +871,22 @@
     <ClInclude Include="GUIButtonAndBinaryInt.h">
       <Filter>Services\GUI\GUIElements</Filter>
     </ClInclude>
-    <ClInclude Include="SwitchBSPSet.h">
+    <ClInclude Include="MCCZoneSets.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="MCCSwitchZoneSet.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HavokBroadphaseBypass.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="UncapRenderSections.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="UncapRenderSectionsTable.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="GUIMCCSwitchZoneSet.h">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClInclude>
     <ClInclude Include="BSPChangeHookEvent.h">
@@ -1548,7 +1563,16 @@
     <ClCompile Include="ScopedImFontScaler.cpp">
       <Filter>Classes</Filter>
     </ClCompile>
-    <ClCompile Include="SwitchBSPSet.cpp">
+    <ClCompile Include="MCCZoneSets.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="MCCSwitchZoneSet.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HavokBroadphaseBypass.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="UncapRenderSections.cpp">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClCompile>
     <ClCompile Include="GetCurrentBSP.cpp">

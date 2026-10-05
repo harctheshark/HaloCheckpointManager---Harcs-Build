@@ -267,10 +267,9 @@ public:
 	std::shared_ptr<ActionEvent> hceFieldOfViewDecreaseEvent = std::make_shared<ActionEvent>();
 
 	std::shared_ptr<ActionEvent> switchBSPEvent = std::make_shared<ActionEvent>();
-	std::shared_ptr<ActionEvent> switchBSPSetLoadSetEvent = std::make_shared<ActionEvent>();
-	std::shared_ptr<ActionEvent> switchBSPLoadIndexEvent = std::make_shared<ActionEvent>();
-	std::shared_ptr<ActionEvent> switchBSPUnloadIndexEvent = std::make_shared<ActionEvent>();
-	std::shared_ptr<ActionEvent> switchBSPSetFillCurrent = std::make_shared<ActionEvent>();
+	// Halo 3 / ODST / Reach / Halo 4: switch to the zone set selected in the dropdown (MCCSwitchZoneSet). Replaced the
+	// old "Switch BSP Set" binary-mask controls.
+	std::shared_ptr<ActionEvent> switchZoneSetEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> forceFutureCheckpointFillEvent = std::make_shared<ActionEvent>(); 
 	// Halo Campaign Evolved's own picker. Separate EVENT from triggerOverlayFilterStringDialogEvent because a
 	// different dialog opens (a checkbox list rather than a text editor) and it is HCETriggerOverlay that owns
@@ -928,6 +927,15 @@ public:
 			false,
 			[](bool in) { return true; },
 			nameof(uncapClusterLimitToggle)
+		);
+
+	// Halo 2: render_visible_globals.sections 850 -> 4096 (UncapRenderSections). A cheat toggle: like
+	// uncapClusterLimitToggle it is NOT in allSerialisableOptions and always starts off.
+	std::shared_ptr<BinarySetting<bool>> uncapRenderSectionsToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(uncapRenderSectionsToggle)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> offscreenShadowCastersToggle = std::make_shared<BinarySetting<bool>>
@@ -2569,27 +2577,6 @@ public:
 			nameof(switchBSPIndex)
 		);
 
-	std::shared_ptr<BinarySetting<int>> switchBSPSetLoadSet = std::make_shared<BinarySetting<int>>
-		(
-			0,
-			[](int in) { return true; },
-			nameof(switchBSPSetLoadSet)
-		);
-
-	std::shared_ptr<BinarySetting<int>> switchBSPSetLoadIndex = std::make_shared<BinarySetting<int>>
-		(
-			0,
-			[](int in) { return true; },
-			nameof(switchBSPSetLoadIndex)
-		);
-
-	std::shared_ptr<BinarySetting<int>> switchBSPSetUnloadIndex = std::make_shared<BinarySetting<int>>
-		(
-			0,
-			[](int in) { return true; },
-			nameof(switchBSPSetUnloadIndex)
-		);
-
 
 	std::shared_ptr<BinarySetting<bool>> OBSBypassToggle = std::make_shared<BinarySetting<bool>>
 		(
@@ -3677,6 +3664,16 @@ public:
 			nameof(h5OutOfBoundsBypassToggle)
 		);
 
+	// Halo 2 / Halo 3 / ODST / Reach / Halo 4 / H2A MP / HaloCER: stop the engine deleting objects whose Havok body
+	// leaves the broadphase (HavokBroadphaseBypass). A cheat toggle: like the others it is NOT in allSerialisableOptions,
+	// so every session starts with it off.
+	std::shared_ptr<BinarySetting<bool>> havokBroadphaseBypassToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(havokBroadphaseBypassToggle)
+		);
+
 	// ---- Halo 5: Infinite Ammo / Bottomless Clip, and One Shot Kill ------------------------------------
 	// Both write per-unit "malleable properties" on the player biped, NOT the player-traits struct - see the
 	// banner in H5UnitCheats.h for why the obvious target is a dead end.
@@ -4145,9 +4142,6 @@ public:
 		freeCameraUserInputCameraNonLinearFOVAtMinimum,
 		freeCameraUserInputCameraNonLinearFOVAtMaximum,
 		switchBSPIndex,
-		switchBSPSetLoadSet,
-		switchBSPSetLoadIndex,
-		switchBSPSetUnloadIndex,
 		setPlayerHealthVec2,
 		waypoint3DClampToggle,
 		waypoint3DGlobalSpriteScale,

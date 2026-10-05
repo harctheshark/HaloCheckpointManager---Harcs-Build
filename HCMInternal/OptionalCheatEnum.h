@@ -98,8 +98,10 @@ GetSoftCeilingData,\
 SoftCeilingOverlay,\
 PlacementPointsOverlay,\
 GetCurrentBSPSet,\
-SwitchBSPSet,\
 GetCurrentZoneSet,\
+MCCZoneSets,\
+MCCSwitchZoneSet,\
+HavokBroadphaseBypass,\
 BSPChangeHookEvent,\
 ZoneSetChangeHookEvent,\
 BSPSetChangeHookEvent,\
@@ -149,6 +151,7 @@ PresetManager
 // preprocessor noise, not a clean error). Remember to add a matching MAKECASE line in OptionalCheatManager.cpp.
 // HCEGetPlayerState is the foundation - it owns the game-thread TLS walk and every one of the others
 // resolveDependentCheat()s it.
+// Also takes non-HCE overflow now that ALLOPTIONALCHEATS2 is at 62 (CompetitionMode, UncapRenderSections).
 #define ALLOPTIONALCHEATS3	\
 HCEGetPlayerState,\
 HCEGetCameraData,\
@@ -180,7 +183,8 @@ HCEFreecamDrift,\
 HCEGameThreadPumpHost,\
 HCEConsole,\
 HCESwitchZoneSet,\
-CompetitionMode
+CompetitionMode,\
+UncapRenderSections
 
 
 // Halo 5: Forge. Its own list rather than an extension of ALLOPTIONALCHEATS3, for two reasons: the 64-entry

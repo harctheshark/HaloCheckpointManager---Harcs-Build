@@ -6,6 +6,7 @@
 #include "RuntimeExceptionHandler.h"
 #include <Windows.h>
 #include <tlhelp32.h>
+#include "ScopedThreadSuspender.h"   // hcmThreadSuspensionMutex(): suspendOthers/resumeOthers take the shared lock
 #include <vector>
 #include <array>
 #include <atomic>
@@ -237,8 +238,15 @@ namespace
 		// thread in the process for the (memory-only) patch window. Buffers/caves are alloc'd BEFORE this
 		// (VirtualAlloc needs locks a suspended thread might hold); patching itself only touches memory.
 		std::vector<HANDLE> suspended;
+		// The process-wide suspension lock (see ScopedThreadSuspender.h): held from before the snapshot until after the
+		// last ResumeThread, so this and any other HCM suspender (UncapRenderSections' gate runs hundreds of windows)
+		// can never suspend each other. suspendOthers/resumeOthers always pair up on the same thread, so they lock and
+		// unlock the recursive_mutex directly - no lock object shared between threads (onToggle and onMCCStateChanged
+		// both reach these, and handing one unique_lock between them could release a mutex the other thread owns).
+		// Holding it across the window also serialises the two threads' use of `suspended`.
 		void suspendOthers()
 		{
+			hcmThreadSuspensionMutex().lock();   // released at the end of resumeOthers, on this same thread
 			suspended.clear();
 			DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
 			HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
@@ -254,7 +262,12 @@ namespace
 				} while (Thread32Next(snap, &te));
 			CloseHandle(snap);
 		}
-		void resumeOthers() { for (HANDLE h : suspended) { ResumeThread(h); CloseHandle(h); } suspended.clear(); }
+		void resumeOthers()
+		{
+			for (HANDLE h : suspended) { ResumeThread(h); CloseHandle(h); }
+			suspended.clear();
+			hcmThreadSuspensionMutex().unlock();   // only after every thread is running again
+		}
 
 	public:
 		bool apply()

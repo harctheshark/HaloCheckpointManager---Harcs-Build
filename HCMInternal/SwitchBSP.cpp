@@ -94,19 +94,19 @@ SwitchBSP::SwitchBSP(GameState gameImpl, IDIContainer& dicon)
 			break;
 
 		case GameState::Value::Halo3:
-			throw HCMInitException("Not applicable, use SwitchBSPSet instead.");
+			throw HCMInitException("Not applicable, use MCCSwitchZoneSet (Switch Zone Set) instead.");
 			break;
 
 		case GameState::Value::Halo3ODST:
-			throw HCMInitException("Not applicable, use SwitchBSPSet instead.");
+			throw HCMInitException("Not applicable, use MCCSwitchZoneSet (Switch Zone Set) instead.");
 			break;
 
 		case GameState::Value::HaloReach:
-			throw HCMInitException("Not applicable, use SwitchBSPSet instead.");
+			throw HCMInitException("Not applicable, use MCCSwitchZoneSet (Switch Zone Set) instead.");
 			break;
 
 		case GameState::Value::Halo4:
-			throw HCMInitException("Not applicable, use SwitchBSPSet instead.");
+			throw HCMInitException("Not applicable, use MCCSwitchZoneSet (Switch Zone Set) instead.");
 			break;
 	default:
 		throw HCMInitException("not impl yet");

@@ -4,7 +4,7 @@
 #include "GameState.h"
 #include "DIContainer.h"
 
-// only impl for h1/h2. See SwitchBSPSet for third gen
+// only impl for h1/h2. Third gen switches ZONE SETS instead - see MCCSwitchZoneSet
 
 class ISwitchBSPImpl { public: virtual ~ISwitchBSPImpl() = default; };
 class SwitchBSP : public IOptionalCheat
