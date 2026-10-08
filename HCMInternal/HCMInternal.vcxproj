@@ -424,6 +424,14 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="UncapVisibilityLimits.h" />
     <ClInclude Include="UncapClusterLimit.h" />
     <ClInclude Include="UncapRenderSections.h" />
+    <ClInclude Include="CollisionViewer.h" />
+    <ClInclude Include="H2CV_Log.h" />
+    <ClInclude Include="H2CV_Mem.h" />
+    <ClInclude Include="H2CV_Halo2.h" />
+    <ClInclude Include="H2CV_Collision.h" />
+    <ClInclude Include="H2CV_TimKeys.h" />
+    <ClInclude Include="H2CV_Renderer.h" />
+    <ClInclude Include="H2CV_Viewer.h" />
     <ClInclude Include="UncapRenderSectionsTable.h" />
     <ClInclude Include="FarClipDistance.h" />
     <ClInclude Include="HavokDebugger.h" />
@@ -651,6 +659,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="GUIRequiredServices.h" />
     <ClInclude Include="GUISimpleButton.h" />
     <ClInclude Include="GameState.h" />
+    <ClInclude Include="GameDataVersion.h" />
     <ClInclude Include="GUISimpleToggle.h" />
     <ClInclude Include="GUISpeedhack.h" />
     <ClInclude Include="HCMExternalCommand.h" />
@@ -829,6 +838,11 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="UncapVisibilityLimits.cpp" />
     <ClCompile Include="UncapClusterLimit.cpp" />
     <ClCompile Include="UncapRenderSections.cpp" />
+    <ClCompile Include="CollisionViewer.cpp" />
+    <ClCompile Include="H2CV_Halo2.cpp" />
+    <ClCompile Include="H2CV_Collision.cpp" />
+    <ClCompile Include="H2CV_Renderer.cpp" />
+    <ClCompile Include="H2CV_Viewer.cpp" />
     <ClCompile Include="FarClipDistance.cpp" />
     <ClCompile Include="HavokDebugger.cpp" />
     <ClCompile Include="HavokDebuggerImpl.cpp">

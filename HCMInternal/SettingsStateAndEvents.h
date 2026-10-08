@@ -938,6 +938,147 @@ public:
 			nameof(uncapRenderSectionsToggle)
 		);
 
+	// Halo 2 collision viewer (PRIVATE, collision-viewer-private branch). Not persisted, like the other cheat toggles.
+	std::shared_ptr<BinarySetting<bool>> collisionViewerToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerToggle)
+		);
+
+	std::shared_ptr<BinarySetting<SettingsEnums::CollisionViewerOcclusionEnum>> collisionViewerOcclusion = std::make_shared<BinarySetting<SettingsEnums::CollisionViewerOcclusionEnum>>
+		(
+			SettingsEnums::CollisionViewerOcclusionEnum::InFrame_NoBloom,
+			[](SettingsEnums::CollisionViewerOcclusionEnum in) { return true; },
+			nameof(collisionViewerOcclusion)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerShowBsp = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerShowBsp)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerShowInstanced = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerShowInstanced)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerShowInvisible = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerShowInvisible)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerShowBreakable = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerShowBreakable)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerShowScenery = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerShowScenery)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerShowCrates = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerShowCrates)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerShowMachines = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerShowMachines)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerShowKillTriggers = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerShowKillTriggers)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerFills = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerFills)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerTim = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerTim)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerTimLabels = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerTimLabels)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerPills = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerPills)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoPanel = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoPanel)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerReversedZ = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerReversedZ)
+		);
+
+	std::shared_ptr<BinarySetting<float>> collisionViewerLineWidth = std::make_shared<BinarySetting<float>>
+		(
+			2.0f,
+			[](float in) { return in >= 1.f && in <= 8.f; },
+			nameof(collisionViewerLineWidth)
+		);
+
+	std::shared_ptr<BinarySetting<float>> collisionViewerDepthPull = std::make_shared<BinarySetting<float>>
+		(
+			0.0015f,
+			[](float in) { return in >= 0.f && in <= 0.05f; },
+			nameof(collisionViewerDepthPull)
+		);
+
+	std::shared_ptr<BinarySetting<float>> collisionViewerRadius = std::make_shared<BinarySetting<float>>
+		(
+			60.f,
+			[](float in) { return in >= 1.f && in <= 2000.f; },
+			nameof(collisionViewerRadius)
+		);
+
+	std::shared_ptr<BinarySetting<float>> collisionViewerHiddenAlpha = std::make_shared<BinarySetting<float>>
+		(
+			0.f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(collisionViewerHiddenAlpha)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> offscreenShadowCastersToggle = std::make_shared<BinarySetting<bool>>
 		(
 			false,

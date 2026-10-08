@@ -280,6 +280,76 @@ namespace
 	constexpr float     kCyclotronSeamThreshold  = 0.05f;
 	using ObjDatumResolverFn = uintptr_t(__fastcall*)(uintptr_t);
 
+	// ---- Fix 1b gate: act ONLY while the FP rocket launcher's barrel-spin animation is playing ----
+	// The seam guard used to run for EVERY interpolated model (every first-person weapon), so a fast melee/swap
+	// delta tripped it and the weapon rendered the raw tick pose (laggy, un-interpolated). It now runs only when
+	// the (render state idx, slot) being interpolated is playing the rocket launcher's "first_person:fire_1:var1"
+	// (the 31-frame spin, jmad animation index 0 of both fp_rocket_launcher graphs), found like this:
+	//   render state array  *(base+0x187C300) [idx * 0x20FC]  ->  slot * 0x1028  ->  anim manager at +0x14
+	//   manager playing channels at +0x00 / +0x24 / +0x48 : { u32 graph tag datum, u32 animation id (hi16 = index) }
+	//   sub_1807A0730(channel) -> jmad animation entry (name sid +0, frame_count i16 +0x14)
+	// The release engine carries no string-id table, so the NAME is matched by what it uniquely is: graph tag NAME
+	// contains "rocket_launcher" (the same name test Fix 3 uses) AND frame_count == 31 (the only 31-frame animation
+	// in either FP rocket graph; the same identity Fix 1 uses).
+	constexpr uintptr_t kRvaRenderStateArray    = 0x187C300; // qword_18187C300 : per-object FP render/animation states
+	constexpr uintptr_t kRenderStateStride      = 0x20FC;
+	constexpr uintptr_t kRenderSlotStride       = 0x1028;
+	constexpr uintptr_t kAnimMgrOffset          = 0x14;
+	constexpr uintptr_t kAnimChannelStride      = 0x24;
+	constexpr int       kAnimChannelCount       = 3;
+	constexpr uintptr_t kRenderEntryStride      = 0x33D4;    // one interp cache entry: (slot + idx*4) * 0x33D4
+	constexpr uintptr_t kRvaAnimChannelEntry    = 0x7A0730;  // sub_1807A0730(channel*) -> jmad animation entry*
+	constexpr int16_t   kRcktSpinFrameCount     = 31;
+	using AnimChannelEntryFn = uintptr_t(__fastcall*)(uintptr_t);
+
+	// true when the jmad tag at tagIdx has "rocket_launcher" in its name (tag-table name lookup, as Fix 3 does)
+	static bool rcktTagNameIsRocket(uintptr_t base, uint32_t tagIdx)
+	{
+		uintptr_t meta = *(uintptr_t*)(base + kRvaMetaHeader);
+		if (!meta || memcmp((void*)(meta + 0x1C), "sgat", 4) != 0) return false;
+		if (tagIdx >= *(uint32_t*)(meta + 0x18)) return false;
+		uintptr_t nameOfs = *(uintptr_t*)(base + kRvaStringMetaTbl);
+		uintptr_t strTab  = *(uintptr_t*)(base + kRvaStringTable);
+		if (!nameOfs || !strTab) return false;
+		const char* name = (const char*)(strTab + *(uint32_t*)(nameOfs + 4ull * tagIdx));
+		for (int i = 0; i < 255 && name[i]; ++i)
+			if (name[i] == 'r' && strncmp(name + i, "rocket_launcher", 15) == 0) return true;
+		return false;
+	}
+
+	// idx = render-state index (rbx at the hook), entryOff = (slot + idx*4) * 0x33D4 (rdi at the hook).
+	// r8 (the slot argument) does not survive the call to sub_1806F4A20, so the slot is recovered from rdi.
+	// POD-only locals so __try is allowed; any fault (stale tables during teardown) just means "not playing".
+	static bool rcktSpinAnimPlaying(uintptr_t base, int64_t idx, uintptr_t entryOff)
+	{
+		__try
+		{
+			if (idx < 0 || idx > 0xFFFF) return false;
+			uintptr_t arr = *(uintptr_t*)(base + kRvaRenderStateArray);
+			if (!arr) return false;
+			uintptr_t delta = entryOff - (uintptr_t)idx * 4 * kRenderEntryStride; // = slot * 0x33D4
+			uintptr_t slotOff;
+			if (delta == 0) slotOff = 0;
+			else if (delta == kRenderEntryStride) slotOff = kRenderSlotStride;
+			else return false;
+			uintptr_t mgr = arr + (uintptr_t)idx * kRenderStateStride + slotOff + kAnimMgrOffset;
+			auto getEntry = (AnimChannelEntryFn)(base + kRvaAnimChannelEntry);
+			for (int k = 0; k < kAnimChannelCount; ++k)
+			{
+				uintptr_t ch = mgr + (uintptr_t)k * kAnimChannelStride;
+				if (*(uint16_t*)(ch + 6) == 0xFFFF) continue;          // channel idle (animation index == -1)
+				uintptr_t entry = getEntry(ch);
+				if (!entry) continue;
+				if (*(int16_t*)(entry + 0x14) != kRcktSpinFrameCount) continue;
+				if (rcktTagNameIsRocket(base, *(uint32_t*)ch & 0xFFFF)) return true;
+			}
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+		}
+		return false;
+	}
+
 	// ============================================================================================
 	// Fix 4: FP legs/body always-interpolate (first-person leg jitter at high / uncapped FPS).
 	// The FP render path gates the body's interpolation on r15b, which is 0 for the render pass, so the
@@ -429,6 +499,7 @@ private:
 
 
 	// ---- Fix 1b: rocket barrel render-interp seam guard (port of the static .rckt cave) ----
+	// GATED to the rocket launcher's barrel-spin animation (rcktSpinAnimPlaying); any other model returns at once.
 	// At the hook the engine is about to interpolate the FP weapon's render pose. Re-check each node's
 	// rotation/position delta between the two render regions (rdx / r10); if any moved too much, redirect
 	// to the engine's SNAP path (0x722963) so it renders the tick pose instead of an interpolation that
@@ -439,6 +510,10 @@ private:
 		uintptr_t base = gHalo2Base.load();
 		if (!base) { base = (uintptr_t)GetModuleHandleW(L"halo2.dll"); gHalo2Base.store(base); }
 		if (!base) return;
+
+		// GATE: only the rocket launcher's barrel-spin animation needs this; every other model (melee, weapon
+		// swap, every other weapon) keeps the engine's normal interpolation.
+		if (!rcktSpinAnimPlaying(base, (int64_t)ctx.rbx, ctx.rdi)) return;
 
 		const float* a = (const float*)(ctx.rdx + kRenderRegionAdd + ctx.rdi); // region A node
 		const float* c = (const float*)(ctx.r10 + kRenderRegionAdd + ctx.rdi); // region B node

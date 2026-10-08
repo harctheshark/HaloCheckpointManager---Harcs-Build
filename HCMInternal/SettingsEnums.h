@@ -53,6 +53,7 @@ namespace SettingsEnums
 	// distance-culling. 2048/4096/8192 = that shadow res + L6 LOD + distance-cull-off. i.e. everything except
 	// Retail forces LOD + kills distance culling. Order matters: index -> label (combo) + size (cpp).
 	enum class H2ShadowResolution { Retail, RetailLOD, x2048, x4096, x8192 };
+	enum class CollisionViewerOcclusionEnum { InFrame_NoBloom, PostBloom_KeepsBloom, OwnCollisionDepth, XRay };
 
 
 

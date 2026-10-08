@@ -9,6 +9,7 @@
 #include "IMakeOrGetCheat.h"
 #include "GameTickEventHook.h"
 #include "ScopedThreadSuspender.h"
+#include "GameDataVersion.h"
 #include <Windows.h>
 #include <atomic>
 
@@ -147,6 +148,11 @@ namespace
 		const wchar_t* module;
 	};
 
+	// ODST "Season 5" (halo3odst.dll 1.2094): the game-time-globals TLS slot is 0xD0, not 0xC8 (the struct's own
+	// field offsets +4/+8 are unchanged - same engine function, only the slot numbering moved). Set once from the
+	// constructor; validateGtg still proves the struct (sane rate + dt == 1/rate) before anything is written.
+	inline std::atomic<bool> gOdstSeason5Slots{ false };
+
 	constexpr TlsTickrateLayout tlsLayoutFor(GameState::Value g)
 	{
 		switch (g)
@@ -159,6 +165,13 @@ namespace
 		case GameState::Value::HaloCER:   return { 0x98, 6, 0, L"HaloSimulation_tag_release.dll" };
 		default:                          return { 0, 0, 0, nullptr };
 		}
+	}
+
+	inline TlsTickrateLayout tlsLayoutForBuild(GameState::Value g)
+	{
+		TlsTickrateLayout L = tlsLayoutFor(g);
+		if (g == GameState::Value::Halo3ODST && gOdstSeason5Slots.load()) L.slot = 0xD0;
+		return L;
 	}
 
 	// _tls_index, read from the module's PE TLS DIRECTORY rather than a hardcoded RVA. This is the
@@ -359,7 +372,7 @@ private:
 		}
 		else
 		{
-			constexpr auto L = tlsLayoutFor(gameT);
+			const auto L = tlsLayoutForBuild(gameT);
 			std::vector<uintptr_t> targets;
 			collectGtgPointers(L, targets);
 
@@ -389,7 +402,7 @@ private:
 		}
 		else
 		{
-			constexpr auto L = tlsLayoutFor(gameT);
+			const auto L = tlsLayoutForBuild(gameT);
 			std::vector<uintptr_t> targets;
 			collectGtgPointers(L, targets);
 			for (uintptr_t gtg : targets)
@@ -637,6 +650,9 @@ public:
 		gameTickEventHookWeak(resolveDependentCheat(GameTickEventHook)),
 		runtimeExceptions(dicon.Resolve<RuntimeExceptionHandler>())
 	{
+		if constexpr (gameT == GameState::Value::Halo3ODST)
+			gOdstSeason5Slots.store(isOdst2094(dicon, game));
+
 		// ⚠ Pointer data exists for HALO 2 ONLY - every other game locates the struct through TLS at
 		// write time, so resolving these would throw and take the whole cheat down with it.
 		if constexpr (gameT == GameState::Value::Halo2)

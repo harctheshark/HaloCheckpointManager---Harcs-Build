@@ -1009,6 +1009,48 @@ private:
 		return std::nullopt; // cancelled
 	}
 
+	// The custom emblem travels INSIDE the .mccolour preset (one shareable file): "emblem_ext <.ext>" + "emblem_data
+	// <base64 of the image file>". Images and GIFs only - videos are too big to embed and are skipped with a message.
+	static std::string base64Encode(const std::vector<uint8_t>& in)
+	{
+		static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+		std::string out; out.reserve((in.size() + 2) / 3 * 4);
+		size_t i = 0;
+		for (; i + 2 < in.size(); i += 3)
+		{
+			uint32_t v = (in[i] << 16) | (in[i + 1] << 8) | in[i + 2];
+			out += tbl[(v >> 18) & 63]; out += tbl[(v >> 12) & 63]; out += tbl[(v >> 6) & 63]; out += tbl[v & 63];
+		}
+		if (i < in.size())
+		{
+			uint32_t v = in[i] << 16; if (i + 1 < in.size()) v |= in[i + 1] << 8;
+			out += tbl[(v >> 18) & 63]; out += tbl[(v >> 12) & 63];
+			out += (i + 1 < in.size()) ? tbl[(v >> 6) & 63] : '=';
+			out += '=';
+		}
+		return out;
+	}
+
+	static bool base64Decode(const std::string& in, std::vector<uint8_t>& out)
+	{
+		auto val = [](char c) -> int {
+			if (c >= 'A' && c <= 'Z') return c - 'A';
+			if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+			if (c >= '0' && c <= '9') return c - '0' + 52;
+			if (c == '+') return 62; if (c == '/') return 63;
+			return -1; };
+		out.clear(); out.reserve(in.size() / 4 * 3);
+		uint32_t acc = 0; int bits = 0;
+		for (char c : in)
+		{
+			if (c == '=' || c == '\r' || c == '\n' || c == ' ') continue;
+			int v = val(c); if (v < 0) return false;
+			acc = (acc << 6) | (uint32_t)v; bits += 6;
+			if (bits >= 8) { bits -= 8; out.push_back((uint8_t)((acc >> bits) & 0xFF)); }
+		}
+		return !out.empty();
+	}
+
 	void onSavePreset()
 	{
 		auto claim = ModalDialogGuard::tryClaim();
@@ -1018,14 +1060,45 @@ private:
 			lockOrThrow(settingsWeak, settings);
 			auto p = settings->h2ArmorColourPrimary->GetValue();
 			auto s = settings->h2ArmorColourSecondary->GetValue();
+			std::wstring emblemPath;
+			if (settings->h2ArmorEmblemToggle->GetValue()) { std::lock_guard<std::mutex> lk(mEmblemPathMutex); emblemPath = mEmblemPngPath; }
 			auto chosen = browsePreset(true);
 			if (!chosen) return;
+
+			// read the emblem BEFORE truncating the preset (a preset saved over itself must not lose anything)
+			std::string emblemNote, emblemExt, emblemB64;
+			if (!emblemPath.empty())
+			{
+				std::string ext = std::filesystem::path(emblemPath).extension().string();
+				for (auto& c : ext) c = (char)tolower((unsigned char)c);
+				const bool imageExt = ext == ".png" || ext == ".gif" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".dds";
+				if (isVideoFile(emblemPath)) emblemNote = " (emblem not included - videos can't be stored in a preset)";
+				else if (!imageExt) emblemNote = " (emblem not included - only PNG/GIF/JPG/BMP/DDS can be stored)";
+				else
+				{
+					std::ifstream ef(std::filesystem::path(emblemPath), std::ios::binary);
+					std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(ef)), std::istreambuf_iterator<char>());
+					if (bytes.empty()) emblemNote = " (emblem not included - couldn't read the emblem file)";
+					else
+					{
+						emblemExt = ext;
+						emblemB64 = base64Encode(bytes);
+						emblemNote = " (with custom emblem)";
+					}
+				}
+			}
+
 			std::ofstream out(*chosen, std::ios::trunc);
 			if (!out) { if (auto m = messagesWeak.lock()) m->addMessage("Colour preset: couldn't write file."); return; }
-			out << "HCM_MC_Colour 1\n";
+			out << "HCM_MC_Colour 2\n";
 			out << "primary "   << p.x << ' ' << p.y << ' ' << p.z << '\n';
 			out << "secondary " << s.x << ' ' << s.y << ' ' << s.z << '\n';
-			if (auto m = messagesWeak.lock()) m->addMessage("Colour preset saved: " + chosen->filename().string());
+			if (!emblemB64.empty())
+			{
+				out << "emblem_ext " << (emblemExt.empty() ? ".png" : emblemExt) << '\n';
+				out << "emblem_data " << emblemB64 << '\n';
+			}
+			if (auto m = messagesWeak.lock()) m->addMessage("Colour preset saved: " + chosen->filename().string() + emblemNote);
 		}
 		catch (HCMRuntimeException&) {}
 	}
@@ -1044,19 +1117,55 @@ private:
 
 			SimpleMath::Vector4 prim = settings->h2ArmorColourPrimary->GetValue();
 			SimpleMath::Vector4 sec  = settings->h2ArmorColourSecondary->GetValue();
-			std::string line, tag; float r, g, b;
+			std::string line, tag, emblemExt, emblemB64; float r, g, b;
 			while (std::getline(in, line))
 			{
-				std::istringstream ss(line); ss >> tag;
+				std::istringstream ss(line); tag.clear(); ss >> tag;
 				if (tag == "primary" && (ss >> r >> g >> b)) prim = { r, g, b, 1.0f };
 				else if (tag == "secondary" && (ss >> r >> g >> b)) sec = { r, g, b, 1.0f };
+				else if (tag == "emblem_ext") ss >> emblemExt;
+				else if (tag == "emblem_data") ss >> emblemB64;
 			}
 			// push into the settings so the pickers update (and valueChanged fires)
 			settings->h2ArmorColourPrimary->GetValueDisplay() = prim;
 			settings->h2ArmorColourPrimary->UpdateValueWithInput();
 			settings->h2ArmorColourSecondary->GetValueDisplay() = sec;
 			settings->h2ArmorColourSecondary->UpdateValueWithInput();
-			if (auto m = messagesWeak.lock()) m->addMessage("Colour preset loaded: " + chosen->filename().string());
+
+			// embedded emblem: write it out to <armour_colours>/emblems/<preset name><ext> and load it like Load Emblem
+			std::string emblemNote;
+			if (!emblemB64.empty())
+			{
+				std::vector<uint8_t> bytes;
+				// only plain image extensions (the file name is built from the preset, never from the file's text)
+				std::string ext = emblemExt;
+				for (auto& c : ext) c = (char)tolower((unsigned char)c);
+				const bool extOk = ext == ".png" || ext == ".gif" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".dds";
+				if (!extOk || !base64Decode(emblemB64, bytes)) emblemNote = " (its emblem couldn't be read)";
+				else
+				{
+					std::error_code ec;
+					auto dir = std::filesystem::path(mPresetDir) / "emblems";
+					std::filesystem::create_directories(dir, ec);
+					auto dest = dir / (chosen->stem().wstring() + std::filesystem::path(ext).wstring());
+					std::ofstream ef(dest, std::ios::binary | std::ios::trunc);
+					ef.write((const char*)bytes.data(), (std::streamsize)bytes.size());
+					ef.close();
+					if (!ef) emblemNote = " (its emblem couldn't be written to disk)";
+					else
+					{
+						{ std::lock_guard<std::mutex> lk(mEmblemPathMutex); mEmblemPngPath = dest.wstring(); }
+						mEmblemReload.store(true, std::memory_order_release);
+						if (!settings->h2ArmorEmblemToggle->GetValue())
+						{
+							settings->h2ArmorEmblemToggle->GetValueDisplay() = true;
+							settings->h2ArmorEmblemToggle->UpdateValueWithInput();
+						}
+						emblemNote = " (with custom emblem)";
+					}
+				}
+			}
+			if (auto m = messagesWeak.lock()) m->addMessage("Colour preset loaded: " + chosen->filename().string() + emblemNote);
 		}
 		catch (HCMRuntimeException&) {}
 	}

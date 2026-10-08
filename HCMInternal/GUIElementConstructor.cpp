@@ -1093,6 +1093,107 @@ private:
 						(game, ToolTipCollection("Halo 2: beats the 128 region-clusters-per-region wall that makes chunks of large maps stop rendering from a high vantage (\"overflowed region clusters during region building\"). Raises the cap to 255 - relocates the region buffer's index/volume arrays into slack, relocates + enlarges the subpart-mask pool, widens the per-region cluster bitvector 128->256 bits, makes the cluster index map unsigned, and grows the clusters submit sub-collection. Pairs with Uncap Visibility Limits for very dense views. Toggle-off drains in a crash-safe order. Offline only. Build 1.3528 only."), std::nullopt, "Uncap Cluster Limit", settings->uncapClusterLimitToggle
 						));
 
+				case GUIElementEnum::collisionViewerToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIToggleWithChildren<GUIToggleWithChildrenParameters::ShowWhenTrue, false>>
+						(game, ToolTipCollection("Halo 2 (MCC 1.3528): collision wireframe sorted by type, Havok capsules, kill triggers, and a live overlay of Havok's per-polygon TIM values (the cached distance behind ghosting). Lines are depth-tested against the game's own scene, so your biped, AI and the gun hide them, and they never go through bloom."), std::nullopt, "Collision Viewer", settings->collisionViewerToggle, headerChildElements
+							{
+							createNestedElement(GUIElementEnum::collisionViewerOcclusionGUI),
+							createNestedElement(GUIElementEnum::collisionViewerShowBspGUI),
+							createNestedElement(GUIElementEnum::collisionViewerShowInstancedGUI),
+							createNestedElement(GUIElementEnum::collisionViewerShowInvisibleGUI),
+							createNestedElement(GUIElementEnum::collisionViewerShowBreakableGUI),
+							createNestedElement(GUIElementEnum::collisionViewerShowSceneryGUI),
+							createNestedElement(GUIElementEnum::collisionViewerShowCratesGUI),
+							createNestedElement(GUIElementEnum::collisionViewerShowMachinesGUI),
+							createNestedElement(GUIElementEnum::collisionViewerShowKillTriggersGUI),
+							createNestedElement(GUIElementEnum::collisionViewerFillsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerTimGUI),
+							createNestedElement(GUIElementEnum::collisionViewerTimLabelsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerPillsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoPanelGUI),
+							createNestedElement(GUIElementEnum::collisionViewerLineWidthGUI),
+							createNestedElement(GUIElementEnum::collisionViewerDepthPullGUI),
+							createNestedElement(GUIElementEnum::collisionViewerRadiusGUI),
+							createNestedElement(GUIElementEnum::collisionViewerHiddenAlphaGUI),
+							createNestedElement(GUIElementEnum::collisionViewerReversedZGUI),
+							}));
+
+				case GUIElementEnum::collisionViewerOcclusionGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::CollisionViewerOcclusionEnum, 260.f>>
+						(game, ToolTipCollection("How lines are hidden behind the scene. InFrame_NoBloom: drawn inside the game's frame just before the first-person pass, against the game's own depth (your biped, AI, everything rendered hides them; the gun and HUD draw over them) - the game's bloom is switched off while shown, exactly like Cartographer's xlive overlay. PostBloom_KeepsBloom: world depth copied at the first-person pass, gun folded in, lines drawn after bloom. OwnCollisionDepth: drawn at Present against the viewer's own collision depth (automatic fallback in remastered graphics / menus). XRay: no occlusion."), "Occlusion", settings->collisionViewerOcclusion));
+
+				case GUIElementEnum::collisionViewerShowBspGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Structure-BSP collision edges."), std::nullopt, "World BSP (cyan)", settings->collisionViewerShowBsp));
+
+				case GUIElementEnum::collisionViewerShowInstancedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Instanced-geometry collision edges."), std::nullopt, "Instanced geometry (blue)", settings->collisionViewerShowInstanced));
+
+				case GUIElementEnum::collisionViewerShowInvisibleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Collision-only surfaces (world red, instanced purple), with a faint fill."), std::nullopt, "Invisible \"*\" surfaces (red / purple)", settings->collisionViewerShowInvisible));
+
+				case GUIElementEnum::collisionViewerShowBreakableGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Breakable surfaces; they drop out when broken."), std::nullopt, "Breakable (orange)", settings->collisionViewerShowBreakable));
+
+				case GUIElementEnum::collisionViewerShowSceneryGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Scenery object collision (moves with the object)."), std::nullopt, "Scenery (magenta)", settings->collisionViewerShowScenery));
+
+				case GUIElementEnum::collisionViewerShowCratesGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Crate object collision."), std::nullopt, "Crates (green)", settings->collisionViewerShowCrates));
+
+				case GUIElementEnum::collisionViewerShowMachinesGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Device-machine collision (doors, lifts)."), std::nullopt, "Machines (pink)", settings->collisionViewerShowMachines));
+
+				case GUIElementEnum::collisionViewerShowKillTriggersGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Scenario kill-trigger volumes (box + faint fill)."), std::nullopt, "Kill triggers (red-orange)", settings->collisionViewerShowKillTriggers));
+
+				case GUIElementEnum::collisionViewerFillsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Faint fills on invisible barriers and kill-trigger volumes."), std::nullopt, "Translucent fills", settings->collisionViewerFills));
+
+				case GUIElementEnum::collisionViewerTimGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Havok's per-polygon TIM (cached 'at least this far away' distance) for every polygon of the level around your capsule. White = touching (label cN), grey = measured, yellow = skipped (TIM > 0), orange/red with '!' = OVER-CREDITED: Havok thinks the polygon is farther than it is (the ghosting state). The edge the TIM was measured against is thick white, label ends in '<'."), std::nullopt, "TIM overlay", settings->collisionViewerTim));
+
+				case GUIElementEnum::collisionViewerTimLabelsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Print the TIM value at the middle of each polygon edge."), std::nullopt, "TIM labels on edges", settings->collisionViewerTimLabels));
+
+				case GUIElementEnum::collisionViewerPillsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The capsule Havok actually collides with, for every biped (yours yellow), drawn through walls."), std::nullopt, "Havok capsules", settings->collisionViewerPills));
+
+				case GUIElementEnum::collisionViewerInfoPanelGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Small panel: mode, pair state S, the TIM table (key, polygon, TIM, contact points, true distance, over-credit)."), std::nullopt, "Info panel", settings->collisionViewerInfoPanel));
+
+				case GUIElementEnum::collisionViewerLineWidthGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 8.f)>>
+						(game, ToolTipCollection("Screen-space line thickness."), "Line width (px)", settings->collisionViewerLineWidth));
+
+				case GUIElementEnum::collisionViewerDepthPullGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 0.02f)>>
+						(game, ToolTipCollection("Pulls lines toward the camera by this fraction of their distance so lines lying on a surface don't flicker. Raise if lines z-fight; lower if they poke through thin walls."), "Depth pull", settings->collisionViewerDepthPull));
+
+				case GUIElementEnum::collisionViewerRadiusGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(2.f, 500.f)>>
+						(game, ToolTipCollection("Only edges within this distance of the camera are drawn."), "Draw radius (wu)", settings->collisionViewerRadius));
+
+				case GUIElementEnum::collisionViewerHiddenAlphaGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+						(game, ToolTipCollection("Draw occluded lines faintly (0 = hide them)."), "Hidden-line opacity", settings->collisionViewerHiddenAlpha));
+
+				case GUIElementEnum::collisionViewerReversedZGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Leave on. Static RE says Halo 2 MCC stores depth reversed (1 - z/w). If in-frame lines are ALL hidden or NEVER hidden, flip this and report which looked right."), std::nullopt, "Game depth is reversed-Z (diagnostic)", settings->collisionViewerReversedZ));
+
 				case GUIElementEnum::uncapRenderSectionsToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Halo 2: fixes the player model and far scenery/instances flickering in and out when you move fast on big maps (e.g. Metropolis). The engine stops accepting render sections at 850 per frame and objects are added last, so they are what gets dropped; this raises the limit to 4096 by moving the per-section arrays into a bigger block. Applies live (it waits a moment for the renderer to pause; if it never does, nothing is changed and it says so) and stays on across level loads; turning it off restores the stock 850 (the cap drops at once; if the renderer is too busy to move the arrays back, that part finishes by itself at the next level load). Works alongside the baked halo2.dll builds - a baked dll that already includes this uncap is detected and left alone. Offline only. Halo 2 build 1.3528 only."), std::nullopt, "Uncap Render Sections", settings->uncapRenderSectionsToggle
@@ -1653,6 +1754,7 @@ private:
 							createNestedElement(GUIElementEnum::hceSoftCeilingOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::softCeilingOverlayToggle),
 							createNestedElement(GUIElementEnum::softCeilingOverlaySettings),
+							createNestedElement(GUIElementEnum::collisionViewerToggleGUI),
 							createNestedElement(GUIElementEnum::placementPointsOverlayToggle),
 							createNestedElement(GUIElementEnum::placementPointsOverlaySettings),
 							createNestedElement(GUIElementEnum::shieldInputPrinterToggle),

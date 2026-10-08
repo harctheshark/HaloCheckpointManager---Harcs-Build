@@ -2068,7 +2068,8 @@
 		<Version Version="1.2094.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
-				<Offset>0x2E3933C</Offset>
+				<Offset>0x2A34AA8</Offset>
+				<Offset>0x10C</Offset>
 			</Offsets>
 		</Version>
 		<Version Version="1.3272.0.0" Game="Halo3ODST">
@@ -7921,6 +7922,12 @@
 		</Version>
 
 		<!--scan nw "96 00 00 00 ** ** ** ** ** ** 03 20 00 00 ** ** ** ** ** 7001" take second result put right on je after test r12, r12 -->
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x3917F6</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.2448.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -8700,6 +8707,13 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1C7A3C8</Offset>
+				<Offset>0x48B4F8</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3272.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -9094,6 +9108,12 @@
 		</Version>
 
 		<!--scan nw "40 53 48 83 ec 20 ** ** ** ** ** ** ** ** ** 8b da 8b d1"-->
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x359334</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.2448.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -9255,6 +9275,13 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x2E377E8</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3272.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -9456,6 +9483,13 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Offsets>
+				<Offset>0x18</Offset>
+				<Offset>0x50</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3272.0.0" Game="Halo3ODST">
 			<Offsets>
 				<Offset>0x18</Offset>
@@ -9655,6 +9689,13 @@
 		</Version>
 
 		<!--sc nw "44 89 6E 28 45 33 e4" check what it acc on restart level-->
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1C7A3C8</Offset>
+				<Offset>0x4005CC</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.2448.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -9880,6 +9921,13 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1C7A3C8</Offset>
+				<Offset>0x405D6C</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3272.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -10482,6 +10530,14 @@
 		</Version>
 
 		<!--[indexTableHeader+0x18]-->
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1CD47A8</Offset>
+				<Offset>0x18</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -10588,6 +10644,13 @@
 		</Version>
 
 		<!--indexTableHeader+10-->
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1CD47A8</Offset>
+				<Offset>0x10</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -10669,6 +10732,14 @@
 		</Version>
 
 		<!--indexTableHeader+8-->
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1CD47A8</Offset>
+				<Offset>0x8</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -10919,6 +10990,13 @@
 		</Version>
 
 		<!--actually index table header-->
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1CD47A8</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3272.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -11066,6 +11144,13 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x983048</Offset>
+				<Offset>0x14000</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3272.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -11202,6 +11287,13 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x983048</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3272.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -11435,6 +11527,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1C7A758</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -11565,6 +11663,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x5773B5</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3272.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -12194,6 +12298,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0xF2113</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.2448.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -12259,6 +12369,11 @@
 			</Parameters>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Parameters>
+				<pOutputString>rsp+0x20</pOutputString>
+			</Parameters>
+		</Version>
 		<Version Version="All" Game="Halo3ODST">
 			<Parameters>
 				<pOutputString>rsp+0x30</pOutputString>
@@ -12604,6 +12719,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0xA0296</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -12886,6 +13007,12 @@
 			</Offsets>
 		</Version>
 		
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x237382</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -13046,6 +13173,9 @@
 			<Data>0x90, 0x90</Data>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Data>0x90, 0x90</Data>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Data>0x90, 0x90</Data>
 		</Version>
@@ -13197,6 +13327,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0xA22EC</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -13307,6 +13443,13 @@
 		</Version>
 
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1C7A3C8</Offset>
+				<Offset>0x6C613C</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -13458,6 +13601,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x286F000</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -13548,6 +13697,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0xA41C6</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -13590,6 +13745,9 @@
 		</Version>
 
 		<!--you get the idea-->
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Data>0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90</Data>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Data>0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90</Data>
 		</Version>
@@ -13791,6 +13949,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1E2EB5C</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -13896,6 +14060,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1E2EB58</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -14003,6 +14173,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1E2EB60</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -14108,6 +14284,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1E2EB64</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -14213,6 +14395,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1E2EB60</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -14318,6 +14506,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1E2EB64</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -14425,6 +14619,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1E2EB70</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -14628,6 +14828,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x2A55E</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -14681,6 +14887,9 @@
 			<Data>0x90, 0x90, 0x90, 0x90, 0x90</Data>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Data>0x90, 0x90, 0x90, 0x90, 0x90</Data>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Data>0x90, 0x90, 0x90, 0x90, 0x90</Data>
 		</Version>
@@ -14784,6 +14993,12 @@
 				<Offset>0x9BC78</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x13048</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3528.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -14820,6 +15035,12 @@
 				<Offset>0x1FCAC0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x161AA4</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3528.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -14854,6 +15075,12 @@
 			<Module>halo3.dll</Module>
 			<Offsets>
 				<Offset>0x22863C0</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x286D7D8</Offset>
 			</Offsets>
 		</Version>
 		<Version Version="1.3528.0.0" Game="Halo3ODST">
@@ -15081,6 +15308,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x72A2AC</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3272.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -15160,6 +15393,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x2E344E4</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -15227,6 +15466,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x138AB</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -15284,6 +15529,12 @@
 			<Module>halo3.dll</Module>
 			<Offsets>
 				<Offset>0x89CADC</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x72A2A4</Offset>
 			</Offsets>
 		</Version>
 		<Version Version="1.3528.0.0" Game="Halo3ODST">
@@ -15345,6 +15596,12 @@
 				<Offset>0x20B96C0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1CE3E40</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3528.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -15383,6 +15640,12 @@
 			<Module>halo3.dll</Module>
 			<Offsets>
 				<Offset>0x20B96B1</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1CE3E31</Offset>
 			</Offsets>
 		</Version>
 		<Version Version="1.3528.0.0" Game="Halo3ODST">
@@ -15428,6 +15691,13 @@
 				<Offset>0x0</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1D33C40</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3528.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -15469,6 +15739,12 @@
 			<Module>halo3.dll</Module>
 			<Offsets>
 				<Offset>0x2D77340</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x2AAC3E0</Offset>
 			</Offsets>
 		</Version>
 		<Version Version="1.3528.0.0" Game="Halo3ODST">
@@ -16870,6 +17146,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x8234C</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -17121,6 +17403,13 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x983038</Offset>
+				<Offset>0x0</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -17234,6 +17523,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x72A2AC</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -17368,6 +17663,12 @@
 			<ZoneSetTagBlock>0x58</ZoneSetTagBlock>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<triggerVolumeTagBlock>0x2A0</triggerVolumeTagBlock>
+			<softCeilingMetaTagBlock>0x27C</softCeilingMetaTagBlock>
+			<StructureBSPsTagBlock>0x14</StructureBSPsTagBlock>
+			<ZoneSetTagBlock>0x70</ZoneSetTagBlock>
+		</Version>
 		<Version Version="All" Game="Halo3ODST">
 			<triggerVolumeTagBlock>0x28C</triggerVolumeTagBlock>
 			<softCeilingMetaTagBlock>0x268</softCeilingMetaTagBlock>
@@ -17425,6 +17726,11 @@
 	<VersionedEntry Name="mccZoneSetFields" Type="DynStructOffsetInfo">
 		<Version Version="All" Game="Halo3">
 			<StrideSize>0x28</StrideSize>
+			<nameStringID>0x0</nameStringID>
+			<bspMask>0xC</bspMask>
+		</Version>
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<StrideSize>0x24</StrideSize>
 			<nameStringID>0x0</nameStringID>
 			<bspMask>0xC</bspMask>
 		</Version>
@@ -17735,6 +18041,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1046AD</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -17789,6 +18101,9 @@
 			<Data>0xEB, 0x61</Data>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Data>0xEB, 0x61</Data>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Data>0xEB, 0x61</Data>
 		</Version>
@@ -17956,6 +18271,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x1103D7</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -18029,6 +18350,9 @@
 			<Data>0xE9, 0x1E, 0x02, 0x00, 0x00</Data>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Data>0xE9, 0x1E, 0x02, 0x00, 0x00</Data>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Data>0xE9, 0x1E, 0x02, 0x00, 0x00</Data>
 		</Version>
@@ -18051,6 +18375,12 @@
 			</Offsets>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0x10FAFF</Offset>
+			</Offsets>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Module>halo3odst.dll</Module>
 			<Offsets>
@@ -18088,6 +18418,9 @@
 			<Data>0xEB, 0x6F</Data>
 		</Version>
 
+		<Version Version="1.2094.0.0" Game="Halo3ODST">
+			<Data>0xE9, 0xF9, 0x00, 0x00, 0x00, 0x90</Data>
+		</Version>
 		<Version Version="1.3385.0.0" Game="Halo3ODST">
 			<Data>0xE9, 0xF9, 0x00, 0x00, 0x00</Data>
 		</Version>

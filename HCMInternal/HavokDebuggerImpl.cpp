@@ -58,6 +58,8 @@ static volatile bool g_vdbPaused  = true;
 // 0 = Halo 3 (halo3.dll, live Havok world via engine step hook); 1 = Halo 2 (halo2.dll, static
 // world BSP collision read straight from the collision_bsp tag — no Havok, no step hook).
 static int          g_game    = 0;
+static bool         g_odstSeason5 = false;   // halo3odst.dll is the 1.2094 build (set by resolveAddrs)
+static int          g_scnBspOff = 0x18;      // scenario tag: structure_bsps block (count @+off, ptr @+off+4). 1.2094's scenario layout has it at 0x14
 static const char*  g_modName = VDB_MODULE;          // GetModuleHandle target, set by start()
 static uintptr_t    g_zeroQ   = 0;                    // points-at-zero target for H3-only viewers in H2 mode
 // Halo 2 collision_bsp tag access: sbsp=*(halo2.dll+0xE6F770); dual tag pools (sign-bit select).
@@ -88,6 +90,8 @@ static int  g_bpWorldOff  = 0x80;       // broadphase ptr @ world+offset (mn@bp+
 static int OFF_COM       = 0x160; // sweptTransform centerOfMass1 (world). PER-GAME: Reach=0x1A0
 static int g_compRbOff = 0x20;          // havok component -> rigidbody array ptr offset (count = +8). halo3=0x20, ODST=0x18
 static uintptr_t g_objTblPtr = 0;       // ODST: &(ptr); object datum array = *(g_objTblPtr) + 0x100 (TLS read fails on VDB thread)
+static uintptr_t g_gsBasePtr = 0;       // ODST "Season 5" (1.2094): &(game-state base global). object datum array header = *(g_gsBasePtr) + g_gsObjHdrOff
+static uintptr_t g_gsObjHdrOff = 0;     //   (the 1.3528 path above reads the checkpoint-COPY buffer, which is empty until the first checkpoint)
 
 // addresses + shape vtables — runtime-resolved in resolveAddrs() (base+RVA)
 static uintptr_t G_WORLD_PTR=0, STEP_FUNC=0;
@@ -1459,9 +1463,9 @@ static void gatherSoftCeilings()
 	uintptr_t scenario=*(uintptr_t*)G_SCENARIO_PTR; if(!okPtr(scenario)){ g_softCount=0; g_softGen++; return; }
 #endif
 	uintptr_t heap=*(uintptr_t*)G_TAGHEAP_PTR;                       // 0 in sapien -> addrRef*4 is absolute
-	int bspCount=*(int*)(scenario+0x18);
+	int bspCount=*(int*)(scenario+g_scnBspOff);
 	if(bspCount<0||bspCount>64){ g_softCount=0; g_softGen++; return; }
-	uintptr_t bspElems=heap + (uintptr_t)(unsigned)(*(int*)(scenario+0x1C))*4;
+	uintptr_t bspElems=heap + (uintptr_t)(unsigned)(*(int*)(scenario+g_scnBspOff+4))*4;
 	for(int i=0;i<bspCount && m<MAX_SOFT_TRI-4;++i){
 		// Per-bsp SEH: a later bsp's sddt/sc/triElems pointer can pass the range guards yet not
 		// be mapped, faulting on read. Without isolating each bsp, that fault unwinds the WHOLE
@@ -1873,6 +1877,9 @@ extern "C" void engineHook()  // patched over sub_1406A8AE0; ENGINE thread
 	// object datum array = [TLS[TlsIndex]+0x38] (engine thread has the engine TLS) — no data_get hook needed
 	if(g_h3TlsIdxAddr && !g_objTblPtr){ __try{ void** ta=(void**)__readgsqword(0x58); void* blk=ta[*(unsigned*)g_h3TlsIdxAddr];
 		uintptr_t oa=*(uintptr_t*)((uintptr_t)blk+0x38); if(ok4(oa)) g_objArr=oa; }__except(EXCEPTION_EXECUTE_HANDLER){} }   // !g_objTblPtr: ODST runs on VDB thread (wrong TLS) -> chain instead
+	// ODST Season 5 (1.2094): header is at a fixed offset of the live game-state block (no checkpoint-copy dependency).
+	if(g_gsBasePtr){ __try{ uintptr_t gs=*(uintptr_t*)g_gsBasePtr; uintptr_t oa=gs+g_gsObjHdrOff;
+		if(ok4(oa)){ unsigned es=*(unsigned*)(oa+0x24); if(es==0x18) g_objArr=oa; } }__except(EXCEPTION_EXECUTE_HANDLER){} }
 	// ODST: TLS read above fails on the VDB thread -> resolve the object datum array from the module pointer chain.
 	if(g_objTblPtr){ __try{ uintptr_t s=*(uintptr_t*)g_objTblPtr; uintptr_t oa=s+0x100;
 		if(ok4(oa)){ unsigned es=*(unsigned*)(oa+0x24); if(es==0x18) g_objArr=oa; } }__except(EXCEPTION_EXECUTE_HANDLER){} }   // *(g_objTblPtr) is 4-ALIGNED (tag-data ptr) -> ok4 NOT okPtr; header @+0x100, es=0x18 (objectHeaderStride)
@@ -2525,6 +2532,7 @@ static void HK_CALL errorReport(const char* msg, void*){ OutputDebugStringA("[vd
 // sapien has no ASLR so RV(va)==va; halo3.dll is relocated so base is read at runtime.
 static void resolveAddrs()
 {
+	g_gsBasePtr=0; g_gsObjHdrOff=0; g_odstSeason5=false; g_scnBspOff=0x18;   // per-start state: a previous ODST session must not leak into another game
 	g_modBase=(uintptr_t)GetModuleHandleA(g_modName); g_modEnd=g_modBase;
 	if(g_modBase){ IMAGE_DOS_HEADER* d=(IMAGE_DOS_HEADER*)g_modBase;
 		IMAGE_NT_HEADERS* nt=(IMAGE_NT_HEADERS*)(g_modBase+d->e_lfanew); g_modEnd=g_modBase+nt->OptionalHeader.SizeOfImage; }
@@ -2543,7 +2551,31 @@ static void resolveAddrs()
 	G_DATAGET_FN   =0;                             // object array read directly from TLS (no data_get hook)
 	G_SCENARIO_PTR =(uintptr_t)&g_scenarioVal;    // scenario found via tag-table walk (findScenarioH3)
 	CAM_GLOBAL     =0;
-	if(g_game==2){   // ===== Halo 3: ODST (halo3odst.dll) — same engine; offsets RE'd from halo3odst.dll.i64 =====
+	// ODST "Season 5" halo3odst.dll (FileVersion 1.2094.0.0, PE timestamp 0x60054472, SizeOfImage 0x2F23000): a different
+	// build than the 1.3528 RVAs below, usable under the 1.3528 exe as a mixed downpatch. Every RVA here was transferred by
+	// instruction-window signature / vtable-entry match from the 1.3528 one and round-trip checked (see the ODST 1.2094 report).
+	if(g_game==2 && g_modBase){
+		IMAGE_DOS_HEADER* d0=(IMAGE_DOS_HEADER*)g_modBase; IMAGE_NT_HEADERS* nt0=(IMAGE_NT_HEADERS*)(g_modBase+d0->e_lfanew);
+		g_odstSeason5 = (nt0->FileHeader.TimeDateStamp==0x60054472u && nt0->OptionalHeader.SizeOfImage==0x2F23000u);
+		if(g_odstSeason5) g_scnBspOff=0x14;
+	}
+	if(g_game==2 && g_odstSeason5){   // ===== Halo 3: ODST, MCC "Season 5" halo3odst.dll 1.2094 =====
+		G_WORLD_PTR=RV(0x180000000+0x2E34718);                         // hkpWorld global
+		G_COMP_ARRAY_PTR=RV(0x180000000+0x2E377E8);                    // "havok components" datum array header global
+		STEP_FUNC=RV(0x180000000+0x7CA88); STEP_DISPLACE=15;           // per-tick step. ⚠ prologue is 15 bytes here (mov [rsp+10],rbx / mov [rsp+18],rsi / push rdi / sub rsp,30h), NOT 1.3528's 12
+		g_compRbOff=0x18;
+		g_objTblPtr=0; g_h3TlsIdxAddr=0;                               // no checkpoint-copy buffer, no TLS (VDB thread): walk the live game state instead
+		g_gsBasePtr=RV(0x180000000+0x1C7A3C8); g_gsObjHdrOff=0x48B498; // *(pbInput) + game-state offset of the object data array header (data = +0x60)
+		G_TAGTABLE_PTR=RV(0x180000000+0x1CD7798); G_TAGINST_PTR=RV(0x180000000+0x983040);
+		g_tagResolve=(FnTagResolve)RV(0x180000000+0x1E86C); g_tagR=(FnTagR)RV(0x180000000+0x1E86C);
+		G_TAGHEAP_PTR=RV(0x180000000+0x1C7A758); G_TAGHEAP_PTR2=RV(0x180000000+0x1C7A758);
+		VT_CAPSULE=RV(0x180000000+0x6547D0); VT_BOX=RV(0x180000000+0x654578); VT_SPHERE=RV(0x180000000+0x654758); VT_CONVEX_VERTS=RV(0x180000000+0x654410);
+		VT_CONVEX_TRANSFORM=RV(0x180000000+0x6546E0); VT_CONVEX_TRANSFORM2=RV(0x180000000+0x654A10); VT_CONVEX_TRANSLATE=RV(0x180000000+0x654668);
+		VT_LIST=RV(0x180000000+0x6BC278); VT_HKLIST=RV(0x180000000+0x6844A8); VT_COLLECTION=RV(0x180000000+0x6543D0);
+		VT_MOPP=RV(0x180000000+0x684520); VT_INST_MOPP=RV(0x180000000+0x654290);
+		VT_TRANSFORM=RV(0x180000000+0x6BC388); VT_XFORMSHAPE=RV(0x180000000+0x6BC388);
+		VT_SURF=RV(0x180000000+0x6845F0);
+	} else if(g_game==2){   // ===== Halo 3: ODST (halo3odst.dll) — same engine; offsets RE'd from halo3odst.dll.i64 =====
 		// ODST: the body+0x10 world-derivation (deriveWorldH3) yields 0, so read the world GLOBAL directly
 		// (confirmed valid: broadphase @+0x80 + island arrays all populated). G_WORLD_PTR -> &global.
 		G_WORLD_PTR=RV(0x1846E29D0);                                  // 0x180000000 + RVA 0x46E29D0 (was 0x18046E29D0 = extra 0 = garbage!)

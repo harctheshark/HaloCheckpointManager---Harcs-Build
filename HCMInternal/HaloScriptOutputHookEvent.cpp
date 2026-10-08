@@ -248,7 +248,7 @@ private:
 		if (!commandOutputStringHook) return;
 		PLOG_DEBUG << "setting HaloScriptOutput hooks state to: " << (shouldEnable ? "true" : "false");
 		commandOutputStringHook->setWantsToBeAttached(shouldEnable);
-		commandErrorStringHook->setWantsToBeAttached(shouldEnable);
+		if (commandErrorStringHook) commandErrorStringHook->setWantsToBeAttached(shouldEnable);   // absent on builds with no error-hook site (ODST 1.2094)
 	}
 
 
@@ -352,9 +352,19 @@ public:
 		commandOutputStringFunctionContext = ptr->getData<std::shared_ptr<MidhookContextInterpreter>>(nameof(commandOutputStringFunctionContext), game);
 		commandOutputStringHook = ModuleMidHook::make(game.toModuleName(), commandOutputStringFunction, outputHookFunction<HSOutputType::Normal, MidhookContextType::commandOutput, false>);
 
-		auto commandErrorStringFunction = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(commandErrorStringFunction), game);
-		commandErrorStringFunctionContext = ptr->getData<std::shared_ptr<MidhookContextInterpreter>>(nameof(commandErrorStringFunctionContext), game);
-		commandErrorStringHook = ModuleMidHook::make(game.toModuleName(), commandErrorStringFunction, outputHookFunction<HSOutputType::Error, MidhookContextType::commandError, false>);
+		// The ERROR-string hook is optional: a build whose pointer data has no such site (ODST's 1.2094 halo3odst.dll has no
+		// equivalent of the later UTF-8 console path) still gets normal command output; only error lines are not captured.
+		try
+		{
+			auto commandErrorStringFunction = ptr->getData<std::shared_ptr<MultilevelPointer>>(nameof(commandErrorStringFunction), game);
+			commandErrorStringFunctionContext = ptr->getData<std::shared_ptr<MidhookContextInterpreter>>(nameof(commandErrorStringFunctionContext), game);
+			commandErrorStringHook = ModuleMidHook::make(game.toModuleName(), commandErrorStringFunction, outputHookFunction<HSOutputType::Error, MidhookContextType::commandError, false>);
+		}
+		catch (const HCMInitException& ex)
+		{
+			commandErrorStringHook.reset(); commandErrorStringFunctionContext.reset();
+			PLOG_WARNING << "HaloScriptOutputHookEvent(" << game.toString() << "): no command error hook for this build, error lines will not be captured (" << ex.what() << ")";
+		}
 	}
 
 	~HaloScriptOutputHookEventImplGeneric()

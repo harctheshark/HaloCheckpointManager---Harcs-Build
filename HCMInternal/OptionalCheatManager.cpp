@@ -105,6 +105,7 @@
 #include "UncapVisibilityLimits.h"
 #include "UncapClusterLimit.h"
 #include "UncapRenderSections.h"
+#include "CollisionViewer.h"
 #include "FarClipDistance.h"
 #include "SunScaleFix.h"
 #include "AnimationFixes.h"

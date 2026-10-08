@@ -103,6 +103,7 @@ template void BinarySetting<ScreenAnchorEnum>::deserialise(pugi::xml_node input)
 template void BinarySetting<SoftCeilingRenderTypes>::deserialise(pugi::xml_node input);
 template void BinarySetting<SoftCeilingRenderDirection>::deserialise(pugi::xml_node input);
 template void BinarySetting<H2ShadowResolution>::deserialise(pugi::xml_node input);
+template void BinarySetting<CollisionViewerOcclusionEnum>::deserialise(pugi::xml_node input);
 
 
 

@@ -2,6 +2,7 @@
 #include "GetCurrentRNG.h"
 #include "MultilevelPointer.h"
 #include "PointerDataStore.h"
+#include "GameDataVersion.h"
 #include <TlHelp32.h>
 #include <vector>
 #include <algorithm>
@@ -299,6 +300,11 @@ public:
 	GetCurrentRNGImpl(GameState game, IDIContainer& dicon) : mGame(game)
 	{
 		mUsesTls = tlsSeedLayoutFor(game, mTlsLayout);
+
+		// ODST "Season 5" (halo3odst.dll 1.2094): the "random math" block's TLS slot is 0x580, not 1.3528's 0x588. Read
+		// off that build's own game_state_data_new site (mov eax,0x580 / mov [rax+r8],rcx / mov dword [rcx],0x78A8).
+		if (mUsesTls && isOdst2094(dicon, game))
+			mTlsLayout.slot = 0x580;
 
 		// Only resolve pointer data for the games that actually have an entry. Asking for one that does not
 		// exist throws "pointerData was null", which would disable the viewer on every TLS game.

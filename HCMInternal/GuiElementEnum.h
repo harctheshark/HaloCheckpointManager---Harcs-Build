@@ -777,7 +777,27 @@
 			((hceVisibleGeometryOverlayHideHiddenLines, (HALOCER_ONLY)))\
 			((display2DInfoShowZoneSet, (Halo3, Halo3ODST, HaloReach, Halo4, Halo2MP)))\
 	((havokBroadphaseBypassGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4, Halo2MP, HaloCER)))\
-	((uncapRenderSectionsToggle, (Halo2)))
+	((uncapRenderSectionsToggle, (Halo2)))\
+	((collisionViewerToggleGUI, (Halo2)))\
+			((collisionViewerOcclusionGUI, (Halo2)))\
+			((collisionViewerShowBspGUI, (Halo2)))\
+			((collisionViewerShowInstancedGUI, (Halo2)))\
+			((collisionViewerShowInvisibleGUI, (Halo2)))\
+			((collisionViewerShowBreakableGUI, (Halo2)))\
+			((collisionViewerShowSceneryGUI, (Halo2)))\
+			((collisionViewerShowCratesGUI, (Halo2)))\
+			((collisionViewerShowMachinesGUI, (Halo2)))\
+			((collisionViewerShowKillTriggersGUI, (Halo2)))\
+			((collisionViewerFillsGUI, (Halo2)))\
+			((collisionViewerTimGUI, (Halo2)))\
+			((collisionViewerTimLabelsGUI, (Halo2)))\
+			((collisionViewerPillsGUI, (Halo2)))\
+			((collisionViewerInfoPanelGUI, (Halo2)))\
+			((collisionViewerLineWidthGUI, (Halo2)))\
+			((collisionViewerDepthPullGUI, (Halo2)))\
+			((collisionViewerRadiusGUI, (Halo2)))\
+			((collisionViewerHiddenAlphaGUI, (Halo2)))\
+			((collisionViewerReversedZGUI, (Halo2)))
 
 
 

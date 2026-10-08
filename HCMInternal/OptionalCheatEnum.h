@@ -213,7 +213,8 @@ H5PauseMenuFix,\
 H5GetHavokData,\
 H5HavokOverlay,\
 H5LuaConsole,\
-H5DisplayInfo
+H5DisplayInfo,\
+CollisionViewer
 
 
 enum class OptionalCheatEnum {

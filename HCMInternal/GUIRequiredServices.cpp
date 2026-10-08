@@ -635,6 +635,86 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::UncapClusterLimit}
 	},
 
+	{ GUIElementEnum::collisionViewerToggleGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerOcclusionGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerShowBspGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerShowInstancedGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerShowInvisibleGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerShowBreakableGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerShowSceneryGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerShowCratesGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerShowMachinesGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerShowKillTriggersGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerFillsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerTimGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerTimLabelsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerPillsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoPanelGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerLineWidthGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerDepthPullGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerRadiusGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerHiddenAlphaGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerReversedZGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
 	{ GUIElementEnum::uncapRenderSectionsToggle,
 		{OptionalCheatEnum::UncapRenderSections}
 	},

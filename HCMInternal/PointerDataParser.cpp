@@ -98,6 +98,19 @@ namespace PointerDataParser
             if (entryName == "VersionedEntry")
             {
                 PLOG_DEBUG << "Processing Versioned Entry, name: " << entry.attribute("Name").value();
+
+                // A version-specific row beats an Version="All" row for the same game. Without this an "All" struct row
+                // (e.g. ODST's scenarioTagDataFields) could never be overridden for ONE build: both rows would match, the
+                // second would be reported as a duplicate and the first in file order would win. Needed for the older
+                // game DLLs a mixed downpatch can load (ODST 1.2094's scenario tag layout differs from 1.3528's).
+                std::set<std::string> gamesWithSpecificRow;
+                for (VersionEntry versionEntry = entry.first_child(); versionEntry; versionEntry = versionEntry.next_sibling())
+                {
+                    if (std::string_view(versionEntry.attribute("Version").value()) == "All") continue;
+                    if (!entryIsCorrectMCCVersion(versionEntry, getMCCVer) || !entryIsCorrectProcessType(versionEntry, getMCCVer)) continue;
+                    gamesWithSpecificRow.insert(versionEntry.attribute("Game").value());
+                }
+
                 // loop over all sub (version) entries, filter to correct MCC version, instantiate
                 for (VersionEntry versionEntry = entry.first_child(); versionEntry; versionEntry = versionEntry.next_sibling())
                 {
@@ -105,6 +118,10 @@ namespace PointerDataParser
                     // Check for Steam vs Winstore process type specificty
                     if (!entryIsCorrectMCCVersion(versionEntry, getMCCVer) || !entryIsCorrectProcessType(versionEntry, getMCCVer))
                         continue;
+
+                    if (std::string_view(versionEntry.attribute("Version").value()) == "All"
+                        && gamesWithSpecificRow.contains(versionEntry.attribute("Game").value()))
+                        continue; // superseded by a row for exactly this version
 
                     try
                     {
