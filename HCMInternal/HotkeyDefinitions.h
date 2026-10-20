@@ -99,6 +99,11 @@ private:
 		mSettings->shieldInputPrinterHotkeyEvent,
 		vsk{}),
 
+		// Chase Camera toggle (Camera tab). Unbound by default.
+		initEventOnPressHotkey(chaseCamera,
+		mSettings->chaseCameraHotkeyEvent,
+		vsk{}),
+
 		initEventOnPressHotkey(toggleGUI,
 		mSettings->toggleGUIHotkeyEvent,
 		vsk{{ ImGuiKey_GraveAccent }}),

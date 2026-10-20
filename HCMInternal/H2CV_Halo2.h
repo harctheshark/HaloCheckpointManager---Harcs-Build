@@ -45,6 +45,10 @@ namespace h2
 		// block + 1 + ctx*32 (bit set = intact); sub_18071AC80(-1, index, 0) clears it when the glass is destroyed
 		constexpr uintptr_t BREAKABLE_BLOCK = 0x1648960; // qword ptr to the runtime block (byte 0 = enable flag)
 		constexpr uintptr_t BREAKABLE_CTX   = 0xDF9D74;  // i16 structure-BSP context row (-1 = none)
+		// baked scenery in the level shape (getChildShape key categories 3 / 4, sub_180793760)
+		constexpr uintptr_t SCENERY_TABLE   = 0x165B440; // qword ptr to u32[] : object datum per scenery index (key & 0xFFFF)
+		constexpr uintptr_t TAG_INSTANCES   = 0x15E4B30; // qword ptr to the tag instance array (16 B entries, data offset i32 @+8)
+		constexpr uintptr_t TAG_DATA_BASE   = 0x15E4B38; // qword: tag data base the instance offsets are relative to
 	}
 	namespace vt
 	{
@@ -69,6 +73,27 @@ namespace h2
 		constexpr uintptr_t SWEEP_AGENT     = 0xB6E1C8;
 		constexpr uintptr_t GSK_AGENT       = 0xB6ECB0;
 		constexpr uintptr_t NULL_AGENT_INST = 0xE1A510;
+		// further agent classes (RTTI, halo2.dll 1.3528). Only the ones above carry TIMs we can read; these are named in the
+		// info panel when an object pair ends in one of them.
+		constexpr uintptr_t CAPSULE_CAPSULE_AGENT = 0xB6F0D8; // hkCapsuleCapsuleAgent (no cached separating distance)
+		constexpr uintptr_t BOX_BOX_AGENT         = 0xB6ED28; // hkBoxBoxAgent
+		constexpr uintptr_t BV_AGENT              = 0xB6EDF8; // hkBvAgent
+		constexpr uintptr_t BV_AGENT_S            = 0xB6EE70;
+		constexpr uintptr_t BVTREE_AGENT          = 0xB6F6D0; // hkBvTreeAgent
+		constexpr uintptr_t BVTREE_AGENT_S        = 0xB6F718;
+		constexpr uintptr_t SHAPE_COLL_AGENT      = 0xB6F508; // hkShapeCollectionAgent
+		constexpr uintptr_t SHAPE_COLL_AGENT_S    = 0xB6F550;
+		constexpr uintptr_t CONVEX_WELDER_AGENT   = 0xB6F640; // hkConvexWelderAgent (not the ConvexConvex one above)
+		constexpr uintptr_t CONVEX_WELDER_AGENT_S = 0xB6F688;
+		constexpr uintptr_t SPHERE_WELDER_AGENT   = 0xB6F828; // hkSphereConvexWelderAgent
+		constexpr uintptr_t SPHERE_WELDER_AGENT_S = 0xB6F870;
+		constexpr uintptr_t MULTISPHERE_AGENT     = 0xB6F5B0; // hkMultiSphereAgent
+		constexpr uintptr_t MULTISPHERE_AGENT_S   = 0xB6F5F8;
+		// Halo's shape collection over ONE collision_bsp (ctor sub_180791F60, getType 2): +0x18 = collision_bsp*,
+		// getChildShape sub_180792E30 builds the triangle of surface `key` (the key IS the surface index). Used for every
+		// collision-model / instanced-geometry physics block: block+0x00 this collection, +0x70 a MOPP over it (child +0x18),
+		// +0x50 an hkConvexWelderShape (type 20) whose +0x18 is that MOPP (sub_18077AFC0).
+		constexpr uintptr_t COLL_BSP_SHAPE        = 0xB3C538;
 	}
 
 	// object types (runtime header byte)
@@ -157,8 +182,10 @@ namespace h2
 	// can have (sphere / stabilized sphere / box / stabilized box / keyframed); fixed motions are always rejected.
 	bool readMotion(uintptr_t entity, Motion& out, bool anyDynamic = false);
 
-	enum class AgentKind : uint8_t { Unknown, Welder, List, Transform, Mopp };
+	// Convex = hkConvexSweepConvexAgent / hkGskConvexConvexAgent: a leaf that carries a TIM (same layout as a welder child)
+	enum class AgentKind : uint8_t { Unknown, Welder, List, Transform, Mopp, Convex };
 	AgentKind agentKind(uintptr_t agent);
+	const char* agentClassName(uintptr_t agent);   // short Havok class name for the info panel ("?" if unknown)
 	struct PairInfo { uintptr_t entry = 0, agent = 0; int32_t S = 0; bool found = false; bool agentIsWelder = false; AgentKind kind = AgentKind::Unknown; };
 	PairInfo findBspPair(uintptr_t entity);
 
@@ -173,6 +200,55 @@ namespace h2
 		int feature = -1; int featA = -1, featB = -1;
 	};
 	bool readChildren(uintptr_t welderAgent, std::vector<Child>& out);
+	// The AABB the welder last queried its MOPP with (child update sub_1809A9AC0): the convex body's AABB in the
+	// other body's space, grown by 1.5 x the collision tolerance (input+0x10 * (1 + 0.5)), stored at agent +0x30 (min)
+	// / +0x40 (max). A polygon gets a child exactly when its MOPP bounds overlap this box. Re-queried only when a face
+	// of the fresh box has moved more than 0.5 x tolerance from the stored one, so the stored box IS the last query.
+	bool readWelderQueryBox(uintptr_t welderAgent, Vec3& mn, Vec3& mx);
+	// the world's collision tolerance (hkWorld +0x120 -> collision input +0x10; the welder and the broadphase both grow
+	// their boxes by multiples of it: broadphase insertion sub_1809D1650 uses 0.5x). 0 when unreadable.
+	float collisionTolerance();
+	// The body's box in the world broadphase (hk3AxisSweep at hkWorld +0x110, vtable 0xB764F0) - the box that decides
+	// whether a pair with another body exists. Decoded like sub_1809FC760: nodes {u16 minY,minZ,maxY,maxZ,minX,maxX; pad;
+	// handle*} 24 B at +0x40 (count +0x48); endpoint arrays X/Y/Z at +0x50/+0x60/+0x70 (4 B: u16 value, u16 node);
+	// coordinate = value / scale(+0x30) - offset(+0x10). The body's handle is its collidable +0x20 (= entity +0x38),
+	// whose first u32 is normally the node index (verified against the node's handle pointer, else searched).
+	bool broadphaseAabb(uintptr_t entity, Vec3& mn, Vec3& mx);
+
+	// Per-level grid numbers (Collision Viewer info panel).
+	//   Broadphase (hk3AxisSweep): coordinates are stored as 16-bit integers q = (p + offset) * scale; a box's min is rounded
+	//     DOWN to an even value and its max UP to an odd one (sub_1809F94D0: & 0xFFFE / | 1), so boxes snap outward to a grid
+	//     of 2 / scale wu, and the whole range covers 65535 / scale wu per axis.
+	//   Level MOPP (the level shape's tree, code at shape +0x20: origin xyz +0x0, scale +0xC; sub_1809BC420): coordinates are
+	//     integers q = (p - origin) * scale; the query starts at 65536 / scale wu cells and each deeper tree level refines
+	//     by 256x, down to 1 / scale.
+	struct LevelGrids
+	{
+		bool bpOk = false; Vec3 bpMin{}, bpMax{}, bpCell{};
+		bool moppOk = false; Vec3 moppOrigin{}; float moppScale = 0;
+		float tolerance = 0;
+	};
+	bool levelGrids(LevelGrids& g);
+
+	// Backstep parameters (hkWorld, read by the island backstep pass sub_1809E3110 / solver sub_1809E38A0):
+	//   For each pair, S = entry +0x18. With S >= 0 the pair is re-collided at the step's end and a backstep happens when a
+	//   contact is DEEPER than the threshold  thr(S) = base + S * perS  (contact distance < thr). Then S += 1 and the solver
+	//   bisects the step's time (halving from 0.5 until the step is <= timeRes) for the latest time t at which no contact is
+	//   below thr(S) (the new S), and rewinds the body to t (motion setTime, vtable +0xE8). Rewound fraction f = 1 - t.
+	//   If even the earliest time still penetrates: S = -3 (stuck). With no contact below thr(S - 1), S is lowered by one.
+	//   base = world +0x2C4, perS = world +0x2C8, timeRes = world +0x2CC.
+	struct BackstepParams { float base = 0, perS = 0, timeRes = 0; bool ok = false; };
+	bool backstepParams(BackstepParams& p);
+	// one sweep / GSK agent read on its own (an object pair leaf); false if the agent is not one of those
+	bool readConvexAgent(uintptr_t agent, Child& out);
+
+	// ---- objects the subject touches (Believed poses - objects) ----
+	// Pair entries of `entity` against every OTHER rigid body (not the level BSP / MCC mesh): crates, machines, vehicles,
+	// dynamic scenery, other bipeds. Same pair arrays findBspPair scans.
+	struct ObjPair { uintptr_t entry = 0, agent = 0, other = 0; int32_t S = 0; };
+	int findObjectPairs(uintptr_t entity, std::vector<ObjPair>& out);
+	// object owning a rigid body (scan of the object table + havokBodies); false if none
+	bool objectOfEntity(uintptr_t entity, ObjectRef& out);
 
 	uint32_t gameTick();
 
@@ -188,6 +264,8 @@ namespace h2
 	Vec3 xfDir(const Xf& x, const Vec3& d);          // rotation only
 	Xf xfCompose(const Xf& a, const Xf& b);          // a o b (apply b first)
 	Xf motionPose(const Motion& m);                  // body-local -> world
+	// the current Havok transform of any rigid body (dynamic, keyframed or fixed motion: motion +0x90..+0xC0)
+	bool entityPose(uintptr_t entity, Xf& out);
 
 	// One convex primitive of a body's shape, geometry in BODY-LOCAL space (leaf transform shapes already applied).
 	//   capsule (a == b: a sphere): segment a-b grown by r.
@@ -205,9 +283,12 @@ namespace h2
 		bool swept = false;        // wrapped in hkConvexSweepShape (23)
 		uintptr_t agent = 0;       // pair sub-agent that collides this primitive against the BSP (0 = unknown); check agentKind()
 	};
+	// a Halo collision_bsp reached through a welder agent: the agent's children are keyed by surface index
+	struct BspLeaf { uintptr_t bsp = 0; uintptr_t agent = 0; Xf xf; };
 	struct BodyShape
 	{
 		std::vector<ShapePrim> prims;
+		std::vector<BspLeaf> bsps;   // only filled by readShapeTree (objects); readBodyShape callers ignore it
 		int skipped = 0;           // shapes of a type the walker does not draw (triangle, MOPP-only mesh, ...)
 		std::string desc;          // e.g. "list(10): 3 sweep>convex, 1 box; skipped 2"
 		uintptr_t root = 0; int rootType = 0;
@@ -216,6 +297,16 @@ namespace h2
 	// vertices, multi-sphere leaves) in parallel with the (entity, BSP) pair agent tree `rootAgent` (0 = no agent info),
 	// so every leaf knows which welder agent holds its TIMs. False when no leaf could be read.
 	bool readBodyShape(uintptr_t entity, uintptr_t rootAgent, BodyShape& out);
+	// same walk from any shape with a starting transform (prims come out in that transform's space, i.e. world space when
+	// `xf` is the body / node pose). Also records welder-shape / MOPP / collision-bsp collections reached through a welder
+	// agent as BspLeaf. False when nothing was read.
+	bool readShapeTree(uintptr_t shape, uintptr_t rootAgent, const Xf& xf, BodyShape& out);
+
+	// Baked scenery in the level shape: a level-welder child of key category 3 (physics model rigid body) or 4 (collision
+	// model) -> the shape the engine wraps in a transform for it, and that transform (object node matrix, scale ignored, as
+	// sub_180791C10 does). Ported from sub_180793760.
+	struct BakedShape { uintptr_t shape = 0, obj = 0; uint32_t datum = 0xFFFFFFFF; uint8_t type = 0xFF; int category = 0; Xf xf; std::string why; };
+	bool bakedSceneryShape(uint32_t key, BakedShape& out);
 	// the capsule in BODY-LOCAL space (entityCapsule without the pose applied)
 	Capsule entityCapsuleLocal(uintptr_t entity);
 }

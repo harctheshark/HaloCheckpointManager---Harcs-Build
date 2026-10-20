@@ -18,6 +18,16 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <!-- Havok SDK (Havok VDB debugger, Release|x64 only). It lives outside the repo, in the H3EK install, so a machine
+       without it builds the no-op stubs in HavokDebuggerImpl.cpp / HCEHavokDebuggerImpl.cpp (the !HCM_HAVOK_AVAILABLE
+       branch) and does not link havok.lib. Override the two paths with /p:HcmHavokSource=... /p:HcmHavokLibDir=... -->
+  <PropertyGroup Label="HcmHavok">
+    <HcmHavokSource Condition="'$(HcmHavokSource)'==''">G:\SteamLibrary\steamapps\common\H3EK\havok-v5.1.0r1-b2007.09.19-main\Source</HcmHavokSource>
+    <HcmHavokLibDir Condition="'$(HcmHavokLibDir)'==''">G:\SteamLibrary\steamapps\common\H3EK\vdb_inject\build</HcmHavokLibDir>
+    <HcmHavokAvailable Condition="Exists('$(HcmHavokSource)') And Exists('$(HcmHavokLibDir)\havok.lib')">true</HcmHavokAvailable>
+    <HcmHavokLib Condition="'$(HcmHavokAvailable)'=='true'">havok.lib;</HcmHavokLib>
+    <HcmHavokDefine Condition="'$(HcmHavokAvailable)'=='true'">HCM_HAVOK_AVAILABLE;</HcmHavokDefine>
+  </PropertyGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
@@ -182,7 +192,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
       </Command>
     </PostBuildEvent>
     <CustomBuildStep>
-      <Command>xcopy /y $(ProjectDir)InternalPointerData.xml  $(OutDir)InternalPointerData.xml || set errorlevel=0</Command>
+      <Command>copy /y "$(ProjectDir)InternalPointerData.xml" "$(OutDir)InternalPointerData.xml" &gt;nul || set errorlevel=0</Command>
     </CustomBuildStep>
     <CustomBuildStep>
       <Message>Copying internal pointer data</Message>
@@ -222,8 +232,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>havok.lib;winmm.lib;user32.lib;advapi32.lib;d3d11.lib;dxguid.lib;libcurl.lib;version.lib;Ws2_32.lib;Wldap32.Lib;Crypt32.Lib;Secur32.lib;Iphlpapi.lib;Normaliz.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>G:\SteamLibrary\steamapps\common\H3EK\vdb_inject\build;$(VcpkgManifestRoot)\vcpkg_installed\$(VcpkgTriplet)\$(VcpkgTriplet)\lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(HcmHavokLib)winmm.lib;user32.lib;advapi32.lib;d3d11.lib;dxguid.lib;libcurl.lib;version.lib;Ws2_32.lib;Wldap32.Lib;Crypt32.Lib;Secur32.lib;Iphlpapi.lib;Normaliz.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(HcmHavokLibDir);$(VcpkgManifestRoot)\vcpkg_installed\$(VcpkgTriplet)\$(VcpkgTriplet)\lib</AdditionalLibraryDirectories>
       <IgnoreSpecificDefaultLibraries>
       </IgnoreSpecificDefaultLibraries>
     </Link>
@@ -245,7 +255,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
       </Command>
     </PostBuildEvent>
     <CustomBuildStep>
-      <Command>xcopy /y $(ProjectDir)InternalPointerData.xml  $(OutDir)InternalPointerData.xml || set errorlevel=0</Command>
+      <Command>copy /y "$(ProjectDir)InternalPointerData.xml" "$(OutDir)InternalPointerData.xml" &gt;nul || set errorlevel=0</Command>
     </CustomBuildStep>
     <CustomBuildStep>
       <Message>Copying internal pointer data (Release; download disabled in this fork)</Message>
@@ -860,8 +870,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
       <ConformanceMode>false</ConformanceMode>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
       <SDLCheck>false</SDLCheck>
-      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">G:\SteamLibrary\steamapps\common\H3EK\havok-v5.1.0r1-b2007.09.19-main\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">HCM_HAVOK_AVAILABLE;TARGET_H3;_CRT_SECURE_NO_WARNINGS;__w64=;_FARQ=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(HcmHavokSource);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(HcmHavokDefine)TARGET_H3;_CRT_SECURE_NO_WARNINGS;__w64=;_FARQ=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <!-- Halo Campaign Evolved Havok VDB payload. Mirrors HavokDebuggerImpl.cpp above, with two deliberate
          differences: NO TARGET_H3 (that gates the MCC-only code paths), and ExceptionHandling=Async - the
@@ -873,8 +883,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
       <SDLCheck>false</SDLCheck>
       <ExceptionHandling>Async</ExceptionHandling>
-      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">G:\SteamLibrary\steamapps\common\H3EK\havok-v5.1.0r1-b2007.09.19-main\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">HCM_HAVOK_AVAILABLE;_CRT_SECURE_NO_WARNINGS;__w64=;_FARQ=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(HcmHavokSource);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(HcmHavokDefine)_CRT_SECURE_NO_WARNINGS;__w64=;_FARQ=;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <ClCompile Include="AnimationFixes.cpp" />
     <ClCompile Include="SunScaleFix.cpp" />

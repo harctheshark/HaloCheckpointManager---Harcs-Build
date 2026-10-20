@@ -214,6 +214,13 @@ namespace h2cv
 		return true;
 	}
 
+	size_t CollisionWorld::igSurfaceCount(uint32_t instance) const
+	{
+		if (instance >= mIgInstances.size()) return 0;
+		const int d = mIgInstances[instance].def;
+		return (d >= 0 && d < (int)mIgDefs.size()) ? mIgDefs[d].surfaces.size() : 0;
+	}
+
 	size_t CollisionWorld::edgeCountTotal() const
 	{
 		size_t n = 0;

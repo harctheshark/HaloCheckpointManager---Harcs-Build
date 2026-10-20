@@ -470,8 +470,34 @@ namespace h2
 		if (v == vt::WELDER_AGENT || v == vt::WELDER_AGENT_S) return AgentKind::Welder;
 		if (v == vt::LIST_AGENT || v == vt::LIST_AGENT_S) return AgentKind::List;
 		if (v == vt::TRANSFORM_AGENT || v == vt::TRANSFORM_AGENT_S) return AgentKind::Transform;
-		if (v == vt::MOPP_AGENT || v == vt::MOPP_AGENT_S) return AgentKind::Mopp;
+		// hkBvTreeAgent: same vtable functions as hkMoppAgent (only the RTTI differs), so the same children layout
+		if (v == vt::MOPP_AGENT || v == vt::MOPP_AGENT_S || v == vt::BVTREE_AGENT || v == vt::BVTREE_AGENT_S) return AgentKind::Mopp;
+		if (v == vt::SWEEP_AGENT || v == vt::GSK_AGENT) return AgentKind::Convex;
 		return AgentKind::Unknown;
+	}
+
+	const char* agentClassName(uintptr_t agent)
+	{
+		if (!okp(agent)) return "none";
+		const uintptr_t b = base();
+		if (agent == b + vt::NULL_AGENT_INST) return "null";
+		const uintptr_t v = q(agent) - b;
+		static const struct { uintptr_t vt; const char* nm; } names[] = {
+			{ vt::WELDER_AGENT, "ConvexConvexWelder" }, { vt::WELDER_AGENT_S, "ConvexConvexWelder(sym)" },
+			{ vt::LIST_AGENT, "List" }, { vt::LIST_AGENT_S, "List(sym)" },
+			{ vt::TRANSFORM_AGENT, "Transform" }, { vt::TRANSFORM_AGENT_S, "Transform(sym)" },
+			{ vt::MOPP_AGENT, "Mopp" }, { vt::MOPP_AGENT_S, "Mopp(sym)" },
+			{ vt::SWEEP_AGENT, "ConvexSweepConvex" }, { vt::GSK_AGENT, "GskConvexConvex" },
+			{ vt::CAPSULE_CAPSULE_AGENT, "CapsuleCapsule" }, { vt::BOX_BOX_AGENT, "BoxBox" },
+			{ vt::BV_AGENT, "Bv" }, { vt::BV_AGENT_S, "Bv(sym)" },
+			{ vt::BVTREE_AGENT, "BvTree" }, { vt::BVTREE_AGENT_S, "BvTree(sym)" },
+			{ vt::SHAPE_COLL_AGENT, "ShapeCollection" }, { vt::SHAPE_COLL_AGENT_S, "ShapeCollection(sym)" },
+			{ vt::CONVEX_WELDER_AGENT, "ConvexWelder" }, { vt::CONVEX_WELDER_AGENT_S, "ConvexWelder(sym)" },
+			{ vt::SPHERE_WELDER_AGENT, "SphereConvexWelder" }, { vt::SPHERE_WELDER_AGENT_S, "SphereConvexWelder(sym)" },
+			{ vt::MULTISPHERE_AGENT, "MultiSphere" }, { vt::MULTISPHERE_AGENT_S, "MultiSphere(sym)" },
+		};
+		for (const auto& n : names) if (v == n.vt) return n.nm;
+		return "?";
 	}
 
 	PairInfo findBspPair(uintptr_t entity)
@@ -520,6 +546,103 @@ namespace h2
 		return out;
 	}
 
+	int findObjectPairs(uintptr_t entity, std::vector<ObjPair>& out)
+	{
+		out.clear();
+		const uintptr_t b = base();
+		const uintptr_t world = q(b + rva::WORLD);
+		if (!okp(world) || !okp(entity)) return 0;
+		const uintptr_t bsp = q(b + rva::BSP_ENTITY), mesh = q(b + rva::MESH_ENTITY);
+		const uintptr_t H = entity + 0x38;
+		const uintptr_t bspH = okp(bsp) ? bsp + 0x38 : 1, meshH = okp(mesh) ? mesh + 0x38 : 1;
+		bool readAny = false;
+		auto scan = [&](uintptr_t island)
+		{
+			const uintptr_t parr = q(island + 0x90);
+			const int32_t np = i32(island + 0x98, -1);
+			if (!okp(parr) || np <= 0 || np > 8192) return;
+			std::vector<uint8_t> blk((size_t)np * 32);
+			if (!copy(blk.data(), parr, blk.size())) return;
+			readAny = true;
+			for (int32_t j = 0; j < np && out.size() < 64; ++j)
+			{
+				const uint8_t* e = &blk[(size_t)j * 32];
+				const uintptr_t a0 = *(const uintptr_t*)e, a1 = *(const uintptr_t*)(e + 8);
+				uintptr_t oh = 0;
+				if (a0 == H) oh = a1; else if (a1 == H) oh = a0; else continue;
+				if (oh == bspH || oh == meshH || !okp(oh)) continue;
+				const uintptr_t other = oh - 0x38;
+				if (q(other) != b + vt::RIGID_BODY) continue;   // phantoms etc.
+				ObjPair p; p.entry = parr + (uintptr_t)j * 32; p.agent = *(const uintptr_t*)(e + 16); p.S = *(const int32_t*)(e + 24); p.other = other;
+				out.push_back(p);
+			}
+		};
+		// Every island that could hold the agent: a pair against a keyframed or sleeping body (trams, elevators, doors at
+		// rest) is not necessarily in the biped's own island. Candidates: the biped's island, every element of the first
+		// three hkArrays of the world (+0x10 active, then the next two), and loose island pointers in world +0x40..+0x100;
+		// each accepted only if it points back at the world (island +0x30), and each scanned once.
+		std::vector<uintptr_t> islands;
+		auto consider = [&](uintptr_t isl)
+		{
+			if (!okp(isl) || q(isl + 0x30) != world) return;
+			if (std::find(islands.begin(), islands.end(), isl) == islands.end() && islands.size() < 2048) islands.push_back(isl);
+		};
+		consider(q(entity + 0x78));
+		for (uintptr_t off : { (uintptr_t)0x10, (uintptr_t)0x20, (uintptr_t)0x30 })
+		{
+			const uintptr_t arr = q(world + off);
+			const int32_t n = i32(world + off + 8, 0);
+			if (!okp(arr) || n <= 0 || n > 1024) continue;
+			std::vector<uintptr_t> ptrs((size_t)n);
+			if (!copy(ptrs.data(), arr, ptrs.size() * 8)) continue;
+			for (uintptr_t p : ptrs) consider(p);
+		}
+		for (uintptr_t off = 0x40; off <= 0x100; off += 8) consider(q(world + off));
+		for (uintptr_t isl : islands) { if (out.size() >= 64) break; scan(isl); }
+		// the same pair can sit in two scanned arrays (merging islands): keep one entry per other body
+		std::vector<ObjPair> uniq;
+		for (const auto& p : out)
+			if (std::find_if(uniq.begin(), uniq.end(), [&](const ObjPair& u) { return u.other == p.other && u.agent == p.agent; }) == uniq.end()) uniq.push_back(p);
+		out.swap(uniq);
+		(void)readAny;
+		return (int)out.size();
+	}
+
+	bool objectOfEntity(uintptr_t entity, ObjectRef& out)
+	{
+		std::vector<ObjectRef> objs;
+		enumerateObjects(objs);
+		for (const auto& o : objs)
+		{
+			if (o.hdrFlags & 0x10) continue;
+			uintptr_t bodies[8];
+			const int n = havokBodies(o.obj, bodies);
+			for (int i = 0; i < n; ++i) if (bodies[i] == entity) { out = o; return true; }
+		}
+		return false;
+	}
+
+	// GSK cache + TIM of a sweep / GSK agent (both lay it out at +0x18): vertex ids +0x18, dims +0x20/+0x21,
+	// manifold +0x24, separating normal +0x30, TIM +0x3C
+	static bool readGskCache(uintptr_t agent, Child& c)
+	{
+		uint8_t g[0x28];
+		if (!copy(g, agent + 0x18, sizeof(g))) return false;
+		memcpy(c.ids, g, 8);
+		c.dimA = g[8]; c.dimB = g[9];
+		c.manifold = *(const int32_t*)(g + 0x0C);
+		c.normal = { *(const float*)(g + 0x18), *(const float*)(g + 0x1C), *(const float*)(g + 0x20) };
+		c.tim = *(const float*)(g + 0x24);
+		if (c.dimA <= 4 && c.dimB >= 1 && c.dimB <= 3 && c.dimA + c.dimB <= 4)
+		{
+			const int i0 = c.ids[c.dimA], i1 = c.dimB >= 2 ? c.ids[c.dimA + 1] : -1;
+			if (c.dimB == 1) { c.feature = 0; c.featA = i0; }
+			else if (c.dimB == 2) { c.feature = 1; c.featA = i0; c.featB = i1; } // adjacency checked by the caller
+			else c.feature = 2;
+		}
+		return std::isfinite(c.tim);
+	}
+
 	bool readChildren(uintptr_t agent, std::vector<Child>& out)
 	{
 		out.clear();
@@ -533,8 +656,10 @@ namespace h2
 		if (n && !copy(ents.data(), arr, ents.size() * sizeof(Entry))) return false;
 		// the sim thread rewrites this array in place every collide: re-read pointer + count, reject a torn copy
 		if (q(agent + 0x18) != arr || i32(agent + 0x20, -1) != n) return false;
-		for (size_t i = 1; i < ents.size(); ++i)
-			if (ents[i].key < ents[i - 1].key) return false;                 // children are kept sorted by key
+		// a welder keeps its children sorted by key (a torn copy breaks that); MOPP / BV-tree agents need not
+		if (agentKind(agent) == AgentKind::Welder)
+			for (size_t i = 1; i < ents.size(); ++i)
+				if (ents[i].key < ents[i - 1].key) return false;
 		for (const auto& e : ents)
 		{
 			Child c; c.key = e.key; c.agent = e.agent;
@@ -543,28 +668,125 @@ namespace h2
 			else if (cvt == vt::SWEEP_AGENT) c.kind = Child::Sweep;
 			else if (cvt == vt::GSK_AGENT) c.kind = Child::Gsk;
 			else c.kind = Child::Other;
-			if (c.kind == Child::Sweep || c.kind == Child::Gsk)
-			{
-				uint8_t g[0x28];
-				if (copy(g, e.agent + 0x18, sizeof(g)))
-				{
-					memcpy(c.ids, g, 8);
-					c.dimA = g[8]; c.dimB = g[9];
-					c.manifold = *(const int32_t*)(g + 0x0C);
-					c.normal = { *(const float*)(g + 0x18), *(const float*)(g + 0x1C), *(const float*)(g + 0x20) };
-					c.tim = *(const float*)(g + 0x24);
-					if (c.dimA <= 4 && c.dimB >= 1 && c.dimB <= 3 && c.dimA + c.dimB <= 4)
-					{
-						const int i0 = c.ids[c.dimA], i1 = c.dimB >= 2 ? c.ids[c.dimA + 1] : -1;
-						if (c.dimB == 1) { c.feature = 0; c.featA = i0; }
-						else if (c.dimB == 2) { c.feature = 1; c.featA = i0; c.featB = i1; } // adjacency checked by the caller
-						else c.feature = 2;
-					}
-				}
-			}
+			if (c.kind == Child::Sweep || c.kind == Child::Gsk) readGskCache(e.agent, c);
 			out.push_back(c);
 		}
 		return true;
+	}
+
+	bool readWelderQueryBox(uintptr_t agent, Vec3& mn, Vec3& mx)
+	{
+		const AgentKind k = agentKind(agent);
+		if (k != AgentKind::Welder) return false;
+		float b[8];
+		if (!copy(b, agent + 0x30, sizeof(b))) return false;
+		mn = { b[0], b[1], b[2] }; mx = { b[4], b[5], b[6] };
+		for (int i = 0; i < 3; ++i)
+			if (!std::isfinite(b[i]) || !std::isfinite(b[4 + i]) || b[4 + i] < b[i] || b[4 + i] - b[i] > 200.f) return false;
+		return true;
+	}
+
+	float collisionTolerance()
+	{
+		const uintptr_t world = q(base() + rva::WORLD);
+		const uintptr_t input = okp(world) ? q(world + 0x120) : 0;
+		const float t = okp(input) ? f32(input + 0x10, 0.f) : 0.f;
+		return (t > 0.f && t < 1.f) ? t : 0.f;
+	}
+
+	bool broadphaseAabb(uintptr_t entity, Vec3& mn, Vec3& mx)
+	{
+		const uintptr_t b = base();
+		const uintptr_t world = q(b + rva::WORLD);
+		const uintptr_t bp = okp(world) ? q(world + 0x110) : 0;
+		if (!okp(bp) || q(bp) != b + 0xB764F0) return false;   // hk3AxisSweep
+		const uintptr_t nodes = q(bp + 0x40);
+		const int32_t n = i32(bp + 0x48, 0);
+		if (!okp(nodes) || n <= 0 || n > 65535) return false;
+		const uintptr_t handle = entity + 0x38;
+		uint32_t idx = u32(handle, 0xFFFFFFFF);
+		if (idx >= (uint32_t)n || q(nodes + 24 * (uintptr_t)idx + 0x10) != handle)
+		{
+			idx = 0xFFFFFFFF;
+			std::vector<uint8_t> raw((size_t)n * 24);
+			if (!copy(raw.data(), nodes, raw.size())) return false;
+			for (int32_t i = 0; i < n; ++i)
+				if (*(const uintptr_t*)&raw[(size_t)i * 24 + 0x10] == handle) { idx = (uint32_t)i; break; }
+			if (idx == 0xFFFFFFFF) return false;
+		}
+		uint16_t nd[6];
+		if (!copy(nd, nodes + 24 * (uintptr_t)idx, sizeof(nd))) return false;
+		float off[3], sc[3];
+		if (!copy(off, bp + 0x10, 12) || !copy(sc, bp + 0x30, 12)) return false;
+		const uintptr_t ax[3] = { q(bp + 0x50), q(bp + 0x60), q(bp + 0x70) };
+		auto ep = [&](int axis, uint16_t i) { return (float)u16(ax[axis] + 4 * (uintptr_t)i, 0) / sc[axis] - off[axis]; };
+		for (int a = 0; a < 3; ++a) if (!okp(ax[a]) || !(std::fabs(sc[a]) > 1e-12f)) return false;
+		mn = { ep(0, nd[4]), ep(1, nd[0]), ep(2, nd[1]) };
+		mx = { ep(0, nd[5]), ep(1, nd[2]), ep(2, nd[3]) };
+		return std::isfinite(mn.x) && std::isfinite(mx.z) && mx.x >= mn.x && mx.y >= mn.y && mx.z >= mn.z;
+	}
+
+	bool backstepParams(BackstepParams& p)
+	{
+		p = BackstepParams{};
+		const uintptr_t world = q(base() + rva::WORLD);
+		if (!okp(world)) return false;
+		float v[3];
+		if (!copy(v, world + 0x2C4, sizeof(v))) return false;
+		for (float f : v) if (!std::isfinite(f) || std::fabs(f) > 10.f) return false;
+		p.base = v[0]; p.perS = v[1]; p.timeRes = v[2]; p.ok = true;
+		return true;
+	}
+
+	bool levelGrids(LevelGrids& g)
+	{
+		g = LevelGrids{};
+		const uintptr_t b = base();
+		g.tolerance = collisionTolerance();
+		const uintptr_t world = q(b + rva::WORLD);
+		const uintptr_t bp = okp(world) ? q(world + 0x110) : 0;
+		float off[3], sc[3];
+		if (okp(bp) && q(bp) == b + 0xB764F0 && copy(off, bp + 0x10, 12) && copy(sc, bp + 0x30, 12)
+			&& sc[0] > 1e-9f && sc[1] > 1e-9f && sc[2] > 1e-9f)
+		{
+			g.bpMin = { -off[0], -off[1], -off[2] };
+			g.bpMax = { -off[0] + 65535.f / sc[0], -off[1] + 65535.f / sc[1], -off[2] + 65535.f / sc[2] };
+			g.bpCell = { 2.f / sc[0], 2.f / sc[1], 2.f / sc[2] };
+			g.bpOk = true;
+		}
+		// the level shape: the structure-BSP body's shape, else the MOPP singleton (ctor sub_1807921C0 -> halo2+0x165B430)
+		auto isMopp = [&](uintptr_t s)   // Halo's MOPP (0xB3C5B0), hkMoppBvTreeShape (0xB6E990) or its COMDAT copy (0xB1A1A8)
+		{
+			if (!okp(s)) return false;
+			const uintptr_t v = q(s) - b;
+			return v == 0xB3C5B0 || v == 0xB6E990 || v == 0xB1A1A8;
+		};
+		uintptr_t shape = 0;
+		const uintptr_t bspEnt = q(b + rva::BSP_ENTITY);
+		if (okp(bspEnt)) shape = q(bspEnt + 0x18);
+		if (!isMopp(shape)) shape = q(b + 0x165B430);
+		if (isMopp(shape))
+		{
+			const uintptr_t code = q(shape + 0x20);
+			float info[4];
+			if (okp(code) && copy(info, code, 16) && std::isfinite(info[3]) && info[3] > 1e-6f)
+			{
+				g.moppOrigin = { info[0], info[1], info[2] }; g.moppScale = info[3]; g.moppOk = true;
+			}
+		}
+		return g.bpOk || g.moppOk;
+	}
+
+	bool readConvexAgent(uintptr_t agent, Child& c)
+	{
+		c = Child{};
+		if (!okp(agent)) return false;
+		const uintptr_t v = q(agent) - base();
+		if (v == vt::SWEEP_AGENT) c.kind = Child::Sweep;
+		else if (v == vt::GSK_AGENT) c.kind = Child::Gsk;
+		else return false;
+		c.agent = agent;
+		return readGskCache(agent, c);
 	}
 
 	// ---- rigid transforms ---------------------------------------------------------------------------------------
@@ -596,6 +818,22 @@ namespace h2
 		for (int i = 0; i < 3; ++i) x.c[i] = m.rc[i];
 		x.t = m.origin;
 		return x;
+	}
+
+	bool entityPose(uintptr_t entity, Xf& out)
+	{
+		const uintptr_t motion = q(entity + 0x68);
+		if (!okp(motion)) return false;
+		float R[12], t[4];
+		if (!copy(R, motion + 0x90, 48) || !copy(t, motion + 0xC0, 16)) return false;
+		for (int i = 0; i < 3; ++i)
+		{
+			out.c[i] = { R[i * 4], R[i * 4 + 1], R[i * 4 + 2] };
+			const float l2 = out.c[i].x * out.c[i].x + out.c[i].y * out.c[i].y + out.c[i].z * out.c[i].z;
+			if (!std::isfinite(l2) || l2 < 0.8f || l2 > 1.2f) return false;
+		}
+		out.t = { t[0], t[1], t[2] };
+		return std::isfinite(t[0]) && std::isfinite(t[1]) && std::isfinite(t[2]);
 	}
 
 	// ---- shape tree walker (vehicles) ---------------------------------------------------------------------------
@@ -870,6 +1108,18 @@ namespace h2
 				}
 			}
 
+			// Halo collision-bsp collection (vtable COLL_BSP_SHAPE, collision_bsp* @+0x18) -> one BspLeaf
+			bool addBsp(uintptr_t coll, const Xf& xf, uintptr_t agent)
+			{
+				if (!okp(coll) || q(coll) != base() + vt::COLL_BSP_SHAPE) return false;
+				const uintptr_t bsp = q(coll + 0x18);
+				if (!okp(bsp) || out.bsps.size() >= 32) return false;
+				for (const auto& l : out.bsps) if (l.agent == agent && l.bsp == bsp) return true;
+				BspLeaf l; l.bsp = bsp; l.agent = agent; l.xf = xf;
+				out.bsps.push_back(l);
+				return true;
+			}
+
 			void walk(uintptr_t shape, uintptr_t agent, const Xf& xf, int depth, bool swept)
 			{
 				if (depth > kMaxDepth || !okp(shape) || out.prims.size() >= (size_t)kMaxPrims) return;
@@ -912,8 +1162,23 @@ namespace h2
 					}
 					break;
 				}
-				case 19: ++cnt[t]; walk(q(shape + 0x18), ak == AgentKind::Mopp ? agent : 0, xf, depth + 1, swept); break;   // MOPP agent keys the list below
+				case 19:
+					++cnt[t];
+					// a welder agent collides the convex body against the MOPP's whole collection itself (the level does
+					// this); its children are keyed by the collection's keys
+					// (a MOPP / BV-tree agent over the same collection keeps the same {key, agent} children)
+					if ((ak == AgentKind::Welder || ak == AgentKind::Mopp) && addBsp(q(shape + 0x18), xf, agent)) break;
+					walk(q(shape + 0x18), ak == AgentKind::Mopp ? agent : 0, xf, depth + 1, swept);   // MOPP agent keys the list below
+					break;
 				case 17: ++cnt[t]; walk(q(shape + 0x18), 0, xf, depth + 1, swept); break;
+				case 20:   // hkConvexWelderShape: +0x18 = the MOPP over the collision-bsp collection (sub_18077AFC0)
+					++cnt[20];
+					walk(q(shape + 0x18), agent, xf, depth + 1, swept);
+					break;
+				case 2:    // shape collection: only Halo's collision-bsp collection is understood (through a welder agent)
+					++cnt[2];
+					if (!((ak == AgentKind::Welder || ak == AgentKind::Mopp) && addBsp(shape, xf, agent))) ++out.skipped;
+					break;
 				case 4: case 6: case 7: case 8: case 9: leaf(shape, t, xf, swept, agent); break;
 				default: ++cnt[t >= 0 && t < 32 ? t : 31]; ++out.skipped; break;   // triangle (5), mesh (11), welder (20), unknown
 				}
@@ -937,5 +1202,111 @@ namespace h2
 		if (out.skipped && n > 0 && n < (int)sizeof(buf) - 24) snprintf(buf + n, sizeof(buf) - n, ", %d skipped", out.skipped);
 		out.desc = buf;
 		return !out.prims.empty();
+	}
+
+	bool readShapeTree(uintptr_t shape, uintptr_t rootAgent, const Xf& xf, BodyShape& out)
+	{
+		out = BodyShape{};
+		if (!okp(shape)) return false;
+		out.root = shape; out.rootType = shapeTypeOf(shape);
+		Walker w(out);
+		w.walk(shape, rootAgent, xf, 0, false);
+		char buf[256];
+		int n = snprintf(buf, sizeof(buf), "root type %d", out.rootType);
+		static const struct { int t; const char* nm; } names[] = { {21, "transform"}, {10, "list"}, {19, "mopp"}, {20, "welder"}, {2, "collection"}, {4, "sphere"}, {6, "box"}, {7, "capsule"}, {8, "convex"}, {9, "multisphere"} };
+		for (const auto& nm : names)
+			if (w.cnt[nm.t] && n > 0 && n < (int)sizeof(buf) - 24) n += snprintf(buf + n, sizeof(buf) - n, ", %d %s", w.cnt[nm.t], nm.nm);
+		if (out.skipped && n > 0 && n < (int)sizeof(buf) - 24) snprintf(buf + n, sizeof(buf) - n, ", %d skipped", out.skipped);
+		out.desc = buf;
+		return !out.prims.empty() || !out.bsps.empty();
+	}
+
+	// ---- baked scenery (level-shape key categories 3 / 4) ---------------------------------------------------------
+	// Port of sub_180793760 (halo2.dll 1.3528). Key: low 16 = scenery index, (key >> 16) & 0x1F = model region,
+	// (key >> 21) & 0xFF = model permutation, key >> 29 = 3 (physics model) / 4 (collision model).
+	//   datum   = u32[*(halo2+0x165B440)][index]; object definition tag = u16 @obj+0
+	//   tag data = *(halo2+0x15E4B38) + i32 @(*(halo2+0x15E4B30) + 16 * tagIndex + 8)
+	//   hlmt     = object definition +0x38 (tag index); hlmt regions {count +0x70, offset +0x74} stride 16:
+	//              collision region i8 +4, physics region i8 +5, permutations {count +8, offset +0xC} stride 8:
+	//              collision permutation i8 +5, physics permutation i8 +6
+	//   cat 4:   coll = hlmt +0x0C; coll regions {+0x1C, +0x20} stride 12 -> permutations {+4, +8} stride 20 ->
+	//            bsp physics {+0x0C, +0x10}; shape = first element + 0x50 (hkConvexWelderShape); transform = node 0
+	//   cat 3:   phmo = hlmt +0x24; phmo regions {+0xC0, +0xC4} stride 12 -> permutations {+4, +8} stride 12 ->
+	//            rigid body indices {+4, +8} (first u16); rigid bodies {+0x38, +0x3C} stride 0xA0: node i16 +0, shape* +0x38;
+	//            transform = that node's matrix (node -1 = the object root; node 0 is used for it here)
+	namespace
+	{
+		uintptr_t tagInstanceData(uint32_t tagIndex)
+		{
+			if ((tagIndex & 0xFFFF) == 0xFFFF) return 0;
+			const uintptr_t b = base();
+			const uintptr_t arr = q(b + rva::TAG_INSTANCES), dataBase = q(b + rva::TAG_DATA_BASE);
+			if (!okp(arr) || !okp(dataBase)) return 0;
+			const int32_t off = i32(arr + 16 * (uintptr_t)(tagIndex & 0xFFFF) + 8, -1);
+			if (off == -1) return 0;
+			const uintptr_t d = dataBase + (intptr_t)off;
+			return okp(d) ? d : 0;
+		}
+
+		// element `index` of a tag block {u32 count @blk, i32 offset @blk+4}; 0 when out of range / unreadable
+		uintptr_t blockElem(uintptr_t blk, int index, size_t stride, const TagPools& p)
+		{
+			uintptr_t first = 0; uint32_t count = 0;
+			if (index < 0 || !resolveBlock(blk, p, first, count) || (uint32_t)index >= count || count > 100000) return 0;
+			return first + (uintptr_t)index * stride;
+		}
+	}
+
+	bool bakedSceneryShape(uint32_t key, BakedShape& out)
+	{
+		out = BakedShape{};
+		out.category = (int)(key >> 29);
+		if (out.category != 3 && out.category != 4) { out.why = "not a scenery key"; return false; }
+		const uintptr_t b = base();
+		TagPools p;
+		if (!tagPools(p)) { out.why = "tag pools"; return false; }
+		const uintptr_t table = q(b + rva::SCENERY_TABLE);
+		if (!okp(table)) { out.why = "scenery table"; return false; }
+		const uint32_t index = key & 0xFFFF, region = (key >> 16) & 0x1F, perm = (key >> 21) & 0xFF;
+		out.datum = u32(table + 4 * (uintptr_t)index);
+		const uintptr_t entry = datumGet(q(b + rva::OBJ_HEADER), out.datum, true);
+		out.obj = entry ? objectFromDatum(out.datum) : 0;
+		if (!out.obj) { out.why = "object gone"; return false; }
+		out.type = u8(entry + 3, 0xFF);
+		const uintptr_t def = tagInstanceData(u16(out.obj, 0xFFFF));
+		const uintptr_t hlmt = def ? tagInstanceData(u16(def + 0x38, 0xFFFF)) : 0;
+		if (!hlmt) { out.why = "no model tag"; return false; }
+		const uintptr_t mreg = blockElem(hlmt + 0x70, (int)region, 16, p);
+		const uintptr_t mperm = mreg ? blockElem(mreg + 0x08, (int)perm, 8, p) : 0;
+		if (!mperm) { out.why = "model region / permutation out of range"; return false; }
+		int node = 0;
+		if (out.category == 4)
+		{
+			const uintptr_t coll = tagInstanceData(u16(hlmt + 0x0C, 0xFFFF));
+			const uintptr_t creg = coll ? blockElem(coll + 0x1C, (int)(int8_t)u8(mreg + 4, 0xFF), 12, p) : 0;
+			const uintptr_t cperm = creg ? blockElem(creg + 0x04, (int)(int8_t)u8(mperm + 5, 0xFF), 20, p) : 0;
+			const uintptr_t phys = cperm ? blockElem(cperm + 0x0C, 0, 1, p) : 0;
+			if (!phys) { out.why = "collision model bsp physics missing"; return false; }
+			out.shape = phys + 0x50;
+		}
+		else
+		{
+			const uintptr_t phmo = tagInstanceData(u16(hlmt + 0x24, 0xFFFF));
+			const uintptr_t preg = phmo ? blockElem(phmo + 0xC0, (int)(int8_t)u8(mreg + 5, 0xFF), 12, p) : 0;
+			const uintptr_t pperm = preg ? blockElem(preg + 0x04, (int)(int8_t)u8(mperm + 6, 0xFF), 12, p) : 0;
+			const uintptr_t rbl = pperm ? blockElem(pperm + 0x04, 0, 2, p) : 0;
+			const uintptr_t rb = rbl && phmo ? blockElem(phmo + 0x38, (int)(int16_t)u16(rbl, 0xFFFF), 0xA0, p) : 0;
+			if (!rb) { out.why = "physics model rigid body missing"; return false; }
+			out.shape = q(rb + 0x38);
+			node = (int16_t)u16(rb, 0);
+			if (node < 0) node = 0;
+		}
+		if (!okp(out.shape)) { out.why = "shape pointer"; return false; }
+		float m[13];
+		if (!objectNodeMatrix(out.obj, (uint16_t)node, m) && !objectNodeMatrix(out.obj, 0, m)) { out.why = "node matrix"; return false; }
+		for (float f : m) if (!std::isfinite(f)) { out.why = "node matrix"; return false; }
+		out.xf.c[0] = { m[1], m[2], m[3] }; out.xf.c[1] = { m[4], m[5], m[6] }; out.xf.c[2] = { m[7], m[8], m[9] };
+		out.xf.t = { m[10], m[11], m[12] };
+		return true;
 	}
 }

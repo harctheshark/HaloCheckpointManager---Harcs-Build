@@ -703,6 +703,38 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::CollisionViewer}
 	},
 
+	{ GUIElementEnum::collisionViewerGhostBelievedObjectsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerGhostLinkLabelsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerGhostPassGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerGhostTravelGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerGhostTravelObjectsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerWeldZonesNearGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerWeldZonesWeldedGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerWeldZoneRangeGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
 	{ GUIElementEnum::collisionViewerGhostTrailGUI,
 		{OptionalCheatEnum::CollisionViewer}
 	},

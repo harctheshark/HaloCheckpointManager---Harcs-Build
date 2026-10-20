@@ -196,6 +196,14 @@ private:
 		v.ghostColBelieved = packColour(s.collisionViewerGhostColBelieved->GetValue());
 		v.ghost = s.collisionViewerGhost->GetValue();
 		v.ghostBelieved = s.collisionViewerGhostBelieved->GetValue();
+		v.ghostBelievedObjects = s.collisionViewerGhostBelievedObjects->GetValue();
+		v.ghostLinkLabels = s.collisionViewerGhostLinkLabels->GetValue();
+		v.ghostPass = s.collisionViewerGhostPass->GetValue();
+		v.ghostTravel = s.collisionViewerGhostTravel->GetValue();
+		v.ghostTravelObjects = s.collisionViewerGhostTravelObjects->GetValue();
+		v.weldZonesNear = s.collisionViewerWeldZonesNear->GetValue();
+		v.weldZonesWelded = s.collisionViewerWeldZonesWelded->GetValue();
+		v.weldZoneRange = s.collisionViewerWeldZoneRange->GetValue();
 		v.ghostTrail = s.collisionViewerGhostTrail->GetValue();
 		v.ghostRewind = s.collisionViewerGhostRewind->GetValue();
 		v.ghostJump = s.collisionViewerGhostJump->GetValue();

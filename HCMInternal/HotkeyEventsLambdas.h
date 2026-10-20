@@ -30,6 +30,7 @@ class HotkeyEventsLambdas
 	ScopedCallback<ActionEvent> mabilityMeterToggleHotkeyEventCallbackHandle;
 	ScopedCallback<ActionEvent> msensDriftOverlayToggleHotkeyEventCallbackHandle;
 	ScopedCallback<ActionEvent> mshieldInputPrinterToggleHotkeyEventCallbackHandle;
+	ScopedCallback<ActionEvent> mChaseCameraHotkeyCallbackHandle;
 
 	// Halo Campaign Evolved feature hotkeys. One entry per subscription, built in the constructor body from the
 	// tables there rather than written out as 44 named members: a named member per hotkey is 44 more chances to
@@ -63,7 +64,8 @@ public:
 		msoftCeilingOverlayToggleHotkeyEventCallbackHandle(settings->softCeilingOverlayToggleHotkeyEvent, [boolsetting = settings->softCeilingOverlayToggle]() {boolsetting->flipBoolSetting(); }),
 		mabilityMeterToggleHotkeyEventCallbackHandle(settings->abilityMeterToggleHotkeyEvent, [boolsetting = settings->abilityMeterOverlayToggle]() {boolsetting->flipBoolSetting(); }),
 		msensDriftOverlayToggleHotkeyEventCallbackHandle(settings->sensDriftOverlayToggleHotkeyEvent, [boolsetting = settings->sensDriftOverlayToggle]() {boolsetting->flipBoolSetting(); }),
-		mshieldInputPrinterToggleHotkeyEventCallbackHandle(settings->shieldInputPrinterHotkeyEvent, [boolsetting = settings->shieldInputPrinterToggle]() {boolsetting->flipBoolSetting(); })
+		mshieldInputPrinterToggleHotkeyEventCallbackHandle(settings->shieldInputPrinterHotkeyEvent, [boolsetting = settings->shieldInputPrinterToggle]() {boolsetting->flipBoolSetting(); }),
+		mChaseCameraHotkeyCallbackHandle(settings->chaseCameraHotkeyEvent, [boolsetting = settings->chaseCameraToggle]() { boolsetting->flipBoolSetting(); })
 		
 
 	{

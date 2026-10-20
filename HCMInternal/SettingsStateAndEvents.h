@@ -172,6 +172,7 @@ public:
 	std::shared_ptr<ActionEvent> bottomlessClipHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> display2DInfoHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraHotkeyEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> chaseCameraHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraGameInputDisableHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraCameraInputDisableHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraUserInputCameraIncreaseTranslationSpeedHotkey = std::make_shared<ActionEvent>();
@@ -1085,6 +1086,67 @@ public:
 			true,
 			[](bool in) { return true; },
 			nameof(collisionViewerGhostBelieved)
+		);
+
+	// Halo 2: believed poses against objects (baked scenery children of the level welder + pairs with other rigid bodies)
+	std::shared_ptr<BinarySetting<bool>> collisionViewerGhostBelievedObjects = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerGhostBelievedObjects)
+		);
+
+	// Halo 2: length labels on the believed-pose link lines
+	std::shared_ptr<BinarySetting<bool>> collisionViewerGhostLinkLabels = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerGhostLinkLabels)
+		);
+
+	// Halo 2: pass-through prediction (flash welded geometry the current offset passes through)
+	std::shared_ptr<BinarySetting<bool>> collisionViewerGhostPass = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerGhostPass)
+		);
+
+	// Halo 2: ghost travel region (per over-credited polygon: weld zone + TIM reset sheet)
+	std::shared_ptr<BinarySetting<bool>> collisionViewerGhostTravel = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerGhostTravel)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerGhostTravelObjects = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerGhostTravelObjects)
+		);
+
+	// Halo 2: weld zones (where the player's welder query box has to be for a polygon / object to get a welder child)
+	std::shared_ptr<BinarySetting<bool>> collisionViewerWeldZonesNear = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerWeldZonesNear)
+		);
+
+	std::shared_ptr<BinarySetting<bool>> collisionViewerWeldZonesWelded = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerWeldZonesWelded)
+		);
+
+	std::shared_ptr<BinarySetting<float>> collisionViewerWeldZoneRange = std::make_shared<BinarySetting<float>>
+		(
+			1.0f,
+			[](float in) { return in >= 0.f && in <= 20.f; },
+			nameof(collisionViewerWeldZoneRange)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> collisionViewerGhostTrail = std::make_shared<BinarySetting<bool>>

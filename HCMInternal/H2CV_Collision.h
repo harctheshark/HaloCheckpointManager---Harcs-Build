@@ -121,6 +121,7 @@ namespace h2cv
 		bool worldPolygon(uint32_t surface, std::vector<Vec3>& out) const { return mWorld.polygon(surface, out); }
 		bool igPolygon(uint32_t instance, uint32_t surface, std::vector<Vec3>& out) const;
 		size_t igInstanceCount() const { return mIgInstances.size(); }
+		size_t igSurfaceCount(uint32_t instance) const;   // surfaces in that instance's definition bsp (0 if unparsed)
 
 		// ---- Halo 3 / ODST (Collision3.cpp): one entry per active structure bsp ----
 		struct Bsp3

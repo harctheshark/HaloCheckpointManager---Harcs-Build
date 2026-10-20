@@ -800,6 +800,14 @@
 			((collisionViewerInfoPanelGUI, (Halo2, Halo3, Halo3ODST)))\
 			((collisionViewerGhostGUI, (Halo2, Halo3, Halo3ODST)))\
 			((collisionViewerGhostBelievedGUI, (Halo2, Halo3, Halo3ODST)))\
+			((collisionViewerGhostBelievedObjectsGUI, (Halo2)))\
+			((collisionViewerGhostLinkLabelsGUI, (Halo2)))\
+			((collisionViewerGhostPassGUI, (Halo2)))\
+			((collisionViewerGhostTravelGUI, (Halo2)))\
+			((collisionViewerGhostTravelObjectsGUI, (Halo2)))\
+			((collisionViewerWeldZonesNearGUI, (Halo2)))\
+			((collisionViewerWeldZonesWeldedGUI, (Halo2)))\
+			((collisionViewerWeldZoneRangeGUI, (Halo2)))\
 			((collisionViewerGhostTrailGUI, (Halo2, Halo3, Halo3ODST)))\
 			((collisionViewerGhostRewindGUI, (Halo2)))\
 			((collisionViewerGhostJumpGUI, (Halo3, Halo3ODST)))\

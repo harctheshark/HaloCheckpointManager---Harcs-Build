@@ -1114,6 +1114,14 @@ private:
 							createNestedElement(GUIElementEnum::collisionViewerInfoPanelGUI),
 							createNestedElement(GUIElementEnum::collisionViewerGhostGUI),
 							createNestedElement(GUIElementEnum::collisionViewerGhostBelievedGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostBelievedObjectsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostLinkLabelsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostPassGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostTravelGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostTravelObjectsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerWeldZonesNearGUI),
+							createNestedElement(GUIElementEnum::collisionViewerWeldZonesWeldedGUI),
+							createNestedElement(GUIElementEnum::collisionViewerWeldZoneRangeGUI),
 							createNestedElement(GUIElementEnum::collisionViewerGhostTrailGUI),
 							createNestedElement(GUIElementEnum::collisionViewerGhostRewindGUI),
 							createNestedElement(GUIElementEnum::collisionViewerGhostJumpGUI),
@@ -1198,6 +1206,38 @@ private:
 				case GUIElementEnum::collisionViewerGhostBelievedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Where each over-credited polygon's cached TIM believes you are: your capsule pushed away from that polygon by the over-credit, with a line back to the real capsule (up to 6). Ceiling/floor polygons put these above/below you."), std::nullopt, "  Believed poses (TIM)", settings->collisionViewerGhostBelieved));
+
+				case GUIElementEnum::collisionViewerGhostLinkLabelsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 2: labels each line between your capsule and a believed pose (level and object) with its length in world units. That length is the over-credit: how much farther away the cached TIM believes the surface is than it really is."), std::nullopt, "  Believed pose distances", settings->collisionViewerGhostLinkLabels));
+
+				case GUIElementEnum::collisionViewerGhostPassGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 2: flashes (green) every welded polygon / object piece your current offset lets you pass through. The TIM is spent linearly (n . dp per move, whatever the path); you pass when it still has some left once your capsule is fully over the surface and fully past its plane (object pieces: your centre past the piece's middle along the TIM normal). The info panel lists the numbers per offset polygon."), std::nullopt, "  Pass-through prediction", settings->collisionViewerGhostPass));
+
+				case GUIElementEnum::collisionViewerGhostTravelGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 2, needs Ghost debug: for each over-credited level polygon (up to 6), what keeps the over-credit alive. Coloured box = the polygon's weld zone, fixed to it: the white cross (your capsule centre) must stay inside, or the welder drops that polygon's child and its TIM with it. Red sheet = the polygon pushed to the depth where your body centre makes the TIM reach 0 (then the exact test runs and the over-credit is gone); the TIM only drains when you move toward the polygon along its normal, so the sheet stays fixed to the wall. The info panel lists each one's remaining toward-polygon budget and box overlap."), std::nullopt, "  Ghost travel region (level)", settings->collisionViewerGhostTravel));
+
+				case GUIElementEnum::collisionViewerGhostTravelObjectsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 2, needs Ghost debug: the travel region for over-credited OBJECT TIMs (up to 6), drawn and listed separately from the level ones because they live differently. Red sheet = the same TIM reset plane (for a moving object it moves too: its motion drains the TIM as well). Box = where the white cross (your capsule centre) must stay, fixed to the object: baked scenery = the level welder's zone around the object; crate / machine / vehicle / other biped = the broadphase zone (its real broadphase box grown by your capsule plus your broadphase margin) - leave it and the whole pair is destroyed and EVERY TIM against that object resets at once. Collision-model pieces also have their own welder zone (thin, oriented with the object). Runs the object scan even with 'Believed poses - objects' off."), std::nullopt, "  Ghost travel region (objects)", settings->collisionViewerGhostTravelObjects));
+
+				case GUIElementEnum::collisionViewerWeldZonesNearGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 2 (on foot): weld zones of every level polygon and rigid body near you, fixed to the geometry: a polygon / object has a welder child (a TIM) while the white cross (your capsule centre) is inside its zone. A zone is its box grown by your capsule's half-size plus the engine's margin (level welder: 1.5x the collision tolerance; rigid bodies: your broadphase margin). Moving adds a little extra reach in your direction of travel. Lime = welded polygon, orange = welded object, cyan = near polygon, pale orange = near body. Only zones within 'Weld zone range' of the cross are drawn (up to 600, nearest first). Works without Ghost debug."), std::nullopt, "  Weld zones (nearby)", settings->collisionViewerWeldZonesNear));
+
+				case GUIElementEnum::collisionViewerWeldZonesWeldedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 2 (on foot): weld zones of ONLY the polygons and objects currently welded to you - every level polygon / baked scenery piece that has a welder child, and every rigid body with a broadphase pair against your biped. Cheaper than the nearby view; ignores the range."), std::nullopt, "  Weld zones (welded only)", settings->collisionViewerWeldZonesWelded));
+
+				case GUIElementEnum::collisionViewerWeldZoneRangeGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 20.f)>>
+						(game, ToolTipCollection("Weld zones (nearby): only zones within this distance of the white cross are drawn. 0 = only zones you are inside."), "  Weld zone range (wu)", settings->collisionViewerWeldZoneRange));
+
+				case GUIElementEnum::collisionViewerGhostBelievedObjectsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 2: believed poses for TIMs against OBJECTS, drawn in orange. Covers static scenery baked into the level (its physics or collision model, reached through the level welder) and, for a biped, every pair with another rigid body: crates, machines, vehicles, dynamic scenery, other bipeds. Each skipped child whose cached TIM over-credits the real gap to the object puts a copy of your capsule where that TIM believes you are. While on, object suspects also turn the capsule lime, show as desync edges, and go to the desync logger (source \"object\"). The info panel lists the object pairs and any leaf agents whose TIMs can't be read."), std::nullopt, "  Believed poses - objects", settings->collisionViewerGhostBelievedObjects));
 
 				case GUIElementEnum::collisionViewerGhostTrailGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1302,7 +1342,7 @@ private:
 
 				case GUIElementEnum::chaseCameraToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Forces the engine's own third-person chase camera (the one it uses for vehicles) on you while you are on foot - Halo 2, Halo 3, Halo 3: ODST, Halo: Reach and Halo 4. Uses the game's own camera code and blend, and goes straight back to first person when turned off. Aim follows the camera. MCC build 1.3528 only. While Free Camera is on you see the free camera; the chase camera returns when Free Camera is turned off."), std::nullopt, "Chase Camera", settings->chaseCameraToggle
+						(game, ToolTipCollection("Forces the engine's own third-person chase camera (the one it uses for vehicles) on you while you are on foot - Halo 2, Halo 3, Halo 3: ODST, Halo: Reach and Halo 4. Uses the game's own camera code and blend, and goes straight back to first person when turned off. Aim follows the camera. MCC build 1.3528 only. While Free Camera is on you see the free camera; the chase camera returns when Free Camera is turned off."), RebindableHotkeyEnum::chaseCamera, "Chase Camera", settings->chaseCameraToggle
 						));
 
 				case GUIElementEnum::h2ArmorColourToggle:

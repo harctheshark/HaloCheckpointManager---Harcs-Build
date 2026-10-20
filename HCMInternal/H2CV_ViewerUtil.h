@@ -195,6 +195,31 @@ namespace h2cv::vu
 			if (e.first < w.size() && e.second < w.size()) addLine(v, w[e.first], w[e.second], col);
 	}
 
+	// closest point of a convex polygon to p
+	inline Vec3 closestPointPoly(const Vec3& p, const std::vector<Vec3>& poly)
+	{
+		const Vec3 n = norm(cross(sub(poly[1], poly[0]), sub(poly[2], poly[0])));
+		const Vec3 q = sub(p, mul(n, dot(sub(p, poly[0]), n)));
+		bool inside = true;
+		for (size_t i = 0; i < poly.size(); ++i)
+		{
+			const Vec3 a = poly[i], b = poly[(i + 1) % poly.size()];
+			if (dot(cross(sub(b, a), sub(q, a)), n) < 0) { inside = false; break; }
+		}
+		if (inside) return q;
+		Vec3 best = poly[0]; float bd = 1e30f;
+		for (size_t i = 0; i < poly.size(); ++i)
+		{
+			const Vec3 a = poly[i], ab = sub(poly[(i + 1) % poly.size()], a);
+			const float l2 = dot(ab, ab);
+			const float t = l2 > 1e-12f ? std::clamp(dot(sub(p, a), ab) / l2, 0.f, 1.f) : 0.f;
+			const Vec3 c = add(a, mul(ab, t));
+			const float d = dot(sub(p, c), sub(p, c));
+			if (d < bd) { bd = d; best = c; }
+		}
+		return best;
+	}
+
 	inline Vec3 primCentre(const h2::ShapePrim& p, const h2::Xf& pose)
 	{
 		if (p.capsule) return mul(add(xfp(pose, p.a), xfp(pose, p.b)), 0.5f);
