@@ -843,6 +843,71 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::ChaseCamera}
 	},
 
+	// Poorboy's Mods
+	{ GUIElementEnum::halo2PhysicsHeadingGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pStatusGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pPhysicsToggleGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pArmGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pFlyToggleGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pFlySpeedGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pFlyHoldGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pBarriersGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pTick30ToggleGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pCombosToggleGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pNoFallDeathsToggleGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pDisableAIGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pForgeBounceGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::spotSaveGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::spotBackGUI,
+		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h2pBottomlessClipGUI,
+		{OptionalCheatEnum::BottomlessClip}
+	},
+
 	{ GUIElementEnum::h2ArmorColourToggle,
 		{OptionalCheatEnum::H2ArmorColour}
 	},

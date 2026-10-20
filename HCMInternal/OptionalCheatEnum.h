@@ -185,7 +185,8 @@ HCEConsole,\
 HCESwitchZoneSet,\
 CompetitionMode,\
 UncapRenderSections,\
-ChaseCamera
+ChaseCamera,\
+Halo2Physics
 
 
 // Halo 5: Forge. Its own list rather than an extension of ALLOPTIONALCHEATS3, for two reasons: the 64-entry

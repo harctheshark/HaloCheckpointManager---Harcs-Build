@@ -11,7 +11,8 @@
 ((cameraHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 ((theaterHeadingGUI,(Halo3,Halo3ODST,HaloReach,Halo4)))\
 ((debugHeadingGUI, (ALL_SUPPORTED_GAMES)))\
-((hceScriptHeadingGUI, (HALOCER_ONLY)))
+((hceScriptHeadingGUI, (HALOCER_ONLY)))\
+((halo2PhysicsHeadingGUI,(Halo3,Halo3ODST,HaloReach)))
 
 #define TOPGUIELEMENTS_DEBUG \
 ((HCMDebugHeadingGUI, (ALL_SUPPORTED_GAMES)))

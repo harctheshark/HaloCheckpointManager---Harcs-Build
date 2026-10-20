@@ -31,6 +31,15 @@ class HotkeyEventsLambdas
 	ScopedCallback<ActionEvent> msensDriftOverlayToggleHotkeyEventCallbackHandle;
 	ScopedCallback<ActionEvent> mshieldInputPrinterToggleHotkeyEventCallbackHandle;
 	ScopedCallback<ActionEvent> mChaseCameraHotkeyCallbackHandle;
+	// Poorboy's Mods
+	ScopedCallback<ActionEvent> mh2pPhysicsHotkeyCallbackHandle;
+	ScopedCallback<ActionEvent> mh2pBarriersCycleHotkeyCallbackHandle;
+	ScopedCallback<ActionEvent> mh2pTick30HotkeyCallbackHandle;
+	ScopedCallback<ActionEvent> mh2pCombosHotkeyCallbackHandle;
+	ScopedCallback<ActionEvent> mh2pNoFallDeathsHotkeyCallbackHandle;
+	ScopedCallback<ActionEvent> mh2pFlyHotkeyCallbackHandle;
+	ScopedCallback<ActionEvent> mh2pDisableAIHotkeyCallbackHandle;
+	ScopedCallback<ActionEvent> mh2pForgeBounceHotkeyCallbackHandle;
 
 	// Halo Campaign Evolved feature hotkeys. One entry per subscription, built in the constructor body from the
 	// tables there rather than written out as 44 named members: a named member per hotkey is 44 more chances to
@@ -65,7 +74,15 @@ public:
 		mabilityMeterToggleHotkeyEventCallbackHandle(settings->abilityMeterToggleHotkeyEvent, [boolsetting = settings->abilityMeterOverlayToggle]() {boolsetting->flipBoolSetting(); }),
 		msensDriftOverlayToggleHotkeyEventCallbackHandle(settings->sensDriftOverlayToggleHotkeyEvent, [boolsetting = settings->sensDriftOverlayToggle]() {boolsetting->flipBoolSetting(); }),
 		mshieldInputPrinterToggleHotkeyEventCallbackHandle(settings->shieldInputPrinterHotkeyEvent, [boolsetting = settings->shieldInputPrinterToggle]() {boolsetting->flipBoolSetting(); }),
-		mChaseCameraHotkeyCallbackHandle(settings->chaseCameraHotkeyEvent, [boolsetting = settings->chaseCameraToggle]() { boolsetting->flipBoolSetting(); })
+		mChaseCameraHotkeyCallbackHandle(settings->chaseCameraHotkeyEvent, [boolsetting = settings->chaseCameraToggle]() { boolsetting->flipBoolSetting(); }),
+		mh2pPhysicsHotkeyCallbackHandle(settings->h2pPhysicsHotkeyEvent, [boolsetting = settings->h2pPhysicsToggle]() { boolsetting->flipBoolSetting(); }),
+		mh2pBarriersCycleHotkeyCallbackHandle(settings->h2pBarriersCycleHotkeyEvent, [intsetting = settings->h2pBarriers]() { intsetting->GetValueDisplay() = (intsetting->GetValue() + 1) % 4; intsetting->UpdateValueWithInput(); }),
+		mh2pTick30HotkeyCallbackHandle(settings->h2pTick30HotkeyEvent, [boolsetting = settings->h2pTick30Toggle]() { boolsetting->flipBoolSetting(); }),
+		mh2pCombosHotkeyCallbackHandle(settings->h2pCombosHotkeyEvent, [boolsetting = settings->h2pCombosToggle]() { boolsetting->flipBoolSetting(); }),
+		mh2pNoFallDeathsHotkeyCallbackHandle(settings->h2pNoFallDeathsHotkeyEvent, [boolsetting = settings->h2pNoFallDeathsToggle]() { boolsetting->flipBoolSetting(); }),
+		mh2pFlyHotkeyCallbackHandle(settings->h2pFlyHotkeyEvent, [boolsetting = settings->h2pFlyToggle]() { boolsetting->flipBoolSetting(); }),
+		mh2pDisableAIHotkeyCallbackHandle(settings->h2pDisableAIHotkeyEvent, [boolsetting = settings->h2pDisableAIToggle]() { boolsetting->flipBoolSetting(); }),
+		mh2pForgeBounceHotkeyCallbackHandle(settings->h2pForgeBounceHotkeyEvent, [boolsetting = settings->h2pForgeBounceToggle]() { boolsetting->flipBoolSetting(); })
 		
 
 	{

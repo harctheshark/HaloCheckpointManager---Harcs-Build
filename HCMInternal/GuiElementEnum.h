@@ -770,6 +770,23 @@
 	((chaseCameraNoClipGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	((chaseCameraFovGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	((chaseCameraHeightGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+	/* Poorboy's Mods (Halo2Physics.cpp, GUIH2Physics.h): the last top-level section of the overlay */\
+	((halo2PhysicsHeadingGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pStatusGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pPhysicsToggleGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pArmGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pFlyToggleGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pFlySpeedGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pFlyHoldGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pBarriersGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pTick30ToggleGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pCombosToggleGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pNoFallDeathsToggleGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pDisableAIGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pForgeBounceGUI, (Halo3, HaloReach)))\
+		((spotSaveGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((spotBackGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h2pBottomlessClipGUI, (Halo3, Halo3ODST, HaloReach)))\
 	((hceVisibleGeometryOverlayToggleGUI, (HALOCER_ONLY)))\
 	((hceVisibleGeometryOverlaySettingsSubheading, (HALOCER_ONLY)))\
 			((hceVisibleGeometryOverlayRadius, (HALOCER_ONLY)))\

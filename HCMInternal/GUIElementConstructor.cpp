@@ -34,6 +34,7 @@
 #include "GUIColourPickerAlpha.h"
 #include "GUIInputInt.h"
 #include "GUIComboEnum.h"
+#include "GUIH2Physics.h"
 #include "GUIComboEnumWithChildren.h"
 #include "GUIDummyContainer.h"
 #include "GUIVec3.h"
@@ -1339,6 +1340,88 @@ private:
 				case GUIElementEnum::chaseCameraNoClipGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Chase Camera: don't pull the camera in when walls/objects are between it and you (sets the observer's own 'no camera collision' command flag). Only affects the chase camera while Chase Camera is on."), std::nullopt, "  No-clip camera", settings->chaseCameraNoClip));
+
+			// ---- Poorboy's Mods (ported from Poorboys Checkpoint Manager by Poorboy, MIT): Halo2Physics.cpp, GUIH2Physics.h, BottomlessClip.cpp ----
+			case GUIElementEnum::halo2PhysicsHeadingGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
+					(game, ToolTipCollection("Poorboy's mods for Halo 3, ODST and Reach (ported from Poorboys Checkpoint Manager by Poorboy), kept apart from Halo Checkpoint Manager's own features above: Halo 2's physics (player body, movement, jump, superbounces), button combos and lunges, fly, save spot, bottomless clip"), "Poorboy's Mods", headerChildElements
+						{
+						createNestedElement(GUIElementEnum::h2pStatusGUI),
+						createNestedElement(GUIElementEnum::h2pPhysicsToggleGUI),
+						createNestedElement(GUIElementEnum::h2pArmGUI),
+						createNestedElement(GUIElementEnum::h2pFlyToggleGUI),
+						createNestedElement(GUIElementEnum::h2pFlySpeedGUI),
+						createNestedElement(GUIElementEnum::h2pFlyHoldGUI),
+						createNestedElement(GUIElementEnum::h2pBarriersGUI),
+						createNestedElement(GUIElementEnum::h2pTick30ToggleGUI),
+						createNestedElement(GUIElementEnum::h2pCombosToggleGUI),
+						createNestedElement(GUIElementEnum::h2pNoFallDeathsToggleGUI),
+						createNestedElement(GUIElementEnum::h2pDisableAIGUI),
+						createNestedElement(GUIElementEnum::h2pForgeBounceGUI),
+						createNestedElement(GUIElementEnum::spotSaveGUI),
+						createNestedElement(GUIElementEnum::spotBackGUI),
+						createNestedElement(GUIElementEnum::h2pBottomlessClipGUI),
+						}));
+
+				case GUIElementEnum::h2pStatusGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIH2PhysicsStatus>
+						(game, ToolTipCollection("ARMED: a fall onto the right edge bounces. Speed is the Halo 2 body's; a step has to pass 5.45 to sweep")));
+
+				case GUIElementEnum::h2pPhysicsToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2's player physics, movement and jump. Off: the mod unloads and the game is untouched"), RebindableHotkeyEnum::h2pPhysicsHotkey, "Halo 2 physics", settings->h2pPhysicsToggle));
+
+				case GUIElementEnum::h2pArmGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Puts the Halo 2 body in the armed state now (what standing up inside geometry does), so you can go straight to a bounce spot. Like Halo 2, it is lost if you stand still long enough to fall asleep. Bind it to a key or a controller button with the .. button"), RebindableHotkeyEnum::h2pArmHotkey, "Arm now", settings->h2pArmEvent));
+
+				case GUIElementEnum::h2pFlyToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Fly your player where you look: stick forward/back/sideways, jump up, crouch down, through walls. Works online in custom games (others see you fly) and with Halo 2 physics on or off. To watch without being seen, use Free Camera (Camera section). Always starts off; bind it with the .. button"), RebindableHotkeyEnum::h2pFlyHotkey, "Fly", settings->h2pFlyToggle));
+
+				case GUIElementEnum::h2pFlySpeedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 40.f)>>
+						(game, ToolTipCollection("Fly speed in world units a second (running is about 2.25)"), "Fly speed##h2p", settings->h2pFlySpeed));
+
+				case GUIElementEnum::h2pFlyHoldGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The Fly hotkey flies only while you hold it: let go and you drop (instead of a press switching fly on and off). Bind the Fly hotkey with its .. button"), std::nullopt, "Hold the Fly key to fly##h2p", settings->h2pFlyHoldToggle));
+
+				case GUIElementEnum::h2pBarriersGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIH2PhysicsBarriers>
+						(game, ToolTipCollection("Invisible barriers while Halo 2 physics is on. The hotkey steps through the four"), RebindableHotkeyEnum::h2pBarriersCycleHotkey, settings->h2pBarriers));
+
+				case GUIElementEnum::h2pTick30ToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Switches the game and the Halo 2 physics between 30 and 60 ticks a second, any time (mid-game too). On: Halo 2 at 30 ticks (Xbox): superbounces, big landings on slopes stop on ledges. Off: Halo 2 at 60 ticks (PC): you slide down slopes, but superbounces from ordinary heights don't happen"), RebindableHotkeyEnum::h2pTick30Hotkey, "30 tick", settings->h2pTick30Toggle));
+
+				case GUIElementEnum::h2pCombosToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2's button combos: melee cancels (BXR, BXB, double shot) and melee lock; X during a weapon switch swaps at once (YX); the plasma pistol double grenade (charged shot, then about a second later grenade, grenade).\nWith Halo 2 physics on, Halo 2's lunges too: a melee or sword lunge flies straight at the target with no gravity and keeps going if you cancel it (butterflying: spam melee + reload at an enemy standing on your head while he jumps); sword flying: rifle in hand locked on someone, Y, X, then RT at once: the sword lunges at what the rifle had locked"), RebindableHotkeyEnum::h2pCombosHotkey, "Halo 2 button combos", settings->h2pCombosToggle));
+
+				case GUIElementEnum::h2pNoFallDeathsToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Falls never kill or hurt you (campaign and Firefight). Other damage still counts"), RebindableHotkeyEnum::h2pNoFallDeathsHotkey, "No falling deaths", settings->h2pNoFallDeathsToggle));
+
+				case GUIElementEnum::h2pDisableAIGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Switches the AI off, as the game's own ai_enable false: enemies and allies stand still and don't shoot. For campaign practice and videos: Theatre films replay it exactly (Cheats' Freeze AI does not). Works with Halo 2 physics on or off; starts off every time"), RebindableHotkeyEnum::h2pDisableAIHotkey, "Disable AI", settings->h2pDisableAIToggle));
+
+				case GUIElementEnum::h2pForgeBounceGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("With Halo 2 physics on: Forge objects count as part of the map for the Halo 2 body, so the seams between Forge pieces (and between a piece and the map) bounce like map seams. For building your own bounce maps. Off = Halo 2's own rule (every object is its own body; in Reach Forge pieces are then not solid for the Halo 2 body)"), RebindableHotkeyEnum::h2pForgeBounceHotkey, "Forge bounces", settings->h2pForgeBounceToggle));
+
+				case GUIElementEnum::spotSaveGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Saves where you are: the place, your speed, crouch, which way you look and Halo 2's armed state. Back to spot puts you there again. Unlike a revert it moves only your own player and rolls nothing else back, so it is made for multiplayer jumping (online too). Works with Halo 2 physics on or off. Bind it with the .. button"), RebindableHotkeyEnum::spotSaveHotkey, "Save spot", settings->spotSaveEvent));
+
+				case GUIElementEnum::spotBackGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Puts you back at the saved spot, looking the same way, at the same speed, armed again if you were. Others online see you there. Objects stay where they are: for crates and the like use Force Checkpoint / Force Revert. Bind it with the .. button"), RebindableHotkeyEnum::spotBackHotkey, "Back to spot", settings->spotBackEvent));
+
+				case GUIElementEnum::h2pBottomlessClipGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Your magazine never empties, plasma batteries don't drain and your grenades never run out (you need at least one of a kind). Reserve ammo still counts and plasma weapons still overheat. Reload first: a part-empty magazine stays as it is"), RebindableHotkeyEnum::bottomlessClip, "Bottomless Clip", settings->bottomlessClipToggle));
 
 				case GUIElementEnum::chaseCameraToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>

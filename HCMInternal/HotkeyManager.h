@@ -19,6 +19,16 @@ private:
 	std::vector<std::thread> mFireEventThreads;
 
 	void pollInput();
+	// "Hold the Fly key to fly": whether the Fly hotkey was down last frame, and the newest wish for the fly setting
+	// (set off the render thread; the newest wish wins)
+	struct FlyHold
+	{
+		std::mutex mutex;
+		std::atomic<bool> want = false;
+	};
+	bool mFlyHeld = false;
+	std::shared_ptr<FlyHold> mFlyHold = std::make_shared<FlyHold>();
+	void pollFlyHold(bool disabled);
 
 
 public:

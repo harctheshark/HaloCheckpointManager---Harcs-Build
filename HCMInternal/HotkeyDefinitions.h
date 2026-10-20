@@ -49,6 +49,7 @@ public:
 	}
 	//friend class HotkeyManager; 
 	const std::map<RebindableHotkeyEnum, std::shared_ptr<EventOnPressHotkey>>& getAllEventOnPressHotkeys() { return allEventOnPressHotkeys; }
+	const std::shared_ptr<SettingsStateAndEvents>& settings() const { return mSettings; }
 	const std::map<RebindableHotkeyEnum, std::shared_ptr<RebindableHotkey>>& getAllRebindableHotkeys() { return allRebindableHotkeys; }
 
 private:
@@ -82,8 +83,8 @@ private:
 	// ⚠ A NEW MACRO MUST BE ADDED TO BOTH SUMS. Each one sizes a fixed-size array below, so missing either is a
 	// compile error - but not an obvious one, and NOT one the asserts in the constructor will catch first: those
 	// are assert(), which NDEBUG deletes in Release.
-	static constexpr inline int allEventOnPressHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_HOTKEYS));
-	static constexpr inline int allRebindableHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((NOEVENT_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_HOTKEYS));
+	static constexpr inline int allEventOnPressHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((H2P_HOTKEYS));
+	static constexpr inline int allRebindableHotkeyEnumCount = BOOST_PP_TUPLE_SIZE((ALL_EVENTONPRESS_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((NOEVENT_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((REPLAY_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_SKULL_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((HCE_HOTKEYS)) + BOOST_PP_TUPLE_SIZE((H2P_HOTKEYS));
 
 	// The event array is indexed by position in HCE_HOTKEYS, so its length must equal that macro's.
 	static_assert(BOOST_PP_TUPLE_SIZE((HCE_HOTKEYS)) == SettingsStateAndEvents::kHCEHotkeyCount,
@@ -102,6 +103,54 @@ private:
 		// Chase Camera toggle (Camera tab). Unbound by default.
 		initEventOnPressHotkey(chaseCamera,
 		mSettings->chaseCameraHotkeyEvent,
+		vsk{}),
+
+		/// Poorboy's Mods: Halo 2 physics (F8 is HCM's console, F1-F5 its checkpoint and cheat keys)
+		initEventOnPressHotkey(h2pPhysicsHotkey,
+		mSettings->h2pPhysicsHotkeyEvent,
+		vsk{{ ImGuiKey_F6 }}),
+
+		initEventOnPressHotkey(h2pBarriersCycleHotkey,
+		mSettings->h2pBarriersCycleHotkeyEvent,
+		vsk{{ ImGuiKey_F7 }}),
+
+		initEventOnPressHotkey(h2pTick30Hotkey,
+		mSettings->h2pTick30HotkeyEvent,
+		vsk{{ ImGuiKey_F9 }}),
+
+		initEventOnPressHotkey(h2pCombosHotkey,
+		mSettings->h2pCombosHotkeyEvent,
+		vsk{{ ImGuiKey_F10 }}),
+
+		initEventOnPressHotkey(h2pNoFallDeathsHotkey,
+		mSettings->h2pNoFallDeathsHotkeyEvent,
+		vsk{{ ImGuiKey_F11 }}),
+
+		// unbound: everyone picks their own (a key, or a controller button / combination)
+		initEventOnPressHotkey(h2pArmHotkey,
+		mSettings->h2pArmEvent,
+		vsk{}),
+
+		// unbound too: F1-F11 are taken and F12 is Steam's screenshot key
+		initEventOnPressHotkey(h2pFlyHotkey,
+		mSettings->h2pFlyHotkeyEvent,
+		vsk{}),
+
+		initEventOnPressHotkey(h2pDisableAIHotkey,
+		mSettings->h2pDisableAIHotkeyEvent,
+		vsk{}),
+
+		initEventOnPressHotkey(h2pForgeBounceHotkey,
+		mSettings->h2pForgeBounceHotkeyEvent,
+		vsk{}),
+
+		// Save spot / Back to spot (Poorboy's Mods): unbound like the two above
+		initEventOnPressHotkey(spotSaveHotkey,
+		mSettings->spotSaveEvent,
+		vsk{}),
+
+		initEventOnPressHotkey(spotBackHotkey,
+		mSettings->spotBackEvent,
 		vsk{}),
 
 		initEventOnPressHotkey(toggleGUI,

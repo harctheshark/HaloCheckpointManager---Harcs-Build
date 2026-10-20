@@ -173,6 +173,15 @@ public:
 	std::shared_ptr<ActionEvent> display2DInfoHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> chaseCameraHotkeyEvent = std::make_shared<ActionEvent>();
+	// Poorboy's Mods: Halo 2 physics (Halo2Physics.cpp)
+	std::shared_ptr<ActionEvent> h2pPhysicsHotkeyEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> h2pBarriersCycleHotkeyEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> h2pTick30HotkeyEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> h2pCombosHotkeyEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> h2pNoFallDeathsHotkeyEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> h2pFlyHotkeyEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> h2pDisableAIHotkeyEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> h2pForgeBounceHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraGameInputDisableHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraCameraInputDisableHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraUserInputCameraIncreaseTranslationSpeedHotkey = std::make_shared<ActionEvent>();
@@ -975,6 +984,37 @@ public:
 			[](float in) { return in >= -5.f && in <= 10.f; },
 			nameof(chaseCameraHeight)
 		);
+
+	// Poorboy's Mods: Halo 2 physics. The master switch loads the mod (h3sb.dll) with the options below, off unloads
+	// it and leaves the game untouched. The options' defaults are the ones the Start script used. A cheat toggle like
+	// HCM's others: the master switch is NOT in allSerialisableOptions and always starts off (the options are saved).
+	std::shared_ptr<BinarySetting<bool>> h2pPhysicsToggle = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(h2pPhysicsToggle));
+	std::shared_ptr<BinarySetting<int>> h2pBarriers = std::make_shared<BinarySetting<int>>
+		(2, [](int in) { return in >= 0 && in <= 3; }, nameof(h2pBarriers)); // 0 the game's, 1 soft ceilings off, 2 + out-of-bounds kill off, 3 + kill volumes off
+	std::shared_ptr<BinarySetting<bool>> h2pTick30Toggle = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(h2pTick30Toggle));
+	std::shared_ptr<BinarySetting<bool>> h2pCombosToggle = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(h2pCombosToggle));
+	std::shared_ptr<BinarySetting<bool>> h2pNoFallDeathsToggle = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(h2pNoFallDeathsToggle));
+	// Disable AI (h3sb_ai.txt): the game's own "ai_enable false", replayed in Theatre films; not saved (starts off)
+	std::shared_ptr<BinarySetting<bool>> h2pDisableAIToggle = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(h2pDisableAIToggle));
+	// Forge bounces (h3sb_forge.txt): with Halo 2 physics on, Forge objects are part of the map for the Halo 2 body
+	std::shared_ptr<BinarySetting<bool>> h2pForgeBounceToggle = std::make_shared<BinarySetting<bool>>
+		(true, [](bool in) { return true; }, nameof(h2pForgeBounceToggle));
+	// fly: not saved (starts off every time, so nobody spawns flying); its speed is saved, world units a second
+	std::shared_ptr<BinarySetting<bool>> h2pFlyToggle = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(h2pFlyToggle));
+	std::shared_ptr<BinarySetting<float>> h2pFlySpeed = std::make_shared<BinarySetting<float>>
+		(8.f, [](float in) { return in >= 0.5f && in <= 100.f; }, nameof(h2pFlySpeed));
+	// the Fly hotkey flies only while it is held (instead of switching fly on and off)
+	std::shared_ptr<BinarySetting<bool>> h2pFlyHoldToggle = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(h2pFlyHoldToggle));
+	std::shared_ptr<ActionEvent> h2pArmEvent = std::make_shared<ActionEvent>();          // button and hotkey: the armed state now
+	std::shared_ptr<ActionEvent> spotSaveEvent = std::make_shared<ActionEvent>();        // button and hotkey: Save spot
+	std::shared_ptr<ActionEvent> spotBackEvent = std::make_shared<ActionEvent>();        // button and hotkey: Back to spot
 
 	std::shared_ptr<BinarySetting<SettingsEnums::CollisionViewerOcclusionEnum>> collisionViewerOcclusion = std::make_shared<BinarySetting<SettingsEnums::CollisionViewerOcclusionEnum>>
 		(
@@ -4154,6 +4194,14 @@ public:
 	std::vector<std::shared_ptr<SerialisableSetting>> allSerialisableOptions
 	{
 		changeOOBBackgroundColor,
+		// Poorboy's Mods (the master switch h2pPhysicsToggle is a cheat toggle: not saved)
+		h2pBarriers,
+		h2pTick30Toggle,
+		h2pCombosToggle,
+		h2pNoFallDeathsToggle,
+		h2pForgeBounceToggle,
+		h2pFlySpeed,
+		h2pFlyHoldToggle,
 		soundClassGainDialog,
 			soundClassGainAmbience,
 			soundClassGainWeapons,
