@@ -11,13 +11,15 @@
 
 namespace h2cv
 {
-	enum class Game : uint8_t { None = 0, Halo2, Halo3, Halo3ODST };
+	enum class Game : uint8_t { None = 0, Halo2, Halo3, Halo3ODST, HaloReach };
 
 	Game game();
 	void setGame(Game g);
 	// first of halo2.dll / halo3.dll / halo3odst.dll that is loaded in this process (standalone injector)
 	Game detectGame();
 	inline bool isH3() { const Game g = game(); return g == Game::Halo3 || g == Game::Halo3ODST; }
+	// Halo: Reach has its own self-contained path (ViewerReach.cpp, Reach.h); the Halo 2 / 3 code never runs for it
+	inline bool isReach() { return game() == Game::HaloReach; }
 	const char* gameName(Game g);   // "halo2" / "halo3" / "halo3odst" (JSONL "engine" field, log lines)
 
 	// the calls both engines answer with the same shared types

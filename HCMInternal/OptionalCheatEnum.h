@@ -114,6 +114,7 @@ GetPlayerDatumPresenter,\
 FreeCameraFOVOverride,\
 GetAbilityData,\
 AbilityMeterOverlay,\
+HavokSleepCountdown,\
 GetTagAddressPresenter,\
 SoundClassGain,\
 ChangeOOBBackground,\
@@ -216,7 +217,8 @@ H5GetHavokData,\
 H5HavokOverlay,\
 H5LuaConsole,\
 H5DisplayInfo,\
-CollisionViewer
+CollisionViewer,\
+LaunchTrajectory
 
 
 enum class OptionalCheatEnum {

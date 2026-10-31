@@ -17,6 +17,14 @@ namespace mem
 		__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 	}
 
+	// write n bytes into game memory; false on any access violation
+	inline bool put(uintptr_t dst, const void* src, size_t n)
+	{
+		if (!okp(dst)) return false;
+		__try { memcpy(reinterpret_cast<void*>(dst), src, n); return true; }
+		__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+	}
+
 	template <class T> inline bool rd(uintptr_t a, T& out) { return copy(&out, a, sizeof(T)); }
 	template <class T> inline T get(uintptr_t a, T def = T{}) { T v; return rd(a, v) ? v : def; }
 

@@ -24,6 +24,7 @@ namespace
 		bool ai;             // h3sb_ai.txt: Disable AI; with physics off too
 		bool forge;          // h3sb_forge.txt: Forge objects count as the map (with physics on)
 		bool flyHold;        // "Hold the Fly key to fly": the mod stays loaded between holds (no unload and load at every press)
+		bool world = false;  // the collision viewer wants the mod's world file (h3sb_world_<map>.bin): loaded in observe mode when alone
 	};
 
 	// The one mod in the process, whichever game's cheat instance asks.
@@ -117,6 +118,12 @@ namespace
 		}
 
 	public:
+		std::wstring dir()
+		{
+			std::scoped_lock lock(mMutex);
+			return mDir;
+		}
+
 		void setDir(const std::string& hcmDir)
 		{
 			std::scoped_lock lock(mMutex);
@@ -128,7 +135,7 @@ namespace
 		{
 			std::scoped_lock lock(mMutex);
 			if (mDir.empty()) return "";
-			if (!o.physics && !o.fly && !o.clip && !o.ai && !o.flyHold && !mSpotInUse)
+			if (!o.physics && !o.fly && !o.clip && !o.ai && !o.flyHold && !o.world && !mSpotInUse)
 			{
 				if (loaded() && !mUnloadAsked)
 				{
@@ -159,6 +166,9 @@ namespace
 			writeSwitch(L"h3sb_ai.txt", o.ai ? 1 : 0);
 			writeSwitch(L"h3sb_forge.txt", o.physics && o.forge ? 1 : 0);
 			writeFly(o.fly, o.flySpeed);
+			// the Halo 2 body at the game's own tick rate (60 tick bouncing at 60): clears a 30 left by the 1.3.2 / 1.3.3
+			// tests' "Halo 2 at 30, game at 60" switch (Poorboy 1.4.0)
+			writeSwitch(L"h3sb_h2rate.txt", 0);
 			writeSwitch(L"h3sb_mode.txt", o.physics ? 3 : 0);
 			if (loaded())
 			{
@@ -242,6 +252,10 @@ namespace
 		}
 	};
 
+	// the collision viewer (Reach) asks for the mod's world file; the settings are kept from the last instance built
+	std::atomic<bool> gWantWorld{ false };
+	std::weak_ptr<SettingsStateAndEvents> gSettingsForWorld;
+
 	H3sbHost& host()
 	{
 		static H3sbHost h;
@@ -264,14 +278,22 @@ private:
 	ScopedCallback<ActionEvent> mArmCallback;
 	ScopedCallback<ActionEvent> mSpotSaveCallback, mSpotBackCallback;
 
+public:
+	static H3sbOptions optionsFrom(SettingsStateAndEvents& s)
+	{
+		H3sbOptions o{ s.h2pPhysicsToggle->GetValue(), s.h2pBarriers->GetValue(), s.h2pTick30Toggle->GetValue(), s.h2pCombosToggle->GetValue(),
+			s.h2pNoFallDeathsToggle->GetValue(), s.h2pFlyToggle->GetValue(), s.h2pFlySpeed->GetValue(), s.bottomlessClipToggle->GetValue(),
+			s.h2pDisableAIToggle->GetValue(), s.h2pForgeBounceToggle->GetValue(),
+			s.h2pFlyHoldToggle->GetValue() };
+		o.world = gWantWorld.load();
+		return o;
+	}
+private:
 	H3sbOptions options()
 	{
 		auto s = mSettingsWeak.lock();
 		if (!s) throw HCMRuntimeException("Halo 2 physics: settings went away");
-		return H3sbOptions{ s->h2pPhysicsToggle->GetValue(), s->h2pBarriers->GetValue(), s->h2pTick30Toggle->GetValue(), s->h2pCombosToggle->GetValue(),
-			s->h2pNoFallDeathsToggle->GetValue(), s->h2pFlyToggle->GetValue(), s->h2pFlySpeed->GetValue(), s->bottomlessClipToggle->GetValue(),
-			s->h2pDisableAIToggle->GetValue(), s->h2pForgeBounceToggle->GetValue(),
-			s->h2pFlyHoldToggle->GetValue() };
+		return optionsFrom(*s);
 	}
 
 	void say(const std::string& line)
@@ -372,6 +394,7 @@ public:
 		mSpotBackCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->spotBackEvent, [this]() { onSpotBack(); })
 	{
 		host().setDir(dicon.Resolve<DirPathContainer>().lock()->dirPath);
+		gSettingsForWorld = mSettingsWeak;
 		// apply the saved options (physics itself always starts off in HCM; a missing dll is reported, it does not stop HCM)
 		try
 		{
@@ -404,3 +427,18 @@ int Halo2Physics::readStatus(H3sbStatus* out) { return host().readStatus(out); }
 bool Halo2Physics::isLoaded() { return host().isLoaded(); }
 
 std::string Halo2Physics::lastError() { return host().lastError(); }
+
+// the collision viewer (Reach) wants the mod's world file: the mod is loaded in observe mode (the game's own physics,
+// nothing switched) while nothing else has it loaded, and let go again with false. Off the caller's thread (LoadLibrary).
+void Halo2Physics::wantWorldFile(bool on)
+{
+	if (gWantWorld.exchange(on) == on) return;
+	auto s = gSettingsForWorld.lock();
+	if (!s) return;
+	std::thread([s]() {
+		try { host().apply(Halo2PhysicsImpl::optionsFrom(*s)); }
+		catch (HCMRuntimeException ex) { PLOG_ERROR << "world file for the collision viewer: " << ex.what(); }
+		}).detach();
+}
+
+std::wstring Halo2Physics::modDir() { return host().dir(); }

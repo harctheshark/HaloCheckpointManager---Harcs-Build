@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 using namespace mem;
 
@@ -264,6 +265,100 @@ namespace h2
 			}
 		if (!n && (out[0] = localPlayerUnitObject()) != 0) n = 1;
 		return n;
+	}
+
+	uint32_t localPlayerUnitDatum(int user)
+	{
+		const uintptr_t b = base();
+		const uintptr_t pg = q(b + rva::PLAYERS_GLOBALS), phdr = q(b + rva::PLAYERS_ARRAY);
+		if (!okp(pg) || !okp(phdr) || user < 0 || user > 3) return 0xFFFFFFFF;
+		const uint32_t pd = u32(pg + 28 + 4 * (uintptr_t)user);
+		if (pd == 0xFFFFFFFF) return 0xFFFFFFFF;
+		const uintptr_t player = datumGet(phdr, pd, true);
+		return player ? u32(player + 44) : 0xFFFFFFFF;
+	}
+
+	OobTimer readOobTimer(int user)
+	{
+		OobTimer o;
+		const uintptr_t b = base();
+		const uintptr_t pg = q(b + rva::PLAYERS_GLOBALS), phdr = q(b + rva::PLAYERS_ARRAY);
+		if (!okp(pg) || !okp(phdr) || user < 0 || user > 3) return o;
+		const uint32_t pd = u32(pg + 28 + 4 * (uintptr_t)user);
+		if (pd == 0xFFFFFFFF) return o;
+		const uintptr_t player = datumGet(phdr, pd, true);
+		if (!player) return o;
+		o.counter = (int)u8(player + 0x21C, 0);
+		const int16_t tps = (int16_t)u16(q(b + rva::GAME_TIME) + 2, 30);
+		if (tps > 0 && tps <= 120) o.ticksPerSec = tps;
+		float sec = 0.5f;
+		if (!copy(&sec, b + rva::OOB_LIMIT_SEC, 4) || !(sec > 0.f && sec < 10.f)) sec = 0.5f;
+		o.limit = (int)(o.ticksPerSec * sec + 0.5f);                 // sub_180706710: seconds -> ticks, rounded
+		o.playerIndex = pd & 0xFFFF;
+		const uint32_t tick = gameTick();
+		o.nextCheck = (int)((16u - ((tick + o.playerIndex) & 15u)) & 15u);   // ticks until (tick + index) % 16 == 0
+		o.valid = true;
+		return o;
+	}
+
+	namespace
+	{
+		typedef uint8_t(__fastcall* t_trigger_test)(int32_t trigger, uint32_t objectDatum);
+		int callTriggerTest(t_trigger_test fn, int32_t trigger, uint32_t datum)
+		{
+			__try { return fn(trigger, datum) ? 1 : 0; }
+			__except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+		}
+	}
+
+	int gameTriggerVolumeTest(int16_t trigger, uint32_t objectDatum)
+	{
+		if (trigger < 0 || objectDatum == 0xFFFFFFFF) return 0;
+		const uintptr_t b = base();
+		if (!b) return -1;
+		return callTriggerTest((t_trigger_test)(b + rva::FN_TRIGGER_TEST), trigger, objectDatum);
+	}
+
+	bool killTestPoint(uintptr_t object, Vec3& out)
+	{
+		float f[3];
+		if (!okp(object) || !copy(f, object + 0x30, 12) || !std::isfinite(f[0]) || !std::isfinite(f[1]) || !std::isfinite(f[2])) return false;
+		out = { f[0], f[1], f[2] };
+		return true;
+	}
+
+	bool readKillVolumes(std::vector<KillVolume>& out)
+	{
+		out.clear();
+		TagPools p;
+		const uintptr_t scen = q(base() + rva::SCENARIO);
+		if (!okp(scen) || !tagPools(p)) return false;
+		uintptr_t kills = 0, tvs = 0; uint32_t nk = 0, ntv = 0;
+		if (!resolveBlock(scen + 0x230, p, kills, nk) || !resolveBlock(scen + 0x108, p, tvs, ntv)) return false;
+		if (nk == 0) return true;
+		if (nk > 4096 || ntv > 65535) return false;
+		const uintptr_t bits = q(base() + rva::KILL_DISABLED);
+		for (uint32_t i = 0; i < nk; ++i)
+		{
+			KillVolume kv;
+			kv.trigger = (int16_t)u16(kills + 2 * (uintptr_t)i, 0xFFFF);
+			if (okp(bits)) kv.enabled = ((u32(bits + 4 * (uintptr_t)(i >> 5), 0) >> (i & 31)) & 1) == 0;
+			if (kv.trigger >= 0 && (uint32_t)kv.trigger < ntv)
+			{
+				// scenario_trigger_volume (0x44 B): object name i16 @+0x04, forward @+0x0C, up @+0x18, position @+0x24,
+				// extents @+0x30 (sub_180678B70 / sub_180729BA0: matrix from point + forward + up, left = up x forward)
+				const uintptr_t tv = tvs + (uintptr_t)kv.trigger * 0x44;
+				kv.attached = (int16_t)u16(tv + 0x04, 0xFFFF) != -1;
+				float f[15];
+				if (copy(f, tv + 0x0C, sizeof(f)))
+				{
+					kv.fwd = { f[0], f[1], f[2] }; kv.up = { f[3], f[4], f[5] }; kv.pos = { f[6], f[7], f[8] }; kv.ext = { f[9], f[10], f[11] };
+					kv.left = { kv.up.y * kv.fwd.z - kv.up.z * kv.fwd.y, kv.up.z * kv.fwd.x - kv.up.x * kv.fwd.z, kv.up.x * kv.fwd.y - kv.up.y * kv.fwd.x };
+				}
+			}
+			out.push_back(kv);
+		}
+		return true;
 	}
 
 	uintptr_t vehicleOfUnit(uintptr_t unit, uint32_t* vehicleDatum)
@@ -787,6 +882,16 @@ namespace h2
 		else return false;
 		c.agent = agent;
 		return readGskCache(agent, c);
+	}
+
+	bool writeConvexState(uintptr_t agent, const Child& s)
+	{
+		Child live;
+		if (!readConvexAgent(agent, live) || live.manifold > 0) return false;
+		uint8_t cache[10];
+		memcpy(cache, s.ids, 8); cache[8] = s.dimA; cache[9] = s.dimB;
+		const float n[3] = { s.normal.x, s.normal.y, s.normal.z };
+		return mem::put(agent + 0x18, cache, sizeof(cache)) && mem::put(agent + 0x30, n, sizeof(n)) && mem::put(agent + 0x3C, &s.tim, sizeof(float));
 	}
 
 	// ---- rigid transforms ---------------------------------------------------------------------------------------

@@ -1,8 +1,11 @@
 #pragma once
+#include <functional>
+#include <memory>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <atomic>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <cstdint>
 #include <string>
@@ -11,6 +14,10 @@
 #include "H2CV_Renderer.h"
 #include "H2CV_Engine.h"
 #include "H2CV_Halo3.h"
+#include "H2CV_ReachOob.h"
+#include "H2CV_Superbounce.h"
+
+struct ImDrawList;
 
 namespace h2cv
 {
@@ -55,7 +62,23 @@ namespace h2cv
 		// Also feeds the lime state, the desync edges and the logger while on.
 		std::atomic_bool ghostBelievedObjects{ true };
 		std::atomic_bool ghostLinkLabels{ false };       // label each believed-pose link line with its length (= the over-credit, wu)
-		std::atomic_bool ghostPass{ true };              // flash (green) welded polygons / object pieces the current offset passes through
+		std::atomic_bool ghostPass{ true };
+		std::atomic_bool offsetNaturalReverts{ false };
+		std::atomic_bool killVolumes{ false };
+		// superbounce viewer (Halo 2): where you will land and what that launches; sbSeamText off = only the colours and the
+		// launch arrows' speed / height; sbRecord = superbounce_log.csv; sbHighlight = possible monster bounces (WIP);
+		// sbKeepCharge = a crouch charge survives reverts
+		std::atomic_bool superbounce{ false }, sbSeamText{ true }, sbSpeed{ true }, sbDebounce{ true }, sbSpots{ true }, sbPredicted{ true }, sbRecord{ false }, sbHighlight{ false }, sbKeepCharge{ false };
+		std::atomic_bool sbForceCharge{ false };       // Force Charged state: the pair with the level held at -3
+		std::atomic_bool infoSuperbounce{ true };       // its Info panel section
+		std::atomic_bool collision{ true };              // the Collision Viewer itself (off: only the info panel / bars run)
+		// bar geometry: anchor (0 TL, 1 TR, 2 BR, 3 BL), offset from that corner, size
+		std::atomic_int oobAnchor{ 0 }, detectAnchor{ 0 };
+		std::atomic<float> oobX{ 690.f }, oobY{ 324.f }, oobW{ 540.f }, oobH{ 20.f };
+		std::atomic<float> detectX{ 690.f }, detectY{ 380.f }, detectW{ 540.f }, detectH{ 14.f };
+		// info panel sections
+		std::atomic_bool infoGeneral{ true }, infoTim{ true }, infoGhost{ true }, infoGhostObjects{ true }, infoGhostDetails{ true },
+			infoPass{ true }, infoTravel{ true }, infoLegend{ true }, infoGrids{ true }, infoKill{ true }, infoWeld{ true };           // kill volumes (out of bounds): boxes + "checked in N ticks" countdown  // offset save state: natural reverts to that checkpoint restore the offsets too              // flash (green) welded polygons / object pieces the current offset passes through
 		// weld zones (Halo 2, biped): for each polygon / object, the box the player's welder query-box CENTRE has to enter
 		// for that polygon to get a welder child (= its bounds grown by the half-extents of the welder's stored query box).
 		// Near = every level polygon / rigid body whose zone is within weldZoneRange of that centre; Welded = only the
@@ -66,6 +89,10 @@ namespace h2cv
 		std::atomic_bool weldZonesNear{ false };
 		std::atomic_bool weldZonesWelded{ false };
 		std::atomic<float> weldZoneRange{ 1.0f };
+		std::atomic<float> sbPredictedRange{ 60.f };   // predicted spots are drawn within this distance (wu)
+		std::atomic_bool sbPredictedMonsters{ true }, sbPredictedDreadnoughts{ true };   // which predicted kinds are drawn
+		std::atomic_bool sbPredictedHeights{ false }, sbScanSlow{ false }, sbScanCurrentTick{ false };   // start heights; spot scan options
+		std::atomic<float> sbScanRadius{ 64.f };
 		std::atomic_bool ghostEdges{ true };            // lime/red edges of skipped / over-credited polygons [Shift+End]
 		std::atomic_bool ghostEdgesSuspectOnly{ false };// false = every skipped child (TIM>0), true = only stale / over-credited ones
 		std::atomic_bool ghostStrictSkip{ false };      // true = ANY skipped child turns the capsule lime (very common on floors)
@@ -88,6 +115,17 @@ namespace h2cv
 	public:
 		Settings settings;
 
+		// ---- OFFSET SAVE STATE (Halo 2, biped) ----
+		// Save: snapshot every skipped TIM the player holds (level polygons by key, object pieces by their stable id), fire
+		// HCM's force checkpoint, and once the checkpoint has rebuilt the pairs write the snapshot back - so you keep
+		// playing with your offsets. Load: fire HCM's force revert, wait for the pairs to come back, verify you are where
+		// the snapshot was taken, and write the TIMs back into the matching new agents. HCM's checkpoint / revert features
+		// are only triggered, never changed.
+		void requestOffsetSave() { mOffsetReq.store(1); }
+		void requestOffsetLoad() { mOffsetReq.store(2); }
+		std::function<void()> fireCheckpoint, fireRevert;
+		std::function<void(std::string)> message;
+
 		// ---- ghost desync LOGGER (render thread only; JSON lines next to the module, see logEvent) ----
 		struct LogKey { uint64_t k; bool operator==(const LogKey& o) const { return k == o.k; } };
 		struct LogState { uint32_t startTick = 0, lastFrame = 0; float peakOver = 0.f; std::string startRec; };
@@ -106,6 +144,7 @@ namespace h2cv
 		// per-tick callback from the simulation thread (HCM's game tick event) that samples the player's Havok state
 		void onFirstPersonPass3(uintptr_t view, bool opaquePass);
 		void onSimTick(uint32_t tick);
+		void onRenderReach();   // Halo: Reach: bars + panel line only (no Collision Viewer)
 		void onResolveDone();     // engine hook: exit of sub_180951EC0 (bloom + composite done, HUD not yet)
 		void restoreBloom();      // put the game's bloom gate back (unload / mode change)
 		void beforeResize();
@@ -121,6 +160,23 @@ namespace h2cv
 		void drawPills();
 		void drawGhost();
 		void drawWeldZones();
+		void drawKillVolumes();
+		void drawDeath3();      // Halo 3: same death bar (out-of-bounds count + kill volume turns)
+		void drawBars(ImDrawList* dl);
+		void drawSuperbounce();      // Halo 2: superbounce viewer (H2CV_Superbounce.cpp)
+		bool superbounceActive() const { return !isH3() && (settings.superbounce || settings.sbKeepCharge || settings.sbForceCharge); }
+		sb::Output mSb;              // its last frame: lines, labels, the Info panel section, the HUD's charge state
+		struct SbLabel { float x, y; uint32_t col; std::string text; };
+		std::vector<SbLabel> mSbLabels;   // its labels, projected (drawn at Present)
+		h3::Death mDeath3;
+		struct KillStats { bool valid = false; int count = 0, enabled = 0, attached = 0; uint32_t tick = 0, objIndex = 0; int checking = -1;
+			std::vector<std::pair<int, int>> inside; std::string note; h2::OobTimer oob; int boxDisagree = 0; bool gameTestFailed = false; std::vector<int> insideDisabled; };   // inside: (kill volume, ticks until it is checked)
+		KillStats mKill;
+		float mOobBar = -1.f;   // death bar: remaining fraction of the nearest kill (1 = full, 0 = this tick), < 0 = hidden
+		char mOobBarText[64] = {};
+		// detection bar: while the out-of-bounds count is 0 the game only checks on ticks where (tick + player index) % 16
+		// == 0, so going out of bounds is noticed 0..15 ticks later depending on when you went out. -1 = hidden.
+		int mDetectTicks = -1;   // what that kill is: "OUT OF BOUNDS" / "KILL VOLUME #k", with the ticks left
 		void drawHud(const h2::Camera& cam);
 
 		// ---- Halo 3 / ODST (Viewer3.cpp) ----
@@ -134,6 +190,73 @@ namespace h2cv
 		struct Frame3 { bool have = false; h2::GameFrame f; D3D11_VIEWPORT vp{}; uint32_t presentIdx = 0; uint32_t user = 0; };
 		Frame3 mF3;
 		bool mLogged3 = false; uint32_t mBad3 = 0; std::string mNote3;
+		// Halo 3 / ODST "after bloom": the game's main depth surface (3) as bound at the first-person pass, held so it can be
+		// copied at Present, when it holds the world AND the first-person gun (Poorboy's 1.4.0 finding, PoorboyWorldLines):
+		// the lines are drawn over the finished frame (no bloom on them) and still hidden by walls and the gun.
+		ID3D11DepthStencilView* mPb3Dsv = nullptr;
+
+		// ---- Halo: Reach (ViewerReach.cpp) ----
+		// Collision from Poorboy's world file (h3sb_world_<map>.bin: structure + instanced geometry, every polygon already in
+		// world space, written by his h3sb.dll) when there is one for the map, else the structure from HCM's Havok debugger
+		// (gather-only on the engine thread, HavokDebuggerBridge). Drawn at Present over the finished frame (no bloom)
+		// against our own collision depth, with the game's own depth (surface 9) as Poorboy's gun mask.
+	public:
+		void stopReach();                      // toggle off / unload (render thread stopped first)
+		// where Poorboy's mod keeps its world files (<HCM folder>\h3sb\) and how to ask for one (loads his mod in observe mode)
+		void setReachWorldSource(const std::wstring& modDir, std::function<void(bool)> wantWorldFile) { mRxModDir = modDir; mRxWantWorld = std::move(wantWorldFile); }
+		struct ReachScene;                     // built on a worker thread (ViewerReach.cpp)
+		struct ReachLoad;
+	private:
+		void renderReach();
+		void pumpReachScene(const std::string& map);
+		void drawHudReach(const h2::Camera& cam);
+		void wantReachWorld(bool on);
+		std::shared_ptr<ReachScene> mRxScene;  // what is drawn
+		std::shared_ptr<ReachLoad> mRxLoad;    // a scene being built on a worker thread
+		bool mRxGather = false;                // Havok gather-only asked for
+		unsigned mRxVer = 0;                   // Havok triangle version last taken
+		std::wstring mRxModDir;
+		std::function<void(bool)> mRxWantWorld;
+		bool mRxWantOn = false;
+		std::string mRxMap;
+		uint64_t mRxNextCheckMs = 0;
+		bool mRxFileSeen = false;
+		uint32_t mRxLoadMask = 0;               // the BSPs loaded when the build in flight was asked for
+		std::string mRxLoadKey, mRxDirectFailed;  // "map/mask" of the direct read in flight / of the last one that failed
+		uint64_t mRxDirectRetryMs = 0;            // a failed direct read is tried again from then (the level may still be loading)
+		std::vector<uint32_t> mRxOccFirst, mRxOccCount;   // occluder ranges near the camera (drawn from the scene's ONE buffer)
+		h2::Vec3 mRxOccAt{};
+		float mRxOccR = 0.f;
+		uint32_t mRxOccMask = 0;
+		const void* mRxOccScene = nullptr;
+		uintptr_t mRxOccVer = 0;
+		size_t mRxOccTris = 0;
+		bool mRxMaskUsed = false;
+		std::string mRxNote;
+		std::string mRxDepthWhy, mRxDepthWhyLogged, mRxMapLogged;
+		// live objects (scenery / crates / machines) from the engine-thread gather, rebuilt per published version
+		std::shared_ptr<ReachScene> mRxObjScene;
+		uintptr_t mRxObjSceneGen = 0;             // bumped per new object scene (the renderer's kept occluder buffer)
+		std::shared_ptr<ReachLoad> mRxObjLoad;    // its rebuild in flight (a worker thread, not this frame)
+		unsigned mRxObjVer = ~0u;
+		std::vector<float> mRxObjBuf;
+		std::vector<uint8_t> mRxObjTags;
+		std::vector<float> mRxObjPrev;            // the triangles of the last build: identical ones (nothing moved) are not rebuilt
+		std::vector<uint8_t> mRxObjPrevTags;
+		void pumpReachObjects();
+		bool wantReachObjects() const { return settings.show[(int)Cat::Scenery] || settings.show[(int)Cat::Crate] || settings.show[(int)Cat::Machine]; }
+		// the lines near the camera, kept until it moves, the scenes, the BSPs, the radius or the categories change
+		std::vector<LineVertex> mRxLines;
+		h2::Vec3 mRxLinesAt{};
+		const void* mRxLinesScene = nullptr;
+		uintptr_t mRxLinesObjGen = ~uintptr_t(0);
+		uint32_t mRxLinesMask = 0, mRxLinesShow = 0;
+		float mRxLinesR = -1.f;
+		uint64_t mRxLinesKey = 0;
+		float mRxCpuMs = 0.f;                     // renderReach's own CPU time per frame (smoothed), for the panel
+		uint32_t mPb3W = 0, mPb3H = 0;            // its size (the scene target's)
+		std::string mPb3Why;                      // why the last Present could not draw that way ("" = it did)
+		bool postBloom3();
 		std::mutex mSimMu;
 		std::deque<h3::Ghost3> mSimQ;          // per-tick samples of user 0 (sim thread pushes, render thread consumes)
 		std::atomic<uint64_t> mSimLastMs{ 0 };
@@ -214,6 +337,15 @@ namespace h2cv
 			std::vector<std::string> passRows;
 		};
 		GhostPlayer mGP[4];
+		std::atomic_int mOffsetReq{ 0 };   // 1 save, 2 load (set by the GUI / hotkey thread, taken by drawGhost)
+		struct OffsetEntry { bool obj = false; uint64_t id = 0; h2::Child state; };
+		struct OffsetSlot { bool valid = false; h2::Vec3 pos{}; std::vector<OffsetEntry> e; };
+		OffsetSlot mOffsetSlot[4];
+		enum class OffsetPhase : uint8_t { Idle, WaitRebuild, Apply };
+		struct OffsetRun { OffsetPhase phase = OffsetPhase::Idle; bool isLoad = false; uintptr_t oldAgent = 0; int frames = 0, restored = 0; std::vector<bool> done; uint32_t reqTick = 0; };
+		uint32_t mOffsetLastTick[4]{};     // game tick seen last frame (a revert makes it go backwards)
+		OffsetRun mOffsetRun[4];
+		std::string mOffsetStatus;         // shown in the info panel
 		GhostInfo mGI[4];
 		// pass-through prediction: the side each TIM was first seen from (kept while it lives, so the normals do not flip
 		// while the player passes through); key = (user << 40) | (object << 39) | key/id, value = (side, last frame seen)

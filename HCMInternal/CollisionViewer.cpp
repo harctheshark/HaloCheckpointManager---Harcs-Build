@@ -8,6 +8,12 @@
 #include "PointerDataStore.h"
 #include "GameTickEventHook.h"
 #include "IMCCStateHook.h"
+#include "DirPathContainer.h"
+#include "Halo2Physics.h"
+#include "HavokDebuggerBridge.h"
+#include "H2CV_Reach.h"
+#include "H2CV_Mem.h"
+#include <filesystem>
 #include "IMakeOrGetCheat.h"
 #include "H2CV_Viewer.h"
 #include "H2CV_Halo2.h"
@@ -55,6 +61,16 @@ class CollisionViewer::Impl
 {
 private:
 	GameState mGame;
+	// Halo: Reach objects (scenery / crates / machines), live: their Havok components handed to the engine-thread gather
+	std::shared_ptr<MultilevelPointer> mObjMeta;    // objectMetaDataTable (InternalPointerData.xml): the object header entries
+	uint32_t mObjDiagLogged = 0;
+	uint64_t mRxObjNextMs = 0;
+	size_t mRxObjLast = ~size_t(0);
+	bool mRxObjsSent = false;                 // a component list has been handed to the gather since the object toggles went off
+	std::string mRxMachineDiagLast;           // the last machine diagnostics logged ...
+	uint64_t mRxMachineDiagNextMs = 0;        // ... and when the next may be (a moving door changes it every pass)
+	uint32_t mWhyLogged = 0;                 // diagnostics: which "frame skipped" reasons were logged since the last toggle
+	const bool mIsReach;                      // Halo: Reach: no engine render hooks (drawn at Present only, ViewerReach.cpp; + the out-of-bounds bar)
 	const bool mIsH3;                         // Halo 3 or ODST (Havok 4.5 engine layer); Halo 2 otherwise
 	std::weak_ptr<SettingsStateAndEvents> settingsWeak;
 	std::weak_ptr<IMessagesGUI> messagesWeak;
@@ -62,6 +78,12 @@ private:
 	std::weak_ptr<IMCCStateHook> mccStateWeak;
 
 	ScopedCallback<ToggleEvent> mToggleCallback;
+	ScopedCallback<ToggleEvent> mInfoPanelCallback, mOobBarCallback;        // these two now run without the Collision Viewer
+	ScopedCallback<ToggleEvent> mSuperbounceCallback;                       // and the superbounce viewer
+	ScopedCallback<ToggleEvent> mKeepChargeCallback, mForceChargeCallback;  // and its charge options (they run without it)
+	ScopedCallback<ActionEvent> mOffsetSaveCallback, mOffsetLoadCallback;   // Halo 2 offset save state
+	ScopedCallback<ActionEvent> mInjectCallback;                            // superbounce: an injected checkpoint's charge is unknown
+	ScopedCallback<ActionEvent> mSpotScanCallback;                          // superbounce: "scan around me"
 	std::unique_ptr<ScopedCallback<DirectXRenderEvent>> mRenderCallback;
 	std::unique_ptr<ModuleInlineHook> mFpHook, mResolveHook;
 	std::shared_ptr<MultilevelPointer> mFp3Ptr;     // Halo 3 / ODST first-person pass (InternalPointerData.xml collisionViewerFirstPersonPass)
@@ -77,15 +99,16 @@ private:
 	// HCM constructs one Impl per game (Halo 2, Halo 3, ODST) and all of them live for the whole session. Each one owns a slot,
 	// so a detour always reaches the Impl (and trampoline) of the module it was installed in, and only the Impl of the game MCC
 	// is running draws / samples. h2cv's game selector is process-global: the active Impl sets it before every call into h2cv.
-	static constexpr int kSlots = 3;
+	static constexpr int kSlots = 4;
 	static inline std::atomic<Impl*> sSlot[kSlots]{};
 	const int mSlot;
 	const h2cv::Game mCvGame;
-	std::atomic_bool mEnabled{ false };
+	std::atomic_bool mEnabled{ false };        // render / tick callbacks running: Collision Viewer OR info panel OR out-of-bounds bar
+	std::atomic_bool mCollisionOn{ false };    // the Collision Viewer itself (gates the in-frame engine-pass drawing)
 
 	static int slotOf(GameState g)
 	{
-		return g == GameState(GameState::Value::Halo3) ? 1 : g == GameState(GameState::Value::Halo3ODST) ? 2 : 0;
+		return g == GameState(GameState::Value::Halo3) ? 1 : g == GameState(GameState::Value::Halo3ODST) ? 2 : g == GameState(GameState::Value::HaloReach) ? 3 : 0;
 	}
 
 	bool isActiveGame()
@@ -98,7 +121,7 @@ private:
 	static int64_t __fastcall fpDetour(int64_t a1, int64_t a2, int64_t a3, char a4, unsigned a5, int a6)
 	{
 		Impl* self = sSlot[0].load();
-		if (self && self->mEnabled.load())
+		if (self && self->mEnabled.load() && self->mCollisionOn.load())
 			guardedCall([](void* p) { static_cast<Impl*>(p)->onFirstPersonPass(); }, self, "first-person pass hook");
 		return self ? self->mFpHook->getInlineHook().call<int64_t>(a1, a2, a3, a4, a5, a6) : 0;
 	}
@@ -107,7 +130,7 @@ private:
 	{
 		Impl* self = sSlot[0].load();
 		const int64_t r = self ? self->mResolveHook->getInlineHook().call<int64_t>(a1, a2, a3) : 0;
-		if (self && self->mEnabled.load())
+		if (self && self->mEnabled.load() && self->mCollisionOn.load())
 			guardedCall([](void* p) { static_cast<Impl*>(p)->onResolveDone(); }, self, "resolve hook");
 		return r;
 	}
@@ -118,7 +141,7 @@ private:
 	static int64_t __fastcall fp3Detour(int64_t a1, char a2)
 	{
 		Impl* self = sSlot[Slot].load();
-		if (self && self->mEnabled.load())
+		if (self && self->mEnabled.load() && self->mCollisionOn.load())
 		{
 			Fp3Args args{ self, (uintptr_t)a1, a2 == 0 };
 			guardedCall([](void* p) { auto* a = static_cast<Fp3Args*>(p); a->self->onFirstPersonPass3(a->view, a->opaque); }, &args, "first-person pass hook");
@@ -199,6 +222,44 @@ private:
 		v.ghostBelievedObjects = s.collisionViewerGhostBelievedObjects->GetValue();
 		v.ghostLinkLabels = s.collisionViewerGhostLinkLabels->GetValue();
 		v.ghostPass = s.collisionViewerGhostPass->GetValue();
+		v.offsetNaturalReverts = s.collisionViewerOffsetNaturalReverts->GetValue();
+		v.killVolumes = s.collisionViewerKillVolumes->GetValue();
+		v.superbounce = s.collisionViewerSuperbounce->GetValue();
+		v.sbSeamText = s.collisionViewerSuperbounceSeamText->GetValue();
+		v.sbSpeed = s.collisionViewerSuperbounceSpeed->GetValue();
+		v.sbDebounce = s.collisionViewerSuperbounceDebounce->GetValue();
+		v.sbSpots = s.collisionViewerSuperbounceSpots->GetValue();
+		v.sbPredicted = s.collisionViewerSuperbouncePredicted->GetValue();
+		v.sbPredictedRange = s.collisionViewerSuperbouncePredictedRange->GetValue();
+		v.sbPredictedMonsters = s.collisionViewerSuperbouncePredictedMonsters->GetValue();
+		v.sbPredictedDreadnoughts = s.collisionViewerSuperbouncePredictedDreadnoughts->GetValue();
+		v.sbPredictedHeights = s.collisionViewerSuperbouncePredictedHeights->GetValue();
+		v.sbScanRadius = s.collisionViewerSpotScanRadius->GetValue();
+		v.sbScanSlow = s.collisionViewerSpotScanSlow->GetValue();
+		v.sbScanCurrentTick = s.collisionViewerSpotScanCurrentTick->GetValue();
+		v.sbRecord = s.collisionViewerSuperbounceRecord->GetValue();
+		v.sbHighlight = s.collisionViewerSuperbounceHighlight->GetValue();
+		v.sbKeepCharge = s.collisionViewerSuperbounceKeepCharge->GetValue();
+		v.sbForceCharge = s.collisionViewerSuperbounceForceCharge->GetValue();
+		v.infoSuperbounce = s.collisionViewerInfoSuperbounce->GetValue();
+		v.collision = s.collisionViewerToggle->GetValue();
+		v.oobAnchor = (int)s.oobBarAnchorCorner->GetValue();
+		v.oobX = s.oobBarScreenOffset->GetValue().x; v.oobY = s.oobBarScreenOffset->GetValue().y;
+		v.oobW = s.oobBarSize->GetValue().x; v.oobH = s.oobBarSize->GetValue().y;
+		v.detectAnchor = (int)s.detectBarAnchorCorner->GetValue();
+		v.detectX = s.detectBarScreenOffset->GetValue().x; v.detectY = s.detectBarScreenOffset->GetValue().y;
+		v.detectW = s.detectBarSize->GetValue().x; v.detectH = s.detectBarSize->GetValue().y;
+		v.infoGeneral = s.collisionViewerInfoGeneral->GetValue();
+		v.infoTim = s.collisionViewerInfoTim->GetValue();
+		v.infoGhost = s.collisionViewerInfoGhost->GetValue();
+		v.infoGhostObjects = s.collisionViewerInfoGhostObjects->GetValue();
+		v.infoGhostDetails = s.collisionViewerInfoGhostDetails->GetValue();
+		v.infoPass = s.collisionViewerInfoPass->GetValue();
+		v.infoTravel = s.collisionViewerInfoTravel->GetValue();
+		v.infoLegend = s.collisionViewerInfoLegend->GetValue();
+		v.infoGrids = s.collisionViewerInfoGrids->GetValue();
+		v.infoKill = s.collisionViewerInfoKill->GetValue();
+		v.infoWeld = s.collisionViewerInfoWeld->GetValue();
 		v.ghostTravel = s.collisionViewerGhostTravel->GetValue();
 		v.ghostTravelObjects = s.collisionViewerGhostTravelObjects->GetValue();
 		v.weldZonesNear = s.collisionViewerWeldZonesNear->GetValue();
@@ -229,12 +290,27 @@ private:
 	void onRender(ID3D11Device* dev, ID3D11DeviceContext* ctx, SimpleMath::Vector2 screen, ID3D11RenderTargetView* rtv)
 	{
 		auto settings = settingsWeak.lock();
-		if (!settings) return;
-		if (!isActiveGame()) return;              // another game's Impl owns the overlay this frame
+		// one log line per reason a frame is not drawn (the first time each happens): where the frame path stops
+		auto why = [this](int bit, const char* what) { if (!(mWhyLogged & (1u << bit))) { mWhyLogged |= 1u << bit; PLOG_INFO << "[CollisionViewer] " << mGame.toString() << ": " << what; } };
+		if (!settings) { why(0, "frame skipped: settings gone"); return; }
+		if (!isActiveGame()) { why(1, "frame skipped: not the game MCC is running"); return; }
 		std::unique_lock lk(mViewerMutex, std::try_to_lock);
-		if (!lk.owns_lock()) return;
+		if (!lk.owns_lock()) { why(2, "frame skipped: viewer busy"); return; }
+		why(3, "frame reached the viewer");
 		h2cv::setGame(mCvGame);
 		syncSettings(*settings);
+		if (mIsReach)
+		{
+			// Reach: the collision drawing (ViewerReach.cpp) while the Collision Viewer is on, then the out-of-bounds bars and
+			// the panel's out-of-bounds line (also without it)
+			if (mCollisionOn)
+			{
+				updateReachObjects(*settings);
+				mViewer.onRender(dev, ctx, rtv, (uint32_t)screen.x, (uint32_t)screen.y);
+			}
+			mViewer.onRenderReach();
+			return;
+		}
 		if (!mHooksArmed) armHooks();
 		mViewer.onRender(dev, ctx, rtv, (uint32_t)screen.x, (uint32_t)screen.y);
 	}
@@ -243,6 +319,7 @@ private:
 	// (refuse rather than patch another build or a function someone else already hooked).
 	void armHooks()
 	{
+		if (mIsReach) { mHooksArmed = true; return; }
 		if (mIsH3) { armHooks3(); return; }
 		if (!h2::base() || !h2::buildOk()) return;
 		mHooksArmed = true;
@@ -282,8 +359,120 @@ private:
 		PLOG_INFO << "[CollisionViewer] first-person pass hook armed @0x" << std::hex << fp;
 	}
 
+	// Reach: 4 times a second, the scenery / crates / machines near the camera -> their Havok component datums -> the
+	// engine-thread gather (HavokDebuggerBridge::setReachObjects), tagged with the viewer category.
+	// The object table is read here (HCM's ObjectTableRange has no Reach table size): objectMetaDataTable resolves to the
+	// header entries (stride 0x18: +0 salt, +4 type byte, +0x10 object address); the data-array header before them is found
+	// by its 'd@t@' signature at header+0x28. Reach (live, 2026-10-21): header = entries - 0x70, name "object" @+0,
+	// entry size u32 @+0x20 = 0x18, signature @+0x28, maximum count u32 @+0x2C = 2048.
+	// Raw type byte (HaloReachObjectType): 6 scenery, 7 machine, 8 control (drawn as machines), 10 crate.
+	// Object +0xCC = Havok component datum, +0x44 = position. Every read guarded.
+	void updateReachObjects(SettingsStateAndEvents& s)
+	{
+		if (!mObjMeta) return;
+		const bool wantScenery = s.collisionViewerShowScenery->GetValue(), wantCrates = s.collisionViewerShowCrates->GetValue(), wantMachines = s.collisionViewerShowMachines->GetValue();
+		// no object category shown: the object table is not walked at all (the gather is stopped too, ViewerReach.cpp) -
+		// only an empty list once, should the gather still be running for the Havok structure fallback
+		if (!wantScenery && !wantCrates && !wantMachines)
+		{
+			if (mRxObjsSent) { HavokDebuggerBridge::setReachObjects(nullptr, nullptr, 0); mRxObjsSent = false; mRxObjLast = 0; }
+			return;
+		}
+		const uint64_t now = GetTickCount64();
+		if (now < mRxObjNextMs) return;
+		mRxObjNextMs = now + 250;
+		mRxObjsSent = true;
+		std::vector<unsigned long long> comps;
+		std::vector<unsigned char> tags;
+		const h2::Camera cam = reach::readCamera();
+		uintptr_t entries = 0;
+		if ((wantScenery || wantCrates || wantMachines) && cam.ok && mObjMeta->resolve(&entries) && mem::okp(entries))
+		{
+			uintptr_t header = 0;
+			for (uintptr_t h = entries - 0x2C; h + 0x200 >= entries && h > 0x10000; h -= 4)
+				if (mem::u32(h + 0x28, 0) == 0x64407440u && (mem::u32(h + 0x20, 0) == 0x18 || mem::u16(h + 0x22, 0) == 0x18)) { header = h; break; }
+			int maxCount = 0;
+			if (header)
+			{
+				const int32_t m32 = mem::i32(header + 0x2C, 0);                // Reach: maximum count u32 after the signature
+				maxCount = (m32 > 0 && m32 <= 16384) ? m32 : (int)(int16_t)mem::u16(header + 0x20, 0);
+			}
+			if (!header || maxCount <= 0 || maxCount > 16384)
+			{
+				if (!(mObjDiagLogged & 1))
+				{
+					mObjDiagLogged |= 1;
+					char b[96]; std::string hex;
+					for (int k = -0x80; k < 0; k += 4) { snprintf(b, sizeof(b), "%08X ", mem::u32(entries + k, 0)); hex += b; }
+					PLOG_ERROR << "[CollisionViewer] Reach: object table header not found before entries 0x" << std::hex << entries << " (max " << std::dec << maxCount << "); 0x80 bytes before: " << hex;
+				}
+			}
+			else
+			{
+				if (!(mObjDiagLogged & 2)) { mObjDiagLogged |= 2; PLOG_INFO << "[CollisionViewer] Reach: object table header 0x" << std::hex << header << " entries 0x" << entries << std::dec << ", max " << maxCount; }
+				const float R = s.collisionViewerRadius->GetValue() + 30.f, R2 = R * R;
+				for (int i = 0; i < maxCount && comps.size() < 1024; ++i)
+				{
+					const uintptr_t e = entries + (uintptr_t)i * 0x18;
+					if (mem::u16(e, 0) == 0) continue;                         // free slot (salt 0)
+					const uint8_t t = mem::u8(e + 4, 0xFF);
+					h2cv::Cat cat;
+					if (t == 6 && wantScenery) cat = h2cv::Cat::Scenery;
+					else if (t == 10 && wantCrates) cat = h2cv::Cat::Crate;
+					else if ((t == 7 || t == 8) && wantMachines) cat = h2cv::Cat::Machine;
+					else continue;
+					const uintptr_t obj = mem::q(e + 0x10);
+					if (!mem::okp(obj)) continue;
+					float p[3];
+					if (!mem::copy(p, obj + 0x44, sizeof(p))) continue;
+					const float dx = p[0] - cam.pos.x, dy = p[1] - cam.pos.y, dz = p[2] - cam.pos.z;
+					if (dx * dx + dy * dy + dz * dz > R2) continue;
+					const uint32_t havokDatum = mem::u32(obj + 0xCC, 0xFFFFFFFFu);
+					if (havokDatum == 0xFFFFFFFFu || (havokDatum & 0xFFFF) == 0xFFFF) continue;
+					comps.push_back(havokDatum);
+					tags.push_back((unsigned char)cat);
+				}
+			}
+		}
+		HavokDebuggerBridge::setReachObjects(comps.data(), tags.data(), (int)comps.size());
+		if (comps.size() != mRxObjLast) { mRxObjLast = comps.size(); PLOG_INFO << "[CollisionViewer] Reach: " << comps.size() << " objects with Havok collision near the camera"; }
+		// what the machines near the camera gave (logged when it changes; positions round to 1 cm so a still door is quiet)
+		if (std::string d = HavokDebuggerBridge::reachMachineDiag(); !d.empty() && d != mRxMachineDiagLast && now >= mRxMachineDiagNextMs)
+		{
+			mRxMachineDiagLast = d;
+			mRxMachineDiagNextMs = now + 2000;
+			PLOG_INFO << "[CollisionViewer] Reach machines:\n" << d;
+		}
+	}
+
+	// The Collision Viewer, the info panel and the out-of-bounds bar are separate options now: the render / tick
+	// callbacks run while ANY of them is on, the world drawing only with the Collision Viewer itself.
+	// which: 0 Collision Viewer, 1 info panel, 2 out-of-bounds bar, 4-6 superbounce (its new value comes in `v`, the others are read)
+	void refreshActive(int which, bool v)
+	{
+		auto s = settingsWeak.lock();
+		if (!s) return;
+		const bool cv = which == 0 ? v : s->collisionViewerToggle->GetValue();
+		const bool info = which == 1 ? v : s->collisionViewerInfoPanel->GetValue();
+		const bool bar = which == 2 ? v : s->collisionViewerKillVolumes->GetValue();
+		const bool bounce = !mIsReach && !mIsH3 && ((which == 4 ? v : s->collisionViewerSuperbounce->GetValue())   // Halo 2 only:
+			|| (which == 5 ? v : s->collisionViewerSuperbounceKeepCharge->GetValue())                               // the viewer, or
+			|| (which == 6 ? v : s->collisionViewerSuperbounceForceCharge->GetValue()));                             // its charge options
+		const bool wasCollision = mCollisionOn.exchange(cv);
+		bool active = cv || info || bar || bounce;
+		if (active != mEnabled.load()) onToggle(active);
+		else if (mIsReach && active && wasCollision && !cv)
+		{
+			// Reach: the Collision Viewer went off but the bars stay - let the engine step function go (the Havok gather)
+			std::scoped_lock lk(mViewerMutex);
+			mViewer.stopReach();
+		}
+	}
+
 	void onToggle(bool& on)
 	{
+		PLOG_INFO << "[CollisionViewer] " << mGame.toString() << ": toggle " << (on ? "on" : "off") << (renderEventWeak.expired() ? " (render event expired!)" : "");
+		mWhyLogged = 0;
 		if (on)
 		{
 			if (!mRenderCallback)
@@ -301,23 +490,57 @@ private:
 			for (int i = 0; i < 400 && mSimInFlight.load() > 0; ++i) Sleep(1);
 			std::scoped_lock lk(mViewerMutex);
 			mViewer.restoreBloom();
+			if (mIsReach) mViewer.stopReach();   // let the engine step function go (the Havok gather)
 		}
 	}
 
 public:
 	Impl(GameState game, IDIContainer& dicon)
 		: mGame(game),
+		mIsReach(game == GameState(GameState::Value::HaloReach)),
 		mIsH3(game == GameState(GameState::Value::Halo3) || game == GameState(GameState::Value::Halo3ODST)),
 		settingsWeak(dicon.Resolve<SettingsStateAndEvents>()),
 		messagesWeak(dicon.Resolve<IMessagesGUI>()),
 		renderEventWeak(dicon.Resolve<DirectXRenderEvent>()),
 		mccStateWeak(dicon.Resolve<IMCCStateHook>()),
 		mSlot(slotOf(game)),
-		mCvGame(game == GameState(GameState::Value::Halo3) ? h2cv::Game::Halo3 : game == GameState(GameState::Value::Halo3ODST) ? h2cv::Game::Halo3ODST : h2cv::Game::Halo2),
+		mCvGame(game == GameState(GameState::Value::Halo3) ? h2cv::Game::Halo3 : game == GameState(GameState::Value::Halo3ODST) ? h2cv::Game::Halo3ODST : game == GameState(GameState::Value::HaloReach) ? h2cv::Game::HaloReach : h2cv::Game::Halo2),
 		mToggleCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerToggle->valueChangedEvent,
-			[this](bool& on) { onToggle(on); })
+			[this](bool& on) { refreshActive(0, on); }),
+		mInfoPanelCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerInfoPanel->valueChangedEvent,
+			[this](bool& on) { refreshActive(1, on); }),
+		mOobBarCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerKillVolumes->valueChangedEvent,
+			[this](bool& on) { refreshActive(2, on); }),
+		mSuperbounceCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerSuperbounce->valueChangedEvent,
+			[this](bool& on) { refreshActive(4, on); }),
+		mKeepChargeCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerSuperbounceKeepCharge->valueChangedEvent,
+			[this](bool& on) { refreshActive(5, on); }),
+		mForceChargeCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerSuperbounceForceCharge->valueChangedEvent,
+			[this](bool& on) { refreshActive(6, on); }),
+		mOffsetSaveCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->offsetSaveEvent,
+			[this]() { if (!mIsH3 && isActiveGame()) mViewer.requestOffsetSave(); }),
+		mOffsetLoadCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->offsetLoadEvent,
+			[this]() { if (!mIsH3 && isActiveGame()) mViewer.requestOffsetLoad(); }),
+		mInjectCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->injectCheckpointEvent,
+			[this]() { if (!mIsH3 && !mIsReach) h2cv::sb::forgetCheckpointCharges(); }),
+		mSpotScanCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerSpotScanEvent,
+			[this]() { if (!mIsH3 && !mIsReach) h2cv::sb::requestSpotScan(); })
 	{
-		if (mIsH3)
+		// offset save state: the viewer triggers HCM's own force checkpoint / force revert (unchanged) and reports here
+		mViewer.fireCheckpoint = [w = settingsWeak]() { if (auto s = w.lock()) s->forceCheckpointEvent->operator()(); };
+		mViewer.fireRevert = [w = settingsWeak]() { if (auto s = w.lock()) s->forceRevertEvent->operator()(); };
+		mViewer.message = [w = messagesWeak](std::string msg) { if (auto m = w.lock()) m->addMessage(msg); };
+		if (mIsReach)
+		{
+			// Halo: Reach: nothing hooked in the game's render. Collision: Poorboy's world files in <HCM folder>\h3sb\ (his
+			// h3sb.dll writes them; asked for in observe mode when a map has none), else the Havok debugger's engine-thread
+			// gather (started on the first frame drawn). The out-of-bounds bar is read on the render thread (H2CV_ReachOob).
+			try { mObjMeta = dicon.Resolve<PointerDataStore>().lock()->getData<std::shared_ptr<MultilevelPointer>>("objectMetaDataTable", game); }
+			catch (...) { PLOG_ERROR << "[CollisionViewer] Reach: no objectMetaDataTable pointer - objects will not be drawn"; mObjMeta.reset(); }
+			if (auto dir = dicon.Resolve<DirPathContainer>().lock())
+				mViewer.setReachWorldSource((std::filesystem::path(dir->dirPath) / L"h3sb").wstring(), [](bool on) { Halo2Physics::wantWorldFile(on); });
+		}
+		else if (mIsH3)
 		{
 			// A missing XML entry throws HCMInitException here -> the cheat is unavailable for this game build and its GUI rows grey out.
 			auto ptr = dicon.Resolve<PointerDataStore>().lock();
@@ -334,8 +557,11 @@ public:
 			mResolveHook = ModuleInlineHook::make(mGame.toModuleName(), rs, (void*)&resolveDetour);
 		}
 		sSlot[mSlot] = this;
-		if (auto s = settingsWeak.lock(); s && s->collisionViewerToggle->GetValue())
+		if (auto s = settingsWeak.lock(); s && (s->collisionViewerToggle->GetValue() || s->collisionViewerInfoPanel->GetValue() || s->collisionViewerKillVolumes->GetValue()
+			|| (!mIsReach && !mIsH3 && (s->collisionViewerSuperbounce->GetValue() || s->collisionViewerSuperbounceKeepCharge->GetValue()
+				|| s->collisionViewerSuperbounceForceCharge->GetValue()))))
 		{
+			mCollisionOn = s->collisionViewerToggle->GetValue();
 			bool on = true;
 			onToggle(on);
 		}
@@ -359,7 +585,7 @@ public:
 	}
 };
 
-// Constructed for Halo 2, Halo 3 and Halo 3: ODST: every GUI row that requires it is registered for exactly those games.
+// Constructed for Halo 2, Halo 3, Halo 3: ODST and Halo: Reach.
 CollisionViewer::CollisionViewer(GameState gameImpl, IDIContainer& dicon)
 	: pimpl(std::make_unique<Impl>(gameImpl, dicon))
 {

@@ -3,6 +3,8 @@
 		<OutputPath_Global>__UNDEFINED__</OutputPath_Global>
 		<OutputPath_Global Condition="Exists('$(SolutionDir)OutputPath.vsmacro')">"$([System.IO.File]::ReadAllText('$(SolutionDir)OutputPath.vsmacro').trim())"</OutputPath_Global>
 		<VersionPrefix>5.10.27.0</VersionPrefix>
+		<!-- 64-bit compiler and linker: the 32-bit ones run out of memory on the largest files (GUIElementConstructor.cpp) -->
+		<PreferredToolArchitecture>x64</PreferredToolArchitecture>
 </PropertyGroup>
 </Project>
     

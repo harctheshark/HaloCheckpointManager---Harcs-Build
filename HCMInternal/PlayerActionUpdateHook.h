@@ -12,10 +12,20 @@
 // ReplayRecorder reads these; ReplayPlayer overwrites them. Owning the single
 // hook here (mirroring GameTickEventHook) avoids double-hooking the address.
 
+#include "ReplayData.h"
+
+// Fires once per simulation tick at the entry of the game's simulation_update consumer (ReplayData.h table), with
+// read/WRITE access to the valid-player mask and player_actions[slots] (layout = the game's ActionLayout).
 struct PlayerActionUpdateContext
 {
-    uint32_t* maskRef;   // -> player_action_mask (writable; low dword of RCX slot)
-    uint8_t*  actions;   // -> player_actions[kMaxPlayers][0x60]  (writable, 0x180 bytes)
+    void*    maskPtr;               // -> the valid-player mask (layout->maskBytes wide; writable)
+    uint8_t* actions;               // -> player_actions[layout->slots], layout->stride bytes each (writable)
+    const ActionLayout* layout;
+    uint64_t getMask() const { return layout->maskBytes == 8 ? *(uint64_t*)maskPtr : (uint64_t)*(uint32_t*)maskPtr; }
+    void setMask(uint64_t m) { if (layout->maskBytes == 8) *(uint64_t*)maskPtr = m; else *(uint32_t*)maskPtr = (uint32_t)m; }
+    // the tick this update simulates, when the layout knows where the update keeps it (layout->tickOffset)
+    bool hasTick() const { return layout->tickOffset != 0; }
+    uint32_t tick() const { return *(const uint32_t*)(actions - layout->actionsOffset + layout->tickOffset); }
 };
 
 using PlayerActionUpdateEvent = eventpp::CallbackList<void(PlayerActionUpdateContext&)>;

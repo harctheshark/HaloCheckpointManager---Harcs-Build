@@ -11,7 +11,7 @@ namespace HCMExternal.Services.External.Impl
     {
         public void ForceDoubleRevert()
         {
-            List<HaloProcessInfo> haloProcesses = GetHaloProcessInfo();
+            List<HaloProcessInfo> haloProcesses = GetHaloProcessInfo(noneIsFine: true);
 
             foreach (var haloProcess in haloProcesses)
             {

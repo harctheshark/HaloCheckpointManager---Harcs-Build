@@ -14,7 +14,7 @@ namespace HCMExternal.Services.External.Impl
 
         public void DisableCheckpoints(bool toggleValue)
         {
-            List<HaloProcessInfo> haloProcesses = GetHaloProcessInfo();
+            List<HaloProcessInfo> haloProcesses = GetHaloProcessInfo(noneIsFine: true);
 
             foreach (var haloProcess in haloProcesses)
             {

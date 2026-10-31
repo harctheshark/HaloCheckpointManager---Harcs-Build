@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "OBSHookDiscovery.h"
 #include "ModuleCache.h"
+#include <thread>
+#include <mutex>
 
 // See OBSHookDiscovery.h for what this is and why it replaced a hard-coded RVA.
 
@@ -333,35 +335,66 @@ bool OBSRealFnPointer::resolve(uintptr_t* resolvedOut) const
 	if (status == OBSDiscoveryStatus::NoDetourFound)
 	{
 		*SetLastErrorByRef() << "graphics-hook64.dll is loaded but no trampoline pointer for " << mFunctionName
-			<< " could be found in it" << std::endl;
+			<< " could be found in it (yet)" << std::endl;
 
-		// Report ONCE. attach() is retried on every module load, and the deferred path (inside
-		// LoadLibrary) has no way to throw, so this log line plus the message is all the user gets.
-		if (!mReportedFailure.exchange(true))
+		// OBS may still be installing its hook (it does so after the DLL has loaded): retry in the background for a
+		// while before calling it unsupported. One retry at a time; none once we were cancelled or have no owner callback.
+		bool startRetry = false;
 		{
-			PLOG_ERROR << std::format(
-				"OBS hook discovery FAILED for {}. graphics-hook64.dll base 0x{:X} size 0x{:X}; sections scanned: {}; "
-				"{} aligned qwords examined, {} probed as candidates; dxgi entry used 0x{:X} (first byte 0x{:02X}, "
-				"looks inline-hooked: {}). This means HCM does not understand your OBS version's Game Capture hook.",
-				mFunctionName, diagnostics.moduleBase, (uint64_t)diagnostics.moduleSize, diagnostics.sectionsScanned,
-				diagnostics.qwordsScanned, diagnostics.candidatesProbed, diagnostics.dxgiEntry,
-				isReadableRange(diagnostics.dxgiEntry, 1) ? *(const uint8_t*)diagnostics.dxgiEntry : 0,
-				looksInlineHooked(diagnostics.dxgiEntry) ? "yes" : "no");
-
-			if (auto messages = gMessageSink.lock())
+			std::scoped_lock lock(mRetry->m);
+			if (!mRetry->cancelled && !mRetry->running && mRetry->onLateSuccess && !mReportedFailure.load())
 			{
-				messages->addMessage(std::format(
-					"OBS Game Capture was detected, but HCM could not locate its {} hook (unsupported OBS version).\n"
-					"The OBS bypass will not engage. Please report this along with your OBS version.", mFunctionName));
-			}
-
-			// Deferred attaches happen inside LoadLibrary and cannot throw. Let the owner stop asking.
-			if (mOnPermanentFailure)
-			{
-				try { mOnPermanentFailure(); }
-				catch (...) { PLOG_ERROR << "OBS hook discovery: the permanent-failure callback threw; ignoring"; }
+				mRetry->running = true;
+				startRetry = true;
 			}
 		}
+		if (startRetry)
+		{
+			PLOG_INFO << "OBS hook discovery: graphics-hook64.dll is loaded but its " << mFunctionName
+				<< " hook is not in place yet - retrying in the background for up to 15 s";
+			std::thread([state = mRetry, dxgiEntry = mDxgiEntry, name = std::string(mFunctionName), self = this]()
+			{
+				OBSDiscoveryDiagnostics last{};
+				for (int attempt = 0; attempt < 150; ++attempt)
+				{
+					Sleep(100);
+					{
+						std::scoped_lock lock(state->m);
+						if (state->cancelled) { state->running = false; return; }
+					}
+					uintptr_t rva = 0;
+					OBSDiscoveryDiagnostics d{};
+					const OBSDiscoveryStatus s = discoverRealFnRva(dxgiEntry, rva, &d);
+					last = d;
+					if (s == OBSDiscoveryStatus::ModuleNotLoaded)
+					{
+						// OBS stopped capturing: nothing to do; the next module load starts over
+						std::scoped_lock lock(state->m);
+						state->running = false;
+						return;
+					}
+					if (s == OBSDiscoveryStatus::Ok)
+					{
+						PLOG_INFO << std::format("OBS hook discovery: {} hook appeared after {} ms - attaching the bypass", name, (attempt + 1) * 100);
+						std::scoped_lock lock(state->m);
+						state->running = false;
+						if (!state->cancelled && state->onLateSuccess)
+						{
+							try { state->onLateSuccess(); }
+							catch (...) { PLOG_ERROR << "OBS hook discovery: the late-success callback threw; ignoring"; }
+						}
+						return;
+					}
+				}
+				std::scoped_lock lock(state->m);
+				state->running = false;
+				if (!state->cancelled) self->reportPermanentFailure(last);     // self is alive: not cancelled (under the lock)
+			}).detach();
+			return false;
+		}
+
+		// no retry possible (no owner callback / already running / already reported): the old behaviour
+		if (!mRetry->running) reportPermanentFailure(diagnostics);
 		return false;
 	}
 
@@ -399,6 +432,36 @@ bool OBSRealFnPointer::resolve(uintptr_t* resolvedOut) const
 	mReportedFailure.store(false); // a later failure is a new event worth reporting
 	*resolvedOut = trampoline;
 	return true;
+}
+
+// The "unsupported OBS version" outcome: logged and shown once, then the owner stops wanting to attach. Called from
+// resolve() (no retry possible) or from the retry thread after its timeout - in both cases with the object alive.
+void OBSRealFnPointer::reportPermanentFailure(const OBSDiscoveryDiagnostics& diagnostics) const
+{
+	if (mReportedFailure.exchange(true)) return;
+	PLOG_ERROR << std::format(
+		"OBS hook discovery FAILED for {}. graphics-hook64.dll base 0x{:X} size 0x{:X}; sections scanned: {}; "
+		"{} aligned qwords examined, {} probed as candidates; dxgi entry used 0x{:X} (first byte 0x{:02X}, "
+		"looks inline-hooked: {}). This means HCM does not understand your OBS version's Game Capture hook.",
+		mFunctionName, diagnostics.moduleBase, (uint64_t)diagnostics.moduleSize, diagnostics.sectionsScanned,
+		diagnostics.qwordsScanned, diagnostics.candidatesProbed, diagnostics.dxgiEntry,
+		isReadableRange(diagnostics.dxgiEntry, 1) ? *(const uint8_t*)diagnostics.dxgiEntry : 0,
+		looksInlineHooked(diagnostics.dxgiEntry) ? "yes" : "no");
+
+	if (auto messages = gMessageSink.lock())
+	{
+		messages->addMessage(std::format(
+			"OBS Game Capture was detected, but HCM could not locate its {} hook (unsupported OBS version).\n"
+			"The OBS bypass will not engage. Please report this along with your OBS version.", mFunctionName));
+	}
+
+	// Deferred attaches happen inside LoadLibrary and cannot throw. Let the owner stop asking. (Called with
+	// mRetry->m held by the retry thread - the callback only flips the hook's wanted state, it never re-enters.)
+	if (mRetry->onPermanentFailure)
+	{
+		try { mRetry->onPermanentFailure(); }
+		catch (...) { PLOG_ERROR << "OBS hook discovery: the permanent-failure callback threw; ignoring"; }
+	}
 }
 
 

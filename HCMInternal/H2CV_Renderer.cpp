@@ -22,6 +22,7 @@ cbuffer CB : register(b0)
 	float gHiddenAlpha; float gHiddenPass; float gUseGame; float gGameEnc;
 	float gGameNear; float gGameFar; float2 gGameScale;
 	float gUseFp; float gFpClear; float gGameTol; float gStdZ;
+	float gGameRange; float3 gPad;
 };
 Texture2D<float> gGameDepth : register(t0);
 Texture2D<float> gFpDepth : register(t1);
@@ -85,7 +86,17 @@ bool gameOccluded(float2 px, float view)
 		occ = abs(gFpDepth.Load(int3(t, 0)) - gFpClear) > 1e-7;          // first-person viewmodel covers this pixel
 	float z = gGameDepth.Load(int3(t, 0));
 	bool cleared = gGameEnc == 1 ? (z >= 1.0) : (z <= 0.0);              // cleared / sky
-	if (!cleared) occ = occ || view > linearGame(z) * (1.0 + gGameTol);
+	if (!cleared)
+	{
+		float g = linearGame(z);
+		if (gGameRange > 0)
+			// gun mask (Poorboy's rule, PoorboyWorldLines 1.4.0): only something of the game's within gGameRange of the
+			// camera AND clearly in front of the line hides it (the first-person gun and arms). The same surface as the line
+			// (the game's picture of a wall the line lies on) is never "in front": it must be nearer by 8 % and 3 cm
+			occ = occ || (g < gGameRange && g < view * 0.92 - 0.03);
+		else
+			occ = occ || view > g * (1.0 + gGameTol);
+	}
 	return occ;
 }
 
@@ -126,6 +137,7 @@ float PSMerge(float4 pos : SV_Position) : SV_Depth
 			float hiddenAlpha; float hiddenPass; float useGame; float gameEnc;
 			float gameNear; float gameFar; float gameScale[2];
 			float useFp; float fpClear; float gameTol; float stdZ;
+			float gameRange; float pad[3];
 		};
 	}
 
@@ -241,6 +253,8 @@ float PSMerge(float4 pos : SV_Position) : SV_Depth
 		rel(mVsLine); rel(mGsLine); rel(mPsLine); rel(mVsPos); rel(mPsFill); rel(mVsFill); rel(mVsFull); rel(mPsMerge); rel(mDsAlwaysWrite);
 		rel(mWDsv); rel(mWTex); rel(mFSrv); rel(mFTex);
 		rel(mLayoutLine); rel(mLayoutPos); rel(mCB); rel(mVB); rel(mStaticVB);
+		rel(mObjVB); mObjCount = 0; mObjVersion = ~uintptr_t(0);
+		rel(mLineVB); mLineVBBytes = 0; mLineKey = ~uint64_t(0);
 		rel(mDsv); rel(mDepthTex);
 		rel(mDsWrite); rel(mDsTest); rel(mDsHidden); rel(mDsNone); rel(mDsTestStd); rel(mDsHiddenStd);
 		rel(mBlendAlpha); rel(mBlendNoColor); rel(mRsNoCull); rel(mPointClamp);
@@ -373,17 +387,22 @@ float PSMerge(float4 pos : SV_Position) : SV_Depth
 
 	void Renderer::upload(const void* data, size_t bytes)
 	{
-		if (bytes > mVBBytes)
+		uploadTo(mVB, mVBBytes, data, bytes);
+	}
+
+	void Renderer::uploadTo(ID3D11Buffer*& vb, size_t& vbBytes, const void* data, size_t bytes)
+	{
+		if (bytes > vbBytes)
 		{
-			rel(mVB);
+			rel(vb);
 			size_t sz = 1 << 20; while (sz < bytes) sz <<= 1;
 			D3D11_BUFFER_DESC bd{};
 			bd.ByteWidth = (UINT)sz; bd.Usage = D3D11_USAGE_DYNAMIC; bd.BindFlags = D3D11_BIND_VERTEX_BUFFER; bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-			if (FAILED(mDev->CreateBuffer(&bd, nullptr, &mVB))) { mVBBytes = 0; return; }
-			mVBBytes = sz;
+			if (FAILED(mDev->CreateBuffer(&bd, nullptr, &vb))) { vbBytes = 0; return; }
+			vbBytes = sz;
 		}
 		D3D11_MAPPED_SUBRESOURCE m{};
-		if (SUCCEEDED(mCtx->Map(mVB, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) { memcpy(m.pData, data, bytes); mCtx->Unmap(mVB, 0); }
+		if (SUCCEEDED(mCtx->Map(vb, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) { memcpy(m.pData, data, bytes); mCtx->Unmap(vb, 0); }
 	}
 
 	void Renderer::setCB(float widthPx, float pull, float hiddenAlpha, float hiddenPass, bool useGameDepth)
@@ -398,6 +417,7 @@ float PSMerge(float4 pos : SV_Position) : SV_Depth
 		d->gameScale[0] = mGameDepth.width > 0 ? mGameDepth.width / (float)mW : 1.f;
 		d->gameScale[1] = mGameDepth.height > 0 ? mGameDepth.height / (float)mH : 1.f;
 		d->useFp = mGameDepth.fpSrv ? 1.f : 0.f; d->fpClear = mGameDepth.fpClearValue; d->gameTol = pull; d->stdZ = mStdZ ? 1.f : 0.f;
+		d->gameRange = mGameDepth.maskRange; d->pad[0] = d->pad[1] = d->pad[2] = 0.f;
 		mCtx->Unmap(mCB, 0);
 	}
 
@@ -429,6 +449,27 @@ float PSMerge(float4 pos : SV_Position) : SV_Depth
 		mCtx->Draw(mStaticCount, 0);
 	}
 
+	void Renderer::drawStaticOccluderRanges(const uint32_t* firstTri, const uint32_t* triCount, size_t n)
+	{
+		if (!mCtx || !mStaticVB || !mStaticCount || !n) return;
+		setCB(1, 0, 0, 0.f, false);
+		const UINT stride = 12, off = 0;
+		mCtx->IASetInputLayout(mLayoutPos);
+		mCtx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		mCtx->IASetVertexBuffers(0, 1, &mStaticVB, &stride, &off);
+		mCtx->VSSetShader(mVsPos, nullptr, 0); mCtx->VSSetConstantBuffers(0, 1, &mCB);
+		mCtx->GSSetShader(nullptr, nullptr, 0);
+		mCtx->PSSetShader(nullptr, nullptr, 0);
+		mCtx->OMSetBlendState(mBlendNoColor, nullptr, 0xFFFFFFFF);
+		mCtx->OMSetDepthStencilState(mDsWrite, 0);
+		const uint32_t total = mStaticCount / 3;
+		for (size_t i = 0; i < n; ++i)
+		{
+			if (firstTri[i] >= total) continue;
+			const uint32_t c = std::min(triCount[i], total - firstTri[i]);
+			if (c) mCtx->Draw(c * 3, firstTri[i] * 3);
+		}
+	}
 	void Renderer::drawOccluders(const std::vector<Tri>& tris)
 	{
 		if (!mCtx || tris.empty()) return;
@@ -447,17 +488,63 @@ float PSMerge(float4 pos : SV_Position) : SV_Depth
 		mCtx->Draw((UINT)(tris.size() * 3), 0);
 	}
 
+	void Renderer::setObjectOccluders(const std::vector<Tri>& tris, uintptr_t version)
+	{
+		if (version == mObjVersion) return;
+		mObjVersion = version;
+		rel(mObjVB); mObjCount = 0;
+		if (tris.empty()) return;
+		D3D11_BUFFER_DESC bd{};
+		bd.ByteWidth = (UINT)(tris.size() * sizeof(Tri)); bd.Usage = D3D11_USAGE_IMMUTABLE; bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+		D3D11_SUBRESOURCE_DATA sd{ tris.data(), 0, 0 };
+		if (SUCCEEDED(mDev->CreateBuffer(&bd, &sd, &mObjVB))) mObjCount = (uint32_t)(tris.size() * 3);
+	}
+
+	void Renderer::drawObjectOccluders()
+	{
+		if (!mCtx || !mObjVB || !mObjCount) return;
+		setCB(1, 0, 0, 0.f, false);
+		const UINT stride = 12, off = 0;
+		mCtx->IASetInputLayout(mLayoutPos);
+		mCtx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		mCtx->IASetVertexBuffers(0, 1, &mObjVB, &stride, &off);
+		mCtx->VSSetShader(mVsPos, nullptr, 0); mCtx->VSSetConstantBuffers(0, 1, &mCB);
+		mCtx->GSSetShader(nullptr, nullptr, 0);
+		mCtx->PSSetShader(nullptr, nullptr, 0);
+		mCtx->OMSetBlendState(mBlendNoColor, nullptr, 0xFFFFFFFF);
+		mCtx->OMSetDepthStencilState(mDsWrite, 0);
+		mCtx->Draw(mObjCount, 0);
+	}
+
 	void Renderer::drawLines(const LineVertex* v, size_t count, float widthPx, float pull, bool useOwnDepth, bool useGameDepth,
 	                         float hiddenAlpha)
 	{
 		if (!mCtx || !count) return;
-		const bool game = useGameDepth && mGameDepth.srv && mGameDepth.encoding != 0;
 		upload(v, count * sizeof(LineVertex));
-		if (!mVB) return;
+		drawLinesFrom(mVB, count, widthPx, pull, useOwnDepth, useGameDepth, hiddenAlpha);
+	}
+
+	void Renderer::drawLinesCached(const LineVertex* v, size_t count, uint64_t cacheKey, float widthPx, float pull, bool useOwnDepth,
+	                               bool useGameDepth, float hiddenAlpha)
+	{
+		if (!mCtx || !count) return;
+		if (cacheKey != mLineKey || !mLineVB)
+		{
+			uploadTo(mLineVB, mLineVBBytes, v, count * sizeof(LineVertex));
+			mLineKey = mLineVB ? cacheKey : ~uint64_t(0);
+		}
+		drawLinesFrom(mLineVB, count, widthPx, pull, useOwnDepth, useGameDepth, hiddenAlpha);
+	}
+
+	void Renderer::drawLinesFrom(ID3D11Buffer* vb, size_t count, float widthPx, float pull, bool useOwnDepth, bool useGameDepth,
+	                             float hiddenAlpha)
+	{
+		if (!vb) return;
+		const bool game = useGameDepth && mGameDepth.srv && mGameDepth.encoding != 0;
 		const UINT stride = sizeof(LineVertex), off = 0;
 		mCtx->IASetInputLayout(mLayoutLine);
 		mCtx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
-		mCtx->IASetVertexBuffers(0, 1, &mVB, &stride, &off);
+		mCtx->IASetVertexBuffers(0, 1, &vb, &stride, &off);
 		mCtx->VSSetShader(mVsLine, nullptr, 0); mCtx->VSSetConstantBuffers(0, 1, &mCB);
 		mCtx->GSSetShader(mGsLine, nullptr, 0); mCtx->GSSetConstantBuffers(0, 1, &mCB);
 		mCtx->PSSetShader(mPsLine, nullptr, 0); mCtx->PSSetConstantBuffers(0, 1, &mCB);
@@ -539,6 +626,26 @@ float PSMerge(float4 pos : SV_Position) : SV_Depth
 		D3D11_SHADER_RESOURCE_VIEW_DESC sv{}; sv.Format = srvF; sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; sv.Texture2D.MipLevels = 1;
 		if (FAILED(mDev->CreateShaderResourceView(mFTex, &sv, &mFSrv))) return false;
 		LOGF("post-bloom depth copies: %ux%u fmt %d", sd.Width, sd.Height, (int)sd.Format);
+		return true;
+	}
+
+	bool Renderer::copyGameDepthForMask(ID3D11DeviceContext* ctx, ID3D11Texture2D* gameDepth, int encoding, float nearClip, float farClip, float range)
+	{
+		mGameDepth = GameDepthInput{};
+		if (!mReady || !ctx || !gameDepth) return false;
+		ID3D11Device* owner = nullptr;
+		gameDepth->GetDevice(&owner);
+		if (owner) owner->Release();
+		if (owner != mDev) return false;                    // another device's texture (cannot be copied here)
+		if (!ensureCopies(gameDepth) || !mFTex || !mFSrv) return false;
+		ctx->CopyResource(mFTex, gameDepth);
+		mGameDepth.srv = mFSrv;
+		mGameDepth.encoding = encoding;
+		mGameDepth.nearClip = nearClip;
+		mGameDepth.farClip = farClip;
+		mGameDepth.width = (float)mCopyDesc.Width;
+		mGameDepth.height = (float)mCopyDesc.Height;
+		mGameDepth.maskRange = range;
 		return true;
 	}
 

@@ -79,8 +79,21 @@ namespace
 		uintptr_t moduleBase() const { return base; }
 
 		// false (no throw) if halo2.dll isn't loaded yet; throws if the site doesn't match build 1.3528.
+		// halo2.dll can be UNLOADED and loaded again (end a game, start a new map): then our patch went with the old image,
+		// `base` points at freed memory and the new image is unpatched. Drop the stale state (the near page may be out of
+		// rip+disp32 range of the new image, so free it) - the caller re-applies. Never touch the old address again.
+		bool stillLoaded() const { return base && (uintptr_t)GetModuleHandleA("halo2.dll") == base; }
+		void forgetStale()
+		{
+			if (!applied || stillLoaded()) return;
+			PLOG_INFO << "MasterTickrate: halo2.dll was reloaded; dropping the stale scalar patch";
+			if (scalarSlot) { VirtualFree(scalarSlot, 0, MEM_RELEASE); scalarSlot = nullptr; }
+			applied = false; base = 0;
+		}
+
 		bool apply()
 		{
+			forgetStale();
 			if (applied) return true;
 			base = (uintptr_t)GetModuleHandleA("halo2.dll");
 			if (!base) return false;
@@ -110,7 +123,7 @@ namespace
 
 		void revert()
 		{
-			if (base)
+			if (stillLoaded())   // a reloaded / unloaded halo2.dll has no patch to undo - and its old address is freed memory
 				writeText(base + kSiteRVA + 4, kDefaultDisp, sizeof(kDefaultDisp)); // restore -> flt_180C32AA0 (30.0)
 			if (scalarSlot) { VirtualFree(scalarSlot, 0, MEM_RELEASE); scalarSlot = nullptr; }
 			applied = false;
@@ -335,10 +348,10 @@ private:
 	TickrateScalarPatcher mScalar;
 	std::atomic<bool> mPendingRebuild{ false };
 
-	// The engine's stock collision scalar is 30.0 (flt_180C32AA0). We only force a live rebuild of existing collision
-	// shapes when our scalar actually CHANGES from what they were last built with. Rebuilding to the SAME value - e.g.
-	// flipping to 30 Hz, whose scalar == stock - would walk the whole object table and call the engine's Havok
-	// teardown/rebuild on every object for zero benefit, which is pure crash risk around level transitions.
+	// The engine's stock collision scalar is 30.0 (flt_180C32AA0). Every tick change forces a live rebuild of the existing
+	// collision shapes - also when the scalar itself does not change (flipping to 30 Hz, whose scalar == stock), so
+	// shapes baked by something else (Season 7 Physics' 60) never outlive a switch. The rebuild only ever runs from
+	// onGameTick while the game is fully in play (never mid-transition), under the SEH guard.
 	static constexpr float kStockScalar = 30.0f;
 	float mLastAppliedScalar = kStockScalar; // scalar the live collision shapes were last built with (stock at launch)
 
@@ -447,13 +460,12 @@ private:
 		}
 	}
 
-	// true only while the user has armed the "Master Tickrate" gate. The value input / flip button are hidden until
-	// then, so this is a belt-and-suspenders guard against any stray apply while disarmed.
-	bool isArmed()
-	{
-		auto settings = settingsWeak.lock();
-		return settings && settings->masterTickrateEnabled->GetValue();
-	}
+	// The arming checkbox is gone: the 60/30 button and the value box always apply. Until a rate is picked the game runs
+	// at its own rate (60) and the box just mirrors it. The last rate picked for THIS game (each game has its own
+	// instance) is re-applied on every later level load and mission restart this session (onMCCStateChanged). Kept here,
+	// not read back from the box: the box is shared by every game, and another game's load mirrors its own rate into it.
+	int mUserRate = 0;   // 0 = none picked yet
+	bool isArmed() { return true; }
 
 	// Arm/disarm gate. Arming just reveals the controls (nothing applies until the user picks a rate). Disarming
 	// returns the game to its stock 60 Hz tickrate and releases the collision scalar (so Season 7 physics can reclaim
@@ -476,7 +488,7 @@ private:
 	void onSetCustomRate(int& newRate)
 	{
 		PLOG_DEBUG << "MasterTickrate onSetCustomRate: " << newRate;
-		if (!isArmed()) return; // gate disarmed: ignore
+		if (!isArmed()) return;
 		try
 		{
 			lockOrThrow(mccStateHookWeak, mccStateHook);
@@ -493,12 +505,13 @@ private:
 
 			int16_t rate16 = (int16_t)newRate; // validator restricts to 3..32766 (fits the signed int16 field; 1-2 crash)
 			writeRate(rate16);
-			// only queue the (risky) live collision rebuild when the scalar actually changed - a no-op rebuild just
-			// churns every Havok body for nothing and is a crash risk when a level switch follows.
-			bool rebuild = applyScalarForRate(newRate);
-			if (rebuild) mPendingRebuild.store(true); // rebuild existing shapes on the next game tick (safe point)
+			mUserRate = rate16;   // re-applied on every later level load / restart of this game
+			// every tick change queues a live collision rebuild (Halo 2: the only game with the scalar). It runs from
+			// onGameTick only while the level is fully in play, under the SEH guard - never mid-transition.
+			applyScalarForRate(newRate);
+			mPendingRebuild.store(true); // every tick change rebuilds the existing shapes, on the next in-play game tick (safe point)
 
-			messagesGUI->addMessage(std::format("Master tickrate set to {} Hz{}.", (int)rate16, rebuild ? " (rebuilding collision)" : ""));
+			messagesGUI->addMessage(std::format("Master tickrate set to {} Hz{}.", (int)rate16, (gameT == GameState::Value::Halo2) ? " (rebuilding collision)" : ""));
 		}
 		catch (HCMRuntimeException ex)
 		{
@@ -507,8 +520,7 @@ private:
 	}
 
 	// The game resets the timing struct (int16/dt) on every level load. If a custom rate is active, restore it and
-	// re-assert the scalar. No rebuild needed here: the scalar repoint persists across loads, so shapes freshly
-	// built during the load already read the correct scalar.
+	// re-assert the scalar, and (when this changes the rate) queue a collision rebuild for the next in-play tick.
 	void onMCCStateChanged(const MCCState& newState)
 	{
 		if (newState.currentGameState != mGame) return;
@@ -518,10 +530,9 @@ private:
 		// post-reset rate into it BEFORE the re-apply would overwrite the rate we are about to re-apply -
 		// the re-apply would then dutifully write back the 60 the game just reset to.
 		auto settings = settingsWeak.lock();
-		const bool armed = settings && settings->masterTickrateEnabled->GetValue();
-		if (!armed)
+		if (!settings || mUserRate <= 0)
 		{
-			// disarmed: just show the game's real tickrate (it resets on every load)
+			// no rate picked for this game yet: it keeps its own (60); just show the real tickrate (it resets on every load)
 			const int16_t real = readRate(); if (real > 0) setBox(real);
 			return;
 		}
@@ -530,9 +541,14 @@ private:
 		// silently reverted to 60 on every map load while the box still showed the user's value.
 		try
 		{
-			int rate = settings->customTickrate->GetValue();
+			// the last rate picked for this game, not the shared box (another game's load may have mirrored its own rate into it)
+			const int rate = mUserRate;
+			const int16_t before = readRate();
 			writeRate((int16_t)rate);
 			applyScalarForRate(rate);
+			// a tick change (every load comes up at 60): rebuild collision too, on the next in-play game tick - the
+			// rebuild waits for the level to be fully in play (onGameTick), so it never runs mid-transition
+			if (before != (int16_t)rate) mPendingRebuild.store(true);
 			setBox(rate); // armed: we just re-applied the chosen rate, so show it (overrides the reset value above)
 		}
 		catch (HCMRuntimeException& ex) { PLOG_DEBUG << "MasterTickrate re-arm skipped: " << ex.what(); }
@@ -568,23 +584,44 @@ private:
 		}
 	}
 
+	// 1 = both engine functions match build 1.3528, 0 = mismatch, -1 = the image faulted on read (POD-only, SEH-wrapped)
+	static int probesMatchSEH(uintptr_t base)
+	{
+		__try
+		{
+			return (memcmp((void*)(base + kRecreateCollisionRVA), kRecreateProbe, sizeof(kRecreateProbe)) == 0
+				&& memcmp((void*)(base + kGetObjectRVA), kGetObjectProbe, sizeof(kGetObjectProbe)) == 0) ? 1 : 0;
+		}
+		__except (EXCEPTION_EXECUTE_HANDLER)
+		{
+			return -1;
+		}
+	}
+
 	// runs on the GAME thread each tick; when a rebuild is queued, recreate collision for every live object.
 	void onGameTick(uint32_t)
 	{
-		if (!mPendingRebuild.exchange(false)) return;
-		if (!mScalar.isApplied()) return;
+		if (!mPendingRebuild.load()) return;
+		if (!mScalar.isApplied()) { mPendingRebuild.store(false); return; }   // no scalar patch (not Halo 2 / not loaded): nothing to rebuild
 		// NEVER walk the object table unless a game is fully in-play. During a level transition the table can be
 		// half-built, and calling the engine's collision teardown/rebuild against it can crash. This (plus the SEH
-		// guard below) is the core stability fix for the level-switch crash.
+		// guard below) is the core stability fix for the level-switch crash. The request STAYS queued until the level
+		// is in play (a picked rate re-applied as a level loads rebuilds once it is playable).
 		if (auto h = mccStateHookWeak.lock(); !h || !h->isGameCurrentlyPlaying(mGame)) return;
+		// the patched halo2.dll must still be THE loaded one: ending a game and starting a new map can reload it, and
+		// reading the cached base then faulted here (crash 2026-10-30 13:20, MasterTickrate.cpp onGameTick). The
+		// request stays queued; the level-load re-arm re-patches the new image and this tick runs after it.
+		if (!mScalar.stillLoaded()) { mScalar.forgetStale(); return; }
+		mPendingRebuild.store(false);
 		uintptr_t base = mScalar.moduleBase();
 		if (!base) return;
 
-		// build gate: the two functions we call must match build 1.3528 before we jump into them
-		if (memcmp((void*)(base + kRecreateCollisionRVA), kRecreateProbe, sizeof(kRecreateProbe)) != 0
-			|| memcmp((void*)(base + kGetObjectRVA), kGetObjectProbe, sizeof(kGetObjectProbe)) != 0)
+		// build gate: the two functions we call must match build 1.3528 before we jump into them (SEH-guarded read)
+		const int probe = probesMatchSEH(base);
+		if (probe <= 0)
 		{
-			PLOG_ERROR << "MasterTickrate: object-fn prologue mismatch; skipping collision rebuild.";
+			PLOG_ERROR << (probe < 0 ? "MasterTickrate: halo2.dll not readable; skipping collision rebuild."
+			                         : "MasterTickrate: object-fn prologue mismatch; skipping collision rebuild.");
 			return;
 		}
 
@@ -600,7 +637,7 @@ private:
 	void onFlip()
 	{
 		PLOG_DEBUG << "MasterTickrate onFlip";
-		if (!isArmed()) return; // gate disarmed: ignore
+		if (!isArmed()) return;
 		try
 		{
 			lockOrThrow(mccStateHookWeak, mccStateHook);
@@ -623,13 +660,14 @@ private:
 			// the collision scalar and rebuilds so 30/60 physics is consistent (not just game speed).
 			int16_t newRate = (currentRate >= 45) ? (int16_t)30 : (int16_t)60;
 			writeRate(newRate);
-			// only rebuild when the scalar actually changed (flipping to 30 == stock scalar, so no rebuild - which
-			// was the level-switch crash: a pointless full-object-table Havok churn right before a transition).
-			bool rebuild = applyScalarForRate(newRate);
-			if (rebuild) mPendingRebuild.store(true);
+			mUserRate = newRate;   // re-applied on every later level load / restart of this game
+			// every tick change queues a live collision rebuild, also to 30 (== the stock scalar). The level-switch crash
+			// this once avoided is handled where the rebuild runs: onGameTick only while fully in play, SEH-guarded.
+			applyScalarForRate(newRate);
+			mPendingRebuild.store(true); // every tick change rebuilds the existing shapes, on the next in-play game tick (safe point)
 			setBox(newRate); // update the "Custom Tickrate (Hz)" box so it shows the flipped rate (30/60), not the old value
 
-			messagesGUI->addMessage(std::format("Master tickrate set to {} Hz{}.", newRate, rebuild ? " (rebuilding collision)" : ""));
+			messagesGUI->addMessage(std::format("Master tickrate set to {} Hz{}.", newRate, (gameT == GameState::Value::Halo2) ? " (rebuilding collision)" : ""));
 		}
 		catch (HCMRuntimeException ex)
 		{

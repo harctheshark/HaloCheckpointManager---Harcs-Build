@@ -153,6 +153,15 @@ private:
 		mSettings->spotBackEvent,
 		vsk{}),
 
+		// Halo 2 offset save state (Collision Viewer). Unbound by default.
+		initEventOnPressHotkey(offsetSave,
+		mSettings->offsetSaveEvent,
+		vsk{}),
+
+		initEventOnPressHotkey(offsetLoad,
+		mSettings->offsetLoadEvent,
+		vsk{}),
+
 		initEventOnPressHotkey(toggleGUI,
 		mSettings->toggleGUIHotkeyEvent,
 		vsk{{ ImGuiKey_GraveAccent }}),
@@ -571,6 +580,12 @@ private:
 
 		initEventOnPressHotkey(replayStopPlaybackHotkey,
 		mSettings->replayStopPlaybackEvent,
+		vsk{}),
+
+		/// Launch Trajectory test bench start / stop - default unbound; bind via the GUI. Lives in REPLAY_HOTKEYS
+		/// (an event-on-press list with room) because ALL_EVENTONPRESS_HOTKEYS is near BOOST_PP_TUPLE_SIZE's 64.
+		initEventOnPressHotkey(launchTrajectoryBenchHotkey,
+		mSettings->launchTrajectoryBenchHotkeyEvent,
 		vsk{}),
 
 		/// Halo Campaign Evolved skulls - all 56, all unbound by default.

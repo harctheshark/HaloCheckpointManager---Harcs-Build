@@ -15026,16 +15026,61 @@
 	     mask @ +0x8, player_actions[16] @ +0x100 (stride 0x60). This is the deterministic input point -
 	     NOT the per-render-frame builder sub_180866A10 (which fires ~240Hz and desyncs). -->
 	<VersionedEntry Name="playerActionUpdateFunction" Type="MultilevelPointer::ModuleOffset">
+		<!-- the simulation_update consumer, RCX = simulation_update* (Documents\Halo Mod And Tools\Replay Port\REPORT_*.md) -->
 		<Version Version="1.3528.0.0" Game="Halo2">
 			<Module>halo2.dll</Module>
 			<Offsets>
 				<Offset>0x6A3910</Offset>
 			</Offsets>
 		</Version>
+		<Version Version="1.3528.0.0" Game="Halo3">
+			<Module>halo3.dll</Module>
+			<Offsets>
+				<Offset>0xE444C</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.3528.0.0" Game="Halo3ODST">
+			<Module>halo3odst.dll</Module>
+			<Offsets>
+				<Offset>0xFEA10</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.3528.0.0" Game="HaloReach">
+			<Module>haloreach.dll</Module>
+			<Offsets>
+				<Offset>0x47050</Offset>
+			</Offsets>
+		</Version>
+		<Version Version="1.3528.0.0" Game="Halo4">
+			<Module>halo4.dll</Module>
+			<Offsets>
+				<Offset>0x82330</Offset>
+			</Offsets>
+		</Version>
 	</VersionedEntry>
 
 	<VersionedEntry Name="playerActionUpdateContextInterpreter" Type="MidhookContextInterpreter">
 		<Version Version="All" Game="Halo2">
+			<Parameters>
+				<pSimUpdate>rcx</pSimUpdate>
+			</Parameters>
+		</Version>
+		<Version Version="All" Game="Halo3">
+			<Parameters>
+				<pSimUpdate>rcx</pSimUpdate>
+			</Parameters>
+		</Version>
+		<Version Version="All" Game="Halo3ODST">
+			<Parameters>
+				<pSimUpdate>rcx</pSimUpdate>
+			</Parameters>
+		</Version>
+		<Version Version="All" Game="HaloReach">
+			<Parameters>
+				<pSimUpdate>rcx</pSimUpdate>
+			</Parameters>
+		</Version>
+		<Version Version="All" Game="Halo4">
 			<Parameters>
 				<pSimUpdate>rcx</pSimUpdate>
 			</Parameters>

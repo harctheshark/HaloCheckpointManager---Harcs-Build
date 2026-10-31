@@ -5,10 +5,11 @@
 #include "DIContainer.h"
 #include <filesystem>
 
-// Plays back a recorded .h2r. Flow:
+// Plays back a recorded .HaloReplay. Flow:
 //   1. loadReplay(path)   - read + validate file into memory
-//   2. startPlayback()    - arm; subscribe to revert + player-action-update
-//   3. <user reverts the matching checkpoint> - feeding begins, real input blocked
+//   2. startPlayback()    - arm; subscribe to revert + player-action-update; a replay carrying its start checkpoint
+//                           injects it (the revert stays the user's)
+//   3. <the revert> - feeding begins, real input blocked
 //   4. inputs overwritten each tick until end-of-stream -> auto stop
 class ReplayPlayer : public IOptionalCheat
 {

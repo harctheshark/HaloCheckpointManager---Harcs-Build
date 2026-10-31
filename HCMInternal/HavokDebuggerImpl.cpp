@@ -464,6 +464,33 @@ static volatile LONG g_liveGen = 0;
 static volatile uintptr_t g_bspWorld = 0;
 static volatile LONG      g_bspGen = 0;     // bumped each (re)gather so viewers refresh
 static uintptr_t          g_bspSig = 0;     // content signature (world + fixed-island count)
+// collision viewer (HavokDebuggerBridge::startGatherOnly): the engine-thread gather runs without the VDB server.
+// g_bspSeq is a seqlock around gatherBSP's writes to g_bspTri: odd while they are being rewritten (readers on the
+// render thread copy only when it is even and unchanged across the copy).
+static volatile bool      g_gatherOnly = false;
+static volatile LONG      g_bspSeq = 0;
+// Reach objects for the collision viewer (setReachObjects / copyObjectTris): the components to emit (set by the render
+// thread under g_rxObjLock), their bodies' world-space triangles (+ the component's tag per triangle) rewritten by the
+// engine thread under the seqlock g_rxObjSeq every other tick.
+#define MAX_RX_OBJ_COMPS 1024
+#define MAX_RX_OBJ_TRI   400000
+#define MAX_RX_OBJ_SEG   400000
+// a spin lock (this translation unit targets an old Windows SDK level: no SRW locks); held only for a short memcpy
+static volatile LONG      g_rxObjLock = 0;
+static void rxObjLock()   { while(InterlockedCompareExchange(&g_rxObjLock, 1, 0) != 0) YieldProcessor(); }
+static void rxObjUnlock() { InterlockedExchange(&g_rxObjLock, 0); }
+static unsigned long long g_rxObjComp[MAX_RX_OBJ_COMPS]; static unsigned char g_rxObjCompTag[MAX_RX_OBJ_COMPS]; static int g_rxObjCompN = 0;
+static float              g_rxObjTri[MAX_RX_OBJ_TRI][9];
+static unsigned char      g_rxObjTriTag[MAX_RX_OBJ_TRI];
+static float              g_rxObjSeg[MAX_RX_OBJ_SEG][6];
+static volatile LONG      g_rxObjTriCount = 0, g_rxObjSeq = 0, g_rxObjGen = 0;
+static volatile bool      g_gatherStructure = true;     // gather-only: the structure pass on (off: objects only)
+static volatile LONG      g_rxObjMicros = 0;            // the last object pass, microseconds
+static volatile uintptr_t g_reachEngineTls = 0;         // Reach: the game thread's TLS block (TLS[TlsIndex]), for the direct read
+// diagnostics for the machines (tag 7 = h2cv::Cat::Machine) of the last object pass: per component its bodies, their top shape
+// and how many triangles each gave. Written under g_rxObjLock; no heap (engine thread).
+#define RX_MACHINE_TAG 7
+static char               g_rxMachineDiag[4096] = {0};
 
 // ---- soft ceilings (tag data: structure_design -> soft ceilings -> triangles) ----
 static uintptr_t          G_SCENARIO_PTR = 0;   // global_scenario* (resolveAddrs)
@@ -1868,9 +1895,88 @@ static void ghostScratchUpdate(uintptr_t world)
 // CE-readable heartbeat (scan AOB "48 56 42 45 41 54 30 31" = "HVBEAT01"): +8 tick (u32, increments
 // only if the step hook actually fires), +12 bspTris, +16 objMoppTris, +24 world. DIAGNOSTIC - remove later.
 // +8 tick(engineHook fires) +12 bspTris +16 objMopp +20 vdbtick +24 paused +28 hookInstalled +32 stepBytes(live first 4 bytes @STEP_FUNC) +40 world +48 stepFunc
+#ifdef TARGET_H3
+static void deriveWorldReach();   // below (VDB loop helpers); also called from engineHook in gather-only mode
+#endif
+
+// Reach objects for the collision viewer: every component in the list -> its rigid bodies -> world-space triangles at the
+// bodies' current transforms (gatherBody: the engine's own getChildShape for MOPP parts, leaf primitives too), tagged with
+// the component's tag. Engine thread (getChildShape needs its TLS). Bounded by MAX_RX_OBJ_TRI.
+static void gatherReachObjectsInner(int* pn, int* pm)
+{
+	unsigned long long comps[MAX_RX_OBJ_COMPS]; unsigned char tags[MAX_RX_OBJ_COMPS]; int nc;
+	rxObjLock();
+	nc = g_rxObjCompN; if(nc > MAX_RX_OBJ_COMPS) nc = MAX_RX_OBJ_COMPS;
+	memcpy(comps, g_rxObjComp, sizeof(comps[0]) * nc); memcpy(tags, g_rxObjCompTag, nc);
+	rxObjUnlock();
+	float (*saveSeg)[6] = g_tSeg; float (*saveTri)[9] = g_tTri; int saveSegMax = g_tSegMax, saveTriMax = g_tTriMax;
+	g_tSeg = g_rxObjSeg; g_tTri = g_rxObjTri; g_tSegMax = MAX_RX_OBJ_SEG; g_tTriMax = MAX_RX_OBJ_TRI;
+	uintptr_t cbase=0; unsigned cstride=0; int ccount=0;
+	if(!resolveCompTable(cbase, cstride, ccount)) return;
+	char diag[4096]; int dn = 0; diag[0] = 0;
+	#define RXD(...) do{ if(dn < (int)sizeof(diag)-160){ const int w = _snprintf_s(diag+dn, sizeof(diag)-dn, _TRUNCATE, __VA_ARGS__); if(w > 0) dn += w; } }while(0)
+	for(int c=0; c<nc && *pm < MAX_RX_OBJ_TRI-256; ++c){
+		const unsigned idx = (unsigned)(comps[c] & 0xFFFF);           // a Havok component datum: index in the low half
+		const bool machine = tags[c] == RX_MACHINE_TAG;
+		if((int)idx >= ccount){ if(machine) RXD("comp %08llX: index past the table (%d)\n", comps[c], ccount); continue; }
+		const uintptr_t comp = cbase + (uintptr_t)idx * cstride;
+		__try{
+			if(!ok4(comp) || *(unsigned short*)comp == 0){ if(machine) RXD("comp %08llX: free slot\n", comps[c]); continue; }
+			const int rc = *(int*)(comp+g_compRbOff+8); const uintptr_t rb = *(uintptr_t*)(comp+g_compRbOff);
+			if(machine) RXD("comp %08llX: %d bodies:", comps[c], rc);
+			if(!ok4(rb) || rc <= 0 || rc >= 64){ if(machine) RXD(" (body list unreadable)\n"); continue; }
+			for(int k=0; k<rc && *pm < MAX_RX_OBJ_TRI-256; ++k){
+				const uintptr_t b = *(uintptr_t*)(rb+g_compBodyOff+(uintptr_t)k*g_compBodyStride);
+				if(!okPtr(b) || !isRigidBody(b)){
+					if(machine) RXD(" [%d %s vt %llX]", k, okPtr(b) ? "not a rigid body" : "null", okPtr(b) ? *(unsigned long long*)b : 0ull);
+					continue;
+				}
+				const int before = *pm;
+				g_tSeg = g_rxObjSeg; g_tTri = g_rxObjTri;            // (fanReachInst may have swapped them)
+				gatherBody(b, pn, pm, true);
+				for(int t=before; t<*pm; ++t) g_rxObjTriTag[t] = tags[c];
+				if(machine){
+					const uintptr_t shp = *(uintptr_t*)(b+OFF_SHAPE);
+					const float* T = (const float*)(b+OFF_TRANSFORM);
+					RXD(" [%d shape vt %llX: %d tris at %.2f %.2f %.2f]", k, okPtr(shp) ? *(unsigned long long*)shp : 0ull, *pm - before, T[12], T[13], T[14]);
+				}
+			}
+			if(machine) RXD("\n");
+		}__except(EXCEPTION_EXECUTE_HANDLER){ if(machine) RXD(" (fault)\n"); }
+	}
+	#undef RXD
+	rxObjLock(); memcpy(g_rxMachineDiag, diag, (size_t)dn + 1); rxObjUnlock();
+	g_tSeg = saveSeg; g_tTri = saveTri; g_tSegMax = saveSegMax; g_tTriMax = saveTriMax;
+}
+static void gatherReachObjects()
+{
+	int n = 0, m = 0;
+	LARGE_INTEGER t0, t1, f; QueryPerformanceCounter(&t0);
+	g_rxObjSeq |= 1; MemoryBarrier();
+	__try { gatherReachObjectsInner(&n, &m); } __except(EXCEPTION_EXECUTE_HANDLER) {}
+	g_rxObjTriCount = m; g_rxObjGen++;
+	MemoryBarrier(); g_rxObjSeq = (g_rxObjSeq|1)+1;
+	QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&f);
+	g_rxObjMicros = (LONG)((t1.QuadPart - t0.QuadPart) * 1000000 / (f.QuadPart ? f.QuadPart : 1));
+}
 extern "C" void engineHook()  // patched over sub_1406A8AE0; ENGINE thread
 {
-	if(g_vdbPaused) return;        // HCM: button off -> skip gather (real step already ran in stepHook)
+	if(g_vdbPaused && !g_gatherOnly) return;        // HCM: button off -> skip gather (real step already ran in stepHook)
+	// gather-only (collision viewer, no VDB thread): the Reach world is normally derived on the VDB loop - derive it here
+	// (engine thread) when unknown, and again every ~2 s so a new map's world replaces a stale one
+#ifdef TARGET_H3
+	if(g_gatherOnly && g_game==3){
+		static unsigned s_derive=0;
+		if(!okPtr(*(uintptr_t*)G_WORLD_PTR) || (++s_derive % 120)==0){ __try{ deriveWorldReach(); }__except(EXCEPTION_EXECUTE_HANDLER){} }
+		// the collision viewer's direct read needs the game thread's TLS block (Reach's resource getter sub_180014124 reads
+		// i32 [TLS[TlsIndex]+0x338]); this IS the game thread: record it (TlsIndex = u32 haloreach+0xC17B18)
+		__try{
+			const uintptr_t mod=(uintptr_t)GetModuleHandleA("haloreach.dll");
+			if(mod){ const unsigned idx=*(unsigned*)(mod+0xC17B18); void** ta=(void**)__readgsqword(0x58);
+				if(ta && idx<1088) g_reachEngineTls=(uintptr_t)ta[idx]; }
+		}__except(EXCEPTION_EXECUTE_HANDLER){}
+	}
+#endif
 	uintptr_t world=*(uintptr_t*)G_WORLD_PTR;
 	if(!okPtr(world)) return;
 #ifdef TARGET_H3
@@ -1893,11 +1999,19 @@ extern "C" void engineHook()  // patched over sub_1406A8AE0; ENGINE thread
 	// loaded fixed objects like the Pelican without re-gathering every tick. Soft ceilings ride
 	// the same gate (gatherSoftCeilings resolves the scenario fresh), so there is no per-tick
 	// polling — they are rebuilt only on a content change.
+	// collision viewer: the Reach objects it asked for, live (every other tick)
+	if(g_gatherOnly && g_game==3){
+		static unsigned s_objTick3=0;
+		if((++s_objTick3 & 1)==0 && g_rxObjCompN > 0) gatherReachObjects();
+	}
 	uintptr_t fi=*(uintptr_t*)(world+48);
 	unsigned fc = okPtr(fi) ? *(unsigned*)(fi+104) : 0;
 	uintptr_t sig = world ^ ((uintptr_t)fc * 2654435761u);
 	if(sig==g_bspSig) return;
+	if(g_gatherOnly && g_vdbPaused && !g_gatherStructure) return;   // collision viewer on a world file: objects only
+	g_bspSeq |= 1; MemoryBarrier();                 // odd: g_bspTri is being rewritten
 	__try { gatherBSP(world); gatherSoftCeilings(); g_bspSig=sig; } __except(EXCEPTION_EXECUTE_HANDLER) {}
+	MemoryBarrier(); g_bspSeq = (g_bspSeq|1)+1;     // even again (also after a fault: the readers retry on the new value)
 }
 
 #ifdef TARGET_H3
@@ -2596,7 +2710,10 @@ static void resolveAddrs()
 	} else if(g_game==3){   // ===== Halo Reach (haloreach.dll, newer Havok ~2010) =====
 		// Component table layout differs (resolveCompTable handles it); transform + rb-array offsets shifted.
 		G_COMP_ARRAY_PTR=RV(0x180C519B8); g_reachComp=true;            // header H; dataTable=H+*(u32)(H+0x60), count@+0x40, stride 0xC0 (VA = imgbase+0xC519B8, NOT 0x18C519B8!)
-		g_compRbOff=0x30; g_compBodyOff=0x40; g_compBodyStride=0x70;   // rbArr@comp+0x30, count@+0x38; body[k]=*(rbArr+0x40+k*0x70)
+		// rbArr@comp+0x30, count@+0x38; body[k]=*(rbArr+0x40+k*0x50). ⚠ The entries are 0x50 apart, NOT 0x70 (live m50 double
+		// door 2026-10-26: entry 1 starts at +0x50 - its position at +0x68, its body at +0x90). 0x70 only ever met single-body
+		// objects; every multi-part machine lost all but its first part (a double door drew one leaf).
+		g_compRbOff=0x30; g_compBodyOff=0x40; g_compBodyStride=0x50;
 		OFF_TRANSFORM=0x170; OFF_COM=0x1A0;                            // hkTransform @ body+0x170 (rot cols +0x170/80/90, pos@+0x1A0); COM marker = body pos
 		g_cvxPdataOff=0x70; g_cvxNpOff=0x78;                          // Reach convex planes shifted +8 (verts vdata@+0x50/nv@+0x60 unchanged)
 		g_bpWorldOff=0x88;                                            // broadphase ptr @ world+0x88 (ODST +0x80); mn@bp+0x20/mx@bp+0x30
@@ -3955,6 +4072,17 @@ namespace HavokDebuggerBridge
 {
 	bool isRunning() { return g_vdbStarted && !g_vdbPaused; }
 
+	int collisionTris(int which, const float** tris, long* gen)
+	{
+		switch(which){
+		case 0: *tris=&g_bspTri[0][0];     *gen=g_bspGen;     return (int)g_bspTriCount;
+		case 1: *tris=&g_instTri[0][0];    *gen=g_instGen;    return (int)g_instTriCount;
+		case 2: *tris=&g_objCollTri[0][0]; *gen=g_objCollGen; return (int)g_objCollTriCount;
+		case 3: *tris=&g_softTri[0][0];    *gen=g_softGen;    return (int)g_softCount;
+		}
+		*tris=0; *gen=0; return 0;
+	}
+
 	bool start(int game)
 	{
 		g_game    = game;
@@ -3984,7 +4112,83 @@ namespace HavokDebuggerBridge
 	void stop()
 	{
 		g_vdbPaused = true;          // stop the gather first (engine thread leaves stepHook)...
-		uninstallEngineHook();       // ...then restore the original STEP_FUNC prologue
+		if(!g_gatherOnly) uninstallEngineHook();       // ...then restore the original STEP_FUNC prologue (unless the collision viewer still gathers)
+	}
+
+	// ---- gather-only (collision viewer): the engine-thread gather without the VDB server ----
+	bool startGatherOnly(int game)
+	{
+		if(game != 3) return false;                  // Reach only (Halo 2 / 3 / ODST have their own collision readers)
+		if(g_gatherOnly && g_game == 3 && g_hookInstalled && GetModuleHandleA("haloreach.dll")) return true;
+		const bool vdbActive = g_vdbStarted && !g_vdbPaused;
+		if(vdbActive && g_game != 3) return false;   // the debugger is attached to another game right now
+		g_game    = 3;
+		g_modName = "haloreach.dll";
+		if(!GetModuleHandleA(g_modName)) return false;
+		if(!vdbActive){
+			g_gatherOnly = false;                    // quiet the engine thread while the addresses are re-resolved
+			resolveAddrs();
+			uninstallEngineHook();
+			g_bspSig = 0; g_derivedWorld = 0; g_bspWorld = 0;
+			if(STEP_FUNC) installEngineHook();
+		}
+		g_gatherOnly = true;
+		return g_hookInstalled;
+	}
+
+	void stopGatherOnly()
+	{
+		g_gatherOnly = false;
+		rxObjLock(); g_rxObjCompN = 0; rxObjUnlock();
+		if(g_vdbPaused) uninstallEngineHook();       // the debugger is off too: put the step function back
+	}
+
+	unsigned bspVersion() { return (unsigned)g_bspGen; }
+
+	bool copyBspTris(float* dst, int maxTris, int* outCount, unsigned* outVersion)
+	{
+		if(outCount) *outCount = 0;
+		const LONG s1 = g_bspSeq; MemoryBarrier();
+		if(s1 & 1) return false;
+		const unsigned ver = (unsigned)g_bspGen;
+		int n = (int)g_bspTriCount; if(n < 0) n = 0; if(n > maxTris) n = maxTris; if(n > MAX_BSP_TRI) n = MAX_BSP_TRI;
+		if(n) memcpy(dst, g_bspTri, (size_t)n * 9 * sizeof(float));
+		MemoryBarrier();
+		if(g_bspSeq != s1) return false;             // rewritten while copying: try again next frame
+		if(outCount) *outCount = n;
+		if(outVersion) *outVersion = ver;
+		return true;
+	}
+
+	void setGatherStructure(bool on) { g_gatherStructure = on; }
+	unsigned long long reachEngineTls() { return (unsigned long long)g_reachEngineTls; }
+	unsigned objectGatherMicros() { return (unsigned)g_rxObjMicros; }
+	unsigned objectTrisVersion() { return (unsigned)g_rxObjGen; }
+	std::string reachMachineDiag() { rxObjLock(); std::string s(g_rxMachineDiag); rxObjUnlock(); return s; }
+
+	void setReachObjects(const unsigned long long* components, const unsigned char* tags, int count)
+	{
+		if(count < 0) count = 0; if(count > MAX_RX_OBJ_COMPS) count = MAX_RX_OBJ_COMPS;
+		rxObjLock();
+		if(count) { memcpy(g_rxObjComp, components, sizeof(g_rxObjComp[0]) * count); memcpy(g_rxObjCompTag, tags, count); }
+		g_rxObjCompN = count;
+		rxObjUnlock();
+		if(count == 0){ g_rxObjSeq |= 1; MemoryBarrier(); g_rxObjTriCount = 0; g_rxObjGen++; MemoryBarrier(); g_rxObjSeq = (g_rxObjSeq|1)+1; }
+	}
+
+	bool copyObjectTris(float* dst, unsigned char* tags, int maxTris, int* outCount, unsigned* outVersion)
+	{
+		if(outCount) *outCount = 0;
+		const LONG s1 = g_rxObjSeq; MemoryBarrier();
+		if(s1 & 1) return false;
+		const unsigned ver = (unsigned)g_rxObjGen;
+		int n = (int)g_rxObjTriCount; if(n < 0) n = 0; if(n > maxTris) n = maxTris; if(n > MAX_RX_OBJ_TRI) n = MAX_RX_OBJ_TRI;
+		if(n){ memcpy(dst, g_rxObjTri, (size_t)n * 9 * sizeof(float)); memcpy(tags, g_rxObjTriTag, (size_t)n); }
+		MemoryBarrier();
+		if(g_rxObjSeq != s1) return false;
+		if(outCount) *outCount = n;
+		if(outVersion) *outVersion = ver;
+		return true;
 	}
 }
 
@@ -3996,6 +4200,18 @@ namespace HavokDebuggerBridge
 	bool start(int)  { return false; }
 	void stop()      {}
 	bool isRunning() { return false; }
+	bool startGatherOnly(int) { return false; }
+	void stopGatherOnly() {}
+	unsigned bspVersion() { return 0; }
+	bool copyBspTris(float*, int, int* outCount, unsigned*) { if(outCount) *outCount = 0; return false; }
+	void setReachObjects(const unsigned long long*, const unsigned char*, int) {}
+	void setGatherStructure(bool) {}
+	unsigned long long reachEngineTls() { return 0; }
+	unsigned objectGatherMicros() { return 0; }
+	std::string reachMachineDiag() { return {}; }
+	bool copyObjectTris(float*, unsigned char*, int, int* outCount, unsigned*) { if(outCount) *outCount = 0; return false; }
+	unsigned objectTrisVersion() { return 0; }
+	int collisionTris(int, const float** tris, long* gen) { *tris=0; *gen=0; return 0; }
 }
 
 #endif // HCM_HAVOK_AVAILABLE

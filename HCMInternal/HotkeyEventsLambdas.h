@@ -40,6 +40,7 @@ class HotkeyEventsLambdas
 	ScopedCallback<ActionEvent> mh2pFlyHotkeyCallbackHandle;
 	ScopedCallback<ActionEvent> mh2pDisableAIHotkeyCallbackHandle;
 	ScopedCallback<ActionEvent> mh2pForgeBounceHotkeyCallbackHandle;
+	ScopedCallback<ActionEvent> mLaunchTrajectoryBenchHotkeyCallbackHandle;
 
 	// Halo Campaign Evolved feature hotkeys. One entry per subscription, built in the constructor body from the
 	// tables there rather than written out as 44 named members: a named member per hotkey is 44 more chances to
@@ -82,7 +83,8 @@ public:
 		mh2pNoFallDeathsHotkeyCallbackHandle(settings->h2pNoFallDeathsHotkeyEvent, [boolsetting = settings->h2pNoFallDeathsToggle]() { boolsetting->flipBoolSetting(); }),
 		mh2pFlyHotkeyCallbackHandle(settings->h2pFlyHotkeyEvent, [boolsetting = settings->h2pFlyToggle]() { boolsetting->flipBoolSetting(); }),
 		mh2pDisableAIHotkeyCallbackHandle(settings->h2pDisableAIHotkeyEvent, [boolsetting = settings->h2pDisableAIToggle]() { boolsetting->flipBoolSetting(); }),
-		mh2pForgeBounceHotkeyCallbackHandle(settings->h2pForgeBounceHotkeyEvent, [boolsetting = settings->h2pForgeBounceToggle]() { boolsetting->flipBoolSetting(); })
+		mh2pForgeBounceHotkeyCallbackHandle(settings->h2pForgeBounceHotkeyEvent, [boolsetting = settings->h2pForgeBounceToggle]() { boolsetting->flipBoolSetting(); }),
+		mLaunchTrajectoryBenchHotkeyCallbackHandle(settings->launchTrajectoryBenchHotkeyEvent, [boolsetting = settings->launchTrajectoryBenchRun]() { boolsetting->flipBoolSetting(); })
 		
 
 	{

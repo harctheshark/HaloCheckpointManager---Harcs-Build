@@ -81,7 +81,7 @@ namespace h2cv
 		struct Rel { ID3D11RenderTargetView*& r; ID3D11DepthStencilView*& d; ~Rel() { if (r) r->Release(); if (d) d->Release(); } } rel{ rtv, dsv };
 		mF3.have = true; mF3.f = f; mF3.vp = vp; mF3.presentIdx = mPresentCount; mF3.user = (uint32_t)h3::viewUser(view);
 		const int occ = settings.occlusion.load();
-		if (occ != (int)Occlusion::InFrame) return;
+		if (occ != (int)Occlusion::InFrame && occ != (int)Occlusion::PostBloom) return;
 		if (!rtv || !dsv || nvp < 1 || vp.Width < 16 || vp.Height < 16 || !comOk3(rtv) || !comOk3(dsv)) return;
 
 		// the bound set must be the main scene target: single-sample colour + D32_FLOAT_S8X24 depth of the same size
@@ -124,7 +124,35 @@ namespace h2cv
 		// labels are drawn on the back buffer at Present: scale from scene-target to back-buffer pixels
 		mLabelScaleX = (cd.Width && mW) ? (float)mW / (float)cd.Width : 1.f;
 		mLabelScaleY = (cd.Height && mH) ? (float)mH / (float)cd.Height : 1.f;
+		if (occ == (int)Occlusion::PostBloom || occ == (int)Occlusion::InFrame)
+		{
+			// after bloom (also for InFrame_NoBloom: an in-frame draw here gets the game's bloom - Halo 3 / ODST have no
+			// bloom switch like Halo 2's): keep the depth view; Present copies it once the gun is in it and draws over the finished frame
+			if (mPb3Dsv != dsv)
+			{
+				if (mPb3Dsv) mPb3Dsv->Release();
+				mPb3Dsv = dsv;
+				mPb3Dsv->AddRef();
+			}
+			mPb3W = cd.Width; mPb3H = cd.Height;
+			return;
+		}
 		if (drawViewInto(rtv, dsv, f, vp)) { mInFrameThisFrame = true; ++mInFrameCount; }
+	}
+
+	// Halo 3 / ODST "after bloom" at Present: the game's depth surface now holds the world and the first-person gun (the gun
+	// pass draws into the same surface 3 - Poorboy, GUN_DEPTH_REPORT.md), so a copy of it hides the lines behind walls and the
+	// gun while they are drawn over the finished, bloomed frame (none of the bloom on the lines).
+	bool Viewer::postBloom3()
+	{
+		mPb3Why.clear();
+		if (!mPb3Dsv || !mF3.have || mPresentCount - mF3.presentIdx > 1) { mPb3Why = "after bloom: no first-person pass this frame (menu, cinematic?) - own collision depth instead"; return false; }
+		if (mPb3W != mW || mPb3H != mH) { mPb3Why = "after bloom: the scene is not drawn at the window's size (render scale?) - own collision depth instead"; return false; }
+		if (!mR.copyWorldDepth(mCtx, mPb3Dsv)) { mPb3Why = "after bloom: the game's depth could not be copied - own collision depth instead"; return false; }
+		mLabelScaleX = mLabelScaleY = 1.f;
+		if (!drawViewInto(mRtv, mR.worldCopyDsv(), mF3.f, mF3.vp)) { mPb3Why = "after bloom: nothing to draw yet"; return false; }
+		mInFrameThisFrame = true; ++mInFrameCount;
+		return true;
 	}
 
 	// ---- simulation-thread sampling -----------------------------------------------------------------------------------
@@ -135,6 +163,8 @@ namespace h2cv
 		{
 			h3::captureSimTls();
 			mSimLastMs = GetTickCount64();
+			// death bar: read on the sim thread, because the game's trigger volume test and the players / game-time / kill
+			// volume tables live in the sim thread's TLS
 			if (!mWantSim3.load()) return;
 			uintptr_t units[4] = {};
 			h3::Ghost3 g;
@@ -546,6 +576,33 @@ namespace h2cv
 	}
 
 	// ---- HUD ----------------------------------------------------------------------------------------------------------
+	void Viewer::drawDeath3()
+	{
+		mOobBar = -1.f; mOobBarText[0] = 0;
+		h3::Death d;
+		h3::readDeath(d);                    // finds the game thread's TLS block itself, no sim callback needed
+		mDetectTicks = (d.valid && d.counter == 0) ? d.nextCheck : -1;
+		if (!d.valid) { mDeath3 = d; return; }
+		int best = INT32_MAX; float frac = -1.f;
+		auto offer = [&](int left, int period, const char* what)
+		{
+			if (left < 0 || period <= 0 || left >= best) return;
+			best = left; frac = std::clamp((float)left / (float)period, 0.f, 1.f);
+			snprintf(mOobBarText, sizeof(mOobBarText), "%s - %d ticks", what, left);
+		};
+		// Halo 3 keeps the count for the whole life (it never drains), so the bar stays put while you are back in bounds
+		if (d.counter > 0)   // can run past the limit when the kill is blocked (invulnerability): clamp to 0
+			offer(std::max(0, d.limit + 1 - d.counter), d.limit + 1, d.counter > d.limit + 1 ? "OUT OF BOUNDS (kill blocked)" : "OUT OF BOUNDS");
+		for (const auto& in : d.kvInside)
+		{
+			char what[32]; snprintf(what, sizeof(what), "KILL VOLUME #%d", in.first);
+			offer(in.second, d.kvCount, what);
+		}
+		mOobBar = frac;
+		if (frac < 0.f) mOobBarText[0] = 0;
+		mDeath3 = std::move(d);
+	}
+
 	void Viewer::drawHud3()
 	{
 		ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_Always);
@@ -553,7 +610,7 @@ namespace h2cv
 		if (ImGui::Begin("Collision Viewer##h3cv", nullptr, ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize |
 			ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav))
 		{
-			ImGui::Text("%s   occlusion: %s", game() == Game::Halo3ODST ? "Halo 3: ODST" : "Halo 3", occlusionName((Occlusion)settings.occlusion.load() == Occlusion::PostBloom ? Occlusion::Own : (Occlusion)settings.occlusion.load()));
+			ImGui::Text("%s   occlusion: %s", game() == Game::Halo3ODST ? "Halo 3: ODST" : "Halo 3", occlusionName((Occlusion)settings.occlusion.load()));
 			if (!mInFrameNote.empty()) ImGui::TextColored(ImVec4(1, 0.75f, 0.2f, 1), "%s", mInFrameNote.c_str());
 			if (!mWorld.lastWhy().empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.3f, 1), "collision: %s", mWorld.lastWhy().c_str());
 			ImGui::Text("width %.1fpx  pull %.4f  hidden %.2f  radius %.0f",
@@ -625,6 +682,29 @@ namespace h2cv
 				ImGui::TextDisabled("    motion type %u, shape vtable RVA 0x%X, v = (%.3f %.3f %.3f)", g.m.type, g.motionShapeVt < 0 ? 0 : g.motionShapeVt, g.m.v.x, g.m.v.y, g.m.v.z);
 			}
 			ImGui::TextDisabled("pink = nothing suspect   LIME = a cached w over-credits the gap   RED = polygon within tolerance is SKIPPED   white = Halo position   yellow = jump");
+			if (settings.killVolumes && settings.infoKill)
+			{
+				ImGui::Separator();
+				const h3::Death& d = mDeath3;
+				if (!d.valid) ImGui::TextDisabled("OUT OF BOUNDS: %s", d.note.empty() ? "waiting for a game tick (is the game running?)" : d.note.c_str());
+				else
+				{
+					if (d.counter > 0)
+						ImGui::TextColored(ImVec4(0.47f, 0.86f, 1.f, 1.f), "OUT OF BOUNDS: %d of %d ticks used - %d left. Halo 3 keeps this count until you die (it never drains back)",
+							d.counter, d.limit + 1, std::max(0, d.limit + 1 - d.counter));
+					else
+						ImGui::TextDisabled("OUT OF BOUNDS: none used. The check starts only on ticks where (tick + player index %u) %% 16 == 0 - next in %d ticks; %d ticks inside solid kill",
+							d.playerIndex, d.nextCheck, d.limit + 1);
+					if (d.kvCount > 0)
+					{
+						ImGui::Text("KILL VOLUMES: %d (%d enabled)   one checked per tick: #%d this tick", d.kvCount, d.kvEnabled, d.kvChecking);
+						if (d.kvInside.empty()) ImGui::TextDisabled("    you are not inside an enabled kill volume");
+						for (const auto& in : d.kvInside)
+							ImGui::TextColored(ImVec4(1.f, 0.9f, 0.f, 1.f), "    INSIDE kill volume #%d - checked in %d ticks; then every %d ticks", in.first, in.second, d.kvCount);
+					}
+					else ImGui::TextDisabled("KILL VOLUMES: none on this map");
+				}
+			}
 			ImGui::Separator();
 			ImGui::TextDisabled("options: HCM menu > Overlays > Collision Viewer");
 		}

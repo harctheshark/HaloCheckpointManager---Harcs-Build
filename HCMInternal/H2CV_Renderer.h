@@ -27,6 +27,9 @@ namespace h2cv
 		float width = 0, height = 0; // texture size (may differ from the back buffer with resolution scaling)
 		ID3D11ShaderResourceView* fpSrv = nullptr; // optional first-person viewmodel depth (any non-cleared texel occludes)
 		float fpClearValue = 0.f;
+		// > 0: gun mask only (Poorboy's rule) - the game's depth hides a line only where something of the game's is within
+		// this many world units AND clearly in front of it; walls are left to the own collision depth. 0: full occlusion.
+		float maskRange = 0.f;
 	};
 
 	class Renderer
@@ -47,11 +50,19 @@ namespace h2cv
 		void clearOwnDepth();
 		void setStaticOccluders(const std::vector<Tri>& tris, uintptr_t version); // uploaded once per version
 		void drawStaticOccluders();
+		// draw only these triangle ranges of the static occluder buffer (first triangle, triangle count) - near the camera
+		void drawStaticOccluderRanges(const uint32_t* firstTri, const uint32_t* triCount, size_t n);
 		void drawOccluders(const std::vector<Tri>& tris);
+		// a second kept occluder buffer (Reach's live objects): uploaded once per version, drawn whole
+		void setObjectOccluders(const std::vector<Tri>& tris, uintptr_t version);
+		void drawObjectOccluders();
 
 		// lines; colour is 0xAABBGGRR. useOwnDepth/useGameDepth choose the occlusion sources.
 		void drawLines(const LineVertex* v, size_t count, float widthPx, float pull, bool useOwnDepth, bool useGameDepth,
 		               float hiddenAlpha);
+		// the same from a kept line buffer: v is uploaded only when cacheKey differs from the last call's
+		void drawLinesCached(const LineVertex* v, size_t count, uint64_t cacheKey, float widthPx, float pull, bool useOwnDepth,
+		                     bool useGameDepth, float hiddenAlpha);
 		void drawTris(const LineVertex* v, size_t count, bool depthTest); // filled, alpha-blended
 
 		void setGameDepth(const GameDepthInput& in) { mGameDepth = in; }
@@ -61,6 +72,10 @@ namespace h2cv
 		bool copyWorldDepth(ID3D11DeviceContext* ctx, ID3D11DepthStencilView* gameDsv);
 		bool copyFpDepthAndMerge(ID3D11DeviceContext* ctx, ID3D11DepthStencilView* gameDsv, const D3D11_VIEWPORT& vp, bool reversed);
 		ID3D11DepthStencilView* worldCopyDsv() const { return mWDsv; }
+		// copy a game depth texture into the sampled copy and point the game-depth input at it (gun mask at Present).
+		// false: unknown format / multisampled / other device. Leaves mGameDepth.srv null on failure.
+		bool copyGameDepthForMask(ID3D11DeviceContext* ctx, ID3D11Texture2D* gameDepth, int encoding, float nearClip, float farClip, float range);
+		void clearGameDepth() { mGameDepth = GameDepthInput{}; }
 		// depth convention of the bound DSV: reversed (default; GREATER_EQUAL, pull z*=1+p) or standard (LESS_EQUAL, z-=p*w)
 		void setStandardZ(bool std) { mStdZ = std; }
 		bool ready() const { return mReady; }
@@ -73,6 +88,8 @@ namespace h2cv
 		bool compile();
 		void ensureDepth(uint32_t w, uint32_t h);
 		void upload(const void* data, size_t bytes);
+		void uploadTo(ID3D11Buffer*& vb, size_t& vbBytes, const void* data, size_t bytes);
+		void drawLinesFrom(ID3D11Buffer* vb, size_t count, float widthPx, float pull, bool useOwnDepth, bool useGameDepth, float hiddenAlpha);
 		void setCB(float widthPx, float pull, float hiddenAlpha, float hiddenPass, bool useGameDepth);
 		void saveState();
 		void restoreState();
@@ -90,6 +107,8 @@ namespace h2cv
 		ID3D11Buffer* mCB = nullptr;
 		ID3D11Buffer* mVB = nullptr; size_t mVBBytes = 0;
 		ID3D11Buffer* mStaticVB = nullptr; uint32_t mStaticCount = 0; uintptr_t mStaticVersion = ~uintptr_t(0);
+		ID3D11Buffer* mObjVB = nullptr; uint32_t mObjCount = 0; uintptr_t mObjVersion = ~uintptr_t(0);
+		ID3D11Buffer* mLineVB = nullptr; size_t mLineVBBytes = 0; uint64_t mLineKey = ~uint64_t(0);
 		ID3D11Texture2D* mDepthTex = nullptr; ID3D11DepthStencilView* mDsv = nullptr; uint32_t mDepthW = 0, mDepthH = 0;
 		ID3D11DepthStencilState* mDsWrite = nullptr;   // occluder prepass: GREATER, write
 		ID3D11DepthStencilState* mDsTest = nullptr;    // visible lines: GREATER_EQUAL, no write

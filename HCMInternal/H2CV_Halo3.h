@@ -72,6 +72,26 @@ namespace h3
 	// kill volumes: trigger volume boxes of scenario kill triggers (corner position + 3 orthonormal axes + full extents)
 	struct VolumeBox { Vec3 fwd{}, up{}, pos{}, ext{}; };
 	bool killVolumes(std::vector<VolumeBox>& out);
+
+	// ---- out-of-bounds / kill volume deaths (Halo 3 and ODST) ----
+	// OUT OF BOUNDS (player update sub_1800E4E58, counter write at +0xE55BF - confirmed in CE):
+	//   counter player+0x45 (byte), players data array = *(TLS + 0x10), player+0x28 = unit
+	//   while the counter is 0 the test only runs on ticks where (tick + player index) % 16 == 0, then every tick
+	//   test: the unit's physics point AND that point + 0.2 wu up are both inside solid (collision flags 0x14809)
+	//   +1 per tick that holds; UNLIKE Halo 2 it is NOT reset when you get back out - it only clears when the unit is
+	//   gone (death / respawn). So the 16 ticks are a budget for the whole life.
+	//   kill when counter > round(0.5 s * ticks/s) (sub_1800F3A88) -> sub_18034D520(unit)
+	// KILL VOLUMES (sub_1801B8E00): one volume tested per object per tick: (tick + (object index & 0xFFFF)) % count,
+	//   count = scenario +0x484, disabled bits *(TLS + 0x418) (set = disabled), test sub_18016F644(trigger, object)
+	struct Death
+	{
+		bool valid = false;
+		int counter = 0, limit = 15, ticksPerSec = 30, nextCheck = 0; uint32_t playerIndex = 0;
+		int kvCount = 0, kvEnabled = 0, kvChecking = -1;
+		std::vector<std::pair<int, int>> kvInside;   // (kill volume, ticks until its turn)
+		std::string note;                            // why it is not valid / how the player was found
+	};
+	bool readDeath(Death& out);
 	// soft ceilings / soft kills / slip surfaces of a structure bsp (its structure design 'sddt' tag): triangles, type = ceiling type word
 	struct SoftTri { Vec3 v[3]; uint16_t type = 0; };
 	bool softCeilings(int bspIndex, std::vector<SoftTri>& out);

@@ -4,6 +4,7 @@
 #include "H2CV_Mem.h"
 #include "H2CV_Log.h"
 #include <windows.h>
+#include <tlhelp32.h>
 #include <intrin.h>
 #include <algorithm>
 #include <atomic>
@@ -339,6 +340,142 @@ namespace h3
 			if (!finite3(b.fwd) || !finite3(b.up) || !finite3(b.pos) || !finite3(b.ext)) continue;
 			if (!(ext[0] > 0 && ext[1] > 0 && ext[2] > 0 && ext[0] < 1e5f && ext[1] < 1e5f && ext[2] < 1e5f)) continue;
 			out.push_back(b);
+		}
+		return true;
+	}
+
+	namespace
+	{
+		// The game keeps the players table, game time and kill volume bits in its game thread's implicit-TLS block.
+		// Without waiting for a sim-thread callback, find that block from any thread: walk the process's threads, read
+		// each TEB's TLS array at the module's TLS index, and keep the block whose players table pointer (+0x10) and game
+		// time pointer (+0xC8) look right. Cached; re-found when it stops looking right.
+		typedef LONG(NTAPI* t_NtQueryInformationThread)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+		struct ThreadBasicInfo { LONG ExitStatus; PVOID TebBaseAddress; PVOID UniqueProcess; PVOID UniqueThread; ULONG_PTR AffinityMask; LONG Priority; LONG BasePriority; };
+
+		bool plausibleGameTls(uintptr_t t)
+		{
+			if (!okp(t)) return false;
+			const uintptr_t hdr = q(t + 0x10), tt = q(t + 0xC8);
+			if (!okp(hdr) || !okp(tt)) return false;
+			const uint32_t mx = u32(hdr + 0x20, 0), sz = u32(hdr + 0x24, 0);
+			const int16_t tps = (int16_t)u16(tt + 4, 0);
+			return okp(q(hdr + 0x48)) && mx > 0 && mx <= 256 && sz >= 0x48 && sz <= 0x4000 && tps > 0 && tps <= 120;
+		}
+
+		uintptr_t findGameTls()
+		{
+			static uintptr_t sCached = 0; static ULONGLONG sNext = 0;
+			if (plausibleGameTls(gSimTls.load())) return gSimTls.load();
+			if (plausibleGameTls(sCached)) return sCached;
+			const ULONGLONG now = GetTickCount64();
+			if (now < sNext) return 0;
+			sNext = now + 1000;                                  // rescan at most once a second
+			sCached = 0;
+			const uint32_t idx = u32(base() + L().rvaTlsIndex, 0xFFFFFFFFu);
+			if (idx == 0xFFFFFFFFu || idx > 1088) return 0;
+			static t_NtQueryInformationThread NtQIT = (t_NtQueryInformationThread)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationThread");
+			if (!NtQIT) return 0;
+			HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+			if (snap == INVALID_HANDLE_VALUE) return 0;
+			THREADENTRY32 te{}; te.dwSize = sizeof(te);
+			const DWORD pid = GetCurrentProcessId();
+			for (BOOL ok = Thread32First(snap, &te); ok && !sCached; ok = Thread32Next(snap, &te))
+			{
+				if (te.th32OwnerProcessID != pid) continue;
+				HANDLE th = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, te.th32ThreadID);
+				if (!th) continue;
+				ThreadBasicInfo tbi{};
+				if (NtQIT(th, 0 /* ThreadBasicInformation */, &tbi, sizeof(tbi), nullptr) == 0 && tbi.TebBaseAddress)
+				{
+					const uintptr_t arr = q((uintptr_t)tbi.TebBaseAddress + 0x58);   // TEB.ThreadLocalStoragePointer
+					const uintptr_t blk = okp(arr) ? q(arr + 8 * (uintptr_t)idx) : 0;
+					if (plausibleGameTls(blk)) sCached = blk;
+				}
+				CloseHandle(th);
+			}
+			CloseHandle(snap);
+			if (sCached) LOGF("death bar: game-thread TLS block found by thread walk: 0x%llX", (unsigned long long)sCached);
+			return sCached;
+		}
+	}
+
+	bool readDeath(Death& out)
+	{
+		out = Death{};
+		// ODST (player update sub_1800FF514, same counter +0x45 / unit +0x28 / players TLS+0x10 / game time TLS+0xC8; kill
+		// volume bits at TLS+0x438 instead of +0x418; trigger volumes carry a type @+0xC - only boxes (0) are tested here)
+		const uintptr_t t = findGameTls();
+		if (!okp(t)) { out.note = "game-thread TLS block not found yet"; return false; }
+		// players data array (TLS + 0x10, as the player update itself reads it)
+		const uintptr_t hdr = q(t + 0x10);
+		if (!okp(hdr)) { out.note = "players table pointer unreadable"; return false; }
+		const uint32_t mx = u32(hdr + 0x20, 0), sz = u32(hdr + 0x24, 0);
+		const uintptr_t data = q(hdr + 0x48);
+		char buf[160];
+		if (!okp(data) || mx == 0 || mx > 256 || sz < 0x48 || sz > 0x4000)
+		{
+			snprintf(buf, sizeof(buf), "players table not recognised (max %u, size 0x%X, data 0x%llX, sig 0x%08X)", mx, sz, (unsigned long long)data, u32(hdr + 0x2C, 0));
+			out.note = buf; return false;
+		}
+		// the local player: the one whose unit (+0x28) is HCM's player unit; else the first player that has a unit
+		const uintptr_t g = G();
+		const uint32_t hcmUnit = okp(g) ? u32(g + L().offPlayer, 0xFFFFFFFFu) : 0xFFFFFFFFu;
+		uintptr_t player = 0, first = 0; uint32_t index = 0, firstIndex = 0;
+		for (uint32_t i = 0; i < mx; ++i)
+		{
+			const uintptr_t e = data + (uintptr_t)i * sz;
+			const uint32_t pu = u32(e + 0x28, 0xFFFFFFFFu);
+			if (pu == 0xFFFFFFFFu || pu == 0) continue;
+			if (!first) { first = e; firstIndex = i; }
+			if (hcmUnit != 0xFFFFFFFFu && pu == hcmUnit) { player = e; index = i; break; }
+		}
+		if (!player) { player = first; index = firstIndex; }
+		if (!player) { out.note = "no player has a unit (dead / respawning)"; return false; }
+		const uint32_t unit = u32(player + 0x28, 0xFFFFFFFFu);
+		// game time (TLS + 0xC8): ticks per second @+4 (i16), tick @+0xC
+		const uintptr_t tt = q(t + 0xC8);
+		const uint32_t tick = okp(tt) ? u32(tt + 0xC, 0) : gameTick();
+		int tps = okp(tt) ? (int)(int16_t)u16(tt + 4, 30) : 30;
+		if (tps <= 0 || tps > 120) tps = 30;
+		out.ticksPerSec = tps;
+		out.limit = (int)(tps * 0.5f + 0.5f);
+		out.counter = (int)u8(player + 0x45, 0);
+		out.playerIndex = index;
+		out.nextCheck = (int)((16u - ((tick + index) & 15u)) & 15u);
+		out.valid = true;
+
+		// kill volume rotation. Inside test as the game does it (sub_18016F55C): the unit's point object+0x1C in the trigger
+		// volume's own frame (forward, left = up x forward, up from its corner), 0 < local < extents on all three axes.
+		const uintptr_t scn = scenario();
+		const uintptr_t uobj = objectFromDatum(unit);
+		float pp[3] = {};
+		const bool haveP = okp(uobj) && copy(pp, uobj + 0x1C, 12) && std::isfinite(pp[0]) && std::isfinite(pp[1]) && std::isfinite(pp[2]);
+		uintptr_t kF, tvF; uint32_t kN, tvN;
+		if (okp(scn) && block(scn + L().scnKill, kF, kN) && block(scn + L().scnTrig, tvF, tvN) && kN > 0 && kN < 4096)
+		{
+			out.kvCount = (int)kN;
+			out.kvChecking = (int)((tick + (unit & 0xFFFF)) % kN);
+			const uintptr_t bits = q(t + (odst() ? 0x438 : 0x418));
+			for (uint32_t k = 0; k < kN; ++k)
+			{
+				const bool enabled = !okp(bits) || ((u32(bits + 4 * (uintptr_t)(k >> 5), 0) >> (k & 31)) & 1) == 0;
+				if (!enabled) continue;
+				++out.kvEnabled;
+				const int16_t trig = (int16_t)u16(kF + 2 * (uintptr_t)k, 0xFFFF);
+				if (trig < 0 || (uint32_t)trig >= tvN || !haveP) continue;
+				const uintptr_t tv = tvF + (uintptr_t)trig * L().trigStride;
+				if ((int16_t)u16(tv + 4, 0xFFFF) != -1) continue;    // follows an object: not handled
+				if (odst() && (int16_t)u16(tv + 0xC, 0) != 0) continue;   // ODST sector volume (polygon prism): not handled
+				float f[3], up[3], pos[3], ext[3];
+				if (!copy(f, tv + L().trigFwd, 12) || !copy(up, tv + L().trigUp, 12) || !copy(pos, tv + L().trigPos, 12) || !copy(ext, tv + L().trigExt, 12)) continue;
+				const float lf[3] = { up[1] * f[2] - up[2] * f[1], up[2] * f[0] - up[0] * f[2], up[0] * f[1] - up[1] * f[0] };
+				const float d[3] = { pp[0] - pos[0], pp[1] - pos[1], pp[2] - pos[2] };
+				const float x = d[0] * f[0] + d[1] * f[1] + d[2] * f[2], y = d[0] * lf[0] + d[1] * lf[1] + d[2] * lf[2], z = d[0] * up[0] + d[1] * up[1] + d[2] * up[2];
+				if (!(x > 0 && y > 0 && z > 0 && x < ext[0] && y < ext[1] && z < ext[2])) continue;
+				const int64_t r = ((int64_t)k - (int64_t)tick - (int64_t)(unit & 0xFFFF)) % (int64_t)kN;
+				out.kvInside.push_back({ (int)k, (int)(r < 0 ? r + kN : r) });
+			}
 		}
 		return true;
 	}

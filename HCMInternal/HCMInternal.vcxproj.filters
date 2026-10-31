@@ -844,6 +844,12 @@
     <ClInclude Include="TagBlockReader.h">
       <Filter>Services\OptionalCheats\Implementations\Services</Filter>
     </ClInclude>
+    <ClInclude Include="LaunchTrajectory.h">
+      <Filter>Services\OptionalCheats\Implementations\3D\SoftCeiling</Filter>
+    </ClInclude>
+    <ClInclude Include="ReachCollision.h">
+      <Filter>Services\OptionalCheats\Implementations\3D\SoftCeiling</Filter>
+    </ClInclude>
     <ClInclude Include="SoftCeilingOverlay.h">
       <Filter>Services\OptionalCheats\Implementations\3D\SoftCeiling</Filter>
     </ClInclude>
@@ -968,6 +974,9 @@
       <Filter>Classes</Filter>
     </ClInclude>
     <ClInclude Include="AbilityMeterOverlay.h">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClInclude>
+    <ClInclude Include="HavokSleepCountdown.h">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClInclude>
     <ClInclude Include="GetTagAddressPresenter.h">
@@ -1554,6 +1563,12 @@
     <ClCompile Include="GetSoftCeilingData.cpp">
       <Filter>Services\OptionalCheats\Implementations\3D\SoftCeiling</Filter>
     </ClCompile>
+    <ClCompile Include="LaunchTrajectory.cpp">
+      <Filter>Services\OptionalCheats\Implementations\3D\SoftCeiling</Filter>
+    </ClCompile>
+    <ClCompile Include="ReachCollision.cpp">
+      <Filter>Services\OptionalCheats\Implementations\3D\SoftCeiling</Filter>
+    </ClCompile>
     <ClCompile Include="SoftCeilingOverlay.cpp">
       <Filter>Services\OptionalCheats\Implementations\3D\SoftCeiling</Filter>
     </ClCompile>
@@ -1624,6 +1639,9 @@
       <Filter>Services\OptionalCheats\Implementations\Services</Filter>
     </ClCompile>
     <ClCompile Include="AbilityMeterOverlay.cpp">
+      <Filter>Services\OptionalCheats\Implementations</Filter>
+    </ClCompile>
+    <ClCompile Include="HavokSleepCountdown.cpp">
       <Filter>Services\OptionalCheats\Implementations</Filter>
     </ClCompile>
     <ClCompile Include="SoundClassGain.cpp">

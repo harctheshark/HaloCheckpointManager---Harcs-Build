@@ -528,6 +528,46 @@ private:
 			= on ? 1u : 0u;
 	}
 
+	// replays holding the crouch smoothing on (holdCrouchInterpForReplay); mHoldMutex orders them against the toggle
+	std::recursive_mutex mHoldMutex;
+	int mReplayHolds = 0;
+	std::shared_ptr<bool> mAlive = std::make_shared<bool>(true);   // a hold outliving this object must not call into it
+	bool currentToggleSetting() const
+	{
+		if (auto s = settingsWeak.lock()) return s->halo3TheaterInterpToggle->GetValue();
+		return false;
+	}
+
+public:
+	std::shared_ptr<void> holdCrouchInterpForReplay()
+	{
+		std::scoped_lock lock(mHoldMutex);
+		if (!mApplied) apply();                 // throws on an unsupported build - the replay plays without it
+		++mReplayHolds;
+		setCrouchKnob(true);
+		struct Hold
+		{
+			Impl* impl; std::weak_ptr<bool> alive;
+			~Hold() { if (alive.lock()) impl->releaseReplayHold(); }
+		};
+		return std::make_shared<Hold>(Hold{ this, mAlive });
+	}
+
+	void releaseReplayHold()
+	{
+		try
+		{
+			std::scoped_lock lock(mHoldMutex);
+			if (mReplayHolds > 0 && --mReplayHolds == 0)
+			{
+				setCrouchKnob(currentCrouchSetting());
+				if (!currentToggleSetting()) revert();   // armed only for the replay
+			}
+		}
+		catch (...) { PLOG_ERROR << "Halo3TheaterInterp: releasing the replay hold failed"; }
+	}
+
+private:
 	void onToggle(bool& newValue)
 	{
 		try
@@ -535,7 +575,9 @@ private:
 			lockOrThrow(messagesGUIWeak, messagesGUI);
 			lockOrThrow(mccStateHookWeak, mccStateHook);
 
-			if (newValue) apply(); else revert();
+			std::scoped_lock lock(mHoldMutex);
+			if (newValue) apply();
+			else if (mReplayHolds == 0) revert();   // a replay holds it: it reverts when the replay ends
 
 			if (mccStateHook->isGameCurrentlyPlaying(mGame))
 				messagesGUI->addMessage(newValue
@@ -551,8 +593,9 @@ private:
 
 	void onCrouchToggle(bool& newValue)
 	{
-		// A live knob - no re-patching, the cave reads it every frame.
-		setCrouchKnob(newValue);
+		// A live knob - no re-patching, the cave reads it every frame. A replay holds it on until it ends.
+		std::scoped_lock lock(mHoldMutex);
+		if (mReplayHolds == 0) setCrouchKnob(newValue);
 	}
 
 	// Declared LAST - ScopedCallbacks subscribe inside their own constructors.
@@ -577,6 +620,7 @@ public:
 
 	~Impl()
 	{
+		mAlive.reset();
 		mToggleCallback.removeCallback();
 		mCrouchCallback.removeCallback();
 		// Before revert(), and before the cave can be freed below: the logger thread reads it.
@@ -592,6 +636,8 @@ Halo3TheaterInterp::Halo3TheaterInterp(GameState game, IDIContainer& dicon)
 	: pimpl(std::make_unique<Impl>(game, dicon))
 {
 }
+
+std::shared_ptr<void> Halo3TheaterInterp::holdCrouchInterpForReplay() { return pimpl->holdCrouchInterpForReplay(); }
 
 Halo3TheaterInterp::~Halo3TheaterInterp()
 {

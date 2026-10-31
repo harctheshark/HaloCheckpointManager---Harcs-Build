@@ -101,8 +101,7 @@ std::string to_string_with_precision(const T a_value, const int n)
 	return std::move(out).str();
 }
 
-// downloads text content of url to local file. Throws HCMInit on fail
-void downloadFileTo(std::string_view url, std::string_view pathToFile);
+// (downloadFileTo() removed: unused in this fork, and it linked libcurl + OpenSSL - see WindowsUtilities.cpp)
 
 std::string readFileContents(std::string_view pathToFile);
 

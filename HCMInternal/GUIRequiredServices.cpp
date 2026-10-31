@@ -715,6 +715,162 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::CollisionViewer}
 	},
 
+	{ GUIElementEnum::collisionViewerOffsetSaveGUI,
+		{OptionalCheatEnum::CollisionViewer, OptionalCheatEnum::ForceCheckpoint}
+	},
+
+	{ GUIElementEnum::collisionViewerOffsetLoadGUI,
+		{OptionalCheatEnum::CollisionViewer, OptionalCheatEnum::ForceRevert}
+	},
+
+	{ GUIElementEnum::collisionViewerOffsetNaturalRevertsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerKillVolumesGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerSuperbounceGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerSuperbounceSeamTextGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbounceSpeedGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbounceDebounceGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbounceSpotsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbouncePredictedGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbouncePredictedRangeGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbouncePredictedMonstersGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbouncePredictedDreadnoughtsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbouncePredictedHeightsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSpotScanRadiusGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSpotScanSlowGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSpotScanCurrentTickGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSpotScanButtonGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerSuperbounceRecordGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerSuperbounceHighlightGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerSuperbounceKeepChargeGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerSuperbounceForceChargeGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerSuperbounceSettingsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoSuperbounceGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::oobBarSettingsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::oobBarAnchorCornerGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::oobBarScreenOffsetGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::oobBarSizeGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::detectBarAnchorCornerGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::detectBarScreenOffsetGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::detectBarSizeGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoGeneralGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoTimGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoGhostGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoGhostObjectsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoGhostDetailsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoPassGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoTravelGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoLegendGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoGridsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoKillGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerInfoWeldGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
 	{ GUIElementEnum::collisionViewerGhostTravelGUI,
 		{OptionalCheatEnum::CollisionViewer}
 	},
@@ -1037,6 +1193,191 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::SoftCeilingOverlay}
 	},
 
+	// Launch Trajectory (Halo 2)
+	{ GUIElementEnum::launchTrajectoryBenchSpeedStartGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchSpeedStepGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchRunGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchRunsGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchFirstCrouchGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchCrouchTicksGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchCyclesGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchCycleLengthGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchAttackTicksGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchCrouchDelayGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchStepGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchReleaseDelayGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchCrouchKeyGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchMeleeKeyGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryBenchReleaseKeyGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryReachGameCollisionGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryHudStoredGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryHudScaleGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryHudHeightGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryReachCrouchReleaseGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryReachReleaseRatioGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryReleaseKickRangeGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryH2DecompGroundGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryReleaseKickGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryFallDeathGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryFallDeathSpeedGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryNextHitToggleGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryNextHitRotateWithViewGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryNextHitColorGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryGroundSlideMaxSpeedGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryReleaseModelGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryReleaseFrictionGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryAirFrictionGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryWallBackstepGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryLogToFileGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryLogSpeedUpsGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryGroundDecelGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryRestitutionGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryMaxSlopeGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryToggleGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectorySettingsGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryMinSpeedGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryDurationGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryOnlyWhenStoredGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryKeepAfterLaunchGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryShowActualPathGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryStopAtCollisionGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryIncludeBarriersGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryIncludeObjectsGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryUseBodyExtentsGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryIgnoreFirstTicksGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryMaxSpeedGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryDampingGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryShowTickMarksGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryShowLabelsGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryLabelScaleGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryLineColorGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryStoredColorGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryHeldColorGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryActualColorGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+	{ GUIElementEnum::launchTrajectoryImpactColorGUI,
+{OptionalCheatEnum::LaunchTrajectory}
+	},
+
 	{ GUIElementEnum::placementPointsOverlayToggle,
 {OptionalCheatEnum::PlacementPointsOverlay}
 	},
@@ -1157,6 +1498,18 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 
 	{ GUIElementEnum::abilityMeterOverlaySettings,
 {OptionalCheatEnum::AbilityMeterOverlay}
+},
+
+	{ GUIElementEnum::havokSleepCountdownToggleGUI,
+{OptionalCheatEnum::HavokSleepCountdown}
+},
+
+	{ GUIElementEnum::havokSleepCountdownSimpleGUI,
+{OptionalCheatEnum::HavokSleepCountdown}
+},
+
+	{ GUIElementEnum::havokSleepAutoJumpGUI,
+{OptionalCheatEnum::HavokSleepCountdown}
 },
 
 		{ GUIElementEnum::display2DInfoToggleGUI,
@@ -1536,6 +1889,8 @@ const std::map<GUIElementEnum, std::set<GameState>> GUIRequiredServices::support
 	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES2)
 	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES3)
 	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES4)
+	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES5)
+	MAKE_ALL_MAPSET(RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES6)
 #ifdef HCM_DEBUG
 	MAKE_ALL_MAPSET(DEBUGGUIELEMENTS_ANDSUPPORTEDGAMES)
 #endif

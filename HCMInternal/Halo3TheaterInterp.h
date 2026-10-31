@@ -16,4 +16,9 @@ public:
 	Halo3TheaterInterp(GameState game, IDIContainer& dicon);
 	~Halo3TheaterInterp();
 	virtual std::string_view getName() override { return nameof(Halo3TheaterInterp); }
+
+	// For an input replay: the crouch smoothing on (the cave armed if the toggle is off, crouch knob forced on) for as long
+	// as the returned handle lives; then back to the user's own settings. Its crouch hook has no playback gate, so it
+	// smooths gameplay; the other hooks are gated on Theater and do nothing there. Throws HCMRuntimeException.
+	std::shared_ptr<void> holdCrouchInterpForReplay();
 };

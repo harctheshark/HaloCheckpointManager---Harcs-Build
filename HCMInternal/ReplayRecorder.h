@@ -9,7 +9,7 @@
 //   1. arm()          - subscribe to revert + player-action-update events
 //   2. <user reverts> - capture begins; startTickAbs = current tick
 //   3. capture each tick until...
-//   4. stopAndSave()  - write .h2r (+ optionally dump checkpoint), disarm
+//   4. stopAndSave()  - write .HaloReplay (with the start checkpoint inside), disarm
 class ReplayRecorder : public IOptionalCheat
 {
 private:

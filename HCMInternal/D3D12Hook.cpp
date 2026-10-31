@@ -3824,6 +3824,15 @@ OBSBypassResult D3D12Hook::setOBSBypass(bool enabled)
 		// the callback can only ever run while the hook is alive.
 		ModuleInlineHook* hook = out.get();
 		realFnPointer->setOnPermanentFailure([hook]() { hook->setWantsToBeAttached(false); });
+		// OBS 32.x hooks Present a moment after graphics-hook64.dll loads: re-attach when the background retry finds it
+		realFnPointer->setOnLateSuccess([hook]()
+			{
+				if (hook->getWantsToBeAttached() && !hook->isHookInstalled())
+				{
+					hook->setWantsToBeAttached(false);
+					hook->setWantsToBeAttached(true);
+				}
+			});
 	};
 
 	// Publish the trampolines for the thunks' teardown-race fallback. Done after install, and only if the

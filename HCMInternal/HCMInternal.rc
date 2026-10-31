@@ -99,7 +99,8 @@ IDR_WAVE3               WAVE                    "GeigerClickB.wav"
 // DDS
 //
 
-IDR_DDS3                DDS                     "lapua2.dds"
+// the watermark: a lossless PNG (was lapua2.dds), loaded with WIC in Renderer2D.cpp
+IDR_DDS3                PNG                     "lapua2.png"
 
 IDR_DDS2                DDS                     "Waypoint3DReticle.dds"
 

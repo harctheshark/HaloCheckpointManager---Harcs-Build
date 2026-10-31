@@ -662,6 +662,16 @@ OBSBypassResult D3D11Hook::setOBSBypass(bool enabled)
 				{
 					if (OBSPresentHook) OBSPresentHook->setWantsToBeAttached(false);
 				});
+			// OBS 32.x hooks Present a moment after graphics-hook64.dll loads: the background retry calls this
+			// when the hook appears (re-runs attach, which resolves through discovery again)
+			realPresentPointer->setOnLateSuccess([this]()
+				{
+					if (OBSPresentHook && OBSPresentHook->getWantsToBeAttached() && !OBSPresentHook->isHookInstalled())
+					{
+						OBSPresentHook->setWantsToBeAttached(false);
+						OBSPresentHook->setWantsToBeAttached(true);
+					}
+				});
 
 			if (status == OBSDiscoveryStatus::ModuleNotLoaded)
 			{

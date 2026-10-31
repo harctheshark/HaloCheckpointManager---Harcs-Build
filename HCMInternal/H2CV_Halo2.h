@@ -24,6 +24,10 @@ namespace h2
 		constexpr uintptr_t BSP_ENTITY      = 0xDFCBC8;  // structure-BSP hkRigidBody* (fixed)
 		constexpr uintptr_t MESH_ENTITY     = 0xDFCBD0;  // MCC static mesh hkRigidBody* (fixed)
 		constexpr uintptr_t GAME_TIME       = 0x15FE008; // +2 i16 ticks/s, +8 u32 tick
+		constexpr uintptr_t SCENARIO        = 0xE6F768;  // scenario tag data* (trigger volumes block +0x108, kill volumes block +0x230)
+		constexpr uintptr_t KILL_DISABLED   = 0x1650F18; // u32* bit vector: bit set = kill volume disabled (kill_volume_disable)
+		constexpr uintptr_t OOB_LIMIT_SEC   = 0xC3273C;  // float 0.5: seconds inside solid geometry before the kill
+		constexpr uintptr_t FN_TRIGGER_TEST = 0x678FD0;  // bool __fastcall(int16 trigger_volume, uint32 object_datum)
 		constexpr uintptr_t SBSP            = 0xE6F770;  // structure_bsp tag data*
 		constexpr uintptr_t TAG_POOL_A      = 0xE80AB0;  // tag data pools (tag block dataOffset >= 0 -> A, < 0 -> B)
 		constexpr uintptr_t TAG_POOL_B      = 0xE80AC0;
@@ -241,6 +245,10 @@ namespace h2
 	bool backstepParams(BackstepParams& p);
 	// one sweep / GSK agent read on its own (an object pair leaf); false if the agent is not one of those
 	bool readConvexAgent(uintptr_t agent, Child& out);
+	// Offset save state: write a saved TIM state into a live convex agent (sweep / GSK): the GSK simplex cache (ids +
+	// dims, agent+0x18..+0x21), the cached separating normal (+0x30) and the TIM (+0x3C). Refuses anything that is not a
+	// convex agent, and agents that are in contact right now (manifold > 0: the engine is resolving that pair).
+	bool writeConvexState(uintptr_t agent, const Child& saved);
 
 	// ---- objects the subject touches (Believed poses - objects) ----
 	// Pair entries of `entity` against every OTHER rigid body (not the level BSP / MCC mesh): crates, machines, vehicles,
@@ -251,6 +259,40 @@ namespace h2
 	bool objectOfEntity(uintptr_t entity, ObjectRef& out);
 
 	uint32_t gameTick();
+
+	// ---- kill volumes (out-of-bounds deaths) ----
+	// sub_18075F620(object): ONE kill volume is tested per object per tick, chosen round-robin:
+	//     i = (game_time + (object_index & 0xFFFF)) % kill_volume_count
+	// skipped when disabled (bit set in *KILL_DISABLED); otherwise its trigger volume is tested against the object
+	// (sub_180678FD0: point = object+0x30, local = R^T (p - position), inside when 0 < local < extents) and a hit kills
+	// the unit (sub_1809292F8: unit flags |= 0x8000). So inside volume k you die on the first tick with
+	// (game_time + object_index) % count == k - between 0 and count-1 ticks after entering.
+	struct KillVolume
+	{
+		int16_t trigger = -1;           // scenario trigger volume index
+		bool enabled = true;            // not disabled by script
+		bool attached = false;          // trigger volume follows an object (geometry not drawn)
+		Vec3 pos{}, fwd{}, left{}, up{}, ext{};   // box = pos + fwd*x + left*y + up*z, 0 <= x,y,z <= ext
+	};
+	bool readKillVolumes(std::vector<KillVolume>& out);
+	// The game's own test (sub_180678FD0(trigger_volume, object datum) -> bool): the same call the kill check makes, so
+	// it settles "am I inside" exactly, whatever point / attachment rules it uses. Read-only; -1 if it faulted.
+	int gameTriggerVolumeTest(int16_t trigger, uint32_t objectDatum);
+	// the point the game tests for an object (object +0x30)
+	bool killTestPoint(uintptr_t object, Vec3& out);
+
+	// Out-of-bounds kill (player update sub_1806A2D80; found with the CE probes): separate from kill volumes.
+	//   test   sub_1808F1D10(unit): the unit's Havok body point is inside solid collision (collision test 0x14800005)
+	//          - which is what being out of the level is: outside the BSP counts as solid
+	//   counter player+0x21C (byte): +1 per tick the test says "inside solid", reset to 0 the first tick it says no
+	//   start  while the counter is 0 the test only runs on ticks where (game_time + player index) % 16 == 0, so it can
+	//          take up to 15 ticks to notice you; once counting it runs every tick
+	//   kill   counter > round(0.5 s * ticks per second) (= 15 at 30 Hz) -> sub_1808FAF30 marks the unit (damage flags
+	//          +0x10A |= 0x20) and the object update kills it with the globals' kill damage
+	//   => from going out of bounds to the kill: 16 ticks of counting + 0..15 ticks waiting for the first check
+	struct OobTimer { bool valid = false; int counter = 0, limit = 15, ticksPerSec = 30, nextCheck = 0; uint32_t playerIndex = 0; };
+	OobTimer readOobTimer(int user);
+	uint32_t localPlayerUnitDatum(int user);       // NONE (0xFFFFFFFF) when no unit
 
 	// ---- Havok bodies of any object (vehicles) ----
 	// Rigid bodies of an object's havok component (up to 8), the component's PRIMARY record first (comp+0x18 = signed index of

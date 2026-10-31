@@ -66,8 +66,11 @@ namespace HCMExternal.Services.External.Impl
 
         }
 
-        // try to find cartographer, mccsteam, and mccwinstore processes. throws if it finds none.
-        List<HaloProcessInfo> GetHaloProcessInfo()
+        // try to find cartographer processes (the external service only drives Project Cartographer; MCC is handled by
+        // HCMInternal inside the game). MCC processes are skipped, not an error. Throws if it finds none, unless
+        // noneIsFine - the force checkpoint / revert / double revert / disable checkpoints commands pass that, because
+        // with MCC running HCMInternal has already done the job and there is nothing for the external side to do.
+        List<HaloProcessInfo> GetHaloProcessInfo(bool noneIsFine = false)
         {
 
 
@@ -84,6 +87,11 @@ namespace HCMExternal.Services.External.Impl
                     ("MCCWinStore-Win64-Shipping") => HaloProcessType.MCCWinStore,
                     _ => throw new Exception("invalid haloProcess name")
                 };
+                if (processType != HaloProcessType.ProjectCartographer)
+                {
+                    Log.Debug("Skipping " + haloProcess.ProcessName + ": the external service only drives Project Cartographer (MCC goes through HCMInternal)");
+                    continue;
+                }
 
 
                 var newHaloProcessInfo = new HaloProcessInfo()
@@ -109,7 +117,10 @@ namespace HCMExternal.Services.External.Impl
 
 
             if (haloProcessInfoOut.Count() == 0)
+            {
+                if (noneIsFine) { Log.Debug("No Project Cartographer process - nothing for the external service to do"); return haloProcessInfoOut; }
                 throw new Exception("Could not find any halo processes");
+            }
             else
                 Log.Information(string.Format("Found {0} halo porcesses", haloProcessInfoOut.Count));
 

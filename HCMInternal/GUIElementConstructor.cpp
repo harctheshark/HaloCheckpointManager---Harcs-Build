@@ -916,10 +916,9 @@ private:
 
 				case GUIElementEnum::replayInputSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
-						(game, ToolTipCollection("Halo 2: deterministic per-tick input record/playback (.h2r). Recording starts on the next revert; playback feeds the recorded inputs on the next revert. Load the matching checkpoint first."), "Input Replay (.h2r)", headerChildElements
+						(game, ToolTipCollection("Deterministic per-tick input record/playback (.HaloReplay). Recording starts on the next revert and saves that checkpoint inside the replay file; Play injects it, then your revert starts playback."), "Input Replay (.HaloReplay)", headerChildElements
 							{
 							createNestedElement(GUIElementEnum::replayRecord30GUI),
-							createNestedElement(GUIElementEnum::replayRecord60GUI),
 							createNestedElement(GUIElementEnum::replayStopSaveGUI),
 							createNestedElement(GUIElementEnum::replayLoadFileGUI),
 							createNestedElement(GUIElementEnum::replayPlayGUI),
@@ -928,7 +927,7 @@ private:
 
 					case GUIElementEnum::replayRecord30GUI:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-							(game, ToolTipCollection("Arm recording at 30 tickrate. Capture begins on your next revert/checkpoint-load."), RebindableHotkeyEnum::replayRecord30Hotkey, "Record (30 tick)", settings->replayRecord30Event));
+							(game, ToolTipCollection("Arm recording. Capture begins on your next revert/checkpoint-load, at the tick rate the game is running then (detected automatically)."), RebindableHotkeyEnum::replayRecord30Hotkey, "Record", settings->replayRecord30Event));
 
 					case GUIElementEnum::replayRecord60GUI:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -940,11 +939,11 @@ private:
 
 					case GUIElementEnum::replayLoadFileGUI:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-							(game, ToolTipCollection("Browse for and load a .h2r replay file into memory (does not start playback)."), RebindableHotkeyEnum::replayLoadFileHotkey, "Load .h2r File", settings->replayLoadFileEvent));
+							(game, ToolTipCollection("Browse for and load a .HaloReplay file into memory (does not start playback). Older .h2r files load too."), RebindableHotkeyEnum::replayLoadFileHotkey, "Load .HaloReplay File", settings->replayLoadFileEvent));
 
 					case GUIElementEnum::replayPlayGUI:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-							(game, ToolTipCollection("Arm playback of the loaded replay. Real input is blocked and the recorded inputs are fed on your next revert/checkpoint-load."), RebindableHotkeyEnum::replayPlayHotkey, "Play Replay", settings->replayPlayEvent));
+							(game, ToolTipCollection("Play the loaded replay. Real input is blocked and the recorded inputs are fed from the revert: a replay with its checkpoint inside injects it first; an older one needs the matching checkpoint loaded by hand. Playback starts on your revert."), RebindableHotkeyEnum::replayPlayHotkey, "Play Replay", settings->replayPlayEvent));
 
 					case GUIElementEnum::replayStopPlaybackGUI:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -976,7 +975,8 @@ private:
 							createNestedElement(GUIElementEnum::fpScaleFixLegSizeGUI),
 							createNestedElement(GUIElementEnum::fpScaleFixLegTuckGUI),
 							createNestedElement(GUIElementEnum::animationFixesToggle),
-							createNestedElement(GUIElementEnum::masterTickrateEnableGUI),
+							createNestedElement(GUIElementEnum::masterTickrateToggleGUI),   // no arming checkbox: these always apply
+							createNestedElement(GUIElementEnum::masterTickrateCustomGUI),
 							createNestedElement(GUIElementEnum::aiFreezeGUI),
 							createNestedElement(GUIElementEnum::hceAiFreezeGUI),
 							createNestedElement(GUIElementEnum::medusaGUI),
@@ -1112,30 +1112,10 @@ private:
 							createNestedElement(GUIElementEnum::collisionViewerTimGUI),
 							createNestedElement(GUIElementEnum::collisionViewerTimLabelsGUI),
 							createNestedElement(GUIElementEnum::collisionViewerPillsGUI),
-							createNestedElement(GUIElementEnum::collisionViewerInfoPanelGUI),
 							createNestedElement(GUIElementEnum::collisionViewerGhostGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostBelievedGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostBelievedObjectsGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostLinkLabelsGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostPassGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostTravelGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostTravelObjectsGUI),
-							createNestedElement(GUIElementEnum::collisionViewerWeldZonesNearGUI),
-							createNestedElement(GUIElementEnum::collisionViewerWeldZonesWeldedGUI),
-							createNestedElement(GUIElementEnum::collisionViewerWeldZoneRangeGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostTrailGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostRewindGUI),
 							createNestedElement(GUIElementEnum::collisionViewerGhostJumpGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostPrevGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostHaloGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostEdgesGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostEdgesSuspectGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostShowRealGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostColNormalGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostColDesyncGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostColBelievedGUI),
 							createNestedElement(GUIElementEnum::collisionViewerGhostVehiclesGUI),
-							createNestedElement(GUIElementEnum::collisionViewerGhostLogGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostHaloGUI),
 							createNestedElement(GUIElementEnum::collisionViewerCreasesGUI),
 							createNestedElement(GUIElementEnum::collisionViewerCreaseFacesGUI),
 							createNestedElement(GUIElementEnum::collisionViewerLineWidthGUI),
@@ -1146,7 +1126,7 @@ private:
 
 				case GUIElementEnum::collisionViewerOcclusionGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::CollisionViewerOcclusionEnum, 260.f>>
-						(game, ToolTipCollection("(Halo 3 / ODST: InFrame draws at the first-person pass against the game's depth, bloom is not touched; PostBloom is treated as OwnCollisionDepth.) How lines are hidden behind the scene. InFrame_NoBloom: drawn inside the game's frame just before the first-person pass, against the game's own depth (your biped, AI, everything rendered hides them; the gun and HUD draw over them) - the game's bloom is switched off while shown, exactly like Cartographer's xlive overlay. PostBloom_KeepsBloom: world depth copied at the first-person pass, gun folded in, lines drawn after bloom. OwnCollisionDepth: drawn at Present against the viewer's own collision depth (automatic fallback in remastered graphics / menus). XRay: no occlusion."), "Occlusion", settings->collisionViewerOcclusion));
+						(game, ToolTipCollection("(Halo 3 / ODST: InFrame draws at the first-person pass against the game's depth, before the gun and the bloom - the lines get bloomed; PostBloom draws over the finished frame against a copy of the game's own depth taken at Present, which then holds the world and the gun - no bloom on the lines, walls and the gun still hide them.) How lines are hidden behind the scene. InFrame_NoBloom: drawn inside the game's frame just before the first-person pass, against the game's own depth (your biped, AI, everything rendered hides them; the gun and HUD draw over them) - the game's bloom is switched off while shown, exactly like Cartographer's xlive overlay. PostBloom_KeepsBloom: world depth copied at the first-person pass, gun folded in, lines drawn after bloom. OwnCollisionDepth: drawn at Present against the viewer's own collision depth (automatic fallback in remastered graphics / menus). XRay: no occlusion."), "Occlusion", settings->collisionViewerOcclusion));
 
 				case GUIElementEnum::collisionViewerShowBspGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1197,52 +1177,336 @@ private:
 						(game, ToolTipCollection("The capsule Havok actually collides with, for every biped (yours yellow), drawn through walls."), std::nullopt, "Havok capsules", settings->collisionViewerPills));
 
 				case GUIElementEnum::collisionViewerInfoPanelGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIToggleWithChildren<GUIToggleWithChildrenParameters::ShowWhenTrue, false>>
+						(game, ToolTipCollection("Small panel: mode, pair state S, the TIM table, ghost rows, kill volumes, weld zones. Tick it to choose which sections it shows (Halo 2)."), std::nullopt, "Info panel", settings->collisionViewerInfoPanel, headerChildElements
+							{
+							createNestedElement(GUIElementEnum::collisionViewerInfoGeneralGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoTimGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoGhostGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoGhostObjectsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoGhostDetailsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoPassGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoTravelGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoLegendGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoGridsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoKillGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoSuperbounceGUI),
+							createNestedElement(GUIElementEnum::collisionViewerInfoWeldGUI),
+							}));
+
+				case GUIElementEnum::collisionViewerInfoGeneralGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Small panel: mode, pair state S, the TIM table (key, polygon, TIM, contact points, true distance, over-credit)."), std::nullopt, "Info panel", settings->collisionViewerInfoPanel));
+						(game, ToolTipCollection("Occlusion mode, line settings and the per-category line counts at the top."), std::nullopt, "General (occlusion, widths, category counts)", settings->collisionViewerInfoGeneral));
+
+				case GUIElementEnum::collisionViewerInfoTimGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The TIM overlay line and the per-polygon TIM table."), std::nullopt, "TIM table", settings->collisionViewerInfoTim));
+
+				case GUIElementEnum::collisionViewerInfoGhostGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The GHOST debug line and one line per player (S, skipped, suspect, max over-credit, believed poses)."), std::nullopt, "Ghost summary", settings->collisionViewerInfoGhost));
+
+				case GUIElementEnum::collisionViewerInfoGhostObjectsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Object pair counts, pair rows and nearby machines under each player."), std::nullopt, "Ghost objects", settings->collisionViewerInfoGhostObjects));
+
+				case GUIElementEnum::collisionViewerInfoGhostDetailsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Havok-Halo offsets, last rewind, and diagnostic notes under each player."), std::nullopt, "Ghost details", settings->collisionViewerInfoGhostDetails));
+
+				case GUIElementEnum::collisionViewerInfoPassGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The PASS-THROUGH line and the per-polygon pass test rows."), std::nullopt, "Pass-through rows", settings->collisionViewerInfoPass));
+
+				case GUIElementEnum::collisionViewerInfoTravelGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The travel region rows (level and objects)."), std::nullopt, "Travel region rows", settings->collisionViewerInfoTravel));
+
+				case GUIElementEnum::collisionViewerInfoLegendGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The two grey legend lines under the ghost section."), std::nullopt, "Color legend", settings->collisionViewerInfoLegend));
+
+				case GUIElementEnum::collisionViewerInfoGridsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Tolerance, broadphase / MOPP grids and backstep parameters."), std::nullopt, "Level grids", settings->collisionViewerInfoGrids));
+
+				case GUIElementEnum::collisionViewerInfoKillGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The out-of-bounds timer and the kill volume rows (needs Kill volumes on)."), std::nullopt, "Out-of-bounds timer + kill volume rows", settings->collisionViewerInfoKill));
+
+				case GUIElementEnum::collisionViewerInfoWeldGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The weld zone summary (needs a weld zone mode on)."), std::nullopt, "Weld zones", settings->collisionViewerInfoWeld));
 
 				case GUIElementEnum::collisionViewerGhostGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIToggleWithChildren<GUIToggleWithChildrenParameters::ShowWhenTrue, false>>
+						(game, ToolTipCollection("Halo 2 ghosting: your Havok capsule turns lime while a backstep rewind is active (S > 0) or a nearby polygon is stale/over-credited, red at S = -3 (bisection failed). The options below appear when this is ticked."), std::nullopt, "Ghost debug (desync view)", settings->collisionViewerGhost, headerChildElements
+							{
+							createNestedElement(GUIElementEnum::collisionViewerGhostPlayerHeadingGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostLevelHeadingGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostObjectsHeadingGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostOffsetsHeadingGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostLoggingHeadingGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostColorsHeadingGUI),
+							}));
+
+				case GUIElementEnum::collisionViewerGhostPlayerHeadingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<true>>
+						(game, ToolTipCollection("Your own capsule: rewinds, poses, trail, pass-through prediction."), "Player", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::collisionViewerGhostShowRealGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostRewindGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostPrevGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostTrailGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostPassGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostLinkLabelsGUI),
+							}));
+
+				case GUIElementEnum::collisionViewerGhostLevelHeadingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<true>>
+						(game, ToolTipCollection("Level polygons: believed poses, travel regions, weld zones, desync edges."), "Level", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::collisionViewerGhostBelievedGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostTravelGUI),
+							createNestedElement(GUIElementEnum::collisionViewerWeldZonesNearGUI),
+							createNestedElement(GUIElementEnum::collisionViewerWeldZonesWeldedGUI),
+							createNestedElement(GUIElementEnum::collisionViewerWeldZoneRangeGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostEdgesGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostEdgesSuspectGUI),
+							}));
+
+				case GUIElementEnum::collisionViewerGhostObjectsHeadingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<true>>
+						(game, ToolTipCollection("Objects paired with you: crates, doors, machines, vehicles, other bipeds, baked scenery."), "Objects", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::collisionViewerGhostBelievedObjectsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostTravelObjectsGUI),
+							}));
+
+				case GUIElementEnum::collisionViewerGhostOffsetsHeadingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<true>>
+						(game, ToolTipCollection("Save your offsets together with a checkpoint and bring them back after reverting."), "Offset save state", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::collisionViewerOffsetSaveGUI),
+							createNestedElement(GUIElementEnum::collisionViewerOffsetLoadGUI),
+							createNestedElement(GUIElementEnum::collisionViewerOffsetNaturalRevertsGUI),
+							}));
+
+				case GUIElementEnum::collisionViewerGhostLoggingHeadingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<true>>
+						(game, ToolTipCollection("Desync logger."), "Logging", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::collisionViewerGhostLogGUI),
+							}));
+
+				case GUIElementEnum::collisionViewerGhostColorsHeadingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Ghost capsule colors."), "Colors", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::collisionViewerGhostColNormalGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostColDesyncGUI),
+							createNestedElement(GUIElementEnum::collisionViewerGhostColBelievedGUI),
+							}));
+
+				case GUIElementEnum::oobBarSettingsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Where the out-of-bounds timer bars sit on screen and how big they are. Each bar is placed from the chosen screen corner: the offset is the distance from that corner to the bar's nearest corner."), "Out-of-bounds Bar Settings", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::oobBarAnchorCornerGUI),
+							createNestedElement(GUIElementEnum::oobBarScreenOffsetGUI),
+							createNestedElement(GUIElementEnum::oobBarSizeGUI),
+							createNestedElement(GUIElementEnum::detectBarAnchorCornerGUI),
+							createNestedElement(GUIElementEnum::detectBarScreenOffsetGUI),
+							createNestedElement(GUIElementEnum::detectBarSizeGUI),
+							}));
+
+				case GUIElementEnum::oobBarAnchorCornerGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::ScreenAnchorEnum, 100.f>>
+						(game, ToolTipCollection("Death bar (out of bounds / kill volume)"), "Death bar: Corner to Anchor to##oobBar", settings->oobBarAnchorCorner));
+
+				case GUIElementEnum::oobBarScreenOffsetGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared < GUIVec2 < false, false, 0, SliderParam<SimpleMath::Vector2>({ 0.f, 0.f }, { 3840.f, 2160.f }, ImGuiSliderFlags_None) >>
+						(game, ToolTipCollection(""), "Death bar: Pixel Offset from Corner##oobBar", settings->oobBarScreenOffset, "Horizontal", "Vertical"));
+
+				case GUIElementEnum::oobBarSizeGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared < GUIVec2 < false, false, 0, SliderParam<SimpleMath::Vector2>({ 0.f, 0.f }, { 2000.f, 200.f }, ImGuiSliderFlags_None) >>
+						(game, ToolTipCollection(""), "Death bar: Bar Size##oobBarSize", settings->oobBarSize, "Horizontal", "Vertical"));
+
+				case GUIElementEnum::detectBarAnchorCornerGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::ScreenAnchorEnum, 100.f>>
+						(game, ToolTipCollection("Detection bar (next out-of-bounds check)"), "Detection bar: Corner to Anchor to##detectBar", settings->detectBarAnchorCorner));
+
+				case GUIElementEnum::detectBarScreenOffsetGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared < GUIVec2 < false, false, 0, SliderParam<SimpleMath::Vector2>({ 0.f, 0.f }, { 3840.f, 2160.f }, ImGuiSliderFlags_None) >>
+						(game, ToolTipCollection(""), "Detection bar: Pixel Offset from Corner##detectBar", settings->detectBarScreenOffset, "Horizontal", "Vertical"));
+
+				case GUIElementEnum::detectBarSizeGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared < GUIVec2 < false, false, 0, SliderParam<SimpleMath::Vector2>({ 0.f, 0.f }, { 2000.f, 200.f }, ImGuiSliderFlags_None) >>
+						(game, ToolTipCollection(""), "Detection bar: Bar Size##detectBarSize", settings->detectBarSize, "Horizontal", "Vertical"));
+
+				case GUIElementEnum::collisionViewerSuperbounceGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2 ghosting: your Havok capsule turns lime while a backstep rewind is active (S > 0) or a nearby polygon is stale/over-credited, red at S = -3 (bisection failed). Draws the extra capsules and desync edges selected below."), std::nullopt, "Ghost debug (desync view)", settings->collisionViewerGhost));
+						(game, ToolTipCollection("Halo 2: where you will land and what that landing launches. The seams below you are coloured by how likely a launch is - LIKELY (green, about 9 in 10), EDGE (orange, about 1 in 2 to 2 in 3), LOTTERY (yellow, about 1 in 30: it needs Havok's contact a tick late), GHOST SEAM (orange: a lottery seam whose late contact has launched you 2+ times, remembered per level) - with your best drift across them (8-13 deg across is an edge, 13+ slides you off); your path, the landing circle with its verdict, and the launch arrow with its speed and height. Monster gaps and dreadnought fins below you are marked and predicted too. The HUD shows only CHARGED / not charged (bottom middle); the rest goes in the Info panel's superbounce section. Reads only (Maintain charge state on reverts writes). Works without the Collision Viewer. While you touch the level, your live contact pairs are drawn with their kick factor, and each launch is classified (squeeze pair, corner, twin points) with how deep the contacts were."), std::nullopt, "Superbounce viewer", settings->collisionViewerSuperbounce));
+
+				case GUIElementEnum::collisionViewerSuperbounceSeamTextGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The viewer's text in the world: on the seams below you (falling: arrive ... u/s, LIKELY / EDGE / LOTTERY ...), your landing's verdict and drift hint, and the squeeze-loaded note. Off: only the colours, and the launch arrows with their speed and height (u/s up, wu high)."), std::nullopt, "Seam info text", settings->collisionViewerSuperbounceSeamText));
+
+				case GUIElementEnum::collisionViewerSuperbounceSpeedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Your current speed (u/s, the whole velocity) just above the CHARGED / not charged indicator at the bottom of the screen."), std::nullopt, "Speed above the charge indicator", settings->collisionViewerSuperbounceSpeed
+						));
+
+				case GUIElementEnum::collisionViewerSuperbounceDebounceGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Flags landings and seams where a late contact would start so far below the floor (0.19+) that the pill falls through instead of launching - a debounce. A LOTTERY that needs that late contact turns red; a LIKELY / EDGE landing notes the risk."), std::nullopt, "Debounce predictor", settings->collisionViewerSuperbounceDebounce
+						));
+
+				case GUIElementEnum::collisionViewerSuperbounceSpotsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Rings, arrows and labels at places a landing launched you 20+ u/s (35+: a dreadnought), with how often they launched and the arrival speeds that give the best odds. Hidden, they are still recorded."), std::nullopt, "Remembered monster / dreadnought spots", settings->collisionViewerSuperbounceSpots
+						));
+
+				case GUIElementEnum::collisionViewerSuperbouncePredictedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The spot scanner's PREDICTED monster / dreadnought spots: places a charged landing can launch 20+ u/s (35+: a dreadnought) by the engine's own contact and solver rules. The map is scanned in the background when it loads (nearest places first) and cached per map. Dashed rings (cyan monster, white dreadnought); near you each gets a yellow arrow for the direction to be MOVING when you land (with the good range of headings), an arrow for where it launches you, and the exact fall speed, drift and odds."), std::nullopt, "Predicted monster / dreadnought spots", settings->collisionViewerSuperbouncePredicted
+						));
+
+				case GUIElementEnum::collisionViewerSuperbounceRecordGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Writes superbounce_log.csv in the game's folder: every tick your position, velocity and the nearest seam / fin (T), each launch (B), the touched triangles with their face normals (H), the map's fins (F), the viewer's verdict for every airborne tick (V) and your live contact points with their solver slots (P)."), std::nullopt, "Record bounces (superbounce_log.csv)", settings->collisionViewerSuperbounceRecord));
+
+				case GUIElementEnum::collisionViewerSuperbounceHighlightGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Marks the whole map's candidates: monster gaps (two steep faces 0.02-0.35 apart with room above, magenta) and fins (thin solids whose sides lean 1-10 degrees from parallel - a DREADNOUGHT when the launch estimate is 35+ u/s - orange; fins that would push you down are left out; with their launch direction and the headroom above). Work in progress."), std::nullopt, "Highlight possible monster bounces (WIP)", settings->collisionViewerSuperbounceHighlight));
+
+				case GUIElementEnum::collisionViewerSuperbounceKeepChargeGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 2: a crouch charge survives checkpoints and reverts. Making a checkpoint (yours or the game's) rebuilds the physics and would lose the charge: if you were charged, the rebuilt (body, level) pair gets its penetration level -3 back. Each checkpoint remembers whether it was made charged, so reverting to it brings the charge back - as does being charged when you revert. Forgotten when HCM injects a checkpoint, and on a new level or bsp. Writes game memory."), std::nullopt, "Maintain charge state on checkpoints and reverts", settings->collisionViewerSuperbounceKeepCharge));
+
+				case GUIElementEnum::collisionViewerInfoSuperbounceGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The superbounce viewer's section: the charge, the sweep speed, your jump take-off, air control, the last launch and its verdict (needs Superbounce viewer on)."), std::nullopt, "Superbounce##collisionViewerInfoSuperbounce", settings->collisionViewerInfoSuperbounce));
+
+				case GUIElementEnum::collisionViewerSuperbounceForceChargeGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 2: keeps you crouch-charged no matter what. Whenever your pair with the level exists and is not at penetration level -3, it is set to -3. Standing still lets your island fall asleep and its pair goes away (that is where a charge is normally lost at rest): you are charged again the moment you move. Overrides Maintain charge state while it is on. Works without the viewer itself. Writes game memory."), std::nullopt, "Force Charged state", settings->collisionViewerSuperbounceForceCharge));
+
+				case GUIElementEnum::collisionViewerSuperbounceSettingsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection("Settings for the superbounce viewer, and its charge options (these work without the viewer itself)"), "Superbounce Viewer Settings", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSeamTextGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSpeedGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceDebounceGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSpotsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedRangeGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedMonstersGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedDreadnoughtsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedHeightsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSpotScanRadiusGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSpotScanSlowGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSpotScanCurrentTickGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSpotScanButtonGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceRecordGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceHighlightGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceKeepChargeGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceForceChargeGUI),
+							}));
+
+				case GUIElementEnum::collisionViewerKillVolumesGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 2: an on-screen bar for the out-of-bounds kill - it appears full / green the moment the game starts counting (your body is inside solid / outside the level) and drains to red over the 16 ticks to the kill; it vanishes when the count resets. The info panel adds the exact numbers and the kill volume rotation: which volume is checked this tick and, for any volume you are inside, how many ticks until its turn. (Kill volume boxes themselves are not drawn here.)"), std::nullopt, "Out-of-bounds timer bar", settings->collisionViewerKillVolumes));
+
+				case GUIElementEnum::collisionViewerOffsetNaturalRevertsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Off: only Load Offsets restores them; dying or reverting from the pause menu resets them like normal. On: any revert that puts you back where the offsets were saved restores them too."), std::nullopt, "Restore offsets after natural reverts too", settings->collisionViewerOffsetNaturalReverts));
 
 				case GUIElementEnum::collisionViewerGhostBelievedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Where each over-credited polygon's cached TIM believes you are: your capsule pushed away from that polygon by the over-credit, with a line back to the real capsule (up to 6). Ceiling/floor polygons put these above/below you."), std::nullopt, "  Believed poses (TIM)", settings->collisionViewerGhostBelieved));
+						(game, ToolTipCollection("Where each over-credited polygon's cached TIM believes you are: your capsule pushed away from that polygon by the over-credit, with a line back to the real capsule (up to 6). Ceiling/floor polygons put these above/below you."), std::nullopt, "Level believed poses", settings->collisionViewerGhostBelieved));
 
 				case GUIElementEnum::collisionViewerGhostLinkLabelsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2: labels each line between your capsule and a believed pose (level and object) with its length in world units. That length is the over-credit: how much farther away the cached TIM believes the surface is than it really is."), std::nullopt, "  Believed pose distances", settings->collisionViewerGhostLinkLabels));
+						(game, ToolTipCollection("Halo 2: labels each line between your capsule and a believed pose (level and object) with its length in world units. That length is the over-credit: how much farther away the cached TIM believes the surface is than it really is."), std::nullopt, "Believed pose distances", settings->collisionViewerGhostLinkLabels));
+
+				case GUIElementEnum::collisionViewerOffsetSaveGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Halo 2 (Ghost debug on): snapshots every TIM you are holding - level polygons and object pieces, offsets included - then forces a checkpoint. The checkpoint stores the objects as usual; once it has rebuilt your physics pairs, the snapshot is written back so you keep your offsets. Uses HCM's own Force Checkpoint, unchanged."), RebindableHotkeyEnum::offsetSave, "Save Offsets (+ checkpoint)", settings->offsetSaveEvent));
+
+				case GUIElementEnum::collisionViewerOffsetLoadGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Halo 2 (Ghost debug on): forces a revert to the checkpoint made by Save Offsets, waits for your physics pairs to come back, checks you are where the offsets were saved, and writes the saved TIMs back into the matching pairs. If a newer checkpoint has replaced it (you are somewhere else after the revert), nothing is written. Uses HCM's own Force Revert, unchanged."), RebindableHotkeyEnum::offsetLoad, "Load Offsets (revert)", settings->offsetLoadEvent));
 
 				case GUIElementEnum::collisionViewerGhostPassGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2: flashes (green) every welded polygon / object piece your current offset lets you pass through. The TIM is spent linearly (n . dp per move, whatever the path); you pass when it still has some left once your capsule is fully over the surface and fully past its plane (object pieces: your centre past the piece's middle along the TIM normal). The info panel lists the numbers per offset polygon."), std::nullopt, "  Pass-through prediction", settings->collisionViewerGhostPass));
+						(game, ToolTipCollection("Halo 2: flashes (green) every welded polygon / object piece your current offset lets you pass through. The TIM is spent linearly (n . dp per move, whatever the path); you pass when it still has some left once your capsule is fully over the surface and fully past its plane (object pieces: your centre past the piece's middle along the TIM normal). The info panel lists the numbers per offset polygon."), std::nullopt, "Pass-through prediction", settings->collisionViewerGhostPass));
 
 				case GUIElementEnum::collisionViewerGhostTravelGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2, needs Ghost debug: for each over-credited level polygon (up to 6), what keeps the over-credit alive. Coloured box = the polygon's weld zone, fixed to it: the white cross (your capsule centre) must stay inside, or the welder drops that polygon's child and its TIM with it. Red sheet = the polygon pushed to the depth where your body centre makes the TIM reach 0 (then the exact test runs and the over-credit is gone); the TIM only drains when you move toward the polygon along its normal, so the sheet stays fixed to the wall. The info panel lists each one's remaining toward-polygon budget and box overlap."), std::nullopt, "  Ghost travel region (level)", settings->collisionViewerGhostTravel));
+						(game, ToolTipCollection("Halo 2, needs Ghost debug: for each over-credited level polygon (up to 6), what keeps the over-credit alive. Coloured box = the polygon's weld zone, fixed to it: the white cross (your capsule centre) must stay inside, or the welder drops that polygon's child and its TIM with it. Red sheet = the polygon pushed to the depth where your body centre makes the TIM reach 0 (then the exact test runs and the over-credit is gone); the TIM only drains when you move toward the polygon along its normal, so the sheet stays fixed to the wall. The info panel lists each one's remaining toward-polygon budget and box overlap."), std::nullopt, "Level travel regions", settings->collisionViewerGhostTravel));
 
 				case GUIElementEnum::collisionViewerGhostTravelObjectsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2, needs Ghost debug: the travel region for over-credited OBJECT TIMs (up to 6), drawn and listed separately from the level ones because they live differently. Red sheet = the same TIM reset plane (for a moving object it moves too: its motion drains the TIM as well). Box = where the white cross (your capsule centre) must stay, fixed to the object: baked scenery = the level welder's zone around the object; crate / machine / vehicle / other biped = the broadphase zone (its real broadphase box grown by your capsule plus your broadphase margin) - leave it and the whole pair is destroyed and EVERY TIM against that object resets at once. Collision-model pieces also have their own welder zone (thin, oriented with the object). Runs the object scan even with 'Believed poses - objects' off."), std::nullopt, "  Ghost travel region (objects)", settings->collisionViewerGhostTravelObjects));
+						(game, ToolTipCollection("Halo 2, needs Ghost debug: the travel region for over-credited OBJECT TIMs (up to 6), drawn and listed separately from the level ones because they live differently. Red sheet = the same TIM reset plane (for a moving object it moves too: its motion drains the TIM as well). Box = where the white cross (your capsule centre) must stay, fixed to the object: baked scenery = the level welder's zone around the object; crate / machine / vehicle / other biped = the broadphase zone (its real broadphase box grown by your capsule plus your broadphase margin) - leave it and the whole pair is destroyed and EVERY TIM against that object resets at once. Collision-model pieces also have their own welder zone (thin, oriented with the object). Runs the object scan even with 'Believed poses - objects' off."), std::nullopt, "Object travel regions", settings->collisionViewerGhostTravelObjects));
 
 				case GUIElementEnum::collisionViewerWeldZonesNearGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2 (on foot): weld zones of every level polygon and rigid body near you, fixed to the geometry: a polygon / object has a welder child (a TIM) while the white cross (your capsule centre) is inside its zone. A zone is its box grown by your capsule's half-size plus the engine's margin (level welder: 1.5x the collision tolerance; rigid bodies: your broadphase margin). Moving adds a little extra reach in your direction of travel. Lime = welded polygon, orange = welded object, cyan = near polygon, pale orange = near body. Only zones within 'Weld zone range' of the cross are drawn (up to 600, nearest first). Works without Ghost debug."), std::nullopt, "  Weld zones (nearby)", settings->collisionViewerWeldZonesNear));
+						(game, ToolTipCollection("Halo 2 (on foot): weld zones of every level polygon and rigid body near you, fixed to the geometry: a polygon / object has a welder child (a TIM) while the white cross (your capsule centre) is inside its zone. A zone is its box grown by your capsule's half-size plus the engine's margin (level welder: 1.5x the collision tolerance; rigid bodies: your broadphase margin). Moving adds a little extra reach in your direction of travel. Lime = welded polygon, orange = welded object, cyan = near polygon, pale orange = near body. Only zones within 'Weld zone range' of the cross are drawn (up to 600, nearest first). Works without Ghost debug."), std::nullopt, "Weld zones (nearby)", settings->collisionViewerWeldZonesNear));
 
 				case GUIElementEnum::collisionViewerWeldZonesWeldedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2 (on foot): weld zones of ONLY the polygons and objects currently welded to you - every level polygon / baked scenery piece that has a welder child, and every rigid body with a broadphase pair against your biped. Cheaper than the nearby view; ignores the range."), std::nullopt, "  Weld zones (welded only)", settings->collisionViewerWeldZonesWelded));
+						(game, ToolTipCollection("Halo 2 (on foot): weld zones of ONLY the polygons and objects currently welded to you - every level polygon / baked scenery piece that has a welder child, and every rigid body with a broadphase pair against your biped. Cheaper than the nearby view; ignores the range."), std::nullopt, "Weld zones (welded only)", settings->collisionViewerWeldZonesWelded));
+
+				case GUIElementEnum::collisionViewerSuperbouncePredictedMonstersGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Predicted spots: draw the MONSTERS (ceiling 20-35 u/s, cyan rings)."), std::nullopt, "Predicted monsters (20-35)", settings->collisionViewerSuperbouncePredictedMonsters
+						));
+
+				case GUIElementEnum::collisionViewerSuperbouncePredictedDreadnoughtsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Predicted spots: draw the DREADNOUGHTS (ceiling 35+ u/s, white rings)."), std::nullopt, "Predicted dreadnoughts (35+)", settings->collisionViewerSuperbouncePredictedDreadnoughts
+						));
+
+				case GUIElementEnum::collisionViewerSuperbouncePredictedHeightsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Predicted spots: also show the START HEIGHT band of the worked-out approach - how high your feet are above the landing surface at the start of the landing tick (the tick you first touch it) for the launch to work. Monsters / dreadnoughts are deterministic: the tick-based sink depth decides them."), std::nullopt, "Show start heights", settings->collisionViewerSuperbouncePredictedHeights
+						));
+
+				case GUIElementEnum::collisionViewerSpotScanRadiusGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 4096.f)>>
+						(game, ToolTipCollection("Scan around me: the geometry within this distance of you (wu) is scanned (a sphere)."), "Spot scan radius (wu)", settings->collisionViewerSpotScanRadius));
+
+				case GUIElementEnum::collisionViewerSpotScanSlowGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Scan around me: test EVERY fall speed from 4 to 50 u/s (slow approaches and very fast plunges) instead of 10/22/30/35/40. About 10x slower."), std::nullopt, "Slow mode (4-50 u/s)", settings->collisionViewerSpotScanSlow
+						));
+
+				case GUIElementEnum::collisionViewerSpotScanCurrentTickGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Scan and show predictions at the game's CURRENT tick rate (e.g. 60) instead of 30. Each tick rate has its own prediction file. Note: the launch model was validated at 30 tick; 60-tick predictions are less certain."), std::nullopt, "Use current tick rate", settings->collisionViewerSpotScanCurrentTick
+						));
+
+				case GUIElementEnum::collisionViewerSpotScanButtonGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+						(game, ToolTipCollection("Scan the geometry around you for monster / dreadnought spots with the spot scanner (GPU, runs hidden in the background), then merge the results into this map's prediction file and show them. Uses the radius / slow mode / tick rate options above."), std::nullopt, "Scan around me", settings->collisionViewerSpotScanEvent));
+
+				case GUIElementEnum::collisionViewerSuperbouncePredictedRangeGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(10.f, 1000.f)>>
+						(game, ToolTipCollection("Predicted monster / dreadnought spots: only spots within this distance of you (wu) are drawn, nearest first (at most 800). Raise it on big maps to find them."), "Predicted spots range (wu)", settings->collisionViewerSuperbouncePredictedRange));
 
 				case GUIElementEnum::collisionViewerWeldZoneRangeGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 20.f)>>
-						(game, ToolTipCollection("Weld zones (nearby): only zones within this distance of the white cross are drawn. 0 = only zones you are inside."), "  Weld zone range (wu)", settings->collisionViewerWeldZoneRange));
+						(game, ToolTipCollection("Weld zones (nearby): only zones within this distance of the white cross are drawn. 0 = only zones you are inside."), "Weld zone range (wu)", settings->collisionViewerWeldZoneRange));
 
 				case GUIElementEnum::collisionViewerGhostBelievedObjectsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2: believed poses for TIMs against OBJECTS, drawn in orange. Covers static scenery baked into the level (its physics or collision model, reached through the level welder) and, for a biped, every pair with another rigid body: crates, machines, vehicles, dynamic scenery, other bipeds. Each skipped child whose cached TIM over-credits the real gap to the object puts a copy of your capsule where that TIM believes you are. While on, object suspects also turn the capsule lime, show as desync edges, and go to the desync logger (source \"object\"). The info panel lists the object pairs and any leaf agents whose TIMs can't be read."), std::nullopt, "  Believed poses - objects", settings->collisionViewerGhostBelievedObjects));
+						(game, ToolTipCollection("Halo 2: believed poses for TIMs against OBJECTS, drawn in orange. Covers static scenery baked into the level (its physics or collision model, reached through the level welder) and, for a biped, every pair with another rigid body: crates, machines, vehicles, dynamic scenery, other bipeds. Each skipped child whose cached TIM over-credits the real gap to the object puts a copy of your capsule where that TIM believes you are. While on, object suspects also turn the capsule lime, show as desync edges, and go to the desync logger (source \"object\"). The info panel lists the object pairs and any leaf agents whose TIMs can't be read."), std::nullopt, "Object believed poses", settings->collisionViewerGhostBelievedObjects));
 
 				case GUIElementEnum::collisionViewerGhostTrailGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Havok's pose on each of the last 8 game ticks, fading; lime on ticks where a backstep was active. Rewinds show up as kinks."), std::nullopt, "  Tick trail", settings->collisionViewerGhostTrail));
+						(game, ToolTipCollection("Havok's pose on each of the last 8 game ticks, fading; lime on ticks where a backstep was active. Rewinds show up as kinks."), std::nullopt, "Tick trail", settings->collisionViewerGhostTrail));
 
 				case GUIElementEnum::collisionViewerShowSoftCeilingsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1250,47 +1514,47 @@ private:
 
 				case GUIElementEnum::collisionViewerGhostJumpGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 3 / ODST: the last position JUMP. Halo 3's Havok integrates every step with centre-of-mass 0 := centre-of-mass 1 of the previous step, so a gap between them means the body was moved between two ticks by something other than the simulation - a raw position write (Force Teleport), or an engine path that skips the safe reposition. Yellow = where the next step started, red-orange = where the body was at the end of the previous step; the info panel says whether Halo's own object position moved with it."), std::nullopt, "  Jump markers (raw position writes)", settings->collisionViewerGhostJump));
+						(game, ToolTipCollection("Halo 3 / ODST: the last position JUMP. Halo 3's Havok integrates every step with centre-of-mass 0 := centre-of-mass 1 of the previous step, so a gap between them means the body was moved between two ticks by something other than the simulation - a raw position write (Force Teleport), or an engine path that skips the safe reposition. Yellow = where the next step started, red-orange = where the body was at the end of the previous step; the info panel says whether Halo's own object position moved with it."), std::nullopt, "Jump markers (raw position writes)", settings->collisionViewerGhostJump));
 
 				case GUIElementEnum::collisionViewerGhostRewindGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("The last backstep rewind: yellow = where the bisector rewound you to, red-orange = where you were before, with the rewind distance and t* in the info panel."), std::nullopt, "  Backstep rewind pose", settings->collisionViewerGhostRewind));
+						(game, ToolTipCollection("The last backstep rewind: yellow = where the bisector rewound you to, red-orange = where you were before, with the rewind distance and t* in the info panel."), std::nullopt, "Backstep rewind poses", settings->collisionViewerGhostRewind));
 
 				case GUIElementEnum::collisionViewerGhostPrevGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Havok's pose at the start of the current physics step (motion PREV). Differs from the current pose by about one tick of movement while running."), std::nullopt, "  Step-start pose", settings->collisionViewerGhostPrev));
+						(game, ToolTipCollection("Havok's pose at the start of the current physics step (motion PREV). Differs from the current pose by about one tick of movement while running."), std::nullopt, "Step-start pose", settings->collisionViewerGhostPrev));
 
 				case GUIElementEnum::collisionViewerGhostHaloGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Where Halo itself thinks the biped is (object position), white, when it differs from Havok's body."), std::nullopt, "  Halo object position", settings->collisionViewerGhostHalo));
+						(game, ToolTipCollection("Where Halo itself thinks the biped is (object position), white, when it differs from Havok's body."), std::nullopt, "Halo object position", settings->collisionViewerGhostHalo));
 
 				case GUIElementEnum::collisionViewerGhostEdgesGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Thick lime edges on every polygon Havok is currently skipping for you (TIM > 0), thick red on stale/over-credited ones - the surfaces you are desyncing from."), std::nullopt, "  Desync edges", settings->collisionViewerGhostEdges));
+						(game, ToolTipCollection("Thick lime edges on every polygon Havok is currently skipping for you (TIM > 0), thick red on stale/over-credited ones - the surfaces you are desyncing from."), std::nullopt, "Desync edges", settings->collisionViewerGhostEdges));
 
 				case GUIElementEnum::collisionViewerGhostEdgesSuspectGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Only highlight stale / over-credited polygons (hides the routine skipped ones, e.g. floor seams)."), std::nullopt, "  Edges: suspect only", settings->collisionViewerGhostEdgesSuspect));
+						(game, ToolTipCollection("Only highlight stale / over-credited polygons (hides the routine skipped ones, e.g. floor seams)."), std::nullopt, "Offset polygons only", settings->collisionViewerGhostEdgesSuspect));
 
 				case GUIElementEnum::collisionViewerGhostShowRealGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Draw the capsule where Havok really is. Turn off to see only the desync poses (believed / rewind / trail) without the overlap."), std::nullopt, "  Show real capsule", settings->collisionViewerGhostShowReal));
+						(game, ToolTipCollection("Draw the capsule where Havok really is. Turn off to see only the desync poses (believed / rewind / trail) without the overlap."), std::nullopt, "Show real capsule", settings->collisionViewerGhostShowReal));
 
 				case GUIElementEnum::collisionViewerGhostColNormalGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
-						(game, ToolTipCollection("Colour of your real Havok capsule (and trail) while nothing is desynced."), "  Capsule colour", settings->collisionViewerGhostColNormal));
+						(game, ToolTipCollection("Colour of your real Havok capsule (and trail) while nothing is desynced."), "Capsule color", settings->collisionViewerGhostColNormal));
 
 				case GUIElementEnum::collisionViewerGhostColDesyncGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
-						(game, ToolTipCollection("Colour of your real Havok capsule (and trail ticks) while a backstep is active or a nearby polygon is stale/over-credited."), "  Desync capsule colour", settings->collisionViewerGhostColDesync));
+						(game, ToolTipCollection("Colour of your real Havok capsule (and trail ticks) while a backstep is active or a nearby polygon is stale/over-credited."), "Desync capsule color", settings->collisionViewerGhostColDesync));
 
 				case GUIElementEnum::collisionViewerGhostColBelievedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
-						(game, ToolTipCollection("Colour of the believed-pose capsules (where the over-credited TIMs think you are)."), "  Believed pose colour", settings->collisionViewerGhostColBelieved));
+						(game, ToolTipCollection("Colour of the believed-pose capsules (where the over-credited TIMs think you are)."), "Believed pose color", settings->collisionViewerGhostColBelieved));
 
 				case GUIElementEnum::collisionViewerGhostVehiclesGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("While you're in a vehicle (any seat), show the vehicle's Havok body and its TIM/backstep desync instead of your biped's; back to your biped when you get out."), std::nullopt, "  Follow vehicle when seated", settings->collisionViewerGhostVehicles));
+						(game, ToolTipCollection("While you're in a vehicle (any seat), show the vehicle's Havok body and its TIM/backstep desync instead of your biped's; back to your biped when you get out."), std::nullopt, "Follow vehicle when seated", settings->collisionViewerGhostVehicles));
 
 				case GUIElementEnum::collisionViewerCreasesGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1302,7 +1566,7 @@ private:
 
 				case GUIElementEnum::collisionViewerGhostLogGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("While Ghost debug is on, writes every backstep, detected rewind and TIM over-credit episode to GhostDesyncLog_<date>.jsonl next to HCMInternal.dll: map, tick, body position / PREV / CUR, velocity and integrate velocity, S, the over-credited polygon (world/instanced, surface, flags, material, vertices, normal, centroid), TIM, true distance, over-credit, the believed-shift direction, normal.velocity, and the surfaces you were touching. One JSON object per line. Turning it off closes the file; on again starts a new one."), std::nullopt, "  Desync logger", settings->collisionViewerGhostLog));
+						(game, ToolTipCollection("While Ghost debug is on, writes every backstep, detected rewind and TIM over-credit episode to GhostDesyncLog_<date>.jsonl next to HCMInternal.dll: map, tick, body position / PREV / CUR, velocity and integrate velocity, S, the over-credited polygon (world/instanced, surface, flags, material, vertices, normal, centroid), TIM, true distance, over-credit, the believed-shift direction, normal.velocity, and the surfaces you were touching. One JSON object per line. Turning it off closes the file; on again starts a new one."), std::nullopt, "Desync logger", settings->collisionViewerGhostLog));
 
 				case GUIElementEnum::collisionViewerLineWidthGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 8.f)>>
@@ -1393,7 +1657,10 @@ private:
 
 				case GUIElementEnum::h2pTick30ToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Switches the game and the Halo 2 physics between 30 and 60 ticks a second, any time (mid-game too). On: Halo 2 at 30 ticks (Xbox): superbounces, big landings on slopes stop on ledges. Off: Halo 2 at 60 ticks (PC): you slide down slopes, but superbounces from ordinary heights don't happen"), RebindableHotkeyEnum::h2pTick30Hotkey, "30 tick", settings->h2pTick30Toggle));
+						(game, ToolTipCollection(game.operator GameState::Value() == GameState::Value::HaloReach
+							? "Reach itself always runs at 60 ticks a second: this switches only the Halo 2 physics, any time (mid-game too). On: Halo 2 at 30 ticks (Xbox), one Halo 2 step every second Reach tick: superbounces, big landings on slopes stop on ledges. Off: Halo 2 at 60 ticks (MCC Halo 2's old 60 tick): you slide down slopes, and bounces (60 tick bouncing) need much bigger drops but go much higher"
+							: "Switches the game and the Halo 2 physics between 30 and 60 ticks a second, any time (mid-game too). On: Halo 2 at 30 ticks (Xbox): superbounces, big landings on slopes stop on ledges. Off: Halo 2 at 60 ticks (MCC Halo 2's old 60 tick): you slide down slopes, and bounces (60 tick bouncing) need much bigger drops but go much higher"),
+							RebindableHotkeyEnum::h2pTick30Hotkey, "30 tick", settings->h2pTick30Toggle));
 
 				case GUIElementEnum::h2pCombosToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -1507,7 +1774,7 @@ private:
 
 				case GUIElementEnum::masterTickrateToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-						(game, ToolTipCollection("Flips the master simulation tickrate between 60 and 30 Hz (and the matching seconds-per-tick). Requires a loaded game."), std::nullopt, "Toggle Tickrate (60/30)", settings->masterTickrateFlipEvent
+						(game, ToolTipCollection("Flips the master simulation tickrate between 60 and 30 Hz (and the matching seconds-per-tick). Requires a loaded game. Each game runs at its own rate (60) until you pick one here; the last rate you picked for that game is then re-applied on every level load and mission restart for the rest of the session."), std::nullopt, "Toggle Tickrate (60/30)", settings->masterTickrateFlipEvent
 						));
 
 				case GUIElementEnum::masterTickrateCustomGUI:
@@ -1983,12 +2250,22 @@ private:
 							createNestedElement(GUIElementEnum::hceSoftCeilingOverlaySettingsSubheading),
 							createNestedElement(GUIElementEnum::softCeilingOverlayToggle),
 							createNestedElement(GUIElementEnum::softCeilingOverlaySettings),
+							createNestedElement(GUIElementEnum::collisionViewerInfoPanelGUI),
+							createNestedElement(GUIElementEnum::collisionViewerKillVolumesGUI),
+							createNestedElement(GUIElementEnum::oobBarSettingsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSettingsGUI),
 							createNestedElement(GUIElementEnum::collisionViewerToggleGUI),
+							createNestedElement(GUIElementEnum::launchTrajectoryToggleGUI),
+							createNestedElement(GUIElementEnum::launchTrajectorySettingsGUI),
 							createNestedElement(GUIElementEnum::placementPointsOverlayToggle),
 							createNestedElement(GUIElementEnum::placementPointsOverlaySettings),
 							createNestedElement(GUIElementEnum::shieldInputPrinterToggle),
 							createNestedElement(GUIElementEnum::abilityMeterOverlayToggle),
 							createNestedElement(GUIElementEnum::abilityMeterOverlaySettings),
+							createNestedElement(GUIElementEnum::havokSleepCountdownToggleGUI),
+							createNestedElement(GUIElementEnum::havokSleepCountdownSimpleGUI),
+							createNestedElement(GUIElementEnum::havokSleepAutoJumpGUI),
 							createNestedElement(GUIElementEnum::sensDriftOverlayToggle),
 							createNestedElement(GUIElementEnum::sensDriftOverlaySettings),
 							createNestedElement(GUIElementEnum::competitionModeToggle),
@@ -2653,6 +2930,312 @@ private:
 							(game, ToolTipCollection("Draw the player-trigger-vertex sphere as wireframe instead of solid"), std::nullopt, "Trigger Vertex Wireframe", settings->triggerOverlayPositionWireframe));
 
 
+			// ---- Launch Trajectory (Halo 2) ----
+			case GUIElementEnum::launchTrajectoryToggleGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Draws the path you will take if you are launched from your CURRENT velocity - through every wall and floor contact, sliding along surfaces and then along the ground - to where you are expected to come to rest.\n\nBuilt for momentum-storage launches: while the stored velocity is held the line is drawn in the Stored colour, and after you launch the prediction made just before release stays on screen (Pre-Launch colour) next to the path you actually flew (Actual colour), so you can see how good it was.\n\nModel (read from halo2.dll 1.3528): each tick v is capped to Max Speed, then v.z -= gravity * tick length, then p += v * tick length. Gravity and tick length are read live, so physics_set_gravity and skulls are followed.\n\nGravity, air friction, ground friction and wall impacts are all measured from real launches. Walkable Slope is still an estimate. Not modelled: stick input (air control).\n\nThe velocity used is the Havok body velocity, the same number Display 2D Info shows for Halo 2.\n\nHalo: Reach: the flight is drawn with Reach gravity and tick length read live from haloreach.dll, with no collision yet and none of the Halo 2 measurements (friction, release ticks, release kick, 4.085 impacts, fall death) assumed. Turn on Log Launches To File in Reach so those can be measured for Reach the same way."), std::nullopt, "Launch Trajectory", settings->launchTrajectoryToggle));
+
+			case GUIElementEnum::launchTrajectorySettingsGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+					(game, ToolTipCollection("Settings for the launch trajectory overlay"), "Launch Trajectory Settings", headerChildElements
+						{
+						createNestedElement(GUIElementEnum::launchTrajectoryMinSpeedGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryDurationGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryOnlyWhenStoredGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryKeepAfterLaunchGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryShowActualPathGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryStopAtCollisionGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryIncludeBarriersGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryIncludeObjectsGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryUseBodyExtentsGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryIgnoreFirstTicksGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryGroundDecelGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryAirFrictionGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryWallBackstepGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryGroundSlideMaxSpeedGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryReleaseModelGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryReleaseFrictionGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryReleaseKickGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryH2DecompGroundGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryReleaseKickRangeGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryReachGameCollisionGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchRunGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchRunsGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchFirstCrouchGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchCrouchTicksGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchCyclesGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchCycleLengthGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchAttackTicksGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchCrouchDelayGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchStepGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchReleaseDelayGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchCrouchKeyGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchMeleeKeyGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchReleaseKeyGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchSpeedStartGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryBenchSpeedStepGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryHudStoredGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryHudScaleGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryHudHeightGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryReachCrouchReleaseGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryReachReleaseRatioGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryFallDeathGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryFallDeathSpeedGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryNextHitToggleGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryNextHitRotateWithViewGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryNextHitColorGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryRestitutionGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryMaxSlopeGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryMaxSpeedGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryDampingGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryShowTickMarksGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryShowLabelsGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryLogToFileGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryLogSpeedUpsGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryLabelScaleGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryLineColorGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryStoredColorGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryHeldColorGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryActualColorGUI),
+						createNestedElement(GUIElementEnum::launchTrajectoryImpactColorGUI)
+						}));
+
+			case GUIElementEnum::launchTrajectoryMinSpeedGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("Only draw the live prediction when your speed is at least this many world units per second. Running is about 2.3 wu/s. This is also the minimum speed for a stall to count as stored momentum."), "Minimum Speed (wu/s)##launchTrajectory", settings->launchTrajectoryMinSpeed));
+
+			case GUIElementEnum::launchTrajectoryDurationGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.5f, 120.f)>>
+					(game, ToolTipCollection("Upper limit on how far ahead to simulate (and how much actual path to keep). The line normally stops earlier, where the body comes to rest; if the end label says still moving, raise this."), "Max Prediction Length (s)##launchTrajectory", settings->launchTrajectoryDuration));
+
+			case GUIElementEnum::launchTrajectoryOnlyWhenStoredGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Only draw the live line while momentum is being stored (velocity high, but the body is not actually moving). Hides it during normal play."), std::nullopt, "Only While Momentum Is Stored##launchTrajectory", settings->launchTrajectoryOnlyWhenStored));
+
+			case GUIElementEnum::launchTrajectoryKeepAfterLaunchGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("When a stored launch is released, keep the prediction made on the last stored tick on screen for the prediction length + 3 seconds, so it can be compared with the path you actually flew."), std::nullopt, "Keep Pre-Launch Prediction##launchTrajectory", settings->launchTrajectoryKeepAfterLaunch));
+
+			case GUIElementEnum::launchTrajectoryShowActualPathGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Draw the path your centre of mass actually took, one point per tick. Restarts at each launch and on reverts / teleports."), std::nullopt, "Show Actual Path##launchTrajectory", settings->launchTrajectoryShowActualPath));
+
+			case GUIElementEnum::launchTrajectoryStopAtCollisionGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Collide with the level (world BSP and instanced geometry, read the same way as the Collision Viewer): slide along what you hit and come to rest on the ground. Off: the pure ballistic arc, straight through everything, for the full Max Prediction Length."), std::nullopt, "Collide With World##launchTrajectory", settings->launchTrajectoryStopAtCollision));
+
+			case GUIElementEnum::launchTrajectoryIncludeBarriersGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Treat invisible collision surfaces (player barriers) as solid."), std::nullopt, "Include Invisible Barriers##launchTrajectory", settings->launchTrajectoryIncludeBarriers));
+
+			case GUIElementEnum::launchTrajectoryIncludeObjectsGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Also collide with scenery, crates and machines near the path. Re-read every frame because objects move."), std::nullopt, "Include Objects##launchTrajectory", settings->launchTrajectoryIncludeObjects));
+
+			case GUIElementEnum::launchTrajectoryUseBodyExtentsGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Collide using three rays - the top and bottom of your capsule as well as its centre - so floors and ceilings are hit when your feet or head reach them. Off: centre of mass only. Walls are still hit by the centre line, so a side impact can be up to one capsule radius late."), std::nullopt, "Use Body Height##launchTrajectory", settings->launchTrajectoryUseBodyExtents));
+
+			case GUIElementEnum::launchTrajectoryIgnoreFirstTicksGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("Skip collision for this many ticks at the start of the path. Storing momentum often leaves you touching or embedded in geometry, which would otherwise end the line immediately."), "Ignore Collision For First N Ticks##launchTrajectory", settings->launchTrajectoryIgnoreFirstTicks));
+
+			case GUIElementEnum::launchTrajectoryGroundDecelGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("How fast you slow down while sliding on walkable ground with no stick input, in wu/s per second. Measured from your launch logs: 9.60 (a constant slow-down). The Actual path label shows the value measured on each landing."), "Ground Friction (wu/s^2)##launchTrajectory", settings->launchTrajectoryGroundDecel));
+
+			case GUIElementEnum::launchTrajectoryRestitutionGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
+					(game, ToolTipCollection("Bounciness on contact: 0 = the velocity going into a surface is removed and you slide along it (bipeds), 1 = a perfect bounce."), "Bounce (Restitution)##launchTrajectory", settings->launchTrajectoryRestitution));
+
+			case GUIElementEnum::launchTrajectoryMaxSlopeGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 89.f)>>
+					(game, ToolTipCollection("Surfaces flatter than this (degrees from horizontal) can be stood on: landing on one grounds you and you slide to a stop. Steeper surfaces are slid down under gravity. Halo 2: 50 - the \"maximum slope angle\" in both masterchief.biped and dervish.biped."), "Walkable Slope (deg)##launchTrajectory", settings->launchTrajectoryMaxSlope));
+
+			case GUIElementEnum::launchTrajectoryLogToFileGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Write one CSV per launch to <HCM folder>\\LaunchLogs: every tick of what the game actually did next to what the overlay predicted, the model constants used, and quick fits measured from the real path (gravity, air drag, ground slow-down, integration order). Recording starts when stored momentum is released and stops when you come to rest, revert, die or teleport. A summary is shown in the message log. Send these files back to refine the model."), std::nullopt, "Log Launches To File##launchTrajectory", settings->launchTrajectoryLogToFile));
+
+			case GUIElementEnum::launchTrajectoryLogSpeedUpsGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Also log launches that had no storage phase: any tick where your speed jumps from below Minimum Speed to above it (explosions, vehicle hits, grenade jumps). The prediction for these starts from the first fast tick."), std::nullopt, "Also Log Launches Without Storage##launchTrajectory", settings->launchTrajectoryLogSpeedUps));
+
+			case GUIElementEnum::launchTrajectoryAirFrictionGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("How fast your HORIZONTAL speed drops while airborne with no stick input, in wu/s per second. Measured from your launch logs: exactly 1.050 (a constant slow-down, not a percentage). Vertical speed only changes by gravity."), "Air Friction (wu/s^2)##launchTrajectory", settings->launchTrajectoryAirFriction));
+
+			case GUIElementEnum::launchTrajectoryWallBackstepGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Measured from 40+ impacts in your launch logs: when a tick would run you into anything - wall, ceiling, object or the ground - at more than 4.085 wu/s into the surface, your whole velocity is cut to exactly 4.085 wu/s (same direction) and you creep in at that speed until you touch. 4.085 = sqrt(2 x gravity x 2 wu), so it follows gravity changes. Gentler contacts just remove the part of the velocity going into the surface (land and slide). Off: every contact is the gentle kind."), std::nullopt, "Hard Impacts Cut Speed To 4.085##launchTrajectory", settings->launchTrajectoryWallBackstep));
+
+			case GUIElementEnum::launchTrajectoryGroundSlideMaxSpeedGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("Above this speed a body sliding on the ground gets only Air Friction, not Ground Friction. Measured: full ground friction at up to 6.1 wu/s, only air friction at 11.9 wu/s. The exact switch point is somewhere in between (default 9) - a landing that slides at 6-12 wu/s in a launch log will pin it down."), "Ground Friction Only Below (wu/s)##launchTrajectory", settings->launchTrajectoryGroundSlideMaxSpeed));
+
+			case GUIElementEnum::launchTrajectoryReleaseModelGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Model what happens as stored momentum is released from the ground (measured from your logs): the release tick adds one tick of ground friction back to your horizontal speed and skips gravity, then for 4 ticks you are still slowed as if on the ground (Release Friction, along your whole velocity) before normal flight. This took the error over 10-second flights from ~45 wu to under 1 wu.\n\nThe extra upward kick many releases get on the release tick (+3 to +19 wu/s in your logs) is not part of the stored velocity - see Release Kick. Without it the pre-launch line leaves the kick out; the live line picks it up from the next tick."), std::nullopt, "Model Release Ticks##launchTrajectory", settings->launchTrajectoryReleaseModel));
+
+			case GUIElementEnum::launchTrajectoryReleaseFrictionGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("Slow-down along your whole velocity for the 4 ticks after a release, in wu/s per second. Best fit across your logs: 9.3."), "Release Friction (wu/s^2)##launchTrajectory", settings->launchTrajectoryReleaseFriction));
+
+			case GUIElementEnum::launchTrajectoryH2DecompGroundGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Experimental: three Halo 2 ground-movement details from the Xbox decompilation - each tick on the ground the velocity is pushed 0.234 wu/s into the surface, gravity acts while you are still slowing down, and at creases the ground direction is combined from up to three contacts. Replayed against 766 of your Halo 2 logs they changed almost nothing (within 0.3 wu), so it is off by default; turn it on to compare."), std::nullopt, "Halo 2: Decompiled Ground Details (experimental)##launchTrajectory", settings->launchTrajectoryH2DecompGround));
+
+			case GUIElementEnum::launchTrajectoryReleaseKickGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("Upward speed added on the release tick of a stored launch. Releasing by tapping forward gives an extra upward kick that is not in the stored velocity: your forward-tap releases got +1.4 to +6.0 wu/s (median of 19: ~3.5). Set 0 for releases that do not kick. The floor-depth idea did not hold up: the measured depth was the same for every launch while the kick varied."), "Release Kick (wu/s)##launchTrajectory", settings->launchTrajectoryReleaseKick));
+
+			case GUIElementEnum::launchTrajectoryFallDeathGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("End the line, with a red marker, where you would die mid-air to the fall timer. Skipped automatically while HCM Invulnerability is on - then the whole line is drawn."), std::nullopt, "Show Fall Death Point##launchTrajectory", settings->launchTrajectoryFallDeath));
+
+			case GUIElementEnum::launchTrajectoryFallDeathSpeedGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("Downward speed at which the mid-air fall death happens. From the game: sqrt(2 x 3.2086613 x maximum falling distance), with the globals tag's maximum falling distance of 14 = 9.4785 wu/s (the code that turns the falling distances into speeds is at 0x696E9C in the Halo 2 Sapien; 3.2086613 is Halo 1's gravity, still used for falling). Matches all 20 logged deaths: last alive at 9.4785, dead by 9.481."), "Fall Death Speed (wu/s)##launchTrajectory", settings->launchTrajectoryFallDeathSpeed));
+
+			case GUIElementEnum::launchTrajectoryNextHitToggleGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("A second line: where you would go if you took one more hit like the last one (sword lunge, melee, rocket, grenade - anything that suddenly added more than 4 wu/s). It uses the exact velocity change that hit gave you. Appears once a hit has been seen this session."), std::nullopt, "Show One-More-Hit Line##launchTrajectory", settings->launchTrajectoryNextHitToggle));
+
+			case GUIElementEnum::launchTrajectoryNextHitRotateWithViewGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Turn the hit's push with your view: a melee or sword hit pushes the way you are aiming, so if you look elsewhere the next hit goes elsewhere. Off: the next hit pushes in exactly the same world direction as the last one (better for an explosion from a fixed spot)."), std::nullopt, "One-More-Hit Follows Your Aim##launchTrajectory", settings->launchTrajectoryNextHitRotateWithView));
+
+			case GUIElementEnum::launchTrajectoryNextHitColorGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<false>>
+					(game, ToolTipCollection("Colour of the one-more-hit line"), "One-More-Hit Colour##launchTrajectory", settings->launchTrajectoryNextHitColor));
+
+			case GUIElementEnum::launchTrajectoryReleaseKickRangeGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("While storing, also draw two dimmed lines for the release kick this much lower and higher than Release Kick, to show where you could end up. The kick is the one thing the stored state does not reveal: with each launch's real kick plugged in, all 6 of your latest logs matched to 0.1-0.3 wu over 2 s and the fall death to within a tick. 0 = off."), "Release Kick Spread (+/- wu/s)##launchTrajectory", settings->launchTrajectoryReleaseKickRange));
+
+			case GUIElementEnum::launchTrajectoryReachCrouchReleaseGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Reach crouch storage stores your speed pointing straight down into the floor, so the plain prediction just goes into the ground. With this on, while that kind of storage is held the line shows the RELEASE instead: the stored speed (times Release Speed Ratio) turned horizontal, DOWN THE SLOPE you are stored on. Measured: 9 releases with your view anywhere from 334 to 47 degrees (and once backwards, 194) all went the same way - straight opposite the stored speed's small sideways part, i.e. downhill. On flat floor that part is ~0 and the direction is unknown, so the line falls back to your aim (the label says which). Stored speeds above ~31 wu/s are flagged as a death risk: the release tick usually dips into the floor at about 0.39 x the stored speed first, and every dip of 13.4 wu/s or more killed you (stored 34.6, 40.9, 41.4) while 11.4 and less never did (28.5 and below). Two releases at 44.8 and 50.2 skipped the dip and survived."), std::nullopt, "Reach: Show Crouch Storage Release##launchTrajectory", settings->launchTrajectoryReachCrouchRelease));
+
+			case GUIElementEnum::launchTrajectoryReachReleaseRatioGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("Horizontal speed after a crouch-storage release (once on the ground), as a fraction of the stored speed. Your 17 logged releases: 0.72 - 0.86, mean ~0.82 (the slowest ones, under 12 wu/s, keep the least)."), "Reach: Release Speed Ratio##launchTrajectory", settings->launchTrajectoryReachReleaseRatio));
+
+			case GUIElementEnum::launchTrajectoryHudStoredGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("While momentum is stored, show the stored speed - and where the prediction ends (or the fall death / Reach release death risk) - in big text under the crosshair, so it can be read in first person, where the label at your feet is off screen."), std::nullopt, "Show Stored Speed On HUD##launchTrajectory", settings->launchTrajectoryHudStored));
+
+			case GUIElementEnum::launchTrajectoryHudScaleGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("Size of the HUD read-out (1 = about 3% of the screen height)."), "HUD Text Size##launchTrajectory", settings->launchTrajectoryHudScale));
+
+			case GUIElementEnum::launchTrajectoryHudHeightGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("Where the HUD read-out sits, as a fraction of the screen height (0 = top, 0.5 = crosshair, 1 = bottom)."), "HUD Position (screen height)##launchTrajectory", settings->launchTrajectoryHudHeight));
+
+			case GUIElementEnum::launchTrajectoryReachGameCollisionGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Reach: test the predicted path with the game's own collision test (collision_test_vector, the same function projectiles and the camera use) instead of the overlay's copy of the level: exact terrain, every rock and placed piece, and - with Include Objects - scenery, crates and machines, on any map. It runs on the game thread each tick, so the lines are drawn one tick behind; off falls back to the copy of the level."), std::nullopt, "Reach: Use The Game's Own Collision##launchTrajectory", settings->launchTrajectoryReachGameCollision));
+
+			case GUIElementEnum::launchTrajectoryBenchRunGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+					(game, ToolTipCollection("Launch Test Bench: repeats your storage launch automatically from YOUR checkpoint. Set it up first: stand where only the storage inputs are left to do, Force Checkpoint, and turn on Disable Natural Checkpoints (so the game does not overwrite it). Then each run: revert, spam crouch (and melee if set) with the real keys, wait for the storage, tap the release key, let the launch play out (it is logged), revert, and go again with the timing shifted by the Step. Keys are sent to the game window - keep MCC focused and hands off. Needs the Launch Trajectory overlay on. Switches itself off when the runs are done; turning it off stops it. Bind a hotkey to start / stop it without the menu open - the bench waits until the menu is closed before it starts (keys sent while the menu has focus do not reach the game)."), RebindableHotkeyEnum::launchTrajectoryBenchHotkey, "Run Launch Test Bench##launchTrajectory", settings->launchTrajectoryBenchRun));
+
+			case GUIElementEnum::launchTrajectoryBenchRunsGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("How many launches the bench does before it stops (and switches itself off)."), "Test Bench: Runs##launchTrajectory", settings->launchTrajectoryBenchRuns));
+
+			case GUIElementEnum::launchTrajectoryBenchFirstCrouchGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("Ticks after the revert before the first storage cycle starts, on the first run. Every run shifts the whole input sequence by the Step, so each run stores at a slightly different moment."), "Test Bench: Start (ticks after revert)##launchTrajectory", settings->launchTrajectoryBenchFirstCrouch));
+
+			case GUIElementEnum::launchTrajectoryBenchCrouchTicksGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("How long the crouch key is spammed (pressed every other tick). 0 = no crouch."), "Test Bench: Crouch Spam Length (ticks)##launchTrajectory", settings->launchTrajectoryBenchCrouchTicks));
+
+			case GUIElementEnum::launchTrajectoryBenchCyclesGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("How many times the storage inputs repeat before the release (Halo 2 sword storage: attack, crouch on the impact frame, crouch more - repeated). Reach: 1."), "Test Bench: Storage Cycles##launchTrajectory", settings->launchTrajectoryBenchCycles));
+
+			case GUIElementEnum::launchTrajectoryBenchCycleLengthGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("Ticks from the start of one cycle to the start of the next."), "Test Bench: Cycle Length (ticks)##launchTrajectory", settings->launchTrajectoryBenchCycleLength));
+
+			case GUIElementEnum::launchTrajectoryBenchAttackTicksGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("Each cycle starts by spamming the Attack Key (pressed every other tick) for this many ticks. 0 = no attack (Reach)."), "Test Bench: Attack Spam (ticks per cycle, 0 = none)##launchTrajectory", settings->launchTrajectoryBenchAttackTicks));
+
+			case GUIElementEnum::launchTrajectoryBenchCrouchDelayGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("Ticks from the start of the cycle (the first attack press) to the first crouch press - set it to the frame the sword lands. The crouch is then spammed for Crouch Spam Length ticks."), "Test Bench: Crouch Delay (ticks after cycle start)##launchTrajectory", settings->launchTrajectoryBenchCrouchDelay));
+
+			case GUIElementEnum::launchTrajectoryBenchStepGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("How far the crouch / melee timing moves each run. 1 = one tick later every run; 0 = repeat the identical launch (determinism check)."), "Test Bench: Step (ticks per run)##launchTrajectory", settings->launchTrajectoryBenchStep));
+
+			case GUIElementEnum::launchTrajectoryBenchReleaseDelayGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("Once the storage is detected and the spam is over, wait this many ticks, then tap the release key (held 2 ticks)."), "Test Bench: Release After Storing (ticks)##launchTrajectory", settings->launchTrajectoryBenchReleaseDelay));
+
+			case GUIElementEnum::launchTrajectoryBenchCrouchKeyGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("Windows virtual-key code of YOUR crouch binding. Left Ctrl = 162, C = 67, Left Shift = 160, Space = 32, letters A-Z = 65-90."), "Test Bench: Crouch Key (VK code)##launchTrajectory", settings->launchTrajectoryBenchCrouchKey));
+
+			case GUIElementEnum::launchTrajectoryBenchMeleeKeyGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("The key spammed at the start of each cycle (Halo 2: the sword attack). Windows virtual-key code: 1 = left mouse, 2 = right mouse, 4 = middle mouse, 5 / 6 = side buttons; Q = 81, V = 86, F = 70, E = 69 (letters A-Z = 65-90)."), "Test Bench: Attack Key (VK code, 1 = left mouse)##launchTrajectory", settings->launchTrajectoryBenchMeleeKey));
+
+			case GUIElementEnum::launchTrajectoryBenchReleaseKeyGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
+					(game, ToolTipCollection("Windows virtual-key code of the key tapped to release: W = 87 (forward), S = 83, A = 65, D = 68. 1 = left mouse (Halo 2: release by hitting the object again, not crouching), 2 = right mouse."), "Test Bench: Release Key (VK code)##launchTrajectory", settings->launchTrajectoryBenchReleaseKey));
+
+			case GUIElementEnum::launchTrajectoryBenchSpeedStartGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("Sweep the stored speed: while stored, the bench sets your stored speed to this (keeping its direction) on the first run, then adds the Speed Step every run - e.g. 10 with step 0.5 covers 10 to 34.5 wu/s in 50 runs. 0 = leave the stored speed as the storage made it. The log records what the game actually stored, so if the game ignores the change it shows."), "Test Bench: Stored Speed Start (wu/s, 0 = off)##launchTrajectory", settings->launchTrajectoryBenchSpeedStart));
+
+			case GUIElementEnum::launchTrajectoryBenchSpeedStepGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("How much the stored speed goes up each run (wu/s) when Stored Speed Start is set."), "Test Bench: Stored Speed Step (wu/s per run)##launchTrajectory", settings->launchTrajectoryBenchSpeedStep));
+
+			case GUIElementEnum::launchTrajectoryMaxSpeedGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
+					(game, ToolTipCollection("The engine caps every Havok body's linear velocity to 100 wu/s each tick before applying gravity (sub_180711C00 called from sub_180712850). If your launches beat the line, set this to 0 to disable the cap in the prediction."), "Max Speed Cap (wu/s, 0 = off)##launchTrajectory", settings->launchTrajectoryMaxSpeed));
+
+			case GUIElementEnum::launchTrajectoryDampingGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 5.f)>>
+					(game, ToolTipCollection("Extra linear damping per second (v *= 1 - damping * tick length). The engine model needs 0; this exists only to fit the line if the Actual path consistently falls short."), "Linear Damping (1/s)##launchTrajectory", settings->launchTrajectoryDamping));
+
+			case GUIElementEnum::launchTrajectoryShowTickMarksGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Mark every full second of flight along the line."), std::nullopt, "Second Markers##launchTrajectory", settings->launchTrajectoryShowTickMarks));
+
+			case GUIElementEnum::launchTrajectoryShowLabelsGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Show your speed and the live gravity at your position, and flight time / horizontal distance / apex / height change at the end of the line."), std::nullopt, "Labels##launchTrajectory", settings->launchTrajectoryShowLabels));
+
+			case GUIElementEnum::launchTrajectoryLabelScaleGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(8.f, 40.f)>>
+					(game, ToolTipCollection("Font size of the labels."), "Label Size##launchTrajectory", settings->launchTrajectoryLabelScale));
+
+			case GUIElementEnum::launchTrajectoryLineColorGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<false>>
+					(game, ToolTipCollection("Live prediction colour"), "Line Colour##launchTrajectory", settings->launchTrajectoryLineColor));
+
+			case GUIElementEnum::launchTrajectoryStoredColorGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<false>>
+					(game, ToolTipCollection("Live prediction colour while momentum is being stored"), "Stored Colour##launchTrajectory", settings->launchTrajectoryStoredColor));
+
+			case GUIElementEnum::launchTrajectoryHeldColorGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<false>>
+					(game, ToolTipCollection("Colour of the prediction kept from just before the launch"), "Pre-Launch Colour##launchTrajectory", settings->launchTrajectoryHeldColor));
+
+			case GUIElementEnum::launchTrajectoryActualColorGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<false>>
+					(game, ToolTipCollection("Colour of the path you actually flew"), "Actual Path Colour##launchTrajectory", settings->launchTrajectoryActualColor));
+
+			case GUIElementEnum::launchTrajectoryImpactColorGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<false>>
+					(game, ToolTipCollection("Colour of the impact marker and its label"), "Impact Colour##launchTrajectory", settings->launchTrajectoryImpactColor));
+
 			case GUIElementEnum::softCeilingOverlayToggle:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 					(game, ToolTipCollection("Renders Soft Ceilings (barriers)"), RebindableHotkeyEnum::softCeilingOverlayToggleHotkey, "Barrier Overlay", settings->softCeilingOverlayToggle));
@@ -2731,7 +3314,7 @@ private:
 					(game, ToolTipCollection("Locks onto nearest deployable shield; when shield disabled, prints which tick you pressed movement inputs"), RebindableHotkeyEnum::shieldInputPrinterToggleHotkey, "Shield Input Printer", settings->shieldInputPrinterToggle));
 
 			case GUIElementEnum::competitionModeToggle:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Broadcast scoreboard for tournament observers. Two independently placed panels, left and right, with team totals and a per-player breakdown. Gametype aware. Halo 2 Classic only."), std::nullopt, "Competition Mode", settings->competitionModeToggle));
 
 			case GUIElementEnum::competitionModeSettings:
@@ -2837,6 +3420,18 @@ private:
 			case GUIElementEnum::abilityMeterOverlayToggle:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 					(game, ToolTipCollection("Renders an overlay with info about the player ability ability"), RebindableHotkeyEnum::abilityMeterToggleHotkey, "Ability Meter Toggle", settings->abilityMeterOverlayToggle));
+
+			case GUIElementEnum::havokSleepCountdownToggleGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("A window for your biped's Havok physics island: how many ticks until Havok puts it to sleep (deactivates it) if nothing in it moves, as a draining bar with the JUMP line (a jump pressed on it freezes you at the apex), its quiet-round count (x/5), the ticks to its next short and long checks, whether tantrums work this cycle, and per body whether it would pass the check now or what keeps it awake (airborne biped, driven vehicle, ...). Shows 'asleep' once it has gone to sleep. Every jump you start is judged under the bar: PERFECT, EARLY by N or LATE by N ticks, with your hit count. Read from Havok's own sleep logic in halo2.dll (MCC 1.3528 only)."), std::nullopt, "Havok Sleep Countdown", settings->havokSleepCountdownToggle));
+
+			case GUIElementEnum::havokSleepCountdownSimpleGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Havok Sleep Countdown shows only the bar: how many ticks until your island sleeps, whether the next check counts, and the JUMP line. Drag it where you want it while HCM's cursor is free."), std::nullopt, "Simple bar only##havokSleep", settings->havokSleepCountdownSimple));
+
+			case GUIElementEnum::havokSleepAutoJumpGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+					(game, ToolTipCollection("Presses jump for you on the tick the countdown reaches the JUMP line (2 ticks left at 30 tick/s, 1 at 60), when every body in your island is still and tantrums work this cycle. Once per cycle: it arms again after your island has slept. Goes through the game's own jump check, like a real press. Every jump you start is judged under the bar (PERFECT / EARLY / LATE)."), std::nullopt, "Auto-jump on the line##havokSleep", settings->havokSleepAutoJump));
 
 			case GUIElementEnum::abilityMeterOverlaySettings:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>

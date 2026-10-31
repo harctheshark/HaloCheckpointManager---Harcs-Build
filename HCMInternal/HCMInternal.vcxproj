@@ -169,7 +169,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>d3d11.lib;dxguid.lib;libcurl.lib;version.lib;Ws2_32.lib;Wldap32.Lib;Crypt32.Lib;Secur32.lib;Iphlpapi.lib;Normaliz.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;dxguid.lib;version.lib;Ws2_32.lib;Wldap32.Lib;Crypt32.Lib;Secur32.lib;Iphlpapi.lib;Normaliz.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(VcpkgManifestRoot)\vcpkg_installed\$(VcpkgTriplet)\$(VcpkgTriplet)\lib</AdditionalLibraryDirectories>
       <IgnoreSpecificDefaultLibraries>
       </IgnoreSpecificDefaultLibraries>
@@ -208,7 +208,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <ProcessorNumber>24</ProcessorNumber>
       <WarningLevel>Level3</WarningLevel>
-      <FunctionLevelLinking>false</FunctionLevelLinking>
+      <!-- /Gy: each function in its own COMDAT, so /OPT:REF can drop unused ones and /OPT:ICF fold duplicates. -->
+      <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING;HCM_OUTPUT_PATH=R"($(OutputPath))";NDEBUG;HCMINTERNAL_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -232,7 +233,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <AdditionalDependencies>$(HcmHavokLib)winmm.lib;user32.lib;advapi32.lib;d3d11.lib;dxguid.lib;libcurl.lib;version.lib;Ws2_32.lib;Wldap32.Lib;Crypt32.Lib;Secur32.lib;Iphlpapi.lib;Normaliz.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(HcmHavokLib)winmm.lib;user32.lib;advapi32.lib;d3d11.lib;dxguid.lib;version.lib;Ws2_32.lib;Wldap32.Lib;Crypt32.Lib;Secur32.lib;Iphlpapi.lib;Normaliz.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(HcmHavokLibDir);$(VcpkgManifestRoot)\vcpkg_installed\$(VcpkgTriplet)\$(VcpkgTriplet)\lib</AdditionalLibraryDirectories>
       <IgnoreSpecificDefaultLibraries>
       </IgnoreSpecificDefaultLibraries>
@@ -362,6 +363,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="ObservedScopedCallback.h" />
     <ClInclude Include="ObservedEvent.h" />
     <ClInclude Include="AbilityMeterOverlay.h" />
+    <ClInclude Include="HavokSleepCountdown.h" />
     <ClInclude Include="PointerDataTypes.h" />
     <ClInclude Include="RevertEventHook.h" />
     <ClInclude Include="SharedRequestProvider.h" />
@@ -435,6 +437,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="UncapClusterLimit.h" />
     <ClInclude Include="UncapRenderSections.h" />
     <ClInclude Include="CollisionViewer.h" />
+    <ClInclude Include="LaunchTrajectory.h" />
+    <ClInclude Include="ReachCollision.h" />
     <ClInclude Include="ChaseCamera.h" />
     <ClInclude Include="Halo2Physics.h" />
     <ClInclude Include="GUIH2Physics.h" />
@@ -446,8 +450,12 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="H2CV_TimKeys.h" />
     <ClInclude Include="H2CV_Renderer.h" />
     <ClInclude Include="H2CV_Viewer.h" />
+    <ClInclude Include="H2CV_Superbounce.h" />
+    <ClInclude Include="H2CV_SbScan.h" />
     <ClInclude Include="H2CV_Engine.h" />
     <ClInclude Include="H2CV_Halo3.h" />
+    <ClInclude Include="H2CV_Reach.h" />
+    <ClInclude Include="H2CV_ReachOob.h" />
     <ClInclude Include="H2CV_ViewerUtil.h" />
     <ClInclude Include="UncapRenderSectionsTable.h" />
     <ClInclude Include="FarClipDistance.h" />
@@ -460,6 +468,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="PresetManager.h" />
     <ClInclude Include="ModalDialogGuard.h" />
     <ClInclude Include="ReplayData.h" />
+    <ClInclude Include="ReplayCheckpoint.h" />
+    <ClInclude Include="ReplayGameTls.h" />
     <ClInclude Include="PlayerActionUpdateHook.h" />
     <ClInclude Include="ReplayRecorder.h" />
     <ClInclude Include="ReplayPlayer.h" />
@@ -745,6 +755,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="HaloScriptOutputHookEvent.cpp" />
     <ClCompile Include="HotkeyRebindDialog.cpp" />
     <ClCompile Include="AbilityMeterOverlay.cpp" />
+    <ClCompile Include="HavokSleepCountdown.cpp" />
     <ClCompile Include="includes\ImGuiColorTextEdit\ImGuiDebugPanel.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
@@ -856,16 +867,23 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="UncapClusterLimit.cpp" />
     <ClCompile Include="UncapRenderSections.cpp" />
     <ClCompile Include="CollisionViewer.cpp" />
+    <ClCompile Include="LaunchTrajectory.cpp" />
+    <ClCompile Include="ReachCollision.cpp" />
     <ClCompile Include="ChaseCamera.cpp" />
     <ClCompile Include="Halo2Physics.cpp" />
     <ClCompile Include="H2CV_Halo2.cpp" />
     <ClCompile Include="H2CV_Collision.cpp" />
     <ClCompile Include="H2CV_Renderer.cpp" />
     <ClCompile Include="H2CV_Viewer.cpp" />
+    <ClCompile Include="H2CV_Superbounce.cpp" />
+    <ClCompile Include="H2CV_SbScan.cpp" />
     <ClCompile Include="H2CV_Engine.cpp" />
     <ClCompile Include="H2CV_Halo3.cpp" />
     <ClCompile Include="H2CV_Collision3.cpp" />
     <ClCompile Include="H2CV_Viewer3.cpp" />
+    <ClCompile Include="H2CV_ViewerReach.cpp" />
+    <ClCompile Include="H2CV_Reach.cpp" />
+    <ClCompile Include="H2CV_ReachOob.cpp" />
     <ClCompile Include="FarClipDistance.cpp" />
     <ClCompile Include="HavokDebugger.cpp" />
     <ClCompile Include="HavokDebuggerImpl.cpp">
@@ -1062,6 +1080,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
   <ItemGroup>
     <Image Include="lapua.dds" />
     <Image Include="lapua2.dds" />
+    <Image Include="lapua2.png" />
     <Image Include="TriggerPatternedTexture.dds" />
     <Image Include="Waypoint3DReticle.dds" />
     <Image Include="Waypoint3DReticle.png" />

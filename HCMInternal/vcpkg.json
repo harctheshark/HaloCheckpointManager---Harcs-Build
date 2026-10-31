@@ -7,20 +7,12 @@
     {
       "name": "imgui",
       "features": [
-          "dx11-binding",
-          "dx12-binding",
-          "win32-binding"
-        ]
-    },
-    "pugixml",
-    {
-      "name": "curl",
-      "features": [
-          "non-http",
-          "ssl",
-          "sspi"
+        "dx11-binding",
+        "dx12-binding",
+        "win32-binding"
       ]
     },
+    "pugixml",
     "boost-stacktrace",
     "boost-algorithm",
     "boost-iostreams",

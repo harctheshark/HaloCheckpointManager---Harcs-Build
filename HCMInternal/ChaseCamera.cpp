@@ -8,6 +8,7 @@
 #include "MultilevelPointer.h"
 #include "ModuleHook.h"
 #include <span>
+#include <intrin.h>
 
 // ============================================================================
 //  Chase camera (MCC build 1.3528). RVAs below are module RVAs = IDA EA - 0x180000000.
@@ -236,6 +237,16 @@ private:
 		}
 
 		const int32_t original = self->mSelectHook->getInlineHook().template call<int32_t>(unitIndex, outPerspectiveCode);
+
+		// The aim query (0x6D4730: where the unit aims from and along - used for the red reticle / auto-aim, melee and
+		// sword-lunge target acquisition) asks this same predicate and, when told "following camera", aims from the
+		// chase camera behind you, so targets come out farther away than in first person. Give it the real answer: the
+		// view stays third person, but aiming, reticle colour and lunge range stay exactly first-person.
+		{
+			static const uintptr_t sBase = (uintptr_t)GetModuleHandleW(L"halo2.dll");
+			constexpr uintptr_t kAimQueryReturn = 0x6D4756;   // the instruction after "call 0x6D4C50" in 0x6D4730 (1.3528)
+			if (sBase && (uintptr_t)_ReturnAddress() - sBase == kAimQueryReturn) return original;
+		}
 
 		// original == 0 for a unit on foot / in a first-person seat. unitIndex == NONE (-1) is "no unit" (dead,
 		// not spawned): leave that to the engine so the dead camera and respawn path stay untouched.

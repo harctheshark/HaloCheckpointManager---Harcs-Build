@@ -25,6 +25,11 @@ public:
 	// for the overlay's status line, any thread: 1 = the mod is loaded and reported a tick (out filled in)
 	static int readStatus(H3sbStatus* out);
 	static bool isLoaded();
+	// the collision viewer (Reach) asks for the mod's world file (h3sb_world_<map>.bin): true loads the mod in observe mode
+	// when nothing else has it loaded (the game untouched), false lets it go. Any thread.
+	static void wantWorldFile(bool on);
+	// <HCM folder>\h3sb\ (with the trailing backslash), empty before the first instance was built
+	static std::wstring modDir();
 	// the last thing that went wrong (dll missing, could not load), empty when all is well
 	static std::string lastError();
 };

@@ -5,6 +5,8 @@
 
 #include "directxtk\SpriteBatch.h"
 #include "directxtk\DDSTextureLoader.h"
+#include "directxtk\WICTextureLoader.h"
+#include <objbase.h>          // CoInitializeEx (pch.h is WIN32_LEAN_AND_MEAN)
 #include "directxtk\CommonStates.h"
 
 
@@ -21,7 +23,7 @@ void LoadTextureFromMemory(int ID, ID3D11Device* pDevice, ID3D11DeviceContext* p
 	HGLOBAL hRes;
 	// Find the resource. 
 
-	hResInfo = FindResourceA(GlobalKill::HCMInternalModuleHandle, MAKEINTRESOURCEA(ID), "DDS");
+	hResInfo = FindResourceA(GlobalKill::HCMInternalModuleHandle, MAKEINTRESOURCEA(ID), "PNG");   // the watermark: lossless PNG (was DDS)
 	if (hResInfo == NULL)
 	{
 		throw HCMRuntimeException("hResInfo null");
@@ -63,7 +65,14 @@ void LoadTextureFromMemory(int ID, ID3D11Device* pDevice, ID3D11DeviceContext* p
 	// no actually this https://github.com/microsoft/DirectXTK/wiki/DDSTextureLoader
 
 	DDS_ALPHA_MODE alpha_mode = DDS_ALPHA_MODE_CUSTOM;
-	auto hr = CreateDDSTextureFromMemory(pDevice, (uint8_t*)lpRes, (size_t)hSize, &texture, &textureView);
+	// The watermark is now a lossless PNG - every pixel exactly as it was in lapua2.dds, 95 KB instead of 8.3 MB. DirectXTK's
+	// WIC loader decodes it. WIC needs COM on this thread (the game's render thread): tolerate it being set up already, in
+	// either mode, and undo only our own setup - as H2ArmorColour does. IGNORE_SRGB keeps the texture linear like the DDS
+	// was (B8G8R8A8_UNORM then, R8G8B8A8_UNORM now: the same values), so the overlay draws exactly as before.
+	const HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+	auto hr = CreateWICTextureFromMemoryEx(pDevice, (uint8_t*)lpRes, (size_t)hSize, 0, D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE, 0, 0,
+		WIC_LOADER_IGNORE_SRGB, &texture, &textureView);
+	if (SUCCEEDED(co)) CoUninitialize();
 
 	if (hr != 0) throw HCMRuntimeException(std::format("Failed to load texture from memory, error: {}", hr));
 	////https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d11-graphics-reference-returnvalues

@@ -29,6 +29,19 @@ public:
 	{
 		if (!playerViewAngle->writeData(&newAngles)) throw HCMRuntimeException(std::format("Failed to write playerViewAngle: {}", MultilevelPointer::GetLastError()));
 	}
+
+	virtual bool setPlayerViewAngleFast(SimpleMath::Vector2 newAngles) override
+	{
+		uintptr_t address = 0;
+		if (!playerViewAngle->resolve(&address) || !address) return false;
+		return guardedWrite(address, newAngles);
+	}
+
+	static bool guardedWrite(uintptr_t address, SimpleMath::Vector2 value)
+	{
+		__try { *reinterpret_cast<SimpleMath::Vector2*>(address) = value; return true; }
+		__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+	}
 };
 
 GetPlayerViewAngle::GetPlayerViewAngle(GameState game, IDIContainer& dicon)

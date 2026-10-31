@@ -12,7 +12,7 @@ namespace HCMExternal.Services.External.Impl
     {
         public void ForceCheckpoint()
         {
-            List<HaloProcessInfo> haloProcesses = GetHaloProcessInfo();
+            List<HaloProcessInfo> haloProcesses = GetHaloProcessInfo(noneIsFine: true);
             foreach (var haloProcess in haloProcesses)
             {
                 IMultilevelPointer pointer = PointerData.GetGameProcessData<IMultilevelPointer>(haloProcess.processType, haloProcess.haloGame, "ForceCheckpointFlag", haloProcess.processVersion);

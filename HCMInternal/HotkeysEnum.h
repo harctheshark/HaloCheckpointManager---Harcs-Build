@@ -62,7 +62,9 @@ sensResetCountHotkey,\
 sensDriftOverlayToggleHotkey,\
 toggleViewAngleLine3D,\
 shieldInputPrinterToggleHotkey,\
-chaseCamera
+chaseCamera,\
+offsetSave,\
+offsetLoad
 
 
 
@@ -269,7 +271,8 @@ replayRecord60Hotkey, \
 replayStopSaveHotkey, \
 replayLoadFileHotkey, \
 replayPlayHotkey, \
-replayStopPlaybackHotkey
+replayStopPlaybackHotkey, \
+launchTrajectoryBenchHotkey
 
 // hotkeys that do not fire an event. Usually used for continous inputs like freecamera
 #define NOEVENT_HOTKEYS \

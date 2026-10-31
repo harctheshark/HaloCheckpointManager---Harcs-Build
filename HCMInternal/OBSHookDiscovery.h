@@ -128,19 +128,37 @@ private:
 	// Discovery is retried on every attach; without this a user whose OBS version we cannot read
 	// would get the same on-screen complaint every time any DLL loads.
 	mutable std::atomic_bool mReportedFailure{ false };
-	// Called (once) when discovery fails on a DEFERRED attach, so the owner can stop wanting to be
-	// attached. Cannot throw from there - we are inside LoadLibrary.
-	std::function<void()> mOnPermanentFailure;
 
+	// OBS 32.x installs its Detours hook a moment AFTER graphics-hook64.dll loads (not inside the load), so the
+	// deferred attach - which runs inside that LoadLibrary - can find no trampoline yet. Before, that one miss was
+	// treated as "unsupported OBS" and the bypass stopped wanting to attach until it was toggled again (seen
+	// 2026-10-23: miss at load, found 9 s later on a manual re-toggle). Now a miss with the module freshly loaded
+	// starts ONE background retry (every 100 ms for up to 15 s); when OBS's hook appears it calls onLateSuccess
+	// (the owner re-attaches), and only a timeout counts as the permanent failure. Shared with that thread, which
+	// may outlive this object: the destructor cancels it under the mutex, so no callback runs afterwards.
+	struct RetryState
+	{
+		std::recursive_mutex m;              // recursive: the late-success callback re-attaches, which re-enters resolve()
+		bool cancelled = false;
+		bool running = false;
+		std::function<void()> onPermanentFailure;   // called (once) when discovery fails for good: stop wanting to attach
+		std::function<void()> onLateSuccess;        // called when the retry finds OBS's hook: attach now
+	};
+	std::shared_ptr<RetryState> mRetry = std::make_shared<RetryState>();
+	void reportPermanentFailure(const OBSDiscoveryDiagnostics& diagnostics) const;
 public:
 	explicit OBSRealFnPointer(uintptr_t dxgiEntry, const char* functionName)
 		: MultilevelPointer(0), mDxgiEntry(dxgiEntry), mFunctionName(functionName)
 	{
 	}
-
+	~OBSRealFnPointer()
+	{
+		std::scoped_lock lock(mRetry->m);
+		mRetry->cancelled = true;
+	}
 	bool resolve(uintptr_t* resolvedOut) const override;
-
-	void setOnPermanentFailure(std::function<void()> callback) { mOnPermanentFailure = std::move(callback); }
+	void setOnPermanentFailure(std::function<void()> callback) { std::scoped_lock lock(mRetry->m); mRetry->onPermanentFailure = std::move(callback); }
+	void setOnLateSuccess(std::function<void()> callback) { std::scoped_lock lock(mRetry->m); mRetry->onLateSuccess = std::move(callback); }
 	uintptr_t getDxgiEntry() const { return mDxgiEntry; }
 };
 

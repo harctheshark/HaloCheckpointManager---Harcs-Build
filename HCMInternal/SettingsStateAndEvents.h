@@ -182,6 +182,10 @@ public:
 	std::shared_ptr<ActionEvent> h2pFlyHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> h2pDisableAIHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> h2pForgeBounceHotkeyEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> launchTrajectoryBenchHotkeyEvent = std::make_shared<ActionEvent>();
+	// Halo 2 collision viewer: offset save state (snapshot the player's TIMs + force checkpoint / force revert + restore)
+	std::shared_ptr<ActionEvent> offsetSaveEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> offsetLoadEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraGameInputDisableHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraCameraInputDisableHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraUserInputCameraIncreaseTranslationSpeedHotkey = std::make_shared<ActionEvent>();
@@ -1142,6 +1146,255 @@ public:
 			false,
 			[](bool in) { return true; },
 			nameof(collisionViewerGhostLinkLabels)
+		);
+
+	// Halo 2: which sections the Collision Viewer info panel shows
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoGeneral = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoGeneral)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoTim = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoTim)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoGhost = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoGhost)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoGhostObjects = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoGhostObjects)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoGhostDetails = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoGhostDetails)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoPass = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoPass)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoTravel = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoTravel)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoLegend = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoLegend)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoGrids = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoGrids)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoKill = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoKill)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoWeld = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoWeld)
+		);
+
+	// Halo 2: superbounce viewer (H2CV_Superbounce.cpp) and its options
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounce = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounce)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceSeamText = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceSeamText)
+		);
+
+	// your speed (u/s) above the superbounce viewer's CHARGED / not charged indicator
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceSpeed = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceSpeed)
+		);
+
+	// flag landings / seams where a late contact would fall through the floor (a debounce)
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceDebounce = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceDebounce)
+		);
+
+	// show the remembered monster / dreadnought spots (recorded either way)
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceSpots = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceSpots)
+		);
+
+	// show the spot scanner's PREDICTED monster / dreadnought spots, with how to approach them (H2CV_SbScan)
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbouncePredicted = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbouncePredicted)
+		);
+	// how far from you predicted spots are drawn (wu) - some maps are huge
+	std::shared_ptr<BinarySetting<float>> collisionViewerSuperbouncePredictedRange = std::make_shared<BinarySetting<float>>
+		(
+			60.f,
+			[](float in) { return in >= 10.f && in <= 1000.f; },
+			nameof(collisionViewerSuperbouncePredictedRange)
+		);
+	// which predicted spots to draw: monsters (20-35 u/s) and / or dreadnoughts (35+)
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbouncePredictedMonsters = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbouncePredictedMonsters)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbouncePredictedDreadnoughts = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbouncePredictedDreadnoughts)
+		);
+	// predicted spots: show the working start-height band of the approach
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbouncePredictedHeights = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbouncePredictedHeights)
+		);
+	// the manual spot scan around the player (the external scanner exe): radius, slow mode, tick rate
+	std::shared_ptr<BinarySetting<float>> collisionViewerSpotScanRadius = std::make_shared<BinarySetting<float>>
+		(
+			64.f,
+			[](float in) { return in >= 1.f && in <= 4096.f; },
+			nameof(collisionViewerSpotScanRadius)
+		);
+	// slow mode: every fall speed 4..50 u/s instead of 10/22/30/35/40
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSpotScanSlow = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerSpotScanSlow)
+		);
+	// scan (and show) at the game's current tick rate instead of 30
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSpotScanCurrentTick = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerSpotScanCurrentTick)
+		);
+	std::shared_ptr<ActionEvent> collisionViewerSpotScanEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceRecord = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceRecord)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceHighlight = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceHighlight)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceKeepCharge = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceKeepCharge)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceForceCharge = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceForceCharge)
+		);
+	std::shared_ptr<BinarySetting<bool>> collisionViewerInfoSuperbounce = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerInfoSuperbounce)
+		);
+
+	// Halo 2: kill volumes (out-of-bounds deaths) with a per-volume "checked in N ticks" countdown
+	std::shared_ptr<BinarySetting<bool>> collisionViewerKillVolumes = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerKillVolumes)
+		);
+
+	// out-of-bounds timer bar: death bar (out of bounds / kill volume) - anchor corner, pixel offset from that corner, size (width, height)
+	std::shared_ptr<BinarySetting<SettingsEnums::ScreenAnchorEnum>> oobBarAnchorCorner = std::make_shared<BinarySetting<SettingsEnums::ScreenAnchorEnum>>
+		(
+			SettingsEnums::ScreenAnchorEnum::TopLeft,
+			[](SettingsEnums::ScreenAnchorEnum in) { return true; },
+			nameof(oobBarAnchorCorner)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector2>> oobBarScreenOffset = std::make_shared<BinarySetting<SimpleMath::Vector2>>
+		(
+			SimpleMath::Vector2{690.f, 324.f},
+			[](SimpleMath::Vector2 in) { return in.x >= 0 && in.y >= 0; },
+			nameof(oobBarScreenOffset)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector2>> oobBarSize = std::make_shared<BinarySetting<SimpleMath::Vector2>>
+		(
+			SimpleMath::Vector2{540.f, 20.f},
+			[](SimpleMath::Vector2 in) { return in.x >= 20 && in.y >= 2; },
+			nameof(oobBarSize)
+		);
+
+	// out-of-bounds timer bar: detection bar (next out-of-bounds check) - anchor corner, pixel offset from that corner, size (width, height)
+	std::shared_ptr<BinarySetting<SettingsEnums::ScreenAnchorEnum>> detectBarAnchorCorner = std::make_shared<BinarySetting<SettingsEnums::ScreenAnchorEnum>>
+		(
+			SettingsEnums::ScreenAnchorEnum::TopLeft,
+			[](SettingsEnums::ScreenAnchorEnum in) { return true; },
+			nameof(detectBarAnchorCorner)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector2>> detectBarScreenOffset = std::make_shared<BinarySetting<SimpleMath::Vector2>>
+		(
+			SimpleMath::Vector2{690.f, 380.f},
+			[](SimpleMath::Vector2 in) { return in.x >= 0 && in.y >= 0; },
+			nameof(detectBarScreenOffset)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector2>> detectBarSize = std::make_shared<BinarySetting<SimpleMath::Vector2>>
+		(
+			SimpleMath::Vector2{540.f, 14.f},
+			[](SimpleMath::Vector2 in) { return in.x >= 20 && in.y >= 2; },
+			nameof(detectBarSize)
+		);
+
+	// Halo 2: offset save state - also restore the saved offsets after natural reverts to that checkpoint
+	std::shared_ptr<BinarySetting<bool>> collisionViewerOffsetNaturalReverts = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerOffsetNaturalReverts)
 		);
 
 	// Halo 2: pass-through prediction (flash welded geometry the current offset passes through)
@@ -3375,6 +3628,368 @@ public:
 			nameof(placementPointsOverlayRadius)
 		);
 
+	// Launch Trajectory overlay (Halo 2). The toggle is not persisted; the configuration is.
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryToggle)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryMinSpeed = std::make_shared<BinarySetting<float>>
+		(
+			5.f,
+			[](float in) { return in >= 0.f; },
+			nameof(launchTrajectoryMinSpeed)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryDuration = std::make_shared<BinarySetting<float>>
+		(
+			20.f,
+			[](float in) { return in > 0.f && in <= 120.f; },
+			nameof(launchTrajectoryDuration)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryLogToFile = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryLogToFile)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryLogSpeedUps = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryLogSpeedUps)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryGroundDecel = std::make_shared<BinarySetting<float>>
+		(
+			9.6f,   // globals: player information "run acceleration" (9.6) - matched the logs exactly
+			[](float in) { return in >= 0.f && in <= 1000.f; },
+			nameof(launchTrajectoryGroundDecel)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryAirFriction = std::make_shared<BinarySetting<float>>
+		(
+			1.05f,  // globals: player information "airborne acceleration" (1.05) - matched the logs exactly
+			[](float in) { return in >= 0.f && in <= 100.f; },
+			nameof(launchTrajectoryAirFriction)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryGroundSlideMaxSpeed = std::make_shared<BinarySetting<float>>
+		(
+			9.f,   // friction measured at up to 6.14 wu/s, none at 11.86
+			[](float in) { return in >= 0.f && in <= 1000.f; },
+			nameof(launchTrajectoryGroundSlideMaxSpeed)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryReleaseModel = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryReleaseModel)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryReleaseKick = std::make_shared<BinarySetting<float>>
+		(
+			3.5f,   // median of 19 forward-tap releases (1.4 - 6.0)
+			[](float in) { return in >= 0.f && in <= 100.f; },
+			nameof(launchTrajectoryReleaseKick)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryBenchRun = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryBenchRun)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchRuns = std::make_shared<BinarySetting<int>>
+		(
+			50,
+			[](int in) { return in >= 1 && in <= 10000; },
+			nameof(launchTrajectoryBenchRuns)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchFirstCrouch = std::make_shared<BinarySetting<int>>
+		(
+			5,
+			[](int in) { return in >= 0 && in <= 10000; },
+			nameof(launchTrajectoryBenchFirstCrouch)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchCrouchTicks = std::make_shared<BinarySetting<int>>
+		(
+			30,
+			[](int in) { return in >= 0 && in <= 10000; },
+			nameof(launchTrajectoryBenchCrouchTicks)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchCycles = std::make_shared<BinarySetting<int>>
+		(
+			1,
+			[](int in) { return in >= 1 && in <= 100; },
+			nameof(launchTrajectoryBenchCycles)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchCycleLength = std::make_shared<BinarySetting<int>>
+		(
+			40,
+			[](int in) { return in >= 1 && in <= 10000; },
+			nameof(launchTrajectoryBenchCycleLength)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchAttackTicks = std::make_shared<BinarySetting<int>>
+		(
+			0,
+			[](int in) { return in >= 0 && in <= 10000; },
+			nameof(launchTrajectoryBenchAttackTicks)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchCrouchDelay = std::make_shared<BinarySetting<int>>
+		(
+			0,
+			[](int in) { return in >= 0 && in <= 10000; },
+			nameof(launchTrajectoryBenchCrouchDelay)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchStep = std::make_shared<BinarySetting<int>>
+		(
+			1,
+			[](int in) { return in >= -100 && in <= 100; },
+			nameof(launchTrajectoryBenchStep)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchReleaseDelay = std::make_shared<BinarySetting<int>>
+		(
+			10,
+			[](int in) { return in >= 1 && in <= 10000; },
+			nameof(launchTrajectoryBenchReleaseDelay)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchCrouchKey = std::make_shared<BinarySetting<int>>
+		(
+			162,
+			[](int in) { return in >= 0 && in <= 255; },
+			nameof(launchTrajectoryBenchCrouchKey)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchMeleeKey = std::make_shared<BinarySetting<int>>
+		(
+			81,
+			[](int in) { return in >= 0 && in <= 255; },
+			nameof(launchTrajectoryBenchMeleeKey)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryBenchReleaseKey = std::make_shared<BinarySetting<int>>
+		(
+			87,
+			[](int in) { return in >= 0 && in <= 255; },
+			nameof(launchTrajectoryBenchReleaseKey)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryBenchSpeedStart = std::make_shared<BinarySetting<float>>
+		(
+			0.f,
+			[](float in) { return in >= 0.f && in <= 200.f; },
+			nameof(launchTrajectoryBenchSpeedStart)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryBenchSpeedStep = std::make_shared<BinarySetting<float>>
+		(
+			0.5f,
+			[](float in) { return in >= -50.f && in <= 50.f; },
+			nameof(launchTrajectoryBenchSpeedStep)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryH2DecompGround = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryH2DecompGround)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryReachGameCollision = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryReachGameCollision)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryHudStored = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryHudStored)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryHudScale = std::make_shared<BinarySetting<float>>
+		(
+			1.f,
+			[](float in) { return in >= 0.25f && in <= 5.f; },
+			nameof(launchTrajectoryHudScale)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryHudHeight = std::make_shared<BinarySetting<float>>
+		(
+			0.62f,   // fraction of the screen height (0 = top, 1 = bottom)
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(launchTrajectoryHudHeight)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryReachCrouchRelease = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryReachCrouchRelease)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryReachReleaseRatio = std::make_shared<BinarySetting<float>>
+		(
+			0.82f,   // 0.75 - 0.86 over 9 logged crouch-storage releases
+			[](float in) { return in >= 0.f && in <= 2.f; },
+			nameof(launchTrajectoryReachReleaseRatio)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryReleaseKickRange = std::make_shared<BinarySetting<float>>
+		(
+			1.2f,
+			[](float in) { return in >= 0.f && in <= 100.f; },
+			nameof(launchTrajectoryReleaseKickRange)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryFallDeath = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryFallDeath)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryFallDeathSpeed = std::make_shared<BinarySetting<float>>
+		(
+			9.478529f,   // sqrt(2 x 3.2086613 x 14): globals falling damage "maximum falling distance" 14 (Sapien 0x696E9C)
+			[](float in) { return in > 0.f && in <= 1000.f; },
+			nameof(launchTrajectoryFallDeathSpeed)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryNextHitToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryNextHitToggle)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryNextHitRotateWithView = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryNextHitRotateWithView)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> launchTrajectoryNextHitColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{0.75f, 0.45f, 1.0f, 1.f},
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(launchTrajectoryNextHitColor)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryReleaseFriction = std::make_shared<BinarySetting<float>>
+		(
+			9.3f,
+			[](float in) { return in >= 0.f && in <= 1000.f; },
+			nameof(launchTrajectoryReleaseFriction)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryWallBackstep = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryWallBackstep)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryRestitution = std::make_shared<BinarySetting<float>>
+		(
+			0.f,
+			[](float in) { return in >= 0.f && in <= 1.f; },
+			nameof(launchTrajectoryRestitution)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryMaxSlope = std::make_shared<BinarySetting<float>>
+		(
+			50.f,   // masterchief.biped / dervish.biped ground physics "maximum slope angle" 50 deg
+			[](float in) { return in >= 0.f && in <= 89.f; },
+			nameof(launchTrajectoryMaxSlope)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryOnlyWhenStored = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryOnlyWhenStored)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryKeepAfterLaunch = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryKeepAfterLaunch)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryShowActualPath = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryShowActualPath)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryStopAtCollision = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryStopAtCollision)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryIncludeBarriers = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryIncludeBarriers)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryIncludeObjects = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryIncludeObjects)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryUseBodyExtents = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryUseBodyExtents)
+		);
+	std::shared_ptr<BinarySetting<int>> launchTrajectoryIgnoreFirstTicks = std::make_shared<BinarySetting<int>>
+		(
+			1,
+			[](int in) { return in >= 0 && in <= 60; },
+			nameof(launchTrajectoryIgnoreFirstTicks)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryMaxSpeed = std::make_shared<BinarySetting<float>>
+		(
+			100.f,
+			[](float in) { return in >= 0.f; },
+			nameof(launchTrajectoryMaxSpeed)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryDamping = std::make_shared<BinarySetting<float>>
+		(
+			0.f,
+			[](float in) { return in >= 0.f && in <= 30.f; },
+			nameof(launchTrajectoryDamping)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryShowTickMarks = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryShowTickMarks)
+		);
+	std::shared_ptr<BinarySetting<bool>> launchTrajectoryShowLabels = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(launchTrajectoryShowLabels)
+		);
+	std::shared_ptr<BinarySetting<float>> launchTrajectoryLabelScale = std::make_shared<BinarySetting<float>>
+		(
+			16.f,
+			[](float in) { return in > 6.f; },
+			nameof(launchTrajectoryLabelScale)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> launchTrajectoryLineColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{1.0f, 0.55f, 0.0f, 1.f},
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(launchTrajectoryLineColor)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> launchTrajectoryStoredColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{1.0f, 0.15f, 0.55f, 1.f},
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(launchTrajectoryStoredColor)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> launchTrajectoryHeldColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{0.0f, 0.8f, 1.0f, 1.f},
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(launchTrajectoryHeldColor)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> launchTrajectoryActualColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{0.35f, 1.0f, 0.35f, 1.f},
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(launchTrajectoryActualColor)
+		);
+	std::shared_ptr<BinarySetting<SimpleMath::Vector4>> launchTrajectoryImpactColor = std::make_shared<BinarySetting<SimpleMath::Vector4>>
+		(
+			SimpleMath::Vector4{1.0f, 1.0f, 0.2f, 1.f},
+			[](SimpleMath::Vector4 in) { return true; },
+			nameof(launchTrajectoryImpactColor)
+		);
+
 	std::shared_ptr<BinarySetting<SettingsEnums::SoftCeilingRenderTypes>> softCeilingOverlayRenderTypes = std::make_shared<BinarySetting<SettingsEnums::SoftCeilingRenderTypes>>
 		(
 			SettingsEnums::SoftCeilingRenderTypes::BipedsOrVehicles,
@@ -3471,6 +4086,16 @@ public:
 			[](float in) { return in >= 0.1f; }, 
 			nameof(renderDistance3D)
 		); 
+
+	// Halo 2: the Havok sleep (deactivation) countdown window
+	std::shared_ptr<BinarySetting<bool>> havokSleepCountdownToggle = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(havokSleepCountdownToggle));
+	// ... just the bar, the JUMP line and the ticks
+	std::shared_ptr<BinarySetting<bool>> havokSleepCountdownSimple = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(havokSleepCountdownSimple));
+
+	std::shared_ptr<BinarySetting<bool>> havokSleepAutoJump = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(havokSleepAutoJump));
 
 	std::shared_ptr<BinarySetting<bool>> abilityMeterOverlayToggle = std::make_shared<BinarySetting<bool>>
 		(
@@ -4193,7 +4818,34 @@ public:
 	// see the problem. Keep this block immediately above the PresetCollectorDisarmer.
 	std::vector<std::shared_ptr<SerialisableSetting>> allSerialisableOptions
 	{
+		collisionViewerInfoPanel,
+		collisionViewerKillVolumes,
+		collisionViewerSuperbounce,
+		collisionViewerSuperbounceSeamText,
+		collisionViewerSuperbounceSpeed,
+		collisionViewerSuperbounceDebounce,
+		collisionViewerSuperbounceSpots,
+		collisionViewerSuperbouncePredicted,
+		collisionViewerSuperbouncePredictedRange,
+		collisionViewerSuperbouncePredictedMonsters,
+		collisionViewerSuperbouncePredictedDreadnoughts,
+		collisionViewerSuperbouncePredictedHeights,
+		collisionViewerSpotScanRadius,
+		collisionViewerSpotScanSlow,
+		collisionViewerSpotScanCurrentTick,
+		collisionViewerSuperbounceRecord,
+		collisionViewerSuperbounceHighlight,
+		collisionViewerSuperbounceKeepCharge,
+		collisionViewerSuperbounceForceCharge,
+		collisionViewerInfoSuperbounce,
+		oobBarAnchorCorner,
+		oobBarScreenOffset,
+		oobBarSize,
+		detectBarAnchorCorner,
+		detectBarScreenOffset,
+		detectBarSize,
 		changeOOBBackgroundColor,
+		collisionViewerOcclusion,
 		// Poorboy's Mods (the master switch h2pPhysicsToggle is a cheat toggle: not saved)
 		h2pBarriers,
 		h2pTick30Toggle,
@@ -4436,6 +5088,9 @@ public:
 		havokWorldCacheToggle,
 		halo3TheaterInterpToggle,
 		halo3TheaterInterpCrouch,
+		havokSleepCountdownToggle,
+		havokSleepCountdownSimple,
+		havokSleepAutoJump,
 		hceAISquadOverlayToggle,
 		hceAISquadOverlayShowTeam,
 		hceAISquadOverlayShowPlayer,
@@ -4611,6 +5266,67 @@ public:
 		h5TriggerOverlayUseLiveActivity,
 		h5TriggerOverlayActivityWindowMs,
 		h5OneShotKillMultiplier,
+
+		// ---- Launch Trajectory (Halo 2): configuration only, not the toggle ----
+		launchTrajectoryMinSpeed,
+		launchTrajectoryDuration,
+		launchTrajectoryGroundDecel,
+		launchTrajectoryAirFriction,
+		launchTrajectoryWallBackstep,
+		launchTrajectoryGroundSlideMaxSpeed,
+		launchTrajectoryReleaseModel,
+		launchTrajectoryReleaseFriction,
+		launchTrajectoryReleaseKick,
+		launchTrajectoryReleaseKickRange,
+		launchTrajectoryReachCrouchRelease,
+		launchTrajectoryReachGameCollision,
+		launchTrajectoryH2DecompGround,
+		launchTrajectoryBenchRun,
+		launchTrajectoryBenchRuns,
+		launchTrajectoryBenchFirstCrouch,
+		launchTrajectoryBenchCrouchTicks,
+		launchTrajectoryBenchCycles,
+		launchTrajectoryBenchCycleLength,
+		launchTrajectoryBenchAttackTicks,
+		launchTrajectoryBenchCrouchDelay,
+		launchTrajectoryBenchStep,
+		launchTrajectoryBenchReleaseDelay,
+		launchTrajectoryBenchCrouchKey,
+		launchTrajectoryBenchMeleeKey,
+		launchTrajectoryBenchReleaseKey,
+		launchTrajectoryBenchSpeedStart,
+		launchTrajectoryBenchSpeedStep,
+		launchTrajectoryHudStored,
+		launchTrajectoryHudScale,
+		launchTrajectoryHudHeight,
+		launchTrajectoryReachReleaseRatio,
+		launchTrajectoryFallDeath,
+		launchTrajectoryFallDeathSpeed,
+		launchTrajectoryNextHitToggle,
+		launchTrajectoryNextHitRotateWithView,
+		launchTrajectoryNextHitColor,
+		launchTrajectoryLogToFile,
+		launchTrajectoryLogSpeedUps,
+		launchTrajectoryRestitution,
+		launchTrajectoryMaxSlope,
+		launchTrajectoryOnlyWhenStored,
+		launchTrajectoryKeepAfterLaunch,
+		launchTrajectoryShowActualPath,
+		launchTrajectoryStopAtCollision,
+		launchTrajectoryIncludeBarriers,
+		launchTrajectoryIncludeObjects,
+		launchTrajectoryUseBodyExtents,
+		launchTrajectoryIgnoreFirstTicks,
+		launchTrajectoryMaxSpeed,
+		launchTrajectoryDamping,
+		launchTrajectoryShowTickMarks,
+		launchTrajectoryShowLabels,
+		launchTrajectoryLabelScale,
+		launchTrajectoryLineColor,
+		launchTrajectoryStoredColor,
+		launchTrajectoryHeldColor,
+		launchTrajectoryActualColor,
+		launchTrajectoryImpactColor,
 
 	};
 
