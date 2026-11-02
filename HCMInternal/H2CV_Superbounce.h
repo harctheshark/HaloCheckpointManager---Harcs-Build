@@ -18,6 +18,7 @@ namespace h2cv::sb
 		float predictedRange = 60.f;   // ... within this distance of the player (wu)
 		bool predictedMonsters = true, predictedDreadnoughts = true;   // ... of these kinds (20-35 / 35+)
 		bool predictedHeights = false;  // ... with the start-height band of the worked-out approach
+		bool predictedHideNarrow = false;   // ... hiding monsters whose window is under 1% (dreadnoughts always shown)
 		float scanRadius = 64.f; bool scanSlow = false, scanCurrentTick = false;   // the manual spot scan ("scan around me")
 		bool seamText = true;      // text in the world (off: colours and the launch arrows' speed / height only)
 		bool record = false;       // superbounce_log.csv in the game folder
@@ -42,4 +43,5 @@ namespace h2cv::sb
 	void reset();   // unload / game change
 	void forgetCheckpointCharges();   // HCM injected a checkpoint: forget which checkpoints were made charged (any thread)
 	void requestSpotScan();           // the "scan around me" button (any thread): scanned on the next frame
+	void noteForceLaunch();           // HCM's Force Launch just set the player's velocity (any thread): not a bounce / spot
 }

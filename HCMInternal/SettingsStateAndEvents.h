@@ -1288,6 +1288,13 @@ public:
 			[](bool in) { return true; },
 			nameof(collisionViewerSuperbouncePredictedHeights)
 		);
+	// predicted spots: hide monsters whose window is under 1% of the tested approaches (dreadnoughts always shown)
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbouncePredictedHideNarrow = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbouncePredictedHideNarrow)
+		);
 	// the manual spot scan around the player (the external scanner exe): radius, slow mode, tick rate
 	std::shared_ptr<BinarySetting<float>> collisionViewerSpotScanRadius = std::make_shared<BinarySetting<float>>
 		(
@@ -4830,6 +4837,7 @@ public:
 		collisionViewerSuperbouncePredictedMonsters,
 		collisionViewerSuperbouncePredictedDreadnoughts,
 		collisionViewerSuperbouncePredictedHeights,
+		collisionViewerSuperbouncePredictedHideNarrow,
 		collisionViewerSpotScanRadius,
 		collisionViewerSpotScanSlow,
 		collisionViewerSpotScanCurrentTick,

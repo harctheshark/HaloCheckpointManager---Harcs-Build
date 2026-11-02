@@ -11,6 +11,7 @@
 #include "H2CV_Mem.h"
 #include "imgui.h"
 #include <windows.h>
+#include <share.h>                // _fsopen / _SH_DENYWR: the recording log stays readable
 #include <Xinput.h>
 #include <algorithm>
 #include <atomic>
@@ -44,7 +45,7 @@ namespace h2cv::sb
 		// this frame's output and settings (frame() points / fills them)
 		Output* g_out = nullptr;
 		struct s_settings_sb { bool superbounce = true, superbounce_record = false, superbounce_gaps = false, superbounce_seam_text = true, superbounce_debounce = true, superbounce_spots = true, superbounce_predicted = true;
-			bool predicted_heights = false, spotscan_slow = false, spotscan_curtick = false; float spotscan_radius = 64.f; } g_settings;
+			bool predicted_heights = false, predicted_hide_narrow = false, spotscan_slow = false, spotscan_curtick = false; float spotscan_radius = 64.f; } g_settings;
 		void line(v3 a, v3 b, ImU32 c, float thick = 1.5f)
 		{
 			if (!g_out) return;
@@ -287,7 +288,10 @@ namespace h2cv::sb
 		s_sb_bsp g_sbb;
 
 		// seams on screen: worked out once per tick, each (and each of its pieces) kept 1.5 s after it last qualified
-		struct s_sb_rated { float best_launch = 0.f, best_hi = 0.f; int q = 0; v3 a{}, b{}, near_pt{}; float drop = 0.f, walk = 0.f, jump = 0.f, down = 0.f, need = 0.f, depth_walk = 0.f, depth_jump = 0.f, late_walk = 0.f, late_jump = 0.f; int pieces = 1, opt = 0; bool air = false, walk_ok = false, jump_ok = false, flat = false, carried = false, gap = false, slot = false; float width = 0.f; bool braked = false; float late_start = 1.f; bool debounce = false; int ghost_tries = 0, ghost_hits = 0; bool junction = false; float jdeg = 0.f; };
+		struct s_sb_rated { float best_launch = 0.f, best_hi = 0.f; int q = 0; v3 a{}, b{}, near_pt{}; float drop = 0.f, walk = 0.f, jump = 0.f, down = 0.f, need = 0.f, depth_walk = 0.f, depth_jump = 0.f, late_walk = 0.f, late_jump = 0.f; int pieces = 1, opt = 0; bool air = false, walk_ok = false, jump_ok = false, flat = false, carried = false, gap = false, slot = false; float width = 0.f; bool braked = false; float late_start = 1.f; bool debounce = false; int ghost_tries = 0, ghost_hits = 0; bool junction = false; float jdeg = 0.f;
+			// the physics check (in the air, non-green seams): 0 not run, 1 launches at your forward speed, -1 slow down, 2 speed up,
+			// 3 no forward speed (0..2.25) launches; adj_lo..adj_hi = the forward speeds that do, adj_launch = their best launch (u/s)
+			int adj = 0; float adj_lo = 0.f, adj_hi = 0.f, adj_launch = 0.f; };
 		struct s_sb_shown { uint32 seen = 0; uint32 piece_seen[24] = {}; uint32 air_id = 0; s_sb_rated r; };   // ticks + 1 (0 = never)
 		std::map<uint32, s_sb_shown> g_sb_shown;
 		uint32 g_sb_plan_tick = 0xFFFFFFFF;
@@ -325,7 +329,9 @@ namespace h2cv::sb
 		{
 			if (g_sb_log) return true;
 			g_sb_fins_logged = false;
-			if (fopen_s(&g_sb_log, "superbounce_log.csv", "a") != 0 || !g_sb_log) { g_sb_log = nullptr; return false; }
+			// readable by other programs while recording (only writers are kept out) - 2026-11-01: checking a recording needed record off
+			g_sb_log = _fsopen("superbounce_log.csv", "a", _SH_DENYWR);
+			if (!g_sb_log) return false;
 			fprintf(g_sb_log, "# superbounce log (Spooky Ghost, Cartographer). Lines:\n"
 				"# T,tick,tps,x,y,z,vx,vy,vz,charged,airborne,seam_dist(-1 none within 1 wu),seam_dir_x,y,z,surf0_n_x,y,z,surf1_n_x,y,z,contact_points,"
 				"stick_released(inferred),stick_x,stick_y,keys(W1 A2 S4 D8),seam_point_x,y,z,seam_bend(+valley -ridge deg)\n"
@@ -409,6 +415,24 @@ namespace h2cv::sb
 			return na.z >= 0.5f && nb.z >= 0.5f && dot(na, nb) >= 0.866f;
 		}
 
+		// a LEDGE edge: a floor (facing up) meeting a wall that goes DOWN from it - the edge of a post or ledge top. Bounceable
+		// (2026-11-01: a headlong post top's 4 edges launched but were not listed). s0 / s1 in either order; the floor's side.
+		bool sb_ledge_seam(uint32 s0, uint32 s1)
+		{
+			const s_sb_surface& a = g_sbb.surf[s0];
+			const s_sb_surface& b = g_sbb.surf[s1];
+			const s_sb_surface& fl = a.n.z >= 0.5f ? a : b;
+			const s_sb_surface& wl = a.n.z >= 0.5f ? b : a;
+			if (fl.n.z < 0.5f || std::fabs(wl.n.z) >= 0.5f || wl.poly.empty() || fl.poly.empty()) return false;
+			float wz = 0.f, fz = 0.f;
+			for (const v3& q : wl.poly) wz += q.z;
+			for (const v3& q : fl.poly) fz += q.z;
+			return wz / (float)wl.poly.size() < fz / (float)fl.poly.size() - 0.05f;   // the wall's middle below the floor: it goes down
+		}
+		bool sb_seam_pair(uint32 s0, uint32 s1) { return sb_floor_seam(s0, s1) || sb_ledge_seam(s0, s1); }
+		float sb_seam_bend(uint32 s0, uint32 s1);   // below
+		float sb_pair_bend(uint32 s0, uint32 s1) { return sb_floor_seam(s0, s1) ? sb_seam_bend(s0, s1) : 0.f; }   // a ledge: 0
+
 		// a seam's bend, signed: + valley (each face's middle lies above the other's plane: the floor gets steeper upward
 		// across the seam), - ridge, 0 flat
 		float sb_seam_bend(uint32 s0, uint32 s1)
@@ -480,13 +504,13 @@ namespace h2cv::sb
 				const uint32 sl = (uint32)(uint16)ed->left_surface, sr = (uint32)(uint16)ed->right_surface;
 				if ((int32)sl >= ns || (int32)sr >= ns || sl == sr) continue;
 				const uint32 gl = base + sl, gr = base + sr;
-				if (!g_sbb.surf[gl].ok || !g_sbb.surf[gr].ok || !sb_floor_seam(gl, gr)) continue;
+				if (!g_sbb.surf[gl].ok || !g_sbb.surf[gr].ok || !sb_seam_pair(gl, gr)) continue;
 				const uint32 va = (uint32)(uint16)ed->start_vertex, vb = (uint32)(uint16)ed->end_vertex;
 				if ((int32)va >= bsp->vertices.count || (int32)vb >= bsp->vertices.count) continue;
 				const real_point3d& pa = bsp->vertices[va]->point;
 				const real_point3d& pb = bsp->vertices[vb]->point;
 				s_sb_seam sm;
-				sm.a = world(v3{ pa.x, pa.y, pa.z }); sm.b = world(v3{ pb.x, pb.y, pb.z }); sm.s0 = gl; sm.s1 = gr; sm.bend = sb_seam_bend(gl, gr);
+				sm.a = world(v3{ pa.x, pa.y, pa.z }); sm.b = world(v3{ pb.x, pb.y, pb.z }); sm.s0 = gl; sm.s1 = gr; sm.bend = sb_pair_bend(gl, gr);
 				if (len(sm.b - sm.a) > 1e-4f) g_sbb.seams.push_back(sm);
 			}
 		}
@@ -994,7 +1018,7 @@ namespace h2cv::sb
 		{
 			FILE* f = nullptr;
 			if (fopen_s(&f, "superbounce_spots.csv", "w") != 0 || !f) return;
-			fprintf(f, "# superbounce spots: map key,x,y,z,charged landings,launches (20+ u/s at 30 tick, 40+ at 60),best u/s,launch dir x,y,z,tick rate\n");
+			fprintf(f, "# superbounce spots: map key,x,y,z,charged landings,launches (20+ u/s at 30 tick, 35+ at 60),best u/s,launch dir x,y,z,tick rate\n");
 			for (const auto& l : g_sb_spot_other) fprintf(f, "%s\n", l.c_str());
 			for (const auto& s : g_sb_spots)
 				fprintf(f, "%016llx,%.3f,%.3f,%.3f,%d,%d,%.1f,%.3f,%.3f,%.3f,%d\n", (unsigned long long)g_sb_map_key, s.at.x, s.at.y, s.at.z, s.tries, s.hits, s.best, s.dir.x, s.dir.y, s.dir.z, s.tps);
@@ -1200,9 +1224,9 @@ namespace h2cv::sb
 					const auto it = first.find(key);
 					if (it == first.end()) { first[key] = si; continue; }
 					const uint32 other = it->second;
-					if (other == si || !sb_floor_seam(other, si)) continue;
+					if (other == si || !sb_seam_pair(other, si)) continue;
 					s_sb_seam sm;
-					sm.a = pa; sm.b = pb; sm.s0 = other; sm.s1 = si; sm.bend = sb_seam_bend(other, si);
+					sm.a = pa; sm.b = pb; sm.s0 = other; sm.s1 = si; sm.bend = sb_pair_bend(other, si);
 					if (len(sm.b - sm.a) > 1e-4f) g_sbb.seams.push_back(sm);
 				}
 			}
@@ -1475,10 +1499,10 @@ namespace h2cv::sb
 				const uint32 other_local = (el == local) ? er : el;
 				if ((int32)other_local >= sf.src->surfaces.count) continue;
 				const uint32 other = sf.base + other_local;
-				if (!g_sbb.surf[other].ok || !sb_floor_seam(s, other)) continue;
+				if (!g_sbb.surf[other].ok || !sb_seam_pair(s, other)) continue;
 				const v3 ea = sf.poly[i], eb = sf.poly[(i + 1) % k];
 				const float d = len(at - sb_closest_on_segment(at, ea, eb));
-				if (d < dist) { dist = d; a = ea; b = eb; bend = sb_seam_bend(s, other); }
+				if (d < dist) { dist = d; a = ea; b = eb; bend = sb_pair_bend(s, other); }
 			}
 			return dist < 1e8f;
 		}
@@ -2133,7 +2157,7 @@ namespace h2cv::sb
 				{
 					if (sp.tps != cur_tps || std::fabs(sp.at.z - ld.at.z) > 1.f || (sp.at.x - ld.at.x) * (sp.at.x - ld.at.x) + (sp.at.y - ld.at.y) * (sp.at.y - ld.at.y) > 0.4f * 0.4f) continue;
 					char wb[160];
-					why += sp.best >= k_sb_dreadnought * (float)sp.tps / 30.f ? "  on a DREADNOUGHT SPOT:" : "  on a MONSTER SPOT:";
+					why += sp.best >= h2cv::sbscan::lineDreadnought(sp.tps) ? "  on a DREADNOUGHT SPOT:" : "  on a MONSTER SPOT:";
 					why += sb_monster_window(speed, wb, sizeof(wb)) + 1;
 					break;
 				}
@@ -2422,7 +2446,7 @@ namespace h2cv::sb
 			for (size_t k = 0; k < near_spots.size(); ++k)
 			{
 				const s_sb_spot& s = g_sb_spots[near_spots[k].second];
-				const bool dread = s.best >= k_sb_dreadnought * (float)s.tps / 30.f;
+				const bool dread = s.best >= h2cv::sbscan::lineDreadnought(s.tps);
 				const ImU32 c = dread ? IM_COL32(255, 60, 60, 240) : IM_COL32(255, 90, 230, 240);
 				for (int i = 0; i < 16; ++i)
 				{
@@ -2452,6 +2476,7 @@ namespace h2cv::sb
 		// ---- the manual spot scan ("scan around me", 2026-10-31): the external scanner exe (the offline scans' exact physics,
 		// GPU) on the geometry within a sphere around the player; it merges into this map's prediction file, which is then
 		// reloaded. Runs hidden (CREATE_NO_WINDOW) at idle priority; output in <game>\superbounce_scan\scan_log.txt ----
+		std::atomic<int> g_sb_force_launch{ 0 };   // logged ticks left to ignore after HCM's Force Launch (noteForceLaunch)
 		std::atomic<bool> g_sb_scan_request{ false }, g_sb_scan_done{ false };
 		std::atomic<HANDLE> g_sb_scan_proc{ nullptr };
 		std::atomic<DWORD> g_sb_scan_exit{ 0 };
@@ -2480,12 +2505,16 @@ namespace h2cv::sb
 				if (b == 0xFFFFFFFFu) continue;
 				for (size_t s = b; s < g_sbb.surf.size() && s < g_sbb.obj_surf && g_sbb.surf[s].base == b; ++s) key[s] = 0xA0000000u | ((uint32)(s - b) << 16) | (uint32)i;
 			}
+			// the objects' triangles too (scenery, lightposts, crates - after the level's; 2026-11-01, user: headlong's lightpost tips
+			// and pegs launch, and the level dump has no surface within 0.6 wu of them). Object collision is not validated against
+			// the game yet, and a spot on an object holds only while the object stays where it was scanned.
+			for (size_t s = g_sbb.obj_surf; s < g_sbb.surf.size(); ++s) key[s] = 0xC0000000u | (uint32)(s - g_sbb.obj_surf);
 			FILE* fm = nullptr; FILE* ff = nullptr;
 			if (fopen_s(&fm, mapcsv.c_str(), "w") != 0 || !fm || fopen_s(&ff, flagcsv.c_str(), "w") != 0 || !ff)
 			{ if (fm) fclose(fm); if (g_out) g_out->message = "Spot scan: cannot write " + dir; return; }
 			fprintf(fm, "# M,surface,havok key,normal x,y,z,vertices,x,y,z ...\n");
 			fprintf(ff, "# havok key,flags,breakable,material\n");
-			for (size_t s = 0; s < g_sbb.surf.size() && s < g_sbb.obj_surf; ++s)
+			for (size_t s = 0; s < g_sbb.surf.size(); ++s)
 			{
 				const s_sb_surface& sf = g_sbb.surf[s];
 				if (!sf.ok || sf.poly.size() < 3) continue;
@@ -2532,11 +2561,17 @@ namespace h2cv::sb
 			static uint32 s_tick = 0;
 			if (g_sbs.tick != s_tick) { s_tick = g_sbs.tick; h2cv::sbscan::setPlayer(feet.x, feet.y, feet.z); h2cv::sbscan::spots(s_spots); }   // once per tick
 			std::vector<std::pair<float, size_t>> near_spots;
+			// the loaded file's tick rate decides the lines (60 tick: monsters 35+, dreadnoughts 60+ provisional - 2026-11-01)
+			const int pt = h2cv::sbscan::tick();
+			const float lineM = h2cv::sbscan::lineMonster(pt), lineD = h2cv::sbscan::lineDreadnought(pt);
 			for (size_t i = 0; i < s_spots.size(); ++i)
 			{
-				if (s_spots[i].share20 < 0.01f && s_spots[i].best < k_sb_dreadnought) continue;   // 1-in-100+ chance, or a dreadnought ceiling
+				if (s_spots[i].best < lineM) continue;   // a normal bounce at this tick rate (60-tick files from before the tick-aware lines list them all)
+				if (g_settings.predicted_hide_narrow && s_spots[i].share20 < 0.01f && s_spots[i].best < lineD) continue;   // the optional 1% filter
+				// narrow windows (< 1% of the tested approaches) are shown too, thin and dim (2026-11-01: headlong's lightpost tops,
+				// 0.3-0.4%, were hidden - the user launches off them every time; the window is room for error, not a chance)
 				// the kind filter, by the scan's ceiling (see the ring colour below)
-				if (s_spots[i].best >= k_sb_dreadnought ? !g_sb_predicted_dreadnoughts : !g_sb_predicted_monsters) continue;
+				if (s_spots[i].best >= lineD ? !g_sb_predicted_dreadnoughts : !g_sb_predicted_monsters) continue;
 				const float dx = s_spots[i].x - feet.x, dy = s_spots[i].y - feet.y;
 				if (dx * dx + dy * dy < g_sb_predicted_range * g_sb_predicted_range) near_spots.push_back({ dx * dx + dy * dy, i });
 			}
@@ -2550,12 +2585,13 @@ namespace h2cv::sb
 				// the kind (ring colour, filter) comes from the SCAN's ceiling: the offline scan runs the full current model;
 				// the in-game recipe only adds the approach (it used to reclassify - and, with monsters hidden, hide - a
 				// dreadnought whose best approach it could not reproduce, 2026-10-30)
-				const bool dread = s.best >= k_sb_dreadnought;
-				const ImU32 c = dread ? IM_COL32(255, 255, 255, 230) : IM_COL32(60, 230, 255, 230);
+				const bool dread = s.best >= lineD;
+				const bool narrow = s.share20 < 0.01f;   // a window under 1%: a thin, dim ring
+				const ImU32 c = dread ? IM_COL32(255, 255, 255, narrow ? 140 : 230) : IM_COL32(60, 230, 255, narrow ? 140 : 230);
 				for (int i = 0; i < 16; i += 2)
 				{
 					const float a0 = 6.2831853f * (float)i / 16.f, a1 = 6.2831853f * (float)(i + 1) / 16.f;
-					line(at + v3{ std::cos(a0) * 0.25f, std::sin(a0) * 0.25f, 0.03f }, at + v3{ std::cos(a1) * 0.25f, std::sin(a1) * 0.25f, 0.03f }, c, 2.f);
+					line(at + v3{ std::cos(a0) * 0.25f, std::sin(a0) * 0.25f, 0.03f }, at + v3{ std::cos(a1) * 0.25f, std::sin(a1) * 0.25f, 0.03f }, c, narrow ? 1.f : 2.f);
 				}
 				if (!s.recipe)
 				{
@@ -2591,12 +2627,12 @@ namespace h2cv::sb
 				if (labelled < 4 && g_settings.superbounce_seam_text)
 				{
 					char t1[220], t2[260], t3[200];
-					snprintf(t1, sizeof(t1), "PREDICTED %s %.1f u/s - window %.1f%% for 20+, %.1f%% for 35+ around this approach", dread ? "DREADNOUGHT" : "MONSTER", s.rBest, s.rShare20 * 100.f, s.rShare35 * 100.f);
+					snprintf(t1, sizeof(t1), "PREDICTED %s %.1f u/s - window %.1f%% for %.0f+, %.1f%% for %.0f+ around this approach%s", dread ? "DREADNOUGHT" : "MONSTER", s.rBest, s.rShare20 * 100.f, lineM, s.rShare35 * 100.f, lineD, pt != 30 ? " (60-tick lines: provisional)" : "");
 					const float drop = s.rFall * s.rFall / (2.f * k_sb_gravity * g_sb_tick_scale * g_sb_tick_scale);
 					snprintf(t2, sizeof(t2), "arrive FALLING %.1f u/s (good %.0f-%.0f; a %.0f wu drop), MOVING %.2f u/s along the yellow arrow (heading %.0f deg, good %.0f-%.0f, %.2f-%.2f u/s)",
 						s.rFall, s.rFallLo, s.rFallHi, drop, dm, std::atan2(s.rDriftY, s.rDriftX) * 57.29578f < 0 ? std::atan2(s.rDriftY, s.rDriftX) * 57.29578f + 360.f : std::atan2(s.rDriftY, s.rDriftX) * 57.29578f,
 						s.rHeadLo < 0 ? s.rHeadLo + 360.f : s.rHeadLo, s.rHeadHi >= 360.f ? s.rHeadHi - 360.f : s.rHeadHi, s.rDriftLo, s.rDriftHi);
-					snprintf(t3, sizeof(t3), "land on the ring (x %.2f y %.2f, surface z %.2f) -> launch (%.1f, %.1f, %.1f)", s.x, s.y, s.z, s.rLaunchX, s.rLaunchY, s.rLaunchZ);
+					snprintf(t3, sizeof(t3), "land on the ring (x %.2f y %.2f, surface z %.2f) -> launch (%.1f, %.1f, %.1f)", s.rAtX, s.rAtY, s.z, s.rLaunchX, s.rLaunchY, s.rLaunchZ);
 					text(at + v3{ 0.f, 0.f, 0.45f }, c, t1);
 					text(at + v3{ 0.f, 0.f, 0.32f }, cApproach, t2);
 					text(at + v3{ 0.f, 0.f, 0.19f }, c, t3);
@@ -2604,7 +2640,7 @@ namespace h2cv::sb
 					{
 						char t4[220];
 						if (s.rHeights > 0) snprintf(t4, sizeof(t4), "START HEIGHT: feet %.2f - %.2f wu above the surface at the start of the landing tick (%d of 8 heights work)", s.rFeetLo, s.rFeetHi, s.rHeights);
-						else snprintf(t4, sizeof(t4), "START HEIGHT: no tested height launches 20+ with this exact approach");
+						else snprintf(t4, sizeof(t4), "START HEIGHT: no tested height launches %.0f+ with this exact approach", lineM);
 						text(at + v3{ 0.f, 0.f, 0.06f }, cApproach, t4);
 					}
 					++labelled;
@@ -2722,6 +2758,10 @@ namespace h2cv::sb
 			{
 				const float dvz = vel.z - g_sbl.prev_vz;
 				const v3 dvh{ vel.x - g_sbl.prev_vhv.x, vel.y - g_sbl.prev_vhv.y, 0.f };   // sideways kicks (before prev_vhv moves on)
+				// HCM's own Force Launch wrote this velocity (noteForceLaunch arms 3 logged ticks; the write lands in one of them):
+				// not a bounce and not a remembered spot (2026-11-01: up-launches mid-air made spots floating in the sky)
+				const bool forced = g_sb_force_launch.load() > 0;
+				if (forced) g_sb_force_launch.fetch_sub(1);
 				{
 					// air control's target, from how the drift just changed: unchanged = at the target; changed by a step
 					// toward a stop with no stick = let go (target zero); otherwise steering toward a 2.25 wu/s target
@@ -2770,7 +2810,7 @@ namespace h2cv::sb
 						g_sbl.jump_speed = vel.z;   // a jump from standing (not a launch): the first airborne tick's speed
 				}
 				// a launch: at least 4 u/s up (a landing stops near 0 and a jump take-off is 3.08 u/s) or a sideways kick
-				if (charged && own && g_sbl.prev_vz < -2.f && (vel.z > 4.f || len(dvh) > 4.f))
+				if (charged && own && !forced && g_sbl.prev_vz < -2.f && (vel.z > 4.f || len(dvh) > 4.f))
 				{
 					std::vector<s_sb_contact> cs;
 					sb_read_contacts(own, cs);
@@ -2786,9 +2826,9 @@ namespace h2cv::sb
 				}
 				// a charged landing (falling, then stopped or launched): counted on a remembered spot; a monster-size launch
 				// (20+ u/s) makes one where there is none
-				if (charged && g_sbl.prev_vz < -1.5f && dvz > 1.5f && tick == g_sbl.prev_tick + 1)
+				if (charged && !forced && g_sbl.prev_vz < -1.5f && dvz > 1.5f && tick == g_sbl.prev_tick + 1)
 				{
-					sb_spots_impact(g_sbl.prev_feet, vel, len(vel) >= k_sb_monster * g_sb_tick_scale && (vel.z > 4.f || len(dvh) > 4.f));
+					sb_spots_impact(g_sbl.prev_feet, vel, len(vel) >= h2cv::sbscan::lineMonster((int)std::lround(30.f * g_sb_tick_scale)) && (vel.z > 4.f || len(dvh) > 4.f));
 					// a pure-lottery seam landing: did it launch? (ghost seams)
 					if (g_sb_last_air.kind == 1 && g_sb_last_air.lottery && g_sb_last_air.feature >= 0) sb_ghost_impact(g_sb_last_air.feature, vel.z >= 6.f);
 				}
@@ -3045,6 +3085,8 @@ namespace h2cv::sb
 					std::partial_sort(cand.begin(), cand.begin() + 96, cand.end());
 					cand.resize(96);
 				}
+				std::sort(cand.begin(), cand.end());                  // nearest first: they get the physics check below
+				int phys_budget = 6;                                      // physics checks per tick (each ~10 landings of ~20 us)
 				for (const auto& cand_seam : cand)
 				{
 					const uint32 si = cand_seam.second;
@@ -3123,6 +3165,54 @@ namespace h2cv::sb
 					if (r.q == 1 && !sm.gap) { int gt = 0, gh = 0; if (sb_ghost_get((int)si, gt, gh)) { r.q = 3; r.ghost_tries = gt; r.ghost_hits = gh; } }
 					// a junction (a piece meeting the floor at an angle): big launches happen here, rarely - a lottery whatever the depth says
 					if (sm.junction) { r.q = 1; r.debounce = false; r.junction = true; r.jdeg = sm.bend; }
+					// PHYSICS (2026-11-01): a seam that is not green. Your height and fall fix WHEN you land (the landing tick and the
+					// start height); your forward speed decides WHERE you are on that tick - so try forward speeds 0..2.25 along your
+					// heading with the scan's exact rules: keep it, slow down, speed up, or none (starting bounces included)
+					if (airborne && r.q != 2 && phys_budget > 0)
+					{
+						--phys_budget;
+						// step the fall tick by tick (the game's order: move, then find contacts at the new position - swept if fast)
+						// until the rules find a contact: the landing tick. A slow (starting-bounce) fall lands sunk in, unswept.
+						const float g1 = k_sb_gravity * dt;
+						const v3 hv{ vel.x, vel.y, 0.f };
+						const float h0 = len(hv);
+						v3 u = h0 > 0.3f ? hv * (1.f / h0) : v3{ near_pt.x - feet.x, near_pt.y - feet.y, 0.f };
+						u = len(u) > 1e-4f ? u * (1.f / len(u)) : v3{ 1.f, 0.f, 0.f };
+						bool ok[10] = {}; float lv[10] = {}; int nok = 0;
+						for (int i = 0; i < 10; ++i)
+						{
+							const float h = 0.25f * (float)i;
+							float x = feet.x, y = feet.y, z = feet.z, vz = vel.z, out[3];
+							for (int k = 0; k < 600 && z > near_pt.z - 0.6f; ++k)
+							{
+								if (z - near_pt.z < 1.5f && h2cv::sbscan::landingLaunch(x, y, z, u.x * h, u.y * h, vz - g1, out))
+								{
+									if (out[2] > 4.f) { ok[i] = true; lv[i] = std::sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]); ++nok; }
+									break;
+								}
+								vz -= g1; z += vz * dt; x += u.x * h * dt; y += u.y * h * dt;
+							}
+						}
+						const int i0 = (std::max)(0, (std::min)(9, (int)std::lround(h0 / 0.25f)));
+						int pick = -1;
+						if (ok[i0]) { r.adj = 1; pick = i0; }
+						else if (nok > 0)
+						{
+							int ib = -1, ia = -1;
+							for (int i = i0 - 1; i >= 0; --i) if (ok[i]) { ib = i; break; }
+							for (int i = i0 + 1; i < 10; ++i) if (ok[i]) { ia = i; break; }
+							if (ib >= 0 && (ia < 0 || i0 - ib <= ia - i0)) { r.adj = -1; pick = ib; } else { r.adj = 2; pick = ia; }
+						}
+						else r.adj = 3;
+						if (pick >= 0)
+						{
+							int lo = pick, hi = pick;
+							while (lo > 0 && ok[lo - 1]) --lo;
+							while (hi < 9 && ok[hi + 1]) ++hi;
+							r.adj_lo = 0.25f * (float)lo; r.adj_hi = 0.25f * (float)hi;
+							for (int i = lo; i <= hi; ++i) r.adj_launch = (std::max)(r.adj_launch, lv[i]);
+						}
+					}
 					// a seam's launch is the tilt line; a gap's grows with the arrival speed (sb_gap_range)
 					r.best_launch = down <= 0.f ? 0.f : sb_up_estimate(std::atan(k_sb_best_tilt)) * g_sb_tick_scale;
 					r.best_hi = r.best_launch;
@@ -3178,8 +3268,10 @@ namespace h2cv::sb
 				const s_sb_shown& e = g_sb_shown[order[i].second];
 				const s_sb_rated& r = e.r;
 				const float age = (float)(tick + 1 - e.seen) / (float)(std::max)(1u, (unsigned)hold);
-				const bool red = r.q == 0;
-				const ImU32 c = sb_fade(sb_quality_color(r.q), (1.f - 0.7f * age) * (red ? 0.35f : 1.f));
+				// the physics check overrides the colour: light blue = slow your forward speed, purple = speed it up, green = keep it
+				const bool red = r.q == 0 && r.adj != 1 && r.adj != -1 && r.adj != 2;
+				const ImU32 cq = r.adj == -1 ? IM_COL32(90, 170, 255, 255) : r.adj == 2 ? IM_COL32(200, 110, 255, 255) : r.adj == 1 ? IM_COL32(80, 230, 90, 255) : sb_quality_color(r.q);
+				const ImU32 c = sb_fade(cq, (1.f - 0.7f * age) * (red ? 0.35f : 1.f));
 				const float wl = red ? 1.f : (labelled[i] ? 3.f : 1.5f);
 				for (int k = 0; k < r.pieces; ++k)
 					if (e.piece_seen[k] != 0 && tick + 1 - e.piece_seen[k] <= hold)
@@ -3238,6 +3330,15 @@ namespace h2cv::sb
 				else if ((std::max)(r.walk, r.jump) < r.need) snprintf(t, sizeof(t), "%sdrop %.1f: too slow (walk %.2f, jump %.2f < %.2f)", pre, r.drop, r.walk, r.jump, r.need);
 				else snprintf(t, sizeof(t), "%sdrop %.1f: too shallow (walk %.2f / late %.2f, jump %.2f / late %.2f)", pre, r.drop, r.depth_walk, r.late_walk, r.depth_jump, r.late_jump);
 				text(r.near_pt + v3{ 0.f, 0.f, 0.15f }, c, t);
+				if (r.adj != 0)
+				{
+					char tp[200];
+					if (r.adj == 1) snprintf(tp, sizeof(tp), "PHYSICS: launches at your forward speed (%.2f-%.2f u/s work) -> about %.0f u/s", r.adj_lo, r.adj_hi, r.adj_launch);
+					else if (r.adj == -1) snprintf(tp, sizeof(tp), "PHYSICS: SLOW DOWN - forward %.2f-%.2f u/s launches (tap / fragment forward) -> about %.0f u/s", r.adj_lo, r.adj_hi, r.adj_launch);
+					else if (r.adj == 2) snprintf(tp, sizeof(tp), "PHYSICS: SPEED UP - forward %.2f-%.2f u/s launches (max 2.25) -> about %.0f u/s", r.adj_lo, r.adj_hi, r.adj_launch);
+					else snprintf(tp, sizeof(tp), "PHYSICS: no forward speed (0-2.25) launches from this fall");
+					text(r.near_pt + v3{ 0.f, 0.f, 0.55f }, c, tp);
+				}
 				if (i == 0 && r.q >= 1 && r.down > 0.f && !r.flat)
 				{
 					char t4[140];
@@ -3270,9 +3371,9 @@ namespace h2cv::sb
 				{
 					if (g_sbl.bounce_side > 4.f)
 						sb_panel(w, "last bounce: up %.1f, sideways kick %.1f u/s (arrived %.1f down): %s%s", g_sbl.bounce_up, g_sbl.bounce_side, g_sbl.bounce_down, g_sbl.bounce_what,
-							std::sqrt(g_sbl.bounce_up * g_sbl.bounce_up + g_sbl.bounce_side * g_sbl.bounce_side) >= k_sb_dreadnought * g_sb_tick_scale ? (g_sb_tick_scale > 1.5f ? " - DREADNOUGHT (70+ u/s at 60 tick)" : " - DREADNOUGHT (35+ u/s)") : "");
+							std::sqrt(g_sbl.bounce_up * g_sbl.bounce_up + g_sbl.bounce_side * g_sbl.bounce_side) >= h2cv::sbscan::lineDreadnought((int)std::lround(30.f * g_sb_tick_scale)) ? (g_sb_tick_scale > 1.5f ? " - DREADNOUGHT (60+ u/s at 60 tick, provisional)" : " - DREADNOUGHT (35+ u/s)") : "");
 					else sb_panel(w, "last bounce: up %.1f u/s (arrived %.1f down): %s%s", g_sbl.bounce_up, g_sbl.bounce_down, g_sbl.bounce_what,
-						g_sbl.bounce_up >= k_sb_dreadnought * g_sb_tick_scale ? (g_sb_tick_scale > 1.5f ? " - DREADNOUGHT (70+ u/s at 60 tick)" : " - DREADNOUGHT (35+ u/s)") : "");
+						g_sbl.bounce_up >= h2cv::sbscan::lineDreadnought((int)std::lround(30.f * g_sb_tick_scale)) ? (g_sb_tick_scale > 1.5f ? " - DREADNOUGHT (60+ u/s at 60 tick, provisional)" : " - DREADNOUGHT (35+ u/s)") : "");
 				}
 			}
 		}
@@ -3359,7 +3460,7 @@ namespace h2cv::sb
 		g_settings.superbounce_predicted = opt.predicted;
 		g_sb_predicted_range = std::clamp(opt.predictedRange, 10.f, 1000.f);
 		g_sb_predicted_monsters = opt.predictedMonsters; g_sb_predicted_dreadnoughts = opt.predictedDreadnoughts;
-		g_settings.predicted_heights = opt.predictedHeights; g_settings.spotscan_slow = opt.scanSlow; g_settings.spotscan_curtick = opt.scanCurrentTick;
+		g_settings.predicted_heights = opt.predictedHeights; g_settings.predicted_hide_narrow = opt.predictedHideNarrow; g_settings.spotscan_slow = opt.scanSlow; g_settings.spotscan_curtick = opt.scanCurrentTick;
 		g_settings.spotscan_radius = std::clamp(opt.scanRadius, 1.f, 4096.f);
 		g_sb_panel.clear();
 		g_sb_hud = -1; g_sb_speed_now = -1.f;
@@ -3428,6 +3529,8 @@ namespace h2cv::sb
 	}
 
 	void requestSpotScan() { g_sb_scan_request = true; }
+
+	void noteForceLaunch() { g_sb_force_launch.store(3); }
 
 	void forgetCheckpointCharges() { g_keep_forget.store(true); }
 

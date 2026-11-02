@@ -865,6 +865,7 @@
 			((collisionViewerSuperbouncePredictedMonstersGUI, (Halo2)))\
 			((collisionViewerSuperbouncePredictedDreadnoughtsGUI, (Halo2)))\
 			((collisionViewerSuperbouncePredictedHeightsGUI, (Halo2)))\
+			((collisionViewerSuperbouncePredictedHideNarrowGUI, (Halo2)))\
 			((collisionViewerSpotScanRadiusGUI, (Halo2)))\
 			((collisionViewerSpotScanSlowGUI, (Halo2)))\
 			((collisionViewerSpotScanCurrentTickGUI, (Halo2)))\

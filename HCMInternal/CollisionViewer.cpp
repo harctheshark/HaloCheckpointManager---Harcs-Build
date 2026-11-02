@@ -234,6 +234,7 @@ private:
 		v.sbPredictedMonsters = s.collisionViewerSuperbouncePredictedMonsters->GetValue();
 		v.sbPredictedDreadnoughts = s.collisionViewerSuperbouncePredictedDreadnoughts->GetValue();
 		v.sbPredictedHeights = s.collisionViewerSuperbouncePredictedHeights->GetValue();
+		v.sbPredictedHideNarrow = s.collisionViewerSuperbouncePredictedHideNarrow->GetValue();
 		v.sbScanRadius = s.collisionViewerSpotScanRadius->GetValue();
 		v.sbScanSlow = s.collisionViewerSpotScanSlow->GetValue();
 		v.sbScanCurrentTick = s.collisionViewerSpotScanCurrentTick->GetValue();

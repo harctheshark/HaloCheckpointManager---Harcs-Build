@@ -15,6 +15,8 @@
 #include "GetObjectPhysics.h"
 //#include "UnfreezeObjectPhysics.h"
 
+namespace h2cv::sb { void noteForceLaunch(); }   // H2CV_Superbounce.h: the launch is not a bounce / remembered spot
+
 class ForceLaunchSimple : public ForceLaunchImplUntemplated
 {
 private:
@@ -163,6 +165,7 @@ void ForceLaunchSimple::LaunchObjectAbsolute(SimpleMath::Vector3 coords, Datum d
 	//	PLOG_ERROR << "unfreezeObjectPhysics service failed, cannot unfreeze physics";
 	//}
 
+	h2cv::sb::noteForceLaunch();
 	lockOrThrow(messagesGUIWeak, messagesGUI);
 	messagesGUI->addMessage(std::format("Launching with velocity {:.2f}, {:.2f}, {:.2f}", coords.x, coords.y, coords.z));
 }
@@ -227,6 +230,7 @@ void ForceLaunchSimple::LaunchObjectRelativeToPlayer(SimpleMath::Vector3 coords,
 	//	PLOG_ERROR << "unfreezeObjectPhysics service failed, cannot unfreeze physics";
 	//}
 
+	h2cv::sb::noteForceLaunch();
 	lockOrThrow(messagesGUIWeak, messagesGUI);
 	messagesGUI->addMessage(std::format("Launching with velocity {:.2f}, {:.2f}, {:.2f}", coords.x, coords.y, coords.z));
 

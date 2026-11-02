@@ -23,6 +23,7 @@ namespace h2cv::sbscan
 		// the START HEIGHT band of the best approach: feet above the surface at the start of the landing tick that launch 20+
 		// (of the 8 tested heights spread over one tick of fall: rHeights of them work, from rFeetLo to rFeetHi)
 		float rFeetLo = 0, rFeetHi = 0; int rHeights = 0;
+		float rAtX = 0, rAtY = 0;   // where on the 3x3 refine patch the best approach lands (world x, y)
 	};
 
 	// load this map's predictions for this tick rate (superbounce_predicted_v3[_t<tick>]_<key>.csv; no file = no spots - the map is
@@ -30,6 +31,12 @@ namespace h2cv::sbscan
 	void start(uint64_t mapKey, std::vector<Surface>&& surfaces, float nearX, float nearY, int tick = 30);
 	// re-read the prediction file (after a manual scan merged new spots into it)
 	void reload();
+	// the monster / dreadnought lines (u/s) at a tick rate: 20 / 35 at 30 tick, 35 / 60 at 60 tick (user, 2026-11-01: 60-tick
+	// normal bounces ~24, monsters 35+; the 60-tick dreadnought line is provisional), linear between, clamped outside
+	inline float lineMonster(int tps) { const float t = tps < 30 ? 30.f : (tps > 60 ? 60.f : (float)tps); return 20.f + (t - 30.f) * 0.5f; }
+	inline float lineDreadnought(int tps) { const float t = tps < 30 ? 30.f : (tps > 60 ? 60.f : (float)tps); return 35.f + (t - 30.f) * (25.f / 30.f); }
+	// the tick rate of the loaded predictions (their share columns use that tick's lines)
+	int tick();
 	// the prediction file name for a map key + tick rate (relative to the game folder)
 	std::string fileName(uint64_t mapKey, int tick);
 	void cancel();
@@ -37,6 +44,11 @@ namespace h2cv::sbscan
 	void spots(std::vector<Spot>& out);
 	float progress();
 	uint64_t mapKey();
+	// one landing with the scan's exact rules on the level last handed to start(): the pill's feet at the start of the landing
+	// tick and its velocity for that tick (gravity already added). false: the level is not ready, nothing is touched, the tick
+	// before was not clear (it would have landed earlier) or only two-sided / invisible surfaces are touched. launch = the
+	// solved velocity (any direction). Thread-safe (the level is read-only once built); costs ~10-30 us.
+	bool landingLaunch(float fx, float fy, float fz, float vx, float vy, float vz, float launch[3]);
 	// where the player is (recipes are worked out for the spots within 30 wu, nearest first)
 	void setPlayer(float x, float y, float z);
 }

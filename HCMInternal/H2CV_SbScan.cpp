@@ -121,6 +121,7 @@ namespace h2cv::sbscan
 		V3 solve(const Row* rows, int n, V3 v0)
 		{
 			V3 v = v0, vsum{};
+			{ const double s2 = dot(v, v); if (s2 > 4.085 * 4.085) v = v * (4.085 / std::sqrt(s2)); }   // the game caps the pill's speed at 4.085 (direction kept) before its solver (2026-11-01)
 			double rhs[32];
 			for (int i = 0; i < n; ++i) rhs[i] = rows[i].d < 0 ? (std::min)(0.05 * std::fabs(rows[i].d), DT) * 8.0 / DT : 0.0;
 			for (int pass = 0; pass < PASSES; ++pass)
@@ -237,7 +238,10 @@ namespace h2cv::sbscan
 			bool reachable(V3 feet, V3 v_pre, const std::vector<int>& local) const
 			{
 				Row prev[32];
-				const int n = landing_contacts(feet - v_pre * DT, v_pre, local, prev, 32);
+				// the tick before swept only if ITS speed (a tick of gravity less) was over SWEEP_MIN: a slow fall sinks in unswept,
+				// and the faster landing tick's sweep must not make this check see the floor it had already reached (2026-11-01)
+				const V3 v_prev{ v_pre.x, v_pre.y, v_pre.z + G * DT };
+				const int n = landing_contacts(feet - v_pre * DT, len(v_prev) > SWEEP_MIN ? v_pre : v_prev, local, prev, 32);
 				for (int k = 0; k < n; ++k) if (prev[k].d < -0.001) return false;
 				return true;
 			}
@@ -285,12 +289,12 @@ namespace h2cv::sbscan
 							if (v.z > 4)
 							{
 								const double sp = len(v);
-								if (sp >= 20) ++n20;
-								if (sp >= 35) ++n35;
+								if (sp >= lineMonster(tick)) ++n20;
+								if (sp >= lineDreadnought(tick)) ++n35;
 								if (sp > best) { best = sp; bf = f; }
 							}
 						}
-					if (best >= 20 && cases > 0)
+					if (best >= lineMonster(tick) && cases > 0)
 						add_found({ (float)p.x, (float)p.y, (float)zland, (float)best, (float)n20 / cases, (float)n35 / cases, (float)bf.vz, (float)bf.dx, (float)bf.dy });
 					++done;
 				}
@@ -324,10 +328,14 @@ namespace h2cv::sbscan
 			{
 				std::vector<int> local;
 				near_surfs(s.x, s.y, 1.0, local);
-				const int NH = 24, NPH = 8, NM = 10;   // + 4 u/s drift: the offline scans try it (2026-10-30)
-				static const double mags[NM] = { 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.25, 3.0, 4.0 };
-				std::vector<double> vzs; for (double vz = 6; vz <= 40.01; vz += 2) vzs.push_back(vz);
-				struct R { double best = 0; V3 bv{}; long long n20 = 0, n35 = 0, cases = 0; double feet = 0; };
+				// the REFINE of the spot (2026-11-01): a 3x3 patch 0.05 apart, 16 start heights, falls 4-5 (starting bounces) and
+				// 6..50, LEGIT drift only (the biped's horizontal speed is at most 2.25) - the scan's sparse table misses precise
+				// approaches (headlong lightpost: scan 25.0, refined 29.0, the user's record 28-29)
+				const int NH = 24, NPH = 16, NM = 10;
+				static const double mags[NM] = { 0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25 };
+				std::vector<double> vzs = { 4.0, 4.5, 5.0 }; for (double vz = 6; vz <= 50.01; vz += 2) vzs.push_back(vz);
+				static const double PX[9] = { 0, -0.05, 0.05, 0, 0, -0.05, 0.05, -0.05, 0.05 }, PY[9] = { 0, 0, 0, -0.05, 0.05, -0.05, -0.05, 0.05, 0.05 };
+				struct R { double best = 0; V3 bv{}; long long n20 = 0, n35 = 0, cases = 0; double feet = 0; int pt = 0; };
 				std::vector<R> res(vzs.size() * NH * NM);
 				Row rows[32], rr[32];
 				for (size_t i = 0; i < res.size() && !stop; ++i)
@@ -336,11 +344,14 @@ namespace h2cv::sbscan
 					const double vz = vzs[vi], ang = h * 6.283185307179586 / NH, m = mags[mi];
 					const V3 v_pre{ m * std::cos(ang), m * std::sin(ang), -vz };
 					R& o = res[i];
+					const double side = len(v_pre) > SWEEP_MIN ? 1.0 : -1.0;   // a slow (unswept) fall is found sunk in, under the surface
+					for (int pt = 0; pt < 9; ++pt)
 					for (int ph = 0; ph < NPH; ++ph)
 					{
-						const double fh = (ph + 0.5) / NPH * vz * DT;
-						if (!reachable({ s.x, s.y, s.z + fh }, v_pre, local)) continue;
-						const int n = landing_contacts({ s.x, s.y, s.z + fh }, v_pre, local, rows, 32);
+						const double fh = side * (ph + 0.5) / NPH * vz * DT;
+						const V3 at{ s.x + PX[pt], s.y + PY[pt], s.z + fh };
+						if (!reachable(at, v_pre, local)) continue;
+						const int n = landing_contacts(at, v_pre, local, rows, 32);
 						if (n == 0) continue;
 						++o.cases;
 						bool hard = false; for (int k = 0; k < n; ++k) if (!rows[k].soft) { hard = true; break; }
@@ -349,9 +360,9 @@ namespace h2cv::sbscan
 						if (v.z > 4)
 						{
 							const double sp = len(v);
-							if (sp >= 20) ++o.n20;
-							if (sp >= 35) ++o.n35;
-							if (sp > o.best) { o.best = sp; o.bv = v; o.feet = fh; }
+							if (sp >= lineMonster(tick)) ++o.n20;
+							if (sp >= lineDreadnought(tick)) ++o.n35;
+							if (sp > o.best) { o.best = sp; o.bv = v; o.feet = fh; o.pt = pt; }
 						}
 					}
 				}
@@ -360,7 +371,7 @@ namespace h2cv::sbscan
 				for (size_t i = 0; i < res.size(); ++i) if (res[i].best > res[bi].best || (res[i].best == res[bi].best && res[i].n20 > res[bi].n20)) bi = i;
 				const R& B = res[bi];
 				const int bvi = (int)(bi / (NH * NM)), bh = (int)((bi / NM) % NH), bmi = (int)(bi % NM);
-				const double good = (std::max)(20.0, 0.85 * B.best);
+				const double good = (std::max)((double)lineMonster(tick), 0.85 * B.best);
 				auto at = [&](int vi, int h, int mi) -> const R& { return res[((size_t)vi * NH + ((h % NH + NH) % NH)) * NM + mi]; };
 				auto headBest = [&](int h) { double b = 0; for (int vi = 0; vi < (int)vzs.size(); ++vi) for (int mi = 0; mi < NM; ++mi) b = (std::max)(b, at(vi, h, mi).best); return b; };
 				int hl = 0, hh = 0;
@@ -379,14 +390,15 @@ namespace h2cv::sbscan
 					const V3 v_pre{ mags[bmi] * std::cos(ang), mags[bmi] * std::sin(ang), -vzs[bvi] };
 					for (int ph = 0; ph < NPH; ++ph)
 					{
-						const double fh = (ph + 0.5) / NPH * vzs[bvi] * DT;
-						if (!reachable({ s.x, s.y, s.z + fh }, v_pre, local)) continue;
-						const int n = landing_contacts({ s.x, s.y, s.z + fh }, v_pre, local, rows, 32);
+						const double fh = (len(v_pre) > SWEEP_MIN ? 1.0 : -1.0) * (ph + 0.5) / NPH * vzs[bvi] * DT;
+						const V3 at{ s.x + PX[B.pt], s.y + PY[B.pt], s.z + fh };
+						if (!reachable(at, v_pre, local)) continue;
+						const int n = landing_contacts(at, v_pre, local, rows, 32);
 						if (n == 0) continue;
 						bool hard = false; for (int k = 0; k < n; ++k) if (!rows[k].soft) { hard = true; break; }
 						if (!hard) continue;
 						const V3 v = solve(rows, n, v_pre);
-						if (v.z > 4 && len(v) >= 20) { flo = (std::min)(flo, fh); fhi = (std::max)(fhi, fh); ++nh; }
+						if (v.z > 4 && len(v) >= lineMonster(tick)) { flo = (std::min)(flo, fh); fhi = (std::max)(fhi, fh); ++nh; }
 					}
 				}
 				std::scoped_lock lk(m);
@@ -394,6 +406,7 @@ namespace h2cv::sbscan
 				s.rBest = (float)B.best; s.rShare20 = (float)B.n20 / (float)(std::max)(1LL, B.cases); s.rShare35 = (float)B.n35 / (float)(std::max)(1LL, B.cases);
 				s.rFall = (float)vzs[bvi]; s.rDriftX = (float)(mags[bmi] * std::cos(ang)); s.rDriftY = (float)(mags[bmi] * std::sin(ang)); s.rFeet = (float)B.feet;
 				s.rLaunchX = (float)B.bv.x; s.rLaunchY = (float)B.bv.y; s.rLaunchZ = (float)B.bv.z;
+				s.rAtX = (float)(s.x + PX[B.pt]); s.rAtY = (float)(s.y + PY[B.pt]);
 				s.rHeadLo = (float)((bh + hl) * 360.0 / NH); s.rHeadHi = (float)((bh + hh) * 360.0 / NH);
 				s.rFallLo = (float)vzs[fl]; s.rFallHi = (float)vzs[fh2]; s.rDriftLo = (float)mags[ml]; s.rDriftHi = (float)mags[mh];
 				s.recipe = true;
@@ -413,7 +426,7 @@ namespace h2cv::sbscan
 						for (int i = 0; i < (int)found.size(); ++i)
 						{
 							const Spot& s = found[i];
-							if (s.recipe || (s.share20 < 0.01f && s.best < 35.f)) continue;
+							if (s.recipe) continue;   // every spot gets a recipe, narrow windows too (2026-11-01: all predictions are shown)
 							const float dx = s.x - px, dy = s.y - py, d2 = dx * dx + dy * dy;
 							if (d2 < bd && std::fabs(s.z - pz) < 15.f) { bd = d2; pick = i; }
 						}
@@ -499,6 +512,27 @@ namespace h2cv::sbscan
 
 		// the job's detached owner thread joins its workers; stopping only asks them to finish their current place
 		void stop_job(const std::shared_ptr<Job>& j) { if (j) j->stop = true; }
+	}
+
+	int tick() { return (int)std::lround(1.0 / DT); }
+
+	bool landingLaunch(float fx, float fy, float fz, float vx, float vy, float vz, float launch[3])
+	{
+		std::shared_ptr<Job> j;
+		{ std::scoped_lock lk(g_m); j = g_job; }
+		if (!j || !j->ready) return false;
+		std::vector<int> local;
+		j->near_surfs(fx, fy, 1.0, local);
+		const V3 feet{ fx, fy, fz }, v_pre{ vx, vy, vz };
+		if (!j->reachable(feet, v_pre, local)) return false;
+		Row rows[32];
+		const int n = j->landing_contacts(feet, v_pre, local, rows, 32);
+		if (n == 0) return false;
+		bool hard = false; for (int k = 0; k < n; ++k) if (!rows[k].soft) { hard = true; break; }
+		if (!hard) return false;
+		const V3 v = solve(rows, n, v_pre);
+		launch[0] = (float)v.x; launch[1] = (float)v.y; launch[2] = (float)v.z;
+		return true;
 	}
 
 	std::string fileName(uint64_t key, int tick)

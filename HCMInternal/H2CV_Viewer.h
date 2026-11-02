@@ -92,6 +92,7 @@ namespace h2cv
 		std::atomic<float> sbPredictedRange{ 60.f };   // predicted spots are drawn within this distance (wu)
 		std::atomic_bool sbPredictedMonsters{ true }, sbPredictedDreadnoughts{ true };   // which predicted kinds are drawn
 		std::atomic_bool sbPredictedHeights{ false }, sbScanSlow{ false }, sbScanCurrentTick{ false };   // start heights; spot scan options
+		std::atomic_bool sbPredictedHideNarrow{ false };   // hide predicted monsters with a window under 1%
 		std::atomic<float> sbScanRadius{ 64.f };
 		std::atomic_bool ghostEdges{ true };            // lime/red edges of skipped / over-credited polygons [Shift+End]
 		std::atomic_bool ghostEdgesSuspectOnly{ false };// false = every skipped child (TIM>0), true = only stale / over-credited ones

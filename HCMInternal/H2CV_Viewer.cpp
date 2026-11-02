@@ -1867,6 +1867,7 @@ namespace h2cv
 		o.predictedMonsters = settings.sbPredictedMonsters;
 		o.predictedDreadnoughts = settings.sbPredictedDreadnoughts;
 		o.predictedHeights = settings.sbPredictedHeights;
+		o.predictedHideNarrow = settings.sbPredictedHideNarrow;
 		o.scanRadius = settings.sbScanRadius.load(); o.scanSlow = settings.sbScanSlow; o.scanCurrentTick = settings.sbScanCurrentTick;
 		o.record = settings.sbRecord;
 		o.highlight = settings.sbHighlight;

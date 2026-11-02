@@ -1405,6 +1405,7 @@ private:
 							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedMonstersGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedDreadnoughtsGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedHeightsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedHideNarrowGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSpotScanRadiusGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSpotScanSlowGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSpotScanCurrentTickGUI),
@@ -1472,6 +1473,11 @@ private:
 				case GUIElementEnum::collisionViewerSuperbouncePredictedHeightsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Predicted spots: also show the START HEIGHT band of the worked-out approach - how high your feet are above the landing surface at the start of the landing tick (the tick you first touch it) for the launch to work. Monsters / dreadnoughts are deterministic: the tick-based sink depth decides them."), std::nullopt, "Show start heights", settings->collisionViewerSuperbouncePredictedHeights
+						));
+
+				case GUIElementEnum::collisionViewerSuperbouncePredictedHideNarrowGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Predicted spots: hide monsters whose window is under 1% of the tested approaches (fewer rings; dreadnoughts are always shown). Off: every prediction, the narrow ones drawn thin and dim. A narrow window is not a chance - it is a precise approach."), std::nullopt, "Hide narrow windows (under 1%)", settings->collisionViewerSuperbouncePredictedHideNarrow
 						));
 
 				case GUIElementEnum::collisionViewerSpotScanRadiusGUI:
