@@ -357,6 +357,27 @@ float PSMerge(float4 pos : SV_Position) : SV_Depth
 		return true;
 	}
 
+	bool Renderer::beginGame(ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, uint32_t width, uint32_t height,
+	                         const h2::Vec3& camPos, const DirectX::XMFLOAT4X4& gameViewProj, float nearClip)
+	{
+		if (!mReady || !ctx || !rtv || width == 0 || height == 0) return false;
+		mCtx = ctx; mRtv = rtv; mW = width; mH = height; mVpX = mVpY = 0; mCamPos = camPos; mStdZ = false;
+		ensureDepth(width, height);
+		if (!mDsv) return false;
+		// the game's x / y / w exactly; z replaced by the own depth's reversed infinite mapping (z / w = near / w)
+		mViewProj = gameViewProj;
+		const float n = nearClip > 0.0001f ? nearClip : 0.01f;
+		for (int i = 0; i < 4; ++i) mViewProj.m[i][2] = i == 3 ? n : 0.f;
+
+		saveState();
+		D3D11_VIEWPORT vp{ 0, 0, (float)width, (float)height, 0, 1 };
+		ctx->RSSetViewports(1, &vp);
+		ctx->RSSetState(mRsNoCull);
+		ctx->OMSetRenderTargets(1, &mRtv, mDsv);
+		ctx->PSSetSamplers(0, 1, &mPointClamp);
+		return true;
+	}
+
 	bool Renderer::beginExternal(ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, ID3D11DepthStencilView* dsv,
 	                             const D3D11_VIEWPORT& vp, const DirectX::XMFLOAT4X4& viewProj)
 	{

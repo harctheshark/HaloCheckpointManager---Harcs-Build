@@ -349,6 +349,11 @@ namespace h2
 	// sub_180791C10 does). Ported from sub_180793760.
 	struct BakedShape { uintptr_t shape = 0, obj = 0; uint32_t datum = 0xFFFFFFFF; uint8_t type = 0xFF; int category = 0; Xf xf; std::string why; };
 	bool bakedSceneryShape(uint32_t key, BakedShape& out);
+	// the datums of the scenery objects baked into the structure bsp's Havok body (2026-11-03). sub_180794440 fills the table at
+	// SCENERY_TABLE on map load: every live scenery object whose scenario placement (92-byte entry) has a nonzero havok index
+	// (u16 +88) gets table[index - 1] = its datum. Scenery has no Havok body of its own, so scenery NOT in this table has no
+	// player collision at all (walk-through; bullets still hit its coll model). Sorted, for binary_search. false = unreadable.
+	bool bakedSceneryDatums(std::vector<uint32_t>& out);
 	// the capsule in BODY-LOCAL space (entityCapsule without the pose applied)
 	Capsule entityCapsuleLocal(uintptr_t entity);
 }

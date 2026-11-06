@@ -19,6 +19,7 @@
 #include "ModalDialogFactory.h"
 #include "IMakeOrGetCheat.h"
 #include "IGetMCCVersion.h"
+#include "H2CheckpointGametype.h"
 #include "GetCurrentDifficulty.h"
 #include "CheckpointInjectionLogger.h"
 #include "DirPathContainer.h"
@@ -231,6 +232,12 @@ private:
 				}
 			}
 
+			// Halo 2: match the checkpoint's gametype to the session's, or refuse a cross-type load (it froze / crashed the
+			// game) - H2CheckpointGametype.h
+			std::string gametypeNote;
+			if (mImplGame.operator GameState::Value() == GameState::Value::Halo2)
+				gametypeNote = H2Gametype::prepareInject(checkpointData, checkpointLoc);
+
 			// zero out last 10 bytes
 			for (auto it = checkpointData.rbegin(); it != checkpointData.rbegin() + 10; ++it)
 			{
@@ -302,7 +309,8 @@ private:
 			}
 
 
-			messagesGUI->addMessage(std::format("Injected checkpoint {}.bin", currentCheckpoint.selectedCheckpointName));
+			messagesGUI->addMessage(gametypeNote.empty() ? std::format("Injected checkpoint {}.bin", currentCheckpoint.selectedCheckpointName)
+				: std::format("Injected checkpoint {}.bin ({})", currentCheckpoint.selectedCheckpointName, gametypeNote));
 
 			PLOG_INFO << "succesfully injected checkpoint from path: " << currentCheckpoint.selectedCheckpointFilePath << " to " << std::hex << (uint64_t)checkpointLoc;
 			

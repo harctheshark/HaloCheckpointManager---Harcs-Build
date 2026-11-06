@@ -1362,6 +1362,18 @@ namespace h2
 		}
 	}
 
+	bool bakedSceneryDatums(std::vector<uint32_t>& out)
+	{
+		out.clear();
+		const uintptr_t table = q(base() + rva::SCENERY_TABLE);
+		if (!okp(table)) return false;
+		uint32_t buf[2000];   // "havok shape globals": 8000 bytes, -1 = empty (sub_180794440 / sub_180793EB0)
+		if (!copy(buf, table, sizeof(buf))) return false;
+		for (uint32_t d : buf) if (d != 0xFFFFFFFFu) out.push_back(d);
+		std::sort(out.begin(), out.end());
+		return true;
+	}
+
 	bool bakedSceneryShape(uint32_t key, BakedShape& out)
 	{
 		out = BakedShape{};

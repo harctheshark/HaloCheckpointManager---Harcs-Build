@@ -41,6 +41,10 @@ namespace h2cv
 		// per frame
 		bool begin(ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, uint32_t width, uint32_t height,
 		           const h2::Vec3& camPos, const h2::Vec3& camFwd, const h2::Vec3& camUp, float vfov, float nearClip);
+		// own depth, the GAME'S view-projection (row-vector, clip w = view depth): its x / y / w as they are, z remapped to the
+		// own depth (Halo 3 / ODST, 2026-11-02 - the vfov-built projection drifted off the geometry away from the screen centre)
+		bool beginGame(ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, uint32_t width, uint32_t height,
+		               const h2::Vec3& camPos, const DirectX::XMFLOAT4X4& gameViewProj, float nearClip);
 		void end();
 		// draw INTO THE GAME'S FRAME: its scene RTV + world DSV (reversed-Z, GREATER_EQUAL), its viewport, a given view-proj
 		bool beginExternal(ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, ID3D11DepthStencilView* dsv,

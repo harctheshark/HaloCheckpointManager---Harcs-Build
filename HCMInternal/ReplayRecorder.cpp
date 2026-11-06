@@ -11,6 +11,7 @@
 #include "GetGameCameraData.h"
 #include "IMakeOrGetCheat.h"
 #include "GetCurrentLevelCode.h"
+#include "H2CheckpointGametype.h"
 #include "ReplayCheckpoint.h"
 #include "ReplayGameTls.h"
 #include <fstream>
@@ -57,13 +58,15 @@ private:
     bool mHaveRecordedTick = false;
     ReplayData mData;
 
-    static std::string makeTimestampedName(uint32_t tickRate)
+    static std::string makeTimestampedName(uint32_t tickRate, const std::string& gametype = "")
     {
         std::time_t t = std::time(nullptr);
         std::tm tm{};
         localtime_s(&tm, &t);
         char buf[64];
         std::strftime(buf, sizeof(buf), "replay_%Y%m%d_%H%M%S", &tm);
+        // Halo 2 multiplayer: the gametype in the name (its start checkpoint only loads into the same gametype type)
+        if (!gametype.empty()) return std::format("{}_{}_{}tick{}", buf, gametype, tickRate, ReplayFormat::kExtension);
         return std::format("{}_{}tick{}", buf, tickRate, ReplayFormat::kExtension);
     }
 
@@ -207,7 +210,8 @@ private:
         if (!mArmed && !mRecording && !isMyGame()) return;   // another game's recorder
         try
         {
-            std::filesystem::path out = std::filesystem::path(mReplayDir) / "replays" / makeTimestampedName(mTickRate);
+            const std::string gametype = mGame.operator GameState::Value() == GameState::Value::Halo2 ? H2Gametype::sessionGametypeForName() : std::string();
+            std::filesystem::path out = std::filesystem::path(mReplayDir) / "replays" / makeTimestampedName(mTickRate, gametype);
             stopAndSave(out);
         }
         catch (HCMRuntimeException ex) { runtimeExceptions->handleMessage(ex); }

@@ -4,6 +4,7 @@
 #include "H2CV_Mem.h"
 #include "H2CV_Log.h"
 #include <cmath>
+#include <algorithm>
 
 using namespace mem;
 
@@ -422,11 +423,13 @@ namespace h2cv
 	void CollisionWorld::gatherObjects()
 	{
 		for (Cat c : { Cat::Scenery, Cat::Crate, Cat::Machine }) mLines[(int)c].clear();
-		mObjectTris.clear();
+		mObjectTris.clear(); mObjSpans.clear();
 		h2::TagPools p;
 		if (!h2::tagPools(p)) return;
 		std::vector<h2::ObjectRef> objs;
 		h2::enumerateObjects(objs);
+		std::vector<uint32_t> baked;
+		h2::bakedSceneryDatums(baked);
 		for (const auto& o : objs)
 		{
 			Cat cat;
@@ -502,7 +505,23 @@ namespace h2cv
 			const Vec3 left{ up.y * fwd.z - up.z * fwd.y, up.z * fwd.x - up.x * fwd.z, up.x * fwd.y - up.y * fwd.x };
 			const float m[13] = { 1.f, fwd.x, fwd.y, fwd.z, left.x, left.y, left.z, up.x, up.y, up.z, pos.x, pos.y, pos.z };
 			auto& out = mLines[(int)cat];
+			ObjSpan span; span.datum = o.datum; span.type = o.type; span.def = defIdx; span.pos = pos; span.first = (uint32_t)mObjectTris.size();
+			span.baked = o.type == h2::Scenery && std::binary_search(baked.begin(), baked.end(), o.datum);
+			// BAKED SCENERY = what the player collides with, built as the engine bakes it (sub_180791C10, ported in
+			// h2::bakedSceneryShape): the collision permutation's FIRST bsp only, on NODE 0, SCALE IGNORED. 2026-11-03: a statue
+			// placed at scale 9 (object +0xA0 / scenario placement scale) has a 1.7 wu collision mesh the player stands on, while
+			// the node matrix's scale made HCM's triangles a 15 wu statue - "monsters" where there is no collision at all.
+			// The drawn lines keep the node matrices (the collision viewer's view, unchanged).
+			float bakedM[13]; bool haveBakedM = false;
+			if (span.baked)
+			{
+				if (h2::objectNodeMatrix(o.obj, 0, bakedM) && sanePlacement(bakedM)) haveBakedM = true;
+				else if (rootOk) { memcpy(bakedM, m, sizeof(bakedM)); haveBakedM = true; }
+				bakedM[0] = 1.f;
+			}
 			for (int si = 0; si < nsel; ++si)
+			{
+				bool firstBsp = true;
 				for (const auto& b : oc->regions[sel[si].r].perms[sel[si].p].bsps)
 				{
 					// each collision bsp is bound to a node (collision_model_bsp.node_index): use that node's world matrix,
@@ -512,8 +531,17 @@ namespace h2cv
 					if (b.node != 0xFFFF && h2::objectNodeMatrix(o.obj, b.node, nm) && sanePlacement(nm)) bm = nm;
 					else if (!rootOk) continue;
 					for (const auto& l : b.lines) out.push_back({ igTransform(bm, l.a), igTransform(bm, l.b) });
-					for (const auto& t : b.tris) mObjectTris.push_back({ igTransform(bm, t.a), igTransform(bm, t.b), igTransform(bm, t.c) });
+					if (span.baked)
+					{
+						if (firstBsp && haveBakedM)
+							for (const auto& t : b.tris) mObjectTris.push_back({ igTransform(bakedM, t.a), igTransform(bakedM, t.b), igTransform(bakedM, t.c) });
+					}
+					else for (const auto& t : b.tris) mObjectTris.push_back({ igTransform(bm, t.a), igTransform(bm, t.b), igTransform(bm, t.c) });
+					firstBsp = false;
 				}
+			}
+			span.count = (uint32_t)mObjectTris.size() - span.first;
+			if (span.count) mObjSpans.push_back(span);
 		}
 	}
 
@@ -527,7 +555,7 @@ namespace h2cv
 			mSbsp = sbsp;
 			mCollCache.clear(); mModelCache.clear();
 			if (okp(sbsp)) rebuildStatic(sbsp);
-			else { mSbsp = 0; for (auto& l : mLines) l.clear(); mStaticTris.clear(); mObjectTris.clear(); return; }
+			else { mSbsp = 0; for (auto& l : mLines) l.clear(); mStaticTris.clear(); mObjectTris.clear(); mObjSpans.clear(); return; }
 		}
 		if (wantBreakableLive && (mFrame % 15) == 0)
 		{
@@ -550,6 +578,6 @@ namespace h2cv
 				if (solid(be.left) || solid(be.right)) out.push_back(be.l);
 		}
 		if (wantObjects) gatherObjects();
-		else { for (Cat c : { Cat::Scenery, Cat::Crate, Cat::Machine }) mLines[(int)c].clear(); mObjectTris.clear(); }
+		else { for (Cat c : { Cat::Scenery, Cat::Crate, Cat::Machine }) mLines[(int)c].clear(); mObjectTris.clear(); mObjSpans.clear(); }
 	}
 }

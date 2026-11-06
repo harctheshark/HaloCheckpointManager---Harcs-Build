@@ -218,7 +218,8 @@ H5HavokOverlay,\
 H5LuaConsole,\
 H5DisplayInfo,\
 CollisionViewer,\
-LaunchTrajectory
+LaunchTrajectory,\
+MPRevertRepair
 
 
 enum class OptionalCheatEnum {

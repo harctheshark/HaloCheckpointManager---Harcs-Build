@@ -14,6 +14,7 @@ public:
 	std::map<GameState, HCMInitException>& getServiceFailures();
 	std::shared_ptr<SharedRequestToken> makeScopedRequest(); // pauses the game while held (unless overridden)
 	std::shared_ptr<SharedRequestToken> makeOverrideScopedRequest(); // overrides any current pauses while held (used by advanceTicks cheat)
+	void setFreezeEffects(bool freeze); // Halo 3 / ODST: also hold the game speed at 0 while paused (particles, decorators freeze)
 
 };
 

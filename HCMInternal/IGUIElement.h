@@ -35,8 +35,16 @@ public:
 	{
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 		{
-			ImGui::SetTooltip(toolTipCollection.getToolTip(mImplGame).data());
-			
+			// wrapped (2026-11-05): SetTooltip never wraps, so long descriptions ran off the screen; TextUnformatted also means a
+			// '%' in a description is printed instead of being read as a format directive
+			const std::string_view tip = toolTipCollection.getToolTip(mImplGame);
+			if (!tip.empty() && ImGui::BeginTooltip())
+			{
+				ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.f);
+				ImGui::TextUnformatted(tip.data(), tip.data() + tip.size());
+				ImGui::PopTextWrapPos();
+				ImGui::EndTooltip();
+			}
 		}
 	}
 };

@@ -1861,9 +1861,12 @@ namespace h2cv
 		o.forceCharge = settings.sbForceCharge;
 		o.seamText = settings.sbSeamText;
 		o.debounce = settings.sbDebounce;
+		o.objects = settings.sbObjects;
+		o.seams = settings.sbSeams;
 		o.spots = settings.sbSpots;
 		o.predicted = settings.sbPredicted;
 		o.predictedRange = settings.sbPredictedRange.load();
+		o.predictedMaxApproach = settings.sbPredictedMaxApproach.load();
 		o.predictedMonsters = settings.sbPredictedMonsters;
 		o.predictedDreadnoughts = settings.sbPredictedDreadnoughts;
 		o.predictedHeights = settings.sbPredictedHeights;
@@ -1872,6 +1875,9 @@ namespace h2cv
 		o.record = settings.sbRecord;
 		o.highlight = settings.sbHighlight;
 		o.keepCharge = settings.sbKeepCharge;
+		o.gen3 = isH3() || isReach();     // Halo 3 / ODST / Reach: the Halo 2 body of Poorboy's h3sb.dll
+		o.reach = isReach();              // Reach: the bsps are read from tag memory on a worker thread (no CollisionWorld)
+		if (o.gen3) o.record = false;   // the charge options re-arm h3sb's Halo 2 body there (h3sb_arm)
 		sb::frame(mWorld, o, mSb);
 		if (!mSb.message.empty() && message) message(mSb.message);
 		if (!mSb.thin.empty()) mR.drawLines(mSb.thin.data(), mSb.thin.size(), 1.5f, 0.f, false, false, 0.f);
@@ -2158,20 +2164,21 @@ namespace h2cv
 		// Halo 3 / ODST: the engine builds the projection for the depth convention in use (reversed when its byte is set) - used as stored.
 		const bool reversed = h3g ? h3::depthReversed() : settings.gameZReversed.load();
 		const bool wantObjects = settings.show[(int)Cat::Scenery] || settings.show[(int)Cat::Crate] || settings.show[(int)Cat::Machine]
-			|| (settings.superbounce && !isH3());   // the superbounce viewer measures their seams too
+			|| (settings.superbounce && settings.sbObjects && !isH3());   // the superbounce viewer measures their seams too (unless objects are off)
 		if (h3g) mWorld.setWantCreases(settings.creases);
 		mWorld.update(wantObjects, settings.show[(int)Cat::Breakable]);
 		if (!mWorld.valid()) return false;
 		mR.setStandardZ(!reversed);
 		if (!mR.beginExternal(mCtx, rtv, dsv, vp, gameViewProj(f, h3g ? false : reversed))) return false;
 		mR.setStandardZ(!reversed);
-		drawCollision(f.pos, true);
+		if (settings.collision) drawCollision(f.pos, true);   // Halo 3 / ODST: this pass also runs for the superbounce viewer alone
 		if (h3g)
 		{
 			if (settings.tim) drawTim3();
 			if (settings.pills) drawPills3();
 			if (settings.ghost) drawGhost3();
 			if (settings.killVolumes) drawDeath3(); else { mOobBar = -1.f; mDetectTicks = -1; }
+			if (superbounceActive()) drawSuperbounce();   // Halo 3 / ODST superbounce viewer (h3sb.dll's Halo 2 body)
 		}
 		else
 		{
@@ -2343,6 +2350,58 @@ namespace h2cv
 		}
 	}
 
+	// superbounce viewer: its (long) labels, left-aligned at their point, and only CHARGED / not charged on the HUD
+	void Viewer::drawSuperbounceOverlay(ImDrawList* dl, bool gameOk)
+	{
+		for (const auto& L : mSbLabels)
+		{
+			const ImVec2 sz = ImGui::CalcTextSize(L.text.c_str());
+			dl->AddRectFilled(ImVec2(L.x - 2, L.y - 1), ImVec2(L.x + sz.x + 2, L.y + sz.y + 1), IM_COL32(0, 0, 0, 120), 3.f);
+			dl->AddText(ImVec2(L.x, L.y), L.col, L.text.c_str());
+		}
+		mSbLabels.clear();
+		if (settings.superbounce && gameOk && mSb.hud >= 0)   // Halo 3 / ODST too (h3sb's armed state, 2026-11-02)
+		{
+			const char* t = mSb.hud ? "CHARGED" : "not charged";
+			const float size = ImGui::GetFontSize() * 1.6f;
+			const ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.f, t);
+			const ImVec2 p(ImGui::GetIO().DisplaySize.x * 0.5f - ts.x * 0.5f, ImGui::GetIO().DisplaySize.y - ts.y - 48.f);
+			dl->AddRectFilled(ImVec2(p.x - 12, p.y - 6), ImVec2(p.x + ts.x + 12, p.y + ts.y + 6), IM_COL32(10, 10, 12, 170), 6.f);
+			dl->AddText(ImGui::GetFont(), size, p, mSb.hud ? IM_COL32(255, 90, 90, 255) : IM_COL32(170, 170, 170, 230), t);
+			{
+				// bounces in a row (this chain, before you land) and this level's record, beside the indicator (placed from the
+				// wider "not charged", so it does not shift when the charge changes)
+				// and the last bounce's top speed (HCM's Force Launch excluded, 2026-11-02)
+				char l0[48], l1[48], l2[48];
+				if (mSb.lastBounce >= 0.f) snprintf(l0, sizeof(l0), "Last bounce: %.1f u/s", mSb.lastBounce);
+				else snprintf(l0, sizeof(l0), "Last bounce: -");
+				snprintf(l1, sizeof(l1), "Bounces in a row: %d", mSb.streak);
+				snprintf(l2, sizeof(l2), "Current level record: %d", mSb.record);
+				const float s3 = ImGui::GetFontSize() * 1.25f;
+				const ImVec2 w0 = ImGui::GetFont()->CalcTextSizeA(s3, FLT_MAX, 0.f, l0), w1 = ImGui::GetFont()->CalcTextSizeA(s3, FLT_MAX, 0.f, l1), w2 = ImGui::GetFont()->CalcTextSizeA(s3, FLT_MAX, 0.f, l2);
+				const float wide = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.f, "not charged").x;
+				const float x0 = ImGui::GetIO().DisplaySize.x * 0.5f + wide * 0.5f + 12.f + 16.f, bottom = p.y + ts.y + 6.f;
+				const float y2 = bottom - 6.f - w2.y, y1 = y2 - 4.f - w1.y, y0 = y1 - 4.f - w0.y;
+				dl->AddRectFilled(ImVec2(x0, y0 - 6.f), ImVec2(x0 + (std::max)((std::max)(w0.x, w1.x), w2.x) + 20.f, bottom), IM_COL32(10, 10, 12, 170), 6.f);
+				dl->AddText(ImGui::GetFont(), s3, ImVec2(x0 + 10.f, y0), IM_COL32(120, 210, 255, 255), l0);
+				dl->AddText(ImGui::GetFont(), s3, ImVec2(x0 + 10.f, y1), mSb.streak > 0 ? IM_COL32(120, 255, 140, 255) : IM_COL32(235, 235, 235, 255), l1);
+				dl->AddText(ImGui::GetFont(), s3, ImVec2(x0 + 10.f, y2), IM_COL32(255, 210, 90, 255), l2);
+			}
+			if (settings.sbSpeed && mSb.speed >= 0.f)
+			{
+				// your speed just above it (the box sized for "888.8 u/s", so it does not jump as the digits change)
+				char sp[32];
+				snprintf(sp, sizeof(sp), "%.1f u/s", mSb.speed);
+				const float s2 = ImGui::GetFontSize() * 1.3f;
+				const ImVec2 bw = ImGui::GetFont()->CalcTextSizeA(s2, FLT_MAX, 0.f, "888.8 u/s");
+				const ImVec2 ss = ImGui::GetFont()->CalcTextSizeA(s2, FLT_MAX, 0.f, sp);
+				const float cx = ImGui::GetIO().DisplaySize.x * 0.5f, top = p.y - 6.f - 8.f - bw.y - 8.f;
+				dl->AddRectFilled(ImVec2(cx - bw.x * 0.5f - 10.f, top), ImVec2(cx + bw.x * 0.5f + 10.f, top + bw.y + 8.f), IM_COL32(10, 10, 12, 170), 6.f);
+				dl->AddText(ImGui::GetFont(), s2, ImVec2(cx - ss.x * 0.5f, top + 4.f), IM_COL32(235, 235, 235, 255), sp);
+			}
+		}
+	}
+
 	void Viewer::onRender(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv, uint32_t w, uint32_t h)
 	{
 		if (!mDev && !initDevice(dev, ctx)) return;
@@ -2386,11 +2445,28 @@ namespace h2cv
 		{
 			const bool own = occ != (int)Occlusion::XRay;
 			const bool wantObjects = (own && !isH3()) || settings.show[(int)Cat::Scenery] || settings.show[(int)Cat::Crate] || settings.show[(int)Cat::Machine]
-				|| (settings.superbounce && !isH3());   // the superbounce viewer measures their seams too
+				|| (settings.superbounce && settings.sbObjects && !isH3());   // the superbounce viewer measures their seams too (unless objects are off)
 			if (isH3()) mWorld.setWantCreases(settings.creases);
 			mWorld.update(wantObjects, settings.show[(int)Cat::Breakable]);
 			mLabelScaleX = mLabelScaleY = 1.f;
-			if (mWorld.valid() && mR.begin(mCtx, mRtv, mW, mH, cam.pos, cam.fwd, cam.up, cam.vfov, 0.01f))
+			// Halo 3 / ODST: this frame's own view-projection (from the first-person pass) when it checks out - a point 10 wu
+			// straight ahead lands at depth ~10, near the screen centre; else the vfov-built one
+			bool begun = false;
+			if (mWorld.valid())
+			{
+				if (isH3() && mF3.have && mPresentCount - mF3.presentIdx <= 3)
+				{
+					const DirectX::XMFLOAT4X4 gvp = gameViewProj(mF3.f, false);
+					const h2::Vec3 p{ mF3.f.pos.x + mF3.f.fwd.x * 10.f, mF3.f.pos.y + mF3.f.fwd.y * 10.f, mF3.f.pos.z + mF3.f.fwd.z * 10.f };
+					float c[4];
+					for (int k = 0; k < 4; ++k) c[k] = p.x * gvp.m[0][k] + p.y * gvp.m[1][k] + p.z * gvp.m[2][k] + gvp.m[3][k];
+					if (c[3] > 9.f && c[3] < 11.f && std::fabs(c[0] / c[3]) < 0.1f && std::fabs(c[1] / c[3]) < 0.1f)
+						begun = mR.beginGame(mCtx, mRtv, mW, mH, mF3.f.pos, gvp, 0.01f);
+					else if (!mLoggedVp3) { mLoggedVp3 = true; LOGF("own depth: the game's view-projection did not check out (clip of 10 wu ahead %.3f %.3f %.3f %.3f) - vfov projection", c[0], c[1], c[2], c[3]); }
+				}
+				if (!begun) begun = mR.begin(mCtx, mRtv, mW, mH, cam.pos, cam.fwd, cam.up, cam.vfov, 0.01f);
+			}
+			if (begun)
 			{
 				if (own)
 				{
@@ -2430,6 +2506,7 @@ namespace h2cv
 					if (settings.pills) drawPills3();
 					if (settings.ghost) drawGhost3();
 					if (settings.killVolumes) drawDeath3(); else { mOobBar = -1.f; mDetectTicks = -1; }
+					if (superbounceActive()) drawSuperbounce();   // Halo 3 / ODST superbounce viewer
 				}
 				else
 				{
@@ -2458,50 +2535,7 @@ namespace h2cv
 				dl->AddText(p, L.col | 0xFF000000u, L.text);
 			}
 			gLabels.clear();
-			// superbounce viewer: its (long) labels, left-aligned at their point, and only CHARGED / not charged on the HUD
-			for (const auto& L : mSbLabels)
-			{
-				const ImVec2 sz = ImGui::CalcTextSize(L.text.c_str());
-				dl->AddRectFilled(ImVec2(L.x - 2, L.y - 1), ImVec2(L.x + sz.x + 2, L.y + sz.y + 1), IM_COL32(0, 0, 0, 120), 3.f);
-				dl->AddText(ImVec2(L.x, L.y), L.col, L.text.c_str());
-			}
-			mSbLabels.clear();
-			if (settings.superbounce && gameOk && !isH3() && mSb.hud >= 0)
-			{
-				const char* t = mSb.hud ? "CHARGED" : "not charged";
-				const float size = ImGui::GetFontSize() * 1.6f;
-				const ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.f, t);
-				const ImVec2 p(ImGui::GetIO().DisplaySize.x * 0.5f - ts.x * 0.5f, ImGui::GetIO().DisplaySize.y - ts.y - 48.f);
-				dl->AddRectFilled(ImVec2(p.x - 12, p.y - 6), ImVec2(p.x + ts.x + 12, p.y + ts.y + 6), IM_COL32(10, 10, 12, 170), 6.f);
-				dl->AddText(ImGui::GetFont(), size, p, mSb.hud ? IM_COL32(255, 90, 90, 255) : IM_COL32(170, 170, 170, 230), t);
-				{
-					// bounces in a row (this chain, before you land) and this level's record, beside the indicator (placed from the
-					// wider "not charged", so it does not shift when the charge changes)
-					char l1[48], l2[48];
-					snprintf(l1, sizeof(l1), "Bounces in a row: %d", mSb.streak);
-					snprintf(l2, sizeof(l2), "Current level record: %d", mSb.record);
-					const float s3 = ImGui::GetFontSize() * 1.25f;
-					const ImVec2 w1 = ImGui::GetFont()->CalcTextSizeA(s3, FLT_MAX, 0.f, l1), w2 = ImGui::GetFont()->CalcTextSizeA(s3, FLT_MAX, 0.f, l2);
-					const float wide = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.f, "not charged").x;
-					const float x0 = ImGui::GetIO().DisplaySize.x * 0.5f + wide * 0.5f + 12.f + 16.f, bottom = p.y + ts.y + 6.f;
-					const float y2 = bottom - 6.f - w2.y, y1 = y2 - 4.f - w1.y;
-					dl->AddRectFilled(ImVec2(x0, y1 - 6.f), ImVec2(x0 + (std::max)(w1.x, w2.x) + 20.f, bottom), IM_COL32(10, 10, 12, 170), 6.f);
-					dl->AddText(ImGui::GetFont(), s3, ImVec2(x0 + 10.f, y1), mSb.streak > 0 ? IM_COL32(120, 255, 140, 255) : IM_COL32(235, 235, 235, 255), l1);
-					dl->AddText(ImGui::GetFont(), s3, ImVec2(x0 + 10.f, y2), IM_COL32(255, 210, 90, 255), l2);
-				}
-				if (settings.sbSpeed && mSb.speed >= 0.f)
-				{
-					// your speed just above it (the box sized for "888.8 u/s", so it does not jump as the digits change)
-					char sp[32];
-					snprintf(sp, sizeof(sp), "%.1f u/s", mSb.speed);
-					const float s2 = ImGui::GetFontSize() * 1.3f;
-					const ImVec2 bw = ImGui::GetFont()->CalcTextSizeA(s2, FLT_MAX, 0.f, "888.8 u/s");
-					const ImVec2 ss = ImGui::GetFont()->CalcTextSizeA(s2, FLT_MAX, 0.f, sp);
-					const float cx = ImGui::GetIO().DisplaySize.x * 0.5f, top = p.y - 6.f - 8.f - bw.y - 8.f;
-					dl->AddRectFilled(ImVec2(cx - bw.x * 0.5f - 10.f, top), ImVec2(cx + bw.x * 0.5f + 10.f, top + bw.y + 8.f), IM_COL32(10, 10, 12, 170), 6.f);
-					dl->AddText(ImGui::GetFont(), s2, ImVec2(cx - ss.x * 0.5f, top + 4.f), IM_COL32(235, 235, 235, 255), sp);
-				}
-			}
+			drawSuperbounceOverlay(dl, gameOk);
 			drawBars(dl);
 			if (settings.hud)
 			{

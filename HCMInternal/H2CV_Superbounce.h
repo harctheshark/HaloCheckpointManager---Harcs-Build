@@ -13,9 +13,12 @@ namespace h2cv::sb
 	{
 		bool on = false;           // the viewer
 		bool debounce = true;      // flag landings / seams where a late contact falls through the floor (a debounce)
+		bool objects = true;       // include objects (scenery / crates / machines); off = none of their collision is used
+		bool seams = true;         // the viewer's own drawing (seams, path / landing, contacts, gaps / fins, debounce finder); off = spots + HUD only
 		bool spots = true;         // show the remembered monster / dreadnought spots
 		bool predicted = true;     // show the spot scanner's predicted spots (H2CV_SbScan)
 		float predictedRange = 60.f;   // ... within this distance of the player (wu)
+		float predictedMaxApproach = 100.f;   // ... whose approach needs at most this landing speed (u/s; 100 = no limit)
 		bool predictedMonsters = true, predictedDreadnoughts = true;   // ... of these kinds (20-35 / 35+)
 		bool predictedHeights = false;  // ... with the start-height band of the worked-out approach
 		bool predictedHideNarrow = false;   // ... hiding monsters whose window is under 1% (dreadnoughts always shown)
@@ -25,6 +28,8 @@ namespace h2cv::sb
 		bool highlight = false;    // possible monster bounces on the whole map (WIP)
 		bool keepCharge = false;   // a crouch charge survives checkpoints and reverts
 		bool forceCharge = false;  // the pair with the level held at -3 no matter what (overrides keepCharge)
+		bool gen3 = false;         // Halo 3 / ODST / Reach: player from h3sb.dll, the active bsp set; Halo 2-only parts off (2026-11-02)
+		bool reach = false;        // Halo: Reach (gen3 is set too): the bsps are read from tag memory on a worker thread (2026-11-04)
 	};
 	struct Label { h2::Vec3 at; uint32_t rgba; std::string text; };       // world-anchored text
 	struct PanelLine { uint32_t rgba; std::string text; };                // a line of the Info panel's superbounce section
@@ -36,12 +41,14 @@ namespace h2cv::sb
 		int hud = -1;                          // -1 nothing to show, 0 not charged, 1 charged
 		float speed = -1.f;                    // your speed (u/s) for the HUD; -1 = none
 		int streak = 0, record = 0;            // bounces in a row (this chain) and the level's record
+		float lastBounce = -1.f;               // the last bounce's top speed (u/s; HCM's Force Launch excluded); -1 = none yet
 		std::string message;                   // one-off notice for HCM's message list ("Charge kept through the revert")
 	};
 	// once per frame, render thread: reads the local player and the level (world must be up to date), fills out
 	void frame(const CollisionWorld& world, const Options& opt, Output& out);
 	void reset();   // unload / game change
 	void forgetCheckpointCharges();   // HCM injected a checkpoint: forget which checkpoints were made charged (any thread)
-	void requestSpotScan();           // the "scan around me" button (any thread): scanned on the next frame
+	void requestSpotScan();
+	void requestRecipes(bool redo = false);   // redo: every spot in range again, replacing the saved approaches (GPU tool)            // the "work out approaches" button (any thread): the spots within the drawing range, from the next frame           // the "scan around me" button (any thread): scanned on the next frame
 	void noteForceLaunch();           // HCM's Force Launch just set the player's velocity (any thread): not a bounce / spot
 }

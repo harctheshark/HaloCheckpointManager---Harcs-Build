@@ -25,4 +25,6 @@ namespace hr
 		std::string note;
 	};
 	bool readDeath(Death& out);
+	// the game tick (u32 @ +0xC of *(gameTLS + 0xA0)) of the game thread's TLS block; 0 when unreadable (bounce viewer, 2026-11-04)
+	uint32_t gameTick();
 }

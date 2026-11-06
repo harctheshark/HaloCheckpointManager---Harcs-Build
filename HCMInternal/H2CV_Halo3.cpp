@@ -307,6 +307,20 @@ namespace h3
 		return r.igDefs + (uintptr_t)r.igDefStride * defIndex + 20;
 	}
 
+	bool seamInfo(uintptr_t sbsp, SeamInfo& out)
+	{
+		out = SeamInfo{};
+		if (!okp(sbsp)) return false;
+		uintptr_t first; uint32_t n;
+		if (!block(sbsp + 0x10, first, n) || n > 1024) return false;
+		out.ids.resize(n);
+		for (uint32_t i = 0; i < n; ++i) if (!copy(out.ids[i].data(), first + 0x28 * (uintptr_t)i, 16)) return false;
+		if (!block(sbsp + 0x28, first, n) || n > 65535) return false;
+		out.matSeam.resize(n);
+		for (uint32_t i = 0; i < n; ++i) out.matSeam[i] = (int16_t)u16(first + 0x18 * (uintptr_t)i + 0x14, 0xFFFF);
+		return true;
+	}
+
 	bool breakableRow(int bsp, uint32_t group, uint32_t out[12])
 	{
 		if (bsp < 0 || bsp > 15 || group > 63) return false;

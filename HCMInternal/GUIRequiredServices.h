@@ -3,6 +3,7 @@
 
 // A sequence of pairs, where the first element of a pair is the GUIElementEnum name, and the second element is a tuple of supported games for that GUIElementEnum
 #define TOPGUIELEMENTS_RELEASE \
+((mapLauncherGUI,(NoGame)))\
 ((presetsHeadingGUI,(ALL_GAMES_AND_MAINMENU)))\
 ((controlHeadingGUI,(ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
 ((saveManagementHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5_AND_H2MP)))\

@@ -9,20 +9,30 @@
 #include "H2CV_SbScan.h"          // HCM addition: the in-game monster / dreadnought spot scanner
 #include "H2CV_Halo2.h"
 #include "H2CV_Mem.h"
+#include "H2CV_Engine.h"          // eng::gameTick (Halo 3 / ODST keep charge: reverts)
+#include "H2CV_Reach.h"           // Halo: Reach (2026-11-04): the bsps read from tag memory, the map name, the game tick
+#include "H2CV_Log.h"
 #include "imgui.h"
 #include <windows.h>
 #include <share.h>                // _fsopen / _SH_DENYWR: the recording log stays readable
+#include "h3sb_api.h"             // Halo 3 / ODST: the Halo 2 body of Poorboy's h3sb.dll (player state)
 #include <Xinput.h>
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <numeric>
+#include <cctype>
+#include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <unordered_map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace h2cv::sb
@@ -44,11 +54,13 @@ namespace h2cv::sb
 
 		// this frame's output and settings (frame() points / fills them)
 		Output* g_out = nullptr;
-		struct s_settings_sb { bool superbounce = true, superbounce_record = false, superbounce_gaps = false, superbounce_seam_text = true, superbounce_debounce = true, superbounce_spots = true, superbounce_predicted = true;
+		struct s_settings_sb { bool superbounce = true, superbounce_record = false, superbounce_gaps = false, superbounce_seam_text = true, superbounce_debounce = true, superbounce_spots = true, superbounce_predicted = true, superbounce_seams = true;
 			bool predicted_heights = false, predicted_hide_narrow = false, spotscan_slow = false, spotscan_curtick = false; float spotscan_radius = 64.f; } g_settings;
+		bool g_sb_lines_off = false;   // sb_draw_predicted's labels-only pass (its lines come from a cache)
+		bool g_sb_geo_pass = false;    // sb_draw_predicted's cache pass (lines and arrows, no nearest-spot labels)
 		void line(v3 a, v3 b, ImU32 c, float thick = 1.5f)
 		{
-			if (!g_out) return;
+			if (!g_out || g_sb_lines_off) return;
 			auto& v = thick >= 2.5f ? g_out->thick : g_out->thin;
 			v.push_back({ a.x, a.y, a.z, c }); v.push_back({ b.x, b.y, b.z, c });
 		}
@@ -56,6 +68,17 @@ namespace h2cv::sb
 		// the Info panel's superbounce section and the HUD's charge state
 		struct s_sb_line { ImVec4 c; std::string t; };
 		std::vector<s_sb_line> g_sb_panel;
+		// time spent per part this frame (ms) - the readout names the parts of the worst frame of each second
+		enum { SBT_BSP, SBT_OBJ, SBT_LEARN, SBT_PATH, SBT_SEAMS, SBT_DEBOUNCE, SBT_SPOTS, SBT_CHARGE, SBT_STATE, SBT_N, SBT_SB = SBT_N };
+		const char* const k_sbt_name[SBT_N] = { "bsp", "objects", "learning", "path", "seams", "debounce", "spots", "charge", "state" };
+		double g_sbt_sb = 0;   // draw_superbounce in all (its timed parts are inside it)
+		size_t g_sb_obj_tris = 0; int g_sb_obj_rebuilds = 0;   // object triangles; rebuilds that changed something (readout)
+		size_t g_sb_obj_out = 0;     // objects left out while they move (readout)
+		size_t g_sb_obj_unbaked = 0, g_sb_obj_bodies = 0;   // left out: scenery with no player collision; crates / machines
+		std::string g_sb_movers;     // the last object left out for moving (readout)
+		double g_sbt[SBT_N] = {};
+		double sb_qpc_ms() { static double f = 0; if (f == 0) { LARGE_INTEGER q; QueryPerformanceFrequency(&q); f = 1000.0 / (double)q.QuadPart; } LARGE_INTEGER t; QueryPerformanceCounter(&t); return (double)t.QuadPart * f; }
+		struct SbTimer { int k; double t0; explicit SbTimer(int k_) : k(k_), t0(sb_qpc_ms()) {} ~SbTimer() { g_sbt[k] += sb_qpc_ms() - t0; } };
 		int g_sb_hud = -1;
 		float g_sb_speed_now = -1.f;     // your speed this frame (u/s) for the HUD; -1 = none
 
@@ -76,27 +99,31 @@ namespace h2cv::sb
 		// Cartographer's collision_bsp shapes over HCM's parsed CollBsp (Halo 2 collision bsps use 16-bit indices)
 		struct real_point3d { float x, y, z; };
 		struct real_plane3d { float n[3]; float d; };
-		struct collision_surface { int16 plane; uint32 first_edge; };
-		struct collision_edge { uint16 start_vertex, end_vertex, forward_edge, reverse_edge, left_surface, right_surface; };
+		struct collision_surface { uint32 plane; uint32 first_edge; };   // plane: index | 0x80000000 when the surface uses it flipped (D3a: was int16 / bit 0x8000)
+		struct collision_edge { uint32 start_vertex, end_vertex, forward_edge, reverse_edge, left_surface, right_surface; };   // D3a: 32 bit (a large bsp keeps its topology); "no surface" = CollBsp::kNone
 		struct collision_vertex { real_point3d point; };
 		template <class T> struct sb_block { int32 count = 0; const T* data = nullptr; const T* operator[](int64_t i) const { return data + i; } };
 		struct collision_bsp { sb_block<real_plane3d> planes; sb_block<collision_surface> surfaces; sb_block<collision_edge> edges; sb_block<collision_vertex> vertices; const uint8* flags = nullptr; };   // flags: per surface (1 two-sided, 2 invisible)
 		struct sb_bsp_copy { std::vector<real_plane3d> P; std::vector<collision_surface> S; std::vector<collision_edge> E; std::vector<collision_vertex> V; std::vector<uint8> F; collision_bsp bsp; };
 		std::vector<std::unique_ptr<sb_bsp_copy>> g_bsp_copies;
 		const CollisionWorld* g_world = nullptr;
-		const collision_bsp* sb_adapt(const CollBsp& c)
+		// copies: where the adapted copy is kept (the surfaces cached from it point into it); the Reach worker keeps its own
+		const collision_bsp* sb_adapt(const CollBsp& c, std::vector<std::unique_ptr<sb_bsp_copy>>& copies = g_bsp_copies)
 		{
 			auto k = std::make_unique<sb_bsp_copy>();
 			for (size_t i = 0; i + 3 < c.planes.size(); i += 4) k->P.push_back({ { c.planes[i], c.planes[i + 1], c.planes[i + 2] }, c.planes[i + 3] });
-			for (const auto& s : c.surfaces) k->S.push_back({ (int16)(uint16)((s.plane & 0x7FFF) | (s.flip ? 0x8000 : 0)), s.firstEdge });
-			for (const auto& e : c.edges) k->E.push_back({ (uint16)e.v0, (uint16)e.v1, (uint16)e.fwd, (uint16)e.rev, (uint16)e.left, (uint16)e.right });
+			k->S.reserve(c.surfaces.size()); k->E.reserve(c.edges.size()); k->V.reserve(c.verts.size()); k->F.reserve(c.surfaces.size());
+			// D3a: 32-bit fields. For Halo 2 / Halo 3 small bsps every value is < 0x8000 / 0xFFFF as before (the flip bit moved from
+			// 0x8000 to 0x80000000 and "none" is CollBsp::kNone instead of 0xFFFF; sb_add_bsp / sb_surface_walk decode both)
+			for (const auto& s : c.surfaces) k->S.push_back({ (s.plane & 0x7FFFFFFFu) | (s.flip ? 0x80000000u : 0u), s.firstEdge });
+			for (const auto& e : c.edges) k->E.push_back({ e.v0, e.v1, e.fwd, e.rev, e.left, e.right });
 			for (const auto& v : c.verts) k->V.push_back({ { v.x, v.y, v.z } });
 			for (const auto& s : c.surfaces) k->F.push_back(s.flags);
 			k->bsp.flags = k->F.data();
 			k->bsp.planes = { (int32)k->P.size(), k->P.data() }; k->bsp.surfaces = { (int32)k->S.size(), k->S.data() };
 			k->bsp.edges = { (int32)k->E.size(), k->E.data() }; k->bsp.vertices = { (int32)k->V.size(), k->V.data() };
-			g_bsp_copies.push_back(std::move(k));
-			return &g_bsp_copies.back()->bsp;
+			copies.push_back(std::move(k));
+			return &copies.back()->bsp;
 		}
 
 		// MCC halo2.dll 1.3528: the contact constraints Havok solves (see sb_read_pairs for how each offset was found)
@@ -116,7 +143,9 @@ namespace h2cv::sb
 		bool sb_live(const h2::PairInfo& p) { return p.found && mem::okp(p.agent) && p.agent != h2::base() + h2::vt::NULL_AGENT_INST; }
 
 		// the local player this frame, read through h2:: by frame()
-		struct s_sb_state { bool ok = false; v3 feet{}, vel{}; bool airborne = false; uintptr_t ent = 0; int tps = 30; uint32 tick = 0; };
+		struct s_sb_state { bool ok = false; v3 feet{}, vel{}; bool airborne = false; uintptr_t ent = 0; int tps = 30; uint32 tick = 0; bool armed = false, flying = false; };   // armed / flying: Gen3 (h3sb level -3, h3sb fly)
+		bool g_gen3 = false;   // Halo 3 / ODST (2026-11-02): h3sb.dll player, the active bsp set; no Halo 2 memory (also true for Reach)
+		bool g_reach = false;  // Halo: Reach (2026-11-04): g_gen3 too; differs only in the geometry source (a worker reads the tag memory), the map file / key salt
 		s_sb_state g_sbs;
 	}
 	/* ---- Superbounce viewer ----
@@ -266,6 +295,61 @@ namespace h2cv::sb
 		                                                  // dervish.biped both 3.08 wu/s (H2EK tags; gravity scale left default)
 		constexpr uintptr_t k_vt_contact_constraint = 0x3F3BD0;   // hkSimpleContactConstraint (MCC's RTTI name)
 
+		// xy grids over the surfaces and the seams (2026-11-02: ODST's Mombasa has ~166k surfaces, 8x a Halo 2 level - the
+		// "every surface in its box" loops ran per tick / frame and took 240 fps to ~80). Built on first use after the geometry
+		// changes (g_sb_geo_gen: bump it whenever g_sbb.surf / seams change); queries return the candidates in ascending index
+		// order (the old loops' order), each still box-tested by its caller.
+		uint32 g_sb_geo_gen = 1;
+		struct s_sb_xygrid
+		{
+			uint32 gen = 0; float cell = 4.f, x0 = 0.f, y0 = 0.f; int32 nx = 0, ny = 0;
+			std::vector<uint32> start, idx;     // cell c: idx[start[c] .. start[c + 1])
+			std::vector<uint32> big;            // items over too many cells: always candidates
+			std::vector<uint32> stamp; uint32 cur = 0;
+			template <class Box> void build(size_t n, Box box)
+			{
+				start.clear(); idx.clear(); big.clear(); stamp.assign(n, 0); cur = 0; nx = ny = 0;
+				float lx = 1e30f, ly = 1e30f, hx = -1e30f, hy = -1e30f;
+				for (size_t i = 0; i < n; ++i) { v3 lo, hi; if (!box(i, lo, hi)) continue; lx = (std::min)(lx, lo.x); ly = (std::min)(ly, lo.y); hx = (std::max)(hx, hi.x); hy = (std::max)(hy, hi.y); }
+				if (lx > hx) return;
+				cell = 4.f;
+				while ((hx - lx) / cell > 1024.f || (hy - ly) / cell > 1024.f) cell *= 2.f;
+				x0 = lx; y0 = ly; nx = (int32)((hx - lx) / cell) + 1; ny = (int32)((hy - ly) / cell) + 1;
+				std::vector<uint32> count((size_t)nx * ny + 1, 0);
+				auto span = [&](size_t i, int32& ax, int32& ay, int32& bx, int32& by) -> int {
+					v3 lo, hi; if (!box(i, lo, hi)) return 0;
+					ax = cx(lo.x); ay = cy(lo.y); bx = cx(hi.x); by = cy(hi.y);
+					return (int64_t)(bx - ax + 1) * (by - ay + 1) > 256 ? 2 : 1;
+				};
+				for (size_t i = 0; i < n; ++i) { int32 ax, ay, bx, by; const int k = span(i, ax, ay, bx, by); if (k != 1) { if (k == 2) big.push_back((uint32)i); continue; } for (int32 y = ay; y <= by; ++y) for (int32 x = ax; x <= bx; ++x) ++count[(size_t)y * nx + x]; }
+				start.assign((size_t)nx * ny + 1, 0);
+				for (size_t c = 0; c < (size_t)nx * ny; ++c) start[c + 1] = start[c] + count[c];
+				idx.resize(start.back());
+				std::vector<uint32> fill(start.begin(), start.end() - 1);
+				for (size_t i = 0; i < n; ++i) { int32 ax, ay, bx, by; if (span(i, ax, ay, bx, by) != 1) continue; for (int32 y = ay; y <= by; ++y) for (int32 x = ax; x <= bx; ++x) idx[fill[(size_t)y * nx + x]++] = (uint32)i; }
+			}
+			int32 cx(float x) const { return (std::max)(0, (std::min)(nx - 1, (int32)std::floor((x - x0) / cell))); }
+			int32 cy(float y) const { return (std::max)(0, (std::min)(ny - 1, (int32)std::floor((y - y0) / cell))); }
+			// sorted = false (2026-11-05): the cell order, for callers whose result does not depend on the order (the planning tick's
+			// blockers, its seam candidates - re-sorted by distance); the sort was most of the query on Reach's dense geometry
+			void query(float lx, float ly, float hx, float hy, std::vector<uint32>& out, bool sorted = true)
+			{
+				out.clear();
+				if (++cur == 0) { std::fill(stamp.begin(), stamp.end(), 0); cur = 1; }
+				for (uint32 i : big) if (stamp[i] != cur) { stamp[i] = cur; out.push_back(i); }
+				if (nx > 0)
+				{
+					const int32 ax = cx(lx), ay = cy(ly), bx = cx(hx), by = cy(hy);
+					for (int32 y = ay; y <= by; ++y)
+						for (int32 x = ax; x <= bx; ++x)
+						{
+							const size_t c = (size_t)y * nx + x;
+							for (uint32 k = start[c]; k < start[c + 1]; ++k) { const uint32 i = idx[k]; if (stamp[i] != cur) { stamp[i] = cur; out.push_back(i); } }
+						}
+				}
+				if (sorted) std::sort(out.begin(), out.end());
+			}
+		};
 		// the world BSP's surfaces (polygon, outward normal from the plane and its flip bit, bounds) and its seams
 		// src / base: the collision BSP the surface comes from (the level's, or an instanced geometry definition's) and the
 		// index of that BSP's surface 0 in the cache (instances are transformed into world space when cached)
@@ -277,6 +361,7 @@ namespace h2cv::sb
 		// a dreadnought fin: ridge a-b, m across, thickness range, sides' angle from parallel, launch direction and size
 		// room: clear height above its ridge (caps how fast you can arrive, so how likely you sink in)
 		struct s_sb_fin { v3 a{}, b{}, m{}, dir{}; float tmin = 0.f, tmax = 0.f, dev = 0.f, est = 0.f, room = 0.f; uint32 face_a = 0, face_b = 0; bool parallel = false; };   // parallel: a thin plate
+		struct s_sb_raygrid;   // the Reach cache's static occlusion grid (defined with the Reach worker)
 		struct s_sb_bsp
 		{
 			const collision_bsp* bsp = nullptr; int32 surface_count = 0, edge_count = 0, instance_count = 0;
@@ -284,14 +369,53 @@ namespace h2cv::sb
 			std::vector<uint32> inst_base;                // each instance's surface 0 in surf (0xFFFFFFFF: not cached)
 					size_t obj_surf = 0, obj_seam = 0;      // where the objects' surfaces / seams start (the level's come first)
 					std::vector<uint32> junctions;          // seam indices of the junctions (a piece meeting a floor at an angle)
+			bool skip_invalid = false;              // sb_add_bsp leaves out flags & 0x10 surfaces (Gen3 / Reach: invalid, bsp seam faces)
+			s_sb_xygrid sgrid; bool sgrid_on = false;   // a cache being BUILT (Reach worker): its own surface grid (g_sb_surf_grid is for g_sbb only)
+			const std::atomic<bool>* cancel = nullptr;  // a cache being BUILT (Reach worker): its job's cancel flag, polled by the long pair loops
+			bool cancelled() const { return cancel && cancel->load(std::memory_order_relaxed); }
+			std::shared_ptr<s_sb_raygrid> rgrid;     // Reach: built once with the cache; the planning tick's occlusion tests use it
 		};
 		s_sb_bsp g_sbb;
+		int g_sbb_owner = 0;   // who filled g_sbb: 1 = sb_bsp_update from the world (Halo 2 / 3), 2 = the Reach worker's swap
+
+		s_sb_xygrid g_sb_surf_grid, g_sb_seam_grid;
+		// the surfaces whose box may meet [lo, hi] in x / y (ascending)
+		void sb_surfs_near(v3 lo, v3 hi, std::vector<uint32>& out, s_sb_bsp& B = g_sbb, bool sorted = true)
+		{
+			if (&B != &g_sbb)
+			{
+				// a cache still being built on the Reach worker thread: its own grid, made on first use (all its surfaces are in by then)
+				if (!B.sgrid_on) { B.sgrid_on = true; B.sgrid.build(B.surf.size(), [&B](size_t i, v3& l, v3& h) { const auto& sf = B.surf[i]; if (!sf.ok) return false; l = sf.lo; h = sf.hi; return true; }); }
+				B.sgrid.query(lo.x, lo.y, hi.x, hi.y, out, sorted);
+				return;
+			}
+			if (g_sb_surf_grid.gen != g_sb_geo_gen)
+			{
+				g_sb_surf_grid.gen = g_sb_geo_gen;
+				g_sb_surf_grid.build(g_sbb.surf.size(), [](size_t i, v3& l, v3& h) { const auto& sf = g_sbb.surf[i]; if (!sf.ok) return false; l = sf.lo; h = sf.hi; return true; });
+			}
+			g_sb_surf_grid.query(lo.x, lo.y, hi.x, hi.y, out, sorted);
+		}
+		// the seams whose segment box may meet [lo, hi] in x / y (ascending)
+		void sb_seams_near(v3 lo, v3 hi, std::vector<uint32>& out, bool sorted = true)
+		{
+			if (g_sb_seam_grid.gen != g_sb_geo_gen)
+			{
+				g_sb_seam_grid.gen = g_sb_geo_gen;
+				g_sb_seam_grid.build(g_sbb.seams.size(), [](size_t i, v3& l, v3& h) {
+					const auto& sm = g_sbb.seams[i];
+					l = { (std::min)(sm.a.x, sm.b.x), (std::min)(sm.a.y, sm.b.y), 0.f }; h = { (std::max)(sm.a.x, sm.b.x), (std::max)(sm.a.y, sm.b.y), 0.f }; return true; });
+			}
+			g_sb_seam_grid.query(lo.x, lo.y, hi.x, hi.y, out, sorted);
+		}
 
 		// seams on screen: worked out once per tick, each (and each of its pieces) kept 1.5 s after it last qualified
 		struct s_sb_rated { float best_launch = 0.f, best_hi = 0.f; int q = 0; v3 a{}, b{}, near_pt{}; float drop = 0.f, walk = 0.f, jump = 0.f, down = 0.f, need = 0.f, depth_walk = 0.f, depth_jump = 0.f, late_walk = 0.f, late_jump = 0.f; int pieces = 1, opt = 0; bool air = false, walk_ok = false, jump_ok = false, flat = false, carried = false, gap = false, slot = false; float width = 0.f; bool braked = false; float late_start = 1.f; bool debounce = false; int ghost_tries = 0, ghost_hits = 0; bool junction = false; float jdeg = 0.f;
 			// the physics check (in the air, non-green seams): 0 not run, 1 launches at your forward speed, -1 slow down, 2 speed up,
 			// 3 no forward speed (0..2.25) launches; adj_lo..adj_hi = the forward speeds that do, adj_launch = their best launch (u/s)
-			int adj = 0; float adj_lo = 0.f, adj_hi = 0.f, adj_launch = 0.f; };
+			int adj = 0; float adj_lo = 0.f, adj_hi = 0.f, adj_launch = 0.f;
+			// phys_req: this rating asked for the physics check; adj_src: the planning tick whose physics result adj.. holds (0xFFFFFFFF none)
+			bool phys_req = false; uint32 adj_src = 0xFFFFFFFF; };
 		struct s_sb_shown { uint32 seen = 0; uint32 piece_seen[24] = {}; uint32 air_id = 0; s_sb_rated r; };   // ticks + 1 (0 = never)
 		std::map<uint32, s_sb_shown> g_sb_shown;
 		uint32 g_sb_plan_tick = 0xFFFFFFFF;
@@ -319,6 +443,8 @@ namespace h2cv::sb
 			bool have_bounce = false; uint32 bounce_tick = 0; float bounce_up = 0.f, bounce_down = 0.f, bounce_side = 0.f; char bounce_what[240] = {};
 			uint32 air_id = 0;                            // counts take-offs (a seam's rating is not lowered during one fall)
 			uint32 log_until = 0;                         // record until this tick (after the last movement while charged)
+			bool prev_charged = false;                    // charged last tick (Gen3: h3sb's level can leave -3 on the launch tick)
+			float last_bounce = -1.f; uint32 last_bounce_until = 0;   // the last bounce's top speed (its launch tick and the 2 after)
 		} g_sbl;
 
 		// the bounce recorder: superbounce_log.csv in the game folder
@@ -391,12 +517,12 @@ namespace h2cv::sb
 			const uint32 first = e;
 			for (int guard = 0; guard < 32; ++guard)
 			{
-				if ((int32)e >= bsp->edges.count) return false;
+				if (e >= (uint32)bsp->edges.count) return false;   // unsigned: a 32-bit "none" (0xFFFFFFFF) must fail here
 				const collision_edge* ed = bsp->edges[e];
 				uint32 vi, next;
 				if (ed->right_surface == s) { vi = ed->end_vertex; next = ed->reverse_edge; }
 				else { vi = ed->start_vertex; next = ed->forward_edge; }
-				if ((int32)vi >= bsp->vertices.count) return false;
+				if (vi >= (uint32)bsp->vertices.count) return false;
 				const real_point3d& pt = bsp->vertices[vi]->point;
 				poly.push_back({ pt.x, pt.y, pt.z });
 				edge_ids.push_back(e);
@@ -409,18 +535,18 @@ namespace h2cv::sb
 		// launch seams: two floor-like faces (slopes under 60 deg) meeting with a small bend (under 30 deg). The first
 		// recorded session showed a ramp / wall corner (faces 90 deg apart) giving only soft bounces: there the coupled
 		// pushes are perpendicular, or two copies of the same point, so nothing is amplified.
-		bool sb_floor_seam(uint32 s0, uint32 s1)
+		bool sb_floor_seam(uint32 s0, uint32 s1, s_sb_bsp& B = g_sbb)
 		{
-			const v3 na = g_sbb.surf[s0].n, nb = g_sbb.surf[s1].n;
+			const v3 na = B.surf[s0].n, nb = B.surf[s1].n;
 			return na.z >= 0.5f && nb.z >= 0.5f && dot(na, nb) >= 0.866f;
 		}
 
 		// a LEDGE edge: a floor (facing up) meeting a wall that goes DOWN from it - the edge of a post or ledge top. Bounceable
 		// (2026-11-01: a headlong post top's 4 edges launched but were not listed). s0 / s1 in either order; the floor's side.
-		bool sb_ledge_seam(uint32 s0, uint32 s1)
+		bool sb_ledge_seam(uint32 s0, uint32 s1, s_sb_bsp& B = g_sbb)
 		{
-			const s_sb_surface& a = g_sbb.surf[s0];
-			const s_sb_surface& b = g_sbb.surf[s1];
+			const s_sb_surface& a = B.surf[s0];
+			const s_sb_surface& b = B.surf[s1];
 			const s_sb_surface& fl = a.n.z >= 0.5f ? a : b;
 			const s_sb_surface& wl = a.n.z >= 0.5f ? b : a;
 			if (fl.n.z < 0.5f || std::fabs(wl.n.z) >= 0.5f || wl.poly.empty() || fl.poly.empty()) return false;
@@ -429,16 +555,16 @@ namespace h2cv::sb
 			for (const v3& q : fl.poly) fz += q.z;
 			return wz / (float)wl.poly.size() < fz / (float)fl.poly.size() - 0.05f;   // the wall's middle below the floor: it goes down
 		}
-		bool sb_seam_pair(uint32 s0, uint32 s1) { return sb_floor_seam(s0, s1) || sb_ledge_seam(s0, s1); }
-		float sb_seam_bend(uint32 s0, uint32 s1);   // below
-		float sb_pair_bend(uint32 s0, uint32 s1) { return sb_floor_seam(s0, s1) ? sb_seam_bend(s0, s1) : 0.f; }   // a ledge: 0
+		bool sb_seam_pair(uint32 s0, uint32 s1, s_sb_bsp& B = g_sbb) { return sb_floor_seam(s0, s1, B) || sb_ledge_seam(s0, s1, B); }
+		float sb_seam_bend(uint32 s0, uint32 s1, s_sb_bsp& B = g_sbb);   // below
+		float sb_pair_bend(uint32 s0, uint32 s1, s_sb_bsp& B = g_sbb) { return sb_floor_seam(s0, s1, B) ? sb_seam_bend(s0, s1, B) : 0.f; }   // a ledge: 0
 
 		// a seam's bend, signed: + valley (each face's middle lies above the other's plane: the floor gets steeper upward
 		// across the seam), - ridge, 0 flat
-		float sb_seam_bend(uint32 s0, uint32 s1)
+		float sb_seam_bend(uint32 s0, uint32 s1, s_sb_bsp& B)
 		{
-			const s_sb_surface& fa = g_sbb.surf[s0];
-			const s_sb_surface& fb = g_sbb.surf[s1];
+			const s_sb_surface& fa = B.surf[s0];
+			const s_sb_surface& fb = B.surf[s1];
 			const float angle = std::acos((std::max)(-1.f, (std::min)(1.f, dot(fa.n, fb.n)))) * 57.29578f;
 			if (angle < 0.3f) return 0.f;
 			v3 ca{ 0.f, 0.f, 0.f }, cb{ 0.f, 0.f, 0.f };
@@ -450,9 +576,9 @@ namespace h2cv::sb
 		}
 
 		bool sb_inside(const std::vector<v3>& poly, v3 n, v3 q);   // defined below
-		bool sb_blocked(const std::vector<uint32>& surfaces, v3 p0, v3 p1);
+		bool sb_blocked(const std::vector<uint32>& surfaces, v3 p0, v3 p1, s_sb_bsp& B = g_sbb);
 		bool sb_face_normal(uint32 key, v3& n);
-		float sb_headroom(v3 p, float maxh);
+		float sb_headroom(v3 p, float maxh, s_sb_bsp& B = g_sbb);
 		// what the viewer last showed for the fall in progress (written to the log as V lines)
 		struct s_sb_pred { int kind = 0, q = -1; float speed = 0.f, depth = 0.f, depth_late = 0.f, off = 0.f, tilt = 0.f; v3 at{};
 			float launch_lo = 0.f, launch_hi = 0.f, late_start = 1.f; int debounce = 0, feature = -1; bool lottery = false; };   // + the launch estimate, a late contact's start, debounce, which seam / gap / fin
@@ -463,29 +589,30 @@ namespace h2cv::sb
 
 		// one collision BSP into the cache: its surfaces (into world space through rot / scale / pos when it is an
 		// instance's; rot = nullptr: already world space) and its floor seams
-		void sb_add_bsp(const collision_bsp* bsp, const float* rot, float scale, v3 pos)
+		void sb_add_bsp(const collision_bsp* bsp, const float* rot, float scale, v3 pos, s_sb_bsp& B = g_sbb)
 		{
-			const uint32 base = (uint32)g_sbb.surf.size();
+			const uint32 base = (uint32)B.surf.size();
 			const int32 ns = bsp->surfaces.count;
 			if (ns <= 0) return;
 			const v3 fw = rot ? v3{ rot[0], rot[1], rot[2] } : v3{ 1.f, 0.f, 0.f };
 			const v3 lf = rot ? v3{ rot[3], rot[4], rot[5] } : v3{ 0.f, 1.f, 0.f };
 			const v3 up = rot ? v3{ rot[6], rot[7], rot[8] } : v3{ 0.f, 0.f, 1.f };
 			auto world = [&](v3 p) { return rot ? pos + (fw * p.x + lf * p.y + up * p.z) * scale : p; };
-			g_sbb.surf.resize((size_t)base + (size_t)ns);
+			B.surf.resize((size_t)base + (size_t)ns);
 			for (int32 s = 0; s < ns; ++s)
 			{
-				s_sb_surface& sf = g_sbb.surf[(size_t)base + (size_t)s];
+				s_sb_surface& sf = B.surf[(size_t)base + (size_t)s];
 				sf.src = bsp; sf.base = base; sf.flags = bsp->flags ? bsp->flags[s] : 0;
+				if (B.skip_invalid && (sf.flags & 0x10)) continue;   // Gen3 / Reach (B.skip_invalid): invalid, and bsp seam faces where the bsp beyond is loaded (h3sb leaves them out)
 				if (!sb_surface_walk(bsp, (uint32)s, sf.edges, sf.poly)) continue;
 				for (v3& q : sf.poly) q = world(q);
-				// outward normal: the plane, negated when the surface uses it flipped (plane index bit 0x8000)
-				const uint32 plane_raw = (uint32)(uint16)bsp->surfaces[s]->plane;
-				const uint32 plane_index = plane_raw & 0x7FFF;
-				if ((int32)plane_index >= bsp->planes.count) continue;
+				// outward normal: the plane, negated when the surface uses it flipped (plane index bit 0x80000000; D3a: was 0x8000)
+				const uint32 plane_raw = bsp->surfaces[s]->plane;
+				const uint32 plane_index = plane_raw & 0x7FFFFFFFu;
+				if (plane_index >= (uint32)bsp->planes.count) continue;
 				const float* pl = (const float*)bsp->planes[plane_index];
 				v3 n{ pl[0], pl[1], pl[2] };
-				if (plane_raw & 0x8000) n = n * -1.f;
+				if (plane_raw & 0x80000000u) n = n * -1.f;
 				n = fw * n.x + lf * n.y + up * n.z;
 				const float nl = len(n);
 				if (nl < 0.5f || nl > 1.5f) continue;
@@ -501,17 +628,17 @@ namespace h2cv::sb
 			for (int32 e = 0; e < bsp->edges.count; ++e)
 			{
 				const collision_edge* ed = bsp->edges[e];
-				const uint32 sl = (uint32)(uint16)ed->left_surface, sr = (uint32)(uint16)ed->right_surface;
-				if ((int32)sl >= ns || (int32)sr >= ns || sl == sr) continue;
+				const uint32 sl = ed->left_surface, sr = ed->right_surface;   // CollBsp::kNone (0xFFFFFFFF) fails the range test
+				if (sl >= (uint32)ns || sr >= (uint32)ns || sl == sr) continue;
 				const uint32 gl = base + sl, gr = base + sr;
-				if (!g_sbb.surf[gl].ok || !g_sbb.surf[gr].ok || !sb_seam_pair(gl, gr)) continue;
-				const uint32 va = (uint32)(uint16)ed->start_vertex, vb = (uint32)(uint16)ed->end_vertex;
-				if ((int32)va >= bsp->vertices.count || (int32)vb >= bsp->vertices.count) continue;
+				if (!B.surf[gl].ok || !B.surf[gr].ok || !sb_seam_pair(gl, gr, B)) continue;
+				const uint32 va = ed->start_vertex, vb = ed->end_vertex;
+				if (va >= (uint32)bsp->vertices.count || vb >= (uint32)bsp->vertices.count) continue;
 				const real_point3d& pa = bsp->vertices[va]->point;
 				const real_point3d& pb = bsp->vertices[vb]->point;
 				s_sb_seam sm;
-				sm.a = world(v3{ pa.x, pa.y, pa.z }); sm.b = world(v3{ pb.x, pb.y, pb.z }); sm.s0 = gl; sm.s1 = gr; sm.bend = sb_pair_bend(gl, gr);
-				if (len(sm.b - sm.a) > 1e-4f) g_sbb.seams.push_back(sm);
+				sm.a = world(v3{ pa.x, pa.y, pa.z }); sm.b = world(v3{ pb.x, pb.y, pb.z }); sm.s0 = gl; sm.s1 = gr; sm.bend = sb_pair_bend(gl, gr, B);
+				if (len(sm.b - sm.a) > 1e-4f) B.seams.push_back(sm);
 			}
 		}
 
@@ -581,14 +708,15 @@ namespace h2cv::sb
 		// ceilings fail) - and body room across it - nothing within 0.2 wu to either side 0.2 and 0.6 above the mouth, so the
 		// pill can centre over it (a gap along the foot of a wall, or under an overhang, fails). Faces closing the crack's end
 		// are not checked: both recorded monster spots are the tapered end of a crack, wedged against its end faces.
-		bool sb_gap_open(const s_sb_gap& gp, int* why = nullptr)
+		bool sb_gap_open(const s_sb_gap& gp, int* why = nullptr, s_sb_bsp& B = g_sbb)
 		{
 			const v3 lo{ (std::min)(gp.a.x, gp.b.x) - 0.5f, (std::min)(gp.a.y, gp.b.y) - 0.5f, (std::min)(gp.a.z, gp.b.z) };
 			const v3 hi{ (std::max)(gp.a.x, gp.b.x) + 0.5f, (std::max)(gp.a.y, gp.b.y) + 0.5f, (std::max)(gp.a.z, gp.b.z) + 3.1f };
-			std::vector<uint32> near_faces;
-			for (uint32 s = 0; s < (uint32)g_sbb.surf.size(); ++s)
+			std::vector<uint32> near_faces, cand_s;
+			sb_surfs_near(lo, hi, cand_s, B);
+			for (const uint32 s : cand_s)
 			{
-				const s_sb_surface& sf = g_sbb.surf[s];
+				const s_sb_surface& sf = B.surf[s];
 				if (!sf.ok || sf.hi.x < lo.x || sf.lo.x > hi.x || sf.hi.y < lo.y || sf.lo.y > hi.y || sf.hi.z < lo.z || sf.lo.z > hi.z) continue;
 				near_faces.push_back(s);
 			}
@@ -598,12 +726,12 @@ namespace h2cv::sb
 			for (int k = 1; k <= 3; ++k)
 			{
 				const v3 c = gp.a + (gp.b - gp.a) * (0.25f * (float)k);
-				if (sb_blocked(near_faces, c + v3{ 0.f, 0.f, 0.05f }, c + v3{ 0.f, 0.f, 0.05f + k_sb_room_min })) continue;   // no room
+				if (sb_blocked(near_faces, c + v3{ 0.f, 0.f, 0.05f }, c + v3{ 0.f, 0.f, 0.05f + k_sb_room_min }, B)) continue;   // no room
 				any_room = true;
 				bool room = true;
 				for (const float h : { 0.2f, 0.6f })
 					for (const v3& d : dirs)
-						if (sb_blocked(near_faces, c + v3{ 0.f, 0.f, h }, c + v3{ 0.f, 0.f, h } + d * 0.2f)) room = false;
+						if (sb_blocked(near_faces, c + v3{ 0.f, 0.f, h }, c + v3{ 0.f, 0.f, h } + d * 0.2f, B)) room = false;
 				if (room) return true;
 			}
 			if (why) *why = any_room ? 2 : 1;
@@ -613,114 +741,30 @@ namespace h2cv::sb
 		// "monster" gaps: two faces facing each other less than the pill's width (0.35) apart, open from above. A pill
 		// dropping in wedges between them and is squeezed by several pairs at once (the recorded monster spot: faces
 		// ~0.13-0.28 apart; 17 u/s landings launched +8.5 straight down and +14.2 drifting across). Found once per map.
-		void sb_find_gaps()
-		{
-			const float wmin = 0.02f, wmax = 0.35f;
-			std::vector<uint32> cand;
-			for (uint32 s = 0; s < (uint32)g_sbb.surf.size(); ++s)
-			{
-				const s_sb_surface& sf = g_sbb.surf[s];
-				if (sf.ok && sf.n.z > -0.3f && sf.n.z < 0.9f) cand.push_back(s);       // walls and steep slopes
-			}
-			std::sort(cand.begin(), cand.end(), [](uint32 x, uint32 y) { return g_sbb.surf[x].lo.x < g_sbb.surf[y].lo.x; });
-			std::vector<v3> samples;
-			std::vector<std::pair<v3, float>> hits;
-			for (size_t i = 0; i < cand.size(); ++i)
-			{
-				const s_sb_surface& fa = g_sbb.surf[cand[i]];
-				for (size_t j = i + 1; j < cand.size(); ++j)
-				{
-					const s_sb_surface& fb = g_sbb.surf[cand[j]];
-					if (fb.lo.x > fa.hi.x + wmax) break;                                     // sorted by lo.x: none further on can be near
-					if (fb.lo.y > fa.hi.y + wmax || fb.hi.y < fa.lo.y - wmax || fb.lo.z > fa.hi.z + wmax || fb.hi.z < fa.lo.z - wmax) continue;
-					if (dot(fa.n, fb.n) > -0.5f) continue;                                   // not facing each other
-					// measured across the region where they overlap
-					hits.clear();
-					sb_gap_overlap(fa, fb, samples);
-					for (const v3& sp : samples)
-					{
-						const float d = dot(sp - fb.poly[0], fb.n);                            // in front of B, this far
-						if (d < wmin || d > wmax) continue;
-						const v3 q = sp - fb.n * d;
-						if (dot(fa.n, fb.n) > -0.95f && !sb_inside(fb.poly, fb.n, q)) continue;
-						hits.push_back({ (sp + q) * 0.5f, d });
-					}
-					if (hits.empty()) continue;
-					const v3 m = norm(fa.n - fb.n);                                          // across the gap
-					const v3 along = cross(m, v3{ 0.f, 0.f, 1.f });
-					if (len(along) < 0.3f) continue;                                         // a floor / ceiling slot: cannot be dropped into
-					const v3 t = norm(along);
-					float ztop = -1e9f;
-					for (const auto& hp : hits) ztop = (std::max)(ztop, hp.first.z);
-					float tmin = 1e9f, tmax = -1e9f, w0 = 1e9f, w1 = 0.f;
-					v3 base{ 0.f, 0.f, 0.f };
-					int nb = 0;
-					for (const auto& hp : hits)
-					{
-						if (hp.first.z < ztop - 0.05f) continue;                             // the mouth: the top of the gap
-						const float u = dot(hp.first, t);
-						tmin = (std::min)(tmin, u); tmax = (std::max)(tmax, u);
-						w0 = (std::min)(w0, hp.second); w1 = (std::max)(w1, hp.second);
-						base = base + hp.first; ++nb;
-					}
-					base = base * (1.f / (float)nb);
-					const float ub = dot(base, t);
-					if (tmax - tmin < 0.1f) { tmin -= 0.05f; tmax += 0.05f; }
-					s_sb_gap gp;
-					gp.a = base + t * (tmin - ub); gp.b = base + t * (tmax - ub); gp.m = m; gp.wmin = w0; gp.wmax = w1;
-					gp.face_a = cand[i]; gp.face_b = cand[j];
-					// the same crack over several triangles: extend the gap it continues
-					bool merged = false;
-					const v3 gc = (gp.a + gp.b) * 0.5f;
-					for (auto& g2 : g_sbb.gaps)
-					{
-						if (std::fabs(dot(g2.m, m)) < 0.9f || std::fabs((g2.a.z + g2.b.z) * 0.5f - gc.z) > 0.1f) continue;
-						if (len(sb_closest_on_segment(gc, g2.a, g2.b) - gc) > 0.3f && len(sb_closest_on_segment(gp.a, g2.a, g2.b) - gp.a) > 0.05f &&
-							len(sb_closest_on_segment(gp.b, g2.a, g2.b) - gp.b) > 0.05f) continue;
-						const v3 t2 = norm(g2.b - g2.a), a0 = g2.a;
-						const float u0 = dot(a0, t2);
-						const float lo2 = (std::min)(0.f, (std::min)(dot(gp.a, t2), dot(gp.b, t2)) - u0);
-						const float hi2 = (std::max)(dot(g2.b, t2) - u0, (std::max)(dot(gp.a, t2), dot(gp.b, t2)) - u0);
-						g2.a = a0 + t2 * lo2; g2.b = a0 + t2 * hi2;
-						g2.wmin = (std::min)(g2.wmin, gp.wmin); g2.wmax = (std::max)(g2.wmax, gp.wmax);
-						merged = true;
-						break;
-					}
-					if (!merged) g_sbb.gaps.push_back(gp);
-				}
-			}
-			// only gaps a player can drop into under normal circumstances (recorded: many found indoors or against walls)
-			std::vector<s_sb_gap> open_gaps;
-			for (auto gp : g_sbb.gaps)
-			{
-				if (!sb_gap_open(gp)) continue;
-				// little room above (under 3 wu): kept as a lottery - on MCC slow landings that sink in late launch there too
-				gp.room = sb_headroom((gp.a + gp.b) * 0.5f + v3{ 0.f, 0.f, 0.05f }, 3.f);
-				if (gp.room >= k_sb_room_min) open_gaps.push_back(gp);
-			}
-			g_sbb.gaps.swap(open_gaps);
-			// the gaps as seams too, so they are rated (walk off / jump / falling) with the others
-			for (const auto& gp : g_sbb.gaps)
-			{
-				s_sb_seam sm;
-				sm.a = gp.a; sm.b = gp.b; sm.s0 = gp.face_a; sm.s1 = gp.face_b; sm.gap = true; sm.width = gp.wmin;
-				g_sbb.seams.push_back(sm);
-			}
-		}
 
 		// clear height straight up from p (to the first surface over it), up to maxh
-		float sb_headroom(v3 p, float maxh)
+		float sb_headroom(v3 p, float maxh, s_sb_bsp& B)
 		{
 			float best = p.z + maxh;
-			for (const s_sb_surface& sf : g_sbb.surf)
+			auto test = [&](const s_sb_surface& sf)
 			{
-				if (!sf.ok || std::fabs(sf.n.z) < 1e-3f) continue;
-				if (sf.hi.x < p.x || sf.lo.x > p.x || sf.hi.y < p.y || sf.lo.y > p.y || sf.hi.z <= p.z || sf.lo.z >= best) continue;
+				if (!sf.ok || std::fabs(sf.n.z) < 1e-3f) return;
+				if (sf.hi.x < p.x || sf.lo.x > p.x || sf.hi.y < p.y || sf.lo.y > p.y || sf.hi.z <= p.z || sf.lo.z >= best) return;
 				const v3 v0 = sf.poly[0];
 				const float z = v0.z - (sf.n.x * (p.x - v0.x) + sf.n.y * (p.y - v0.y)) / sf.n.z;
-				if (z <= p.z || z >= best) continue;
+				if (z <= p.z || z >= best) return;
 				if (sb_inside(sf.poly, sf.n, v3{ p.x, p.y, z })) best = z;
+			};
+			if (&B != &g_sbb)
+			{
+				// a cache being built on the Reach worker (1.6 M surfaces on m50): only the surfaces whose xy box holds p. The result is
+				// the lowest qualifying z, so the visiting order does not matter. Halo 2 / 3 keep the plain scan below, unchanged.
+				std::vector<uint32> cand;
+				sb_surfs_near(p, p, cand, B);
+				for (const uint32 si : cand) test(B.surf[si]);
 			}
+			else
+				for (const s_sb_surface& sf : B.surf) test(sf);
 			return best - p.z;
 		}
 
@@ -745,11 +789,11 @@ namespace h2cv::sb
 		// the merge and the open / room checks). The recorder's "why not a fin" lines run the same function.
 		enum { k_fin_ok = 0, k_fin_apart, k_fin_not_opposite, k_fin_sides_angle, k_fin_no_overlap, k_fin_lying_flat, k_fin_pushes_down };
 		struct s_sb_fin_why { float dev = 0.f, tmin = 0.f, tmax = 0.f, along = 0.f, dirz = 0.f, ridge = 0.f; int hits = 0; };
-		int sb_fin_pair(uint32 ia, uint32 ib, s_sb_fin& fn, std::vector<v3>& samples, std::vector<std::pair<v3, float>>& hits, s_sb_fin_why* why)
+		int sb_fin_pair(uint32 ia, uint32 ib, s_sb_fin& fn, std::vector<v3>& samples, std::vector<std::pair<v3, float>>& hits, s_sb_fin_why* why, s_sb_bsp& B = g_sbb)
 		{
 			const float tmax = 0.8f;
-			const s_sb_surface& fa = g_sbb.surf[ia];
-			const s_sb_surface& fb = g_sbb.surf[ib];
+			const s_sb_surface& fa = B.surf[ia];
+			const s_sb_surface& fb = B.surf[ib];
 			if (fb.lo.x > fa.hi.x + tmax || fb.hi.x < fa.lo.x - tmax || fb.lo.y > fa.hi.y + tmax || fb.hi.y < fa.lo.y - tmax
 				|| fb.lo.z > fa.hi.z + tmax || fb.hi.z < fa.lo.z - tmax) return k_fin_apart;
 			const float c = dot(fa.n, fb.n);
@@ -808,23 +852,578 @@ namespace h2cv::sb
 		// biggest recorded launches (28.3, 27.4 and 25.7 u/s) were the pill wedged in such creases. The crease joins the seams
 		// flagged as a junction, rated a lottery: big launches happen there, rarely (vertical sides are left out - a floor and
 		// wall corner pushes weakly)
-		void sb_find_junctions()
+
+
+		// slot seams: a floor seam with a steep face hanging from it on each side (normals across the seam, opposite ways) -
+		// a slot or fin thinner than the pill right under the seam line. Only a pill straddling it almost exactly touches
+		// both faces; a few hundredths past it, it touches one wall and nothing squeezes. Recorded at the bridge slot
+		// (level 5838 / 5845 under the 5779 / 5837 floor seam): +15.68 with the contact ~0.01 off, nothing at ~0.04 off with
+		// the same speed (9.43) and drift.
+		// ====================================================================================================================
+		// Faster sb_find_gaps / sb_find_fins / sb_find_junctions / sb_mark_slots (Reach worker, 1.6 M-surface caches): same outputs,
+		// bit for bit (same vectors, order, float bits). Paste in place of the four old functions (all helpers are new, sbq_*).
+		// Needs, all unchanged and already in the file: s_sb_surface / s_sb_seam / s_sb_gap / s_sb_fin / s_sb_bsp (+ s_sb_xygrid),
+		// sb_gap_samples, sb_gap_open, sb_headroom, sb_closest_on_segment, sb_inside, sb_surfs_near, sb_up_estimate, norm / dot /
+		// cross / len, k_sb_* constants, the k_fin_* enum; and <thread>, <atomic>, <unordered_map>, <numeric>.
+		// Method: the pair searches ask a y-bucketed index for the j > i (lo.x order) whose box is near instead of scanning the whole
+		// lo.x slice; the pair tests (pure functions of the two faces) run on worker threads; their results are then merged strictly
+		// in the old (i, j) order, so merges / appends happen in the same sequence. Merge lookups go through a z-bucket index that
+		// yields the old loop's candidates in index order (first match wins, as before).
+		// ====================================================================================================================
+		constexpr unsigned k_sbq_max_threads = 8;           // worker threads for the pair tests (the merge / append order stays serial)
+
+		static unsigned sbq_thread_count() { const unsigned h = std::thread::hardware_concurrency(); return (std::max)(1u, (std::min)(k_sbq_max_threads, h > 2 ? h - 2 : 1u)); }
+		// fn(chunk, state) for chunk = 0 .. n - 1 on up to k_sbq_max_threads threads (this one included), chunks handed out in order;
+		// S: per-thread state
+		template <class S, class F> static void sbq_for_chunks(size_t n, F&& fn)
 		{
-			g_sbb.junctions.clear();
-			std::vector<uint32> floors;
-			for (uint32 s = 0; s < (uint32)g_sbb.surf.size(); ++s)
-				if (g_sbb.surf[s].ok && g_sbb.surf[s].n.z >= 0.7f && g_sbb.surf[s].poly.size() >= 3) floors.push_back(s);
-			std::sort(floors.begin(), floors.end(), [](uint32 x, uint32 y) { return g_sbb.surf[x].lo.x < g_sbb.surf[y].lo.x; });
-			for (uint32 a = 0; a < (uint32)g_sbb.surf.size(); ++a)
+			const unsigned nt = (unsigned)(std::min<size_t>)(sbq_thread_count(), n);
+			std::atomic<size_t> next{ 0 };
+			auto work = [&]() { S st; for (size_t c; (c = next.fetch_add(1)) < n;) fn(c, st); };
+			std::vector<std::thread> th;
+			for (unsigned t = 1; t < nt; ++t) th.emplace_back(work);
+			work();
+			for (auto& t : th) t.join();
+		}
+
+		// sb_gap_overlap with reusable buffers (same arithmetic, no per-pair allocations)
+		struct sbq_p2 { float x, y; };
+		struct sbq_scratch { std::vector<sbq_p2> clip, a2, next; std::vector<v3> region, samples; std::vector<std::pair<v3, float>> hits; std::vector<uint32> js; };
+		static void sbq_gap_overlap(const s_sb_surface& fa, const s_sb_surface& fb, std::vector<v3>& out, sbq_scratch& sc)
+		{
+			out.clear();
+			const v3 o = fa.poly[0], n = fa.n;
+			const v3 u = norm(cross(n, std::fabs(n.z) < 0.9f ? v3{ 0.f, 0.f, 1.f } : v3{ 1.f, 0.f, 0.f }));
+			const v3 w = cross(n, u);
+			std::vector<sbq_p2>& clip = sc.clip; std::vector<sbq_p2>& a2 = sc.a2; std::vector<sbq_p2>& next = sc.next;
+			clip.clear(); a2.clear();
+			for (const v3& q : fb.poly) clip.push_back({ dot(q - o, u), dot(q - o, w) });
+			for (const v3& q : fa.poly) a2.push_back({ dot(q - o, u), dot(q - o, w) });
+			float area = 0.f;
+			for (size_t i = 0; i < a2.size(); ++i)
 			{
-				const s_sb_surface& A = g_sbb.surf[a];
-				if (!A.ok || A.poly.size() < 3 || A.n.z < 0.17f || A.n.z > 0.97f) continue;    // leaning 15-80 deg from level
-				for (uint32 b : floors)
+				const sbq_p2 p = a2[i], r = a2[(i + 1) % a2.size()];
+				area += p.x * r.y - r.x * p.y;
+			}
+			const float sgn = area >= 0.f ? 1.f : -1.f;
+			for (size_t i = 0; i < a2.size() && clip.size() >= 3; ++i)
+			{
+				const sbq_p2 e0 = a2[i], e1 = a2[(i + 1) % a2.size()];
+				auto side = [&](const sbq_p2& p) { return sgn * ((e1.x - e0.x) * (p.y - e0.y) - (e1.y - e0.y) * (p.x - e0.x)); };
+				next.clear();
+				for (size_t k = 0; k < clip.size(); ++k)
 				{
-					const s_sb_surface& B = g_sbb.surf[b];
+					const sbq_p2 c0 = clip[k], c1 = clip[(k + 1) % clip.size()];
+					const float s0 = side(c0), s1 = side(c1);
+					if (s0 >= 0.f) next.push_back(c0);
+					if ((s0 >= 0.f) != (s1 >= 0.f))
+					{
+						const float f = s0 / (s0 - s1);
+						next.push_back({ c0.x + (c1.x - c0.x) * f, c0.y + (c1.y - c0.y) * f });
+					}
+				}
+				clip.swap(next);
+			}
+			if (clip.size() < 3) return;
+			sc.region.clear();
+			for (const sbq_p2& p : clip) sc.region.push_back(o + u * p.x + w * p.y);
+			sb_gap_samples(sc.region, out);
+		}
+
+		// Cheap exact-safe reject for a pair: every overlap sample lies in the convex hull of B's polygon mapped onto A's plane as
+		// sb_gap_overlap maps it, and a sample's distance to B's plane is affine, so it lies between the distances of the mapped
+		// corners. true = no sample can have a distance in [dlo, dhi] (0.01 wu slack for the clip's float rounding).
+		static inline bool sbq_no_dist(const s_sb_surface& fa, const s_sb_surface& fb, float dlo, float dhi)
+		{
+			const v3 o = fa.poly[0], n = fa.n;
+			const v3 u = norm(cross(n, std::fabs(n.z) < 0.9f ? v3{ 0.f, 0.f, 1.f } : v3{ 1.f, 0.f, 0.f }));
+			const v3 w = cross(n, u);
+			const v3 g = u * dot(u, fb.n) + w * dot(w, fb.n);              // B's normal in A's (u, w) frame: d(x, y) = d0 + g . (x u + y w)
+			const float d0 = dot(o - fb.poly[0], fb.n);
+			float mn = 1e30f, mx = -1e30f;
+			for (const v3& q : fb.poly)
+			{
+				const float d = d0 + dot(q - o, g);
+				mn = (std::min)(mn, d); mx = (std::max)(mx, d);
+			}
+			return mn > dhi + 0.01f || mx < dlo - 0.01f;
+		}
+
+		// the candidates' boxes and normals in lo.x order (the pair searches stream through this, not through s_sb_surface)
+		struct sbq_box { float lx, ly, lz, hx, hy, hz; v3 n; };
+		// y buckets over those boxes: for a query box, the later entries (j > i) whose lo.x is within the x limit and whose y range may
+		// meet [ly - w, hy + w]. Every entry is listed in each bucket its y range covers (positions ascending, so lo.x ascending);
+		// it is reported from the first bucket it shares with the query only. Superset of the true pairs; the caller re-tests exactly.
+		struct sbq_yindex
+		{
+			struct E { uint32 pos; float lx; int32 b0; };
+			float y0 = 0.f, inv = 1.f; int32 nb = 1;
+			std::vector<uint32> start; std::vector<E> ent, wide;
+			int32 bucket(float y) const { const float t = (y - y0) * inv; return t <= 0.f ? 0 : (t >= (float)(nb - 1) ? nb - 1 : (int32)t); }
+			void build(const std::vector<sbq_box>& bx)
+			{
+				float lo = 1e30f, hi = -1e30f;
+				for (const sbq_box& b : bx) { lo = (std::min)(lo, b.ly); hi = (std::max)(hi, b.hy); }
+				if (bx.empty()) { lo = hi = 0.f; }
+				float cell = 4.f; while ((hi - lo) / cell > 4000.f) cell *= 2.f;
+				y0 = lo; inv = 1.f / cell; nb = (int32)((hi - lo) * inv) + 1;
+				std::vector<uint32> cnt((size_t)nb + 1, 0);
+				for (const sbq_box& b : bx) { const int32 a = bucket(b.ly), z = bucket(b.hy); if (z - a < 32) for (int32 k = a; k <= z; ++k) ++cnt[k]; }
+				start.assign((size_t)nb + 1, 0);
+				for (int32 k = 0; k < nb; ++k) start[k + 1] = start[k] + cnt[k];
+				ent.resize(start.back());
+				std::vector<uint32> fill(start.begin(), start.end() - 1);
+				for (uint32 p = 0; p < (uint32)bx.size(); ++p)
+				{
+					const sbq_box& b = bx[p]; const int32 a = bucket(b.ly), z = bucket(b.hy);
+					if (z - a >= 32) wide.push_back({ p, b.lx, a }); else for (int32 k = a; k <= z; ++k) ent[fill[k]++] = { p, b.lx, a };
+				}
+			}
+			static const E* first_after(const E* b, const E* e, uint32 i) { return std::upper_bound(b, e, i, [](uint32 v, const E& x) { return v < x.pos; }); }
+			void query(uint32 i, const sbq_box& a, float w, std::vector<uint32>& out) const
+			{
+				out.clear();
+				const float xlim = a.hx + w;
+				const int32 q0 = bucket(a.ly - w), q1 = bucket(a.hy + w);
+				for (int32 k = q0; k <= q1; ++k)
+				{
+					const E* b = ent.data() + start[k]; const E* e = ent.data() + start[k + 1];
+					for (const E* p = first_after(b, e, i); p != e && p->lx <= xlim; ++p) if (k == (std::max)(p->b0, q0)) out.push_back(p->pos);
+				}
+				for (const E* p = first_after(wide.data(), wide.data() + wide.size(), i); p != wide.data() + wide.size() && p->lx <= xlim; ++p) out.push_back(p->pos);
+				std::sort(out.begin(), out.end());
+			}
+		};
+
+		// "the first crack in the list that this one continues": an index over the merge list's segments. The old loops skip an entry
+		// unless its mid height is within 0.1 of the new one's AND the new segment's mid point or an end is within 0.3 / 0.05 of
+		// it, so a candidate must share a (0.2 wu z bucket, 4 wu xy cell) with the new segment's box (entries are registered with
+		// 0.35 wu padding, and again whenever they grow - old registrations just stay). Candidates come back in list order; entries
+		// that are non-finite / huge are always candidates, and so is everything for a non-finite or very large query.
+		struct sbq_mindex
+		{
+			std::unordered_map<uint64_t, std::vector<uint32>> bk; std::unordered_map<int64_t, std::vector<uint32>> wide; std::vector<uint32> odd; std::vector<uint8_t> is_odd;
+			static bool plain(float v) { return std::isfinite(v) && std::fabs(v) < 1e4f; }
+			static bool plain(v3 p) { return plain(p.x) && plain(p.y) && plain(p.z); }
+			static int64_t kz(double z) { return (int64_t)std::floor(z / 0.2); }
+			static int32 kc(float v) { return (int32)std::floor(v * 0.25f); }
+			static uint64_t mk(int64_t z, int32 x, int32 y) { return ((uint64_t)(z & 0xFFFFF) << 44) ^ ((uint64_t)(uint32)(x & 0x3FFFFF) << 22) ^ (uint64_t)(uint32)(y & 0x3FFFFF); }
+			void reg(uint32 idx, v3 a, v3 b)
+			{
+				if (is_odd.size() <= idx) is_odd.resize(idx + 1, 0);
+				if (is_odd[idx]) return;
+				if (!plain(a) || !plain(b)) { is_odd[idx] = 1; odd.push_back(idx); return; }
+				const int64_t z = kz((double)((a.z + b.z) * 0.5f));
+				const int32 x0 = kc((std::min)(a.x, b.x) - 0.35f), x1 = kc((std::max)(a.x, b.x) + 0.35f), y0 = kc((std::min)(a.y, b.y) - 0.35f), y1 = kc((std::max)(a.y, b.y) + 0.35f);
+				if ((int64_t)(x1 - x0 + 1) * (y1 - y0 + 1) > 64) { wide[z].push_back(idx); return; }
+				for (int32 x = x0; x <= x1; ++x) for (int32 y = y0; y <= y1; ++y) bk[mk(z, x, y)].push_back(idx);
+			}
+			void candidates(v3 a, v3 b, size_t total, std::vector<uint32>& out) const
+			{
+				out.clear();
+				const float gz = (a.z + b.z) * 0.5f;
+				const int32 x0 = kc((std::min)(a.x, b.x)), x1 = kc((std::max)(a.x, b.x)), y0 = kc((std::min)(a.y, b.y)), y1 = kc((std::max)(a.y, b.y));
+				if (!plain(a) || !plain(b) || !plain(gz) || (int64_t)(x1 - x0 + 1) * (y1 - y0 + 1) > 1024) { out.resize(total); std::iota(out.begin(), out.end(), 0u); return; }
+				for (int64_t z = kz((double)gz - 0.12); z <= kz((double)gz + 0.12); ++z)
+				{
+					for (int32 x = x0; x <= x1; ++x) for (int32 y = y0; y <= y1; ++y) { const auto it = bk.find(mk(z, x, y)); if (it != bk.end()) out.insert(out.end(), it->second.begin(), it->second.end()); }
+					const auto w = wide.find(z); if (w != wide.end()) out.insert(out.end(), w->second.begin(), w->second.end());
+				}
+				out.insert(out.end(), odd.begin(), odd.end());
+				std::sort(out.begin(), out.end()); out.erase(std::unique(out.begin(), out.end()), out.end());
+			}
+		};
+
+		// the old gap loop's per-pair body (after its box / facing tests): false = the pair makes no gap
+		static bool sbq_gap_pair(uint32 ia, uint32 ib, s_sb_bsp& B, sbq_scratch& sc, s_sb_gap& gp)
+		{
+			const float wmin = 0.02f, wmax = 0.35f;
+			const s_sb_surface& fa = B.surf[ia];
+			const s_sb_surface& fb = B.surf[ib];
+			if (sbq_no_dist(fa, fb, wmin, wmax)) return false;                           // nothing of the overlap is 0.02-0.35 from B's plane
+			std::vector<v3>& samples = sc.samples; std::vector<std::pair<v3, float>>& hits = sc.hits;
+			// measured across the region where they overlap
+			hits.clear();
+			sbq_gap_overlap(fa, fb, samples, sc);
+			for (const v3& sp : samples)
+			{
+				const float d = dot(sp - fb.poly[0], fb.n);                                // in front of B, this far
+				if (d < wmin || d > wmax) continue;
+				const v3 q = sp - fb.n * d;
+				if (dot(fa.n, fb.n) > -0.95f && !sb_inside(fb.poly, fb.n, q)) continue;
+				hits.push_back({ (sp + q) * 0.5f, d });
+			}
+			if (hits.empty()) return false;
+			const v3 m = norm(fa.n - fb.n);                                              // across the gap
+			const v3 along = cross(m, v3{ 0.f, 0.f, 1.f });
+			if (len(along) < 0.3f) return false;                                         // a floor / ceiling slot: cannot be dropped into
+			const v3 t = norm(along);
+			float ztop = -1e9f;
+			for (const auto& hp : hits) ztop = (std::max)(ztop, hp.first.z);
+			float tmin = 1e9f, tmax = -1e9f, w0 = 1e9f, w1 = 0.f;
+			v3 base{ 0.f, 0.f, 0.f };
+			int nb = 0;
+			for (const auto& hp : hits)
+			{
+				if (hp.first.z < ztop - 0.05f) continue;                                 // the mouth: the top of the gap
+				const float u = dot(hp.first, t);
+				tmin = (std::min)(tmin, u); tmax = (std::max)(tmax, u);
+				w0 = (std::min)(w0, hp.second); w1 = (std::max)(w1, hp.second);
+				base = base + hp.first; ++nb;
+			}
+			base = base * (1.f / (float)nb);
+			const float ub = dot(base, t);
+			if (tmax - tmin < 0.1f) { tmin -= 0.05f; tmax += 0.05f; }
+			gp = s_sb_gap{};
+			gp.a = base + t * (tmin - ub); gp.b = base + t * (tmax - ub); gp.m = m; gp.wmin = w0; gp.wmax = w1;
+			gp.face_a = ia; gp.face_b = ib;
+			return true;
+		}
+
+		// sb_fin_pair without the recorder's `why`, on the reusable buffers (same rules, same order)
+		static int sbq_fin_pair(uint32 ia, uint32 ib, s_sb_fin& fn, sbq_scratch& sc, s_sb_bsp& B)
+		{
+			const float tmax = 0.8f;
+			const s_sb_surface& fa = B.surf[ia];
+			const s_sb_surface& fb = B.surf[ib];
+			if (fb.lo.x > fa.hi.x + tmax || fb.hi.x < fa.lo.x - tmax || fb.lo.y > fa.hi.y + tmax || fb.hi.y < fa.lo.y - tmax
+				|| fb.lo.z > fa.hi.z + tmax || fb.hi.z < fa.lo.z - tmax) return k_fin_apart;
+			const float c = dot(fa.n, fb.n);
+			const float dev = std::acos((std::max)(-1.f, (std::min)(1.f, -c))) * 57.29578f;
+			if (c > -0.966f) return k_fin_not_opposite;
+			if (dev > 10.f) return k_fin_sides_angle;
+			const bool parallel = dev < 1.0f;
+			if (sbq_no_dist(fa, fb, -tmax, -0.005f)) return k_fin_no_overlap;            // no sample 0.005-0.8 behind B
+			std::vector<std::pair<v3, float>>& hits = sc.hits; std::vector<v3>& samples = sc.samples;
+			hits.clear();
+			sbq_gap_overlap(fa, fb, samples, sc);
+			for (const v3& sp : samples)
+			{
+				const float d = dot(sp - fb.poly[0], fb.n);
+				if (d > -0.005f || d < -tmax) continue;
+				hits.push_back({ sp - fa.n * (-0.5f * d), -d });
+			}
+			if (hits.empty()) return k_fin_no_overlap;
+			const v3 m = norm(fa.n - fb.n);
+			const v3 along = cross(m, v3{ 0.f, 0.f, 1.f });
+			if (len(along) < 0.3f) return k_fin_lying_flat;
+			const v3 t = norm(along);
+			float ztop = -1e9f;
+			for (const auto& hp : hits) ztop = (std::max)(ztop, hp.first.z);
+			float tlo = 1e9f, thi = -1e9f, w0 = 1e9f, w1 = 0.f;
+			v3 base{ 0.f, 0.f, 0.f };
+			int nb = 0;
+			for (const auto& hp : hits)
+			{
+				if (hp.first.z < ztop - 0.05f) continue;
+				const float u = dot(hp.first, t);
+				tlo = (std::min)(tlo, u); thi = (std::max)(thi, u);
+				w0 = (std::min)(w0, hp.second); w1 = (std::max)(w1, hp.second);
+				base = base + hp.first; ++nb;
+			}
+			base = base * (1.f / (float)nb);
+			const float ub = dot(base, t);
+			if (thi - tlo < 0.1f) { tlo -= 0.05f; thi += 0.05f; }
+			if (parallel && w1 > 0.45f) return k_fin_sides_angle;
+			fn = s_sb_fin{};
+			fn.a = base + t * (tlo - ub); fn.b = base + t * (thi - ub); fn.m = m; fn.tmin = w0; fn.tmax = w1; fn.dev = dev;
+			fn.dir = parallel ? v3{ 0.f, 0.f, 1.f } : norm(fa.n + fb.n); fn.face_a = ia; fn.face_b = ib; fn.parallel = parallel;
+			if (fn.dir.z < -0.3f) return k_fin_pushes_down;
+			return k_fin_ok;
+		}
+
+		// ---- read-only geometry for the worker threads: the cache's surface grid (built here if it is not yet) and a compact copy of the
+		// surface boxes, so queries do not chase every surface's heap data. sb_surfs_near's own query writes a stamp array (one
+		// caller only), so these queries gather unsorted, filter, then sort - the same set in the same ascending order.
+		struct sbq_sb { v3 lo, hi; float nz; };
+		struct sbq_ctx
+		{
+			const s_sb_xygrid* grid = nullptr; std::vector<sbq_sb> sb;
+			explicit sbq_ctx(s_sb_bsp& B)
+			{
+				std::vector<uint32> tmp;
+				sb_surfs_near(v3{ 0.f, 0.f, 0.f }, v3{ 0.f, 0.f, 0.f }, tmp, B);              // builds the grid on first use
+				grid = &B.sgrid;
+				if (&B == &g_sbb) grid = &g_sb_surf_grid;
+				sb.resize(B.surf.size());
+				for (size_t i = 0; i < sb.size(); ++i) { const s_sb_surface& sf = B.surf[i]; sb[i] = { sf.lo, sf.hi, sf.n.z }; }
+			}
+		};
+		struct sbq_tmp { std::vector<uint32> cand, near_faces; };
+		// every item whose cells meet the box, unsorted, a multi-cell item once per cell
+		static void sbq_gather(const s_sb_xygrid& G, float lx, float ly, float hx, float hy, std::vector<uint32>& out)
+		{
+			out.assign(G.big.begin(), G.big.end());
+			if (G.nx <= 0) return;
+			const int32 ax = G.cx(lx), ay = G.cy(ly), bx = G.cx(hx), by = G.cy(hy);
+			for (int32 y = ay; y <= by; ++y)
+				for (int32 x = ax; x <= bx; ++x)
+				{
+					const size_t c = (size_t)y * G.nx + x;
+					out.insert(out.end(), G.idx.begin() + G.start[c], G.idx.begin() + G.start[c + 1]);
+				}
+		}
+		static void sbq_sort_unique(std::vector<uint32>& v) { std::sort(v.begin(), v.end()); v.erase(std::unique(v.begin(), v.end()), v.end()); }
+
+		// sb_headroom on a cache being built (same result): the old scan's early-outs are applied before sorting, the rest runs in
+		// ascending surface order exactly as before
+		static float sbq_headroom(const sbq_ctx& cx, const s_sb_bsp& B, v3 p, float maxh, sbq_tmp& t)
+		{
+			float best = p.z + maxh;
+			const float top = best;
+			sbq_gather(*cx.grid, p.x, p.y, p.x, p.y, t.cand);
+			t.near_faces.clear();
+			for (const uint32 si : t.cand)
+			{
+				const sbq_sb& sf = cx.sb[si];
+				if (std::fabs(sf.nz) < 1e-3f || sf.hi.x < p.x || sf.lo.x > p.x || sf.hi.y < p.y || sf.lo.y > p.y || sf.hi.z <= p.z || sf.lo.z >= top) continue;
+				t.near_faces.push_back(si);
+			}
+			sbq_sort_unique(t.near_faces);
+			for (const uint32 si : t.near_faces)
+			{
+				const s_sb_surface& sf = B.surf[si];
+				if (!sf.ok || std::fabs(sf.n.z) < 1e-3f) continue;
+				if (sf.hi.x < p.x || sf.lo.x > p.x || sf.hi.y < p.y || sf.lo.y > p.y || sf.hi.z <= p.z || sf.lo.z >= best) continue;
+				const v3 v0 = sf.poly[0];
+				const float z = v0.z - (sf.n.x * (p.x - v0.x) + sf.n.y * (p.y - v0.y)) / sf.n.z;
+				if (z <= p.z || z >= best) continue;
+				if (sb_inside(sf.poly, sf.n, v3{ p.x, p.y, z })) best = z;
+			}
+			return best - p.z;
+		}
+
+		// sb_gap_open (no `why`) on those queries
+		static bool sbq_gap_open(const sbq_ctx& cx, s_sb_bsp& B, const s_sb_gap& gp, sbq_tmp& t)
+		{
+			const v3 lo{ (std::min)(gp.a.x, gp.b.x) - 0.5f, (std::min)(gp.a.y, gp.b.y) - 0.5f, (std::min)(gp.a.z, gp.b.z) };
+			const v3 hi{ (std::max)(gp.a.x, gp.b.x) + 0.5f, (std::max)(gp.a.y, gp.b.y) + 0.5f, (std::max)(gp.a.z, gp.b.z) + 3.1f };
+			sbq_gather(*cx.grid, lo.x, lo.y, hi.x, hi.y, t.cand);
+			std::vector<uint32>& near_faces = t.near_faces; near_faces.clear();
+			for (const uint32 s : t.cand)
+			{
+				const sbq_sb& sf = cx.sb[s];
+				if (sf.hi.x < lo.x || sf.lo.x > hi.x || sf.hi.y < lo.y || sf.lo.y > hi.y || sf.hi.z < lo.z || sf.lo.z > hi.z) continue;
+				near_faces.push_back(s);
+			}
+			sbq_sort_unique(near_faces);
+			const v3 m = gp.m;
+			const v3 dirs[2] = { m, m * -1.f };
+			for (int k = 1; k <= 3; ++k)
+			{
+				const v3 c = gp.a + (gp.b - gp.a) * (0.25f * (float)k);
+				if (sb_blocked(near_faces, c + v3{ 0.f, 0.f, 0.05f }, c + v3{ 0.f, 0.f, 0.05f + k_sb_room_min }, B)) continue;   // no room
+				bool room = true;
+				for (const float h : { 0.2f, 0.6f })
+					for (const v3& d : dirs)
+						if (sb_blocked(near_faces, c + v3{ 0.f, 0.f, h }, c + v3{ 0.f, 0.f, h } + d * 0.2f, B)) room = false;
+				if (room) return true;
+			}
+			return false;
+		}
+
+		void sb_find_gaps(s_sb_bsp& B = g_sbb)
+		{
+			const float wmax = 0.35f;
+			std::vector<uint32> cand;
+			for (uint32 s = 0; s < (uint32)B.surf.size(); ++s)
+			{
+				const s_sb_surface& sf = B.surf[s];
+				if (sf.ok && sf.n.z > -0.3f && sf.n.z < 0.9f) cand.push_back(s);       // walls and steep slopes
+			}
+			std::sort(cand.begin(), cand.end(), [&B](uint32 x, uint32 y) { return B.surf[x].lo.x < B.surf[y].lo.x; });
+			std::vector<sbq_box> bx(cand.size());
+			for (size_t i = 0; i < cand.size(); ++i) { const s_sb_surface& sf = B.surf[cand[i]]; bx[i] = { sf.lo.x, sf.lo.y, sf.lo.z, sf.hi.x, sf.hi.y, sf.hi.z, sf.n }; }
+			sbq_yindex yi; yi.build(bx);
+			// the pair tests, in parallel: chunk c = candidates [c * 64, c * 64 + 64); its gaps in (i, j) order
+			constexpr size_t k_chunk = 64;
+			const size_t nchunk = (cand.size() + k_chunk - 1) / k_chunk;
+			std::vector<std::vector<s_sb_gap>> res(nchunk);
+			std::atomic<bool> stop{ false };
+			sbq_for_chunks<sbq_scratch>(nchunk, [&](size_t c, sbq_scratch& sc)
+			{
+				if (stop.load(std::memory_order_relaxed)) return;
+				if (B.cancelled()) { stop.store(true); return; }                             // Reach worker: a cancelled build stops here
+				for (size_t i = c * k_chunk; i < (std::min)(cand.size(), (c + 1) * k_chunk); ++i)
+				{
+					const sbq_box& a = bx[i];
+					yi.query((uint32)i, a, wmax, sc.js);
+					for (const uint32 j : sc.js)
+					{
+						const sbq_box& b = bx[j];
+						if (b.ly > a.hy + wmax || b.hy < a.ly - wmax || b.lz > a.hz + wmax || b.hz < a.lz - wmax) continue;
+						if (dot(a.n, b.n) > -0.5f) continue;                                 // not facing each other
+						s_sb_gap gp;
+						if (sbq_gap_pair(cand[i], cand[j], B, sc, gp)) res[c].push_back(gp);
+					}
+				}
+			});
+			if (stop.load() || B.cancelled()) return;
+			// in the old order: the same crack over several triangles extends the gap it continues
+			sbq_mindex zi; std::vector<uint32> cl;
+			for (const auto& chunk : res)
+				for (const s_sb_gap& gp : chunk)
+				{
+					const v3 m = gp.m;
+					bool merged = false;
+					const v3 gc = (gp.a + gp.b) * 0.5f;
+					zi.candidates(gp.a, gp.b, B.gaps.size(), cl);
+					for (const uint32 gi : cl)
+					{
+						auto& g2 = B.gaps[gi];
+						if (std::fabs(dot(g2.m, m)) < 0.9f || std::fabs((g2.a.z + g2.b.z) * 0.5f - gc.z) > 0.1f) continue;
+						if (len(sb_closest_on_segment(gc, g2.a, g2.b) - gc) > 0.3f && len(sb_closest_on_segment(gp.a, g2.a, g2.b) - gp.a) > 0.05f &&
+							len(sb_closest_on_segment(gp.b, g2.a, g2.b) - gp.b) > 0.05f) continue;
+						const v3 t2 = norm(g2.b - g2.a), a0 = g2.a;
+						const float u0 = dot(a0, t2);
+						const float lo2 = (std::min)(0.f, (std::min)(dot(gp.a, t2), dot(gp.b, t2)) - u0);
+						const float hi2 = (std::max)(dot(g2.b, t2) - u0, (std::max)(dot(gp.a, t2), dot(gp.b, t2)) - u0);
+						g2.a = a0 + t2 * lo2; g2.b = a0 + t2 * hi2;
+						g2.wmin = (std::min)(g2.wmin, gp.wmin); g2.wmax = (std::max)(g2.wmax, gp.wmax);
+						zi.reg(gi, g2.a, g2.b);
+						merged = true;
+						break;
+					}
+					if (!merged) { B.gaps.push_back(gp); zi.reg((uint32)B.gaps.size() - 1, gp.a, gp.b); }
+				}
+			// only gaps a player can drop into under normal circumstances (recorded: many found indoors or against walls)
+			std::vector<s_sb_gap> open_gaps;
+			{
+				const sbq_ctx cx(B);
+				std::vector<s_sb_gap> done(B.gaps.size()); std::vector<uint8_t> keep(B.gaps.size(), 0);
+				constexpr size_t k_blk = 16;
+				sbq_for_chunks<sbq_tmp>((B.gaps.size() + k_blk - 1) / k_blk, [&](size_t c, sbq_tmp& t)
+				{
+					for (size_t k = c * k_blk; k < (std::min)(B.gaps.size(), (c + 1) * k_blk); ++k)
+					{
+						s_sb_gap gp = B.gaps[k];
+						if (!sbq_gap_open(cx, B, gp, t)) continue;
+						// little room above (under 3 wu): kept as a lottery - on MCC slow landings that sink in late launch there too
+						gp.room = sbq_headroom(cx, B, (gp.a + gp.b) * 0.5f + v3{ 0.f, 0.f, 0.05f }, 3.f, t);
+						if (gp.room >= k_sb_room_min) { done[k] = gp; keep[k] = 1; }
+					}
+				});
+				for (size_t k = 0; k < done.size(); ++k) if (keep[k]) open_gaps.push_back(done[k]);
+			}
+			B.gaps.swap(open_gaps);
+			// the gaps as seams too, so they are rated (walk off / jump / falling) with the others
+			for (const auto& gp : B.gaps)
+			{
+				s_sb_seam sm;
+				sm.a = gp.a; sm.b = gp.b; sm.s0 = gp.face_a; sm.s1 = gp.face_b; sm.gap = true; sm.width = gp.wmin;
+				B.seams.push_back(sm);
+			}
+		}
+
+		void sb_find_fins(s_sb_bsp& B = g_sbb)
+		{
+			const float tmax = 0.8f;
+			std::vector<uint32> cand;
+			for (uint32 s = 0; s < (uint32)B.surf.size(); ++s)
+			{
+				const s_sb_surface& sf = B.surf[s];
+				if (sf.ok && std::fabs(sf.n.z) < 0.6f) cand.push_back(s);              // sides: walls and steep slopes
+			}
+			std::sort(cand.begin(), cand.end(), [&B](uint32 x, uint32 y) { return B.surf[x].lo.x < B.surf[y].lo.x; });
+			std::vector<sbq_box> bx(cand.size());
+			for (size_t i = 0; i < cand.size(); ++i) { const s_sb_surface& sf = B.surf[cand[i]]; bx[i] = { sf.lo.x, sf.lo.y, sf.lo.z, sf.hi.x, sf.hi.y, sf.hi.z, sf.n }; }
+			sbq_yindex yi; yi.build(bx);
+			constexpr size_t k_chunk = 64;
+			const size_t nchunk = (cand.size() + k_chunk - 1) / k_chunk;
+			std::vector<std::vector<s_sb_fin>> res(nchunk);
+			std::atomic<bool> stop{ false };
+			sbq_for_chunks<sbq_scratch>(nchunk, [&](size_t c, sbq_scratch& sc)
+			{
+				if (stop.load(std::memory_order_relaxed)) return;
+				if (B.cancelled()) { stop.store(true); return; }                             // Reach worker: a cancelled build stops here
+				for (size_t i = c * k_chunk; i < (std::min)(cand.size(), (c + 1) * k_chunk); ++i)
+				{
+					const sbq_box& a = bx[i];
+					yi.query((uint32)i, a, tmax, sc.js);
+					for (const uint32 j : sc.js)
+					{
+						const sbq_box& b = bx[j];
+						if (b.hx < a.lx - tmax || b.ly > a.hy + tmax || b.hy < a.ly - tmax || b.lz > a.hz + tmax || b.hz < a.lz - tmax) continue;   // k_fin_apart
+						const float cn = dot(a.n, b.n);
+						if (cn > -0.966f || -cn < 0.9835f) continue;                         // not opposite / sides over 10.5 deg apart (> 10: k_fin_sides_angle)
+						s_sb_fin fn;
+						if (sbq_fin_pair(cand[i], cand[j], fn, sc, B) == k_fin_ok) res[c].push_back(fn);
+					}
+				}
+			});
+			if (stop.load() || B.cancelled()) return;
+			std::vector<s_sb_fin> found;
+			sbq_mindex zi; std::vector<uint32> cl;
+			for (const auto& chunk : res)
+				for (const s_sb_fin& fn : chunk)
+				{
+					const v3 m = fn.m;
+					bool merged = false;
+					const v3 gc = (fn.a + fn.b) * 0.5f;
+					zi.candidates(fn.a, fn.b, found.size(), cl);
+					for (const uint32 fi : cl)
+					{
+						auto& f2 = found[fi];
+						if (std::fabs(dot(f2.m, m)) < 0.9f || std::fabs((f2.a.z + f2.b.z) * 0.5f - gc.z) > 0.1f) continue;
+						if (len(sb_closest_on_segment(gc, f2.a, f2.b) - gc) > 0.3f && len(sb_closest_on_segment(fn.a, f2.a, f2.b) - fn.a) > 0.05f &&
+							len(sb_closest_on_segment(fn.b, f2.a, f2.b) - fn.b) > 0.05f) continue;
+						const v3 t2 = norm(f2.b - f2.a), a0 = f2.a;
+						const float u0 = dot(a0, t2);
+						const float lo2 = (std::min)(0.f, (std::min)(dot(fn.a, t2), dot(fn.b, t2)) - u0);
+						const float hi2 = (std::max)(dot(f2.b, t2) - u0, (std::max)(dot(fn.a, t2), dot(fn.b, t2)) - u0);
+						f2.a = a0 + t2 * lo2; f2.b = a0 + t2 * hi2;
+						f2.tmin = (std::min)(f2.tmin, fn.tmin); f2.tmax = (std::max)(f2.tmax, fn.tmax);
+						if (fn.dev > f2.dev) { f2.dev = fn.dev; f2.dir = fn.dir; }
+						f2.parallel = f2.parallel && fn.parallel;
+						zi.reg(fi, f2.a, f2.b);
+						merged = true;
+						break;
+					}
+					if (!merged) { found.push_back(fn); zi.reg((uint32)found.size() - 1, fn.a, fn.b); }
+				}
+			{
+				const sbq_ctx cx(B);
+				std::vector<uint8_t> keep(found.size(), 0);
+				constexpr size_t k_blk = 16;
+				sbq_for_chunks<sbq_tmp>((found.size() + k_blk - 1) / k_blk, [&](size_t c, sbq_tmp& t)
+				{
+					for (size_t k = c * k_blk; k < (std::min)(found.size(), (c + 1) * k_blk); ++k)
+					{
+						s_sb_fin& fn = found[k];
+						s_sb_gap probe;
+						probe.a = fn.a; probe.b = fn.b; probe.m = fn.m;
+						if (!sbq_gap_open(cx, B, probe, t)) continue;                                  // indoors, or a wall over it
+						fn.est = sb_up_estimate(fn.dev / 57.29578f) * (k_sb_pair_flat + 0.5f * (fn.tmin + fn.tmax)) / k_sb_pair_norm;
+						fn.room = sbq_headroom(cx, B, (fn.a + fn.b) * 0.5f + v3{ 0.f, 0.f, 0.05f }, 80.f, t);
+						if (fn.room >= k_sb_room_min) keep[k] = 1;                         // under 3 wu: a lottery (a 26.8 u/s launch under 0.7)
+					}
+				});
+				for (size_t k = 0; k < found.size(); ++k) if (keep[k]) B.fins.push_back(found[k]);
+			}
+		}
+
+		// ---- junctions. g_sbb (Halo 2 / 3) keeps the old scan below, unchanged; a cache being built (Reach) takes the fast path.
+		static void sbq_find_junctions_plain(s_sb_bsp& K)
+		{
+			K.junctions.clear();
+			std::vector<uint32> floors;
+			for (uint32 s = 0; s < (uint32)K.surf.size(); ++s)
+				if (K.surf[s].ok && K.surf[s].n.z >= 0.7f && K.surf[s].poly.size() >= 3) floors.push_back(s);
+			std::sort(floors.begin(), floors.end(), [&K](uint32 x, uint32 y) { return K.surf[x].lo.x < K.surf[y].lo.x; });
+			std::vector<float> pmax(floors.size());
+			{ float m = -1e30f; for (size_t i = 0; i < floors.size(); ++i) { m = (std::max)(m, K.surf[floors[i]].hi.x); pmax[i] = m; } }
+			for (uint32 a = 0; a < (uint32)K.surf.size(); ++a)
+			{
+				if ((a & 1023) == 0 && K.cancelled()) return;
+				const s_sb_surface& A = K.surf[a];
+				if (!A.ok || A.poly.size() < 3 || A.n.z < 0.17f || A.n.z > 0.97f) continue;
+				size_t first = (size_t)(std::lower_bound(pmax.begin(), pmax.end(), A.lo.x - 0.05f) - pmax.begin()), count = floors.size();
+				for (size_t fi = first; fi < count; ++fi)
+				{
+					const uint32 b = floors[fi];
+					const s_sb_surface& B = K.surf[b];
 					if (B.lo.x > A.hi.x + 0.05f) break;
 					if (B.base == A.base || B.hi.x < A.lo.x - 0.05f || B.lo.y > A.hi.y + 0.05f || B.hi.y < A.lo.y - 0.05f || B.lo.z > A.hi.z + 0.05f || B.hi.z < A.lo.z - 0.05f) continue;
-					// A's polygon against B's plane: the corners on it and the edges crossing it
 					v3 pts[12]; int np = 0;
 					for (size_t k = 0; k < A.poly.size() && np < 12; ++k)
 					{
@@ -837,7 +1436,6 @@ namespace h2cv::sb
 					v3 ca = pts[0], cb = pts[1]; float span = len(cb - ca);
 					for (int x = 0; x < np; ++x) for (int y = x + 1; y < np; ++y) if (len(pts[y] - pts[x]) > span) { span = len(pts[y] - pts[x]); ca = pts[x]; cb = pts[y]; }
 					if (span < 0.3f) continue;
-					// clipped to B's polygon: the longest run of samples inside it
 					const int ns = (std::min)(64, (std::max)(4, (int)(span / 0.1f)));
 					int run_s = -1, run_e = -1, cur_s = -1;
 					for (int k = 0; k <= ns; ++k)
@@ -852,138 +1450,218 @@ namespace h2cv::sb
 					if (run_s < 0 || (float)(run_e - run_s) * span / (float)ns < 0.3f) continue;
 					s_sb_seam sm;
 					sm.a = ca + (cb - ca) * ((float)run_s / (float)ns); sm.b = ca + (cb - ca) * ((float)run_e / (float)ns);
-					if (sb_headroom((sm.a + sm.b) * 0.5f + v3{ 0.f, 0.f, 0.05f }, 3.f) < k_sb_room_min) continue;   // nothing to land into
+					if (sb_headroom((sm.a + sm.b) * 0.5f + v3{ 0.f, 0.f, 0.05f }, 3.f, K) < k_sb_room_min) continue;
 					sm.s0 = b; sm.s1 = a; sm.junction = true;
 					sm.bend = std::acos((std::max)(-1.f, (std::min)(1.f, dot(A.n, B.n)))) * 57.29578f;
-					g_sbb.junctions.push_back((uint32)g_sbb.seams.size());
-					g_sbb.seams.push_back(sm);
+					K.junctions.push_back((uint32)K.seams.size());
+					K.seams.push_back(sm);
 				}
 			}
 		}
 
-		void sb_find_fins()
+		// where a separate piece meets a floor at an angle (see the old comment): for each leaning face A (ascending index) the floors B
+		// (ascending index) near it. B comes from a floors-only grid, the pair bodies run on worker threads, the seams are appended in
+		// (A, B) order.
+		void sb_find_junctions(s_sb_bsp& K = g_sbb)   // K: the cache; B below is a floor surface
 		{
-			const float tmax = 0.8f;
-			std::vector<uint32> cand;
-			for (uint32 s = 0; s < (uint32)g_sbb.surf.size(); ++s)
+			if (&K == &g_sbb) { sbq_find_junctions_plain(K); return; }
+			K.junctions.clear();
+			s_sb_xygrid fg;                                                                    // the floors (ok, n.z >= 0.7, 3+ corners)
+			fg.build(K.surf.size(), [&K](size_t i, v3& l, v3& h) { const auto& sf = K.surf[i]; if (!(sf.ok && sf.n.z >= 0.7f && sf.poly.size() >= 3)) return false; l = sf.lo; h = sf.hi; return true; });
+			std::vector<uint32> leaning;                                                       // leaning 15-80 deg from level
+			for (uint32 a = 0; a < (uint32)K.surf.size(); ++a)
 			{
-				const s_sb_surface& sf = g_sbb.surf[s];
-				if (sf.ok && std::fabs(sf.n.z) < 0.6f) cand.push_back(s);              // sides: walls and steep slopes
+				const s_sb_surface& A = K.surf[a];
+				if (!(!A.ok || A.poly.size() < 3 || A.n.z < 0.17f || A.n.z > 0.97f)) leaning.push_back(a);
 			}
-			std::sort(cand.begin(), cand.end(), [](uint32 x, uint32 y) { return g_sbb.surf[x].lo.x < g_sbb.surf[y].lo.x; });
-			std::vector<v3> samples;
-			std::vector<std::pair<v3, float>> hits;
-			std::vector<s_sb_fin> found;
-			for (size_t i = 0; i < cand.size(); ++i)
+			const sbq_ctx cx(K);
+			constexpr size_t k_chunk = 64;
+			const size_t nchunk = (leaning.size() + k_chunk - 1) / k_chunk;
+			std::vector<std::vector<s_sb_seam>> res(nchunk);
+			std::atomic<bool> stop{ false };
+			struct st_t { sbq_tmp t; std::vector<uint32> near_f, cand_g; };
+			sbq_for_chunks<st_t>(nchunk, [&](size_t c, st_t& st)
 			{
-				const s_sb_surface& fa = g_sbb.surf[cand[i]];
-				for (size_t j = i + 1; j < cand.size(); ++j)
+				if (stop.load(std::memory_order_relaxed)) return;
+				if (K.cancelled()) { stop.store(true); return; }                             // Reach worker: a cancelled build stops here
+				for (size_t li = c * k_chunk; li < (std::min)(leaning.size(), (c + 1) * k_chunk); ++li)
 				{
-					const s_sb_surface& fb = g_sbb.surf[cand[j]];
-					if (fb.lo.x > fa.hi.x + tmax) break;
-					s_sb_fin fn;
-					if (sb_fin_pair(cand[i], cand[j], fn, samples, hits, nullptr) != k_fin_ok) continue;
-					const v3 m = fn.m;
-					bool merged = false;
-					const v3 gc = (fn.a + fn.b) * 0.5f;
-					for (auto& f2 : found)
+					const uint32 a = leaning[li];
+					const s_sb_surface& A = K.surf[a];
+					sbq_gather(fg, A.lo.x - 0.05f, A.lo.y - 0.05f, A.hi.x + 0.05f, A.hi.y + 0.05f, st.cand_g);
+					st.near_f.clear();
+					for (const uint32 b : st.cand_g)
 					{
-						if (std::fabs(dot(f2.m, m)) < 0.9f || std::fabs((f2.a.z + f2.b.z) * 0.5f - gc.z) > 0.1f) continue;
-						if (len(sb_closest_on_segment(gc, f2.a, f2.b) - gc) > 0.3f && len(sb_closest_on_segment(fn.a, f2.a, f2.b) - fn.a) > 0.05f &&
-							len(sb_closest_on_segment(fn.b, f2.a, f2.b) - fn.b) > 0.05f) continue;
-						const v3 t2 = norm(f2.b - f2.a), a0 = f2.a;
-						const float u0 = dot(a0, t2);
-						const float lo2 = (std::min)(0.f, (std::min)(dot(fn.a, t2), dot(fn.b, t2)) - u0);
-						const float hi2 = (std::max)(dot(f2.b, t2) - u0, (std::max)(dot(fn.a, t2), dot(fn.b, t2)) - u0);
-						f2.a = a0 + t2 * lo2; f2.b = a0 + t2 * hi2;
-						f2.tmin = (std::min)(f2.tmin, fn.tmin); f2.tmax = (std::max)(f2.tmax, fn.tmax);
-						if (fn.dev > f2.dev) { f2.dev = fn.dev; f2.dir = fn.dir; }
-						f2.parallel = f2.parallel && fn.parallel;
-						merged = true;
-						break;
+						const sbq_sb& B = cx.sb[b];
+						if (B.lo.x > A.hi.x + 0.05f || B.hi.x < A.lo.x - 0.05f || B.lo.y > A.hi.y + 0.05f || B.hi.y < A.lo.y - 0.05f || B.lo.z > A.hi.z + 0.05f || B.hi.z < A.lo.z - 0.05f) continue;
+						st.near_f.push_back(b);
 					}
-					if (!merged) found.push_back(fn);
+					sbq_sort_unique(st.near_f);
+					for (const uint32 b : st.near_f)
+					{
+						const s_sb_surface& B = K.surf[b];
+						if (B.lo.x > A.hi.x + 0.05f) continue;
+						if (B.base == A.base || B.hi.x < A.lo.x - 0.05f || B.lo.y > A.hi.y + 0.05f || B.hi.y < A.lo.y - 0.05f || B.lo.z > A.hi.z + 0.05f || B.hi.z < A.lo.z - 0.05f) continue;
+						// A's polygon against B's plane: the corners on it and the edges crossing it
+						v3 pts[12]; int np = 0;
+						for (size_t k = 0; k < A.poly.size() && np < 12; ++k)
+						{
+							const v3 p = A.poly[k], q = A.poly[(k + 1) % A.poly.size()];
+							const float dp = dot(p - B.poly[0], B.n), dq = dot(q - B.poly[0], B.n);
+							if (std::fabs(dp) < 0.01f) pts[np++] = p;
+							else if (std::fabs(dq) >= 0.01f && (dp < 0.f) != (dq < 0.f)) pts[np++] = p + (q - p) * (dp / (dp - dq));
+						}
+						if (np < 2) continue;
+						v3 ca = pts[0], cb = pts[1]; float span = len(cb - ca);
+						for (int x = 0; x < np; ++x) for (int y = x + 1; y < np; ++y) if (len(pts[y] - pts[x]) > span) { span = len(pts[y] - pts[x]); ca = pts[x]; cb = pts[y]; }
+						if (span < 0.3f) continue;
+						// clipped to B's polygon: the longest run of samples inside it
+						const int ns = (std::min)(64, (std::max)(4, (int)(span / 0.1f)));
+						int run_s = -1, run_e = -1, cur_s = -1;
+						for (int k = 0; k <= ns; ++k)
+						{
+							if (sb_inside(B.poly, B.n, ca + (cb - ca) * ((float)k / (float)ns)))
+							{
+								if (cur_s < 0) cur_s = k;
+								if (run_s < 0 || k - cur_s > run_e - run_s) { run_s = cur_s; run_e = k; }
+							}
+							else cur_s = -1;
+						}
+						if (run_s < 0 || (float)(run_e - run_s) * span / (float)ns < 0.3f) continue;
+						s_sb_seam sm;
+						sm.a = ca + (cb - ca) * ((float)run_s / (float)ns); sm.b = ca + (cb - ca) * ((float)run_e / (float)ns);
+						if (sbq_headroom(cx, K, (sm.a + sm.b) * 0.5f + v3{ 0.f, 0.f, 0.05f }, 3.f, st.t) < k_sb_room_min) continue;   // nothing to land into
+						sm.s0 = b; sm.s1 = a; sm.junction = true;
+						sm.bend = std::acos((std::max)(-1.f, (std::min)(1.f, dot(A.n, B.n)))) * 57.29578f;
+						res[c].push_back(sm);
+					}
 				}
-			}
-			for (auto& fn : found)
-			{
-				s_sb_gap probe;
-				probe.a = fn.a; probe.b = fn.b; probe.m = fn.m;
-				if (!sb_gap_open(probe)) continue;                                         // indoors, or a wall over it
-				fn.est = sb_up_estimate(fn.dev / 57.29578f) * (k_sb_pair_flat + 0.5f * (fn.tmin + fn.tmax)) / k_sb_pair_norm;
-				fn.room = sb_headroom((fn.a + fn.b) * 0.5f + v3{ 0.f, 0.f, 0.05f }, 80.f);
-				if (fn.room < k_sb_room_min) continue;                                  // under 3 wu: a lottery (a 26.8 u/s launch under 0.7)
-				g_sbb.fins.push_back(fn);
-			}
+			});
+			if (stop.load() || K.cancelled()) return;
+			for (const auto& chunk : res)
+				for (const s_sb_seam& sm : chunk) { K.junctions.push_back((uint32)K.seams.size()); K.seams.push_back(sm); }
 		}
 
-		// slot seams: a floor seam with a steep face hanging from it on each side (normals across the seam, opposite ways) -
-		// a slot or fin thinner than the pill right under the seam line. Only a pill straddling it almost exactly touches
-		// both faces; a few hundredths past it, it touches one wall and nothing squeezes. Recorded at the bridge slot
-		// (level 5838 / 5845 under the 5779 / 5837 floor seam): +15.68 with the contact ~0.01 off, nothing at ~0.04 off with
-		// the same speed (9.43) and drift.
-		void sb_mark_slots()
+		// slot seams: see the old comment. The steep faces go into a flat 2 wu grid (flat arrays; a sorted-key lookup when the map is
+		// too spread out for one); every seam's test is independent, so they run on worker threads. The answer is pos && neg, so no
+		// per-seam de-duplication or visiting order is needed and the scan stops once both are seen.
+		void sb_mark_slots(s_sb_bsp& B = g_sbb)
 		{
-			std::map<int64_t, std::vector<uint32>> grid;                       // steep faces, 2 wu cells in x / y
 			auto cell = [](float v) { return (int32)std::floor(v * 0.5f); };
-			auto key = [](int32 x, int32 y) { return ((int64_t)x << 32) ^ (int64_t)(uint32)y; };
-			for (uint32 s = 0; s < (uint32)g_sbb.surf.size(); ++s)
+			struct rg_t { int32 x0, x1, y0, y1; uint32 s; };
+			std::vector<rg_t> rg;                                                       // steep faces, 2 wu cells in x / y
+			int32 gx0 = INT32_MAX, gx1 = INT32_MIN, gy0 = INT32_MAX, gy1 = INT32_MIN;
+			for (uint32 s = 0; s < (uint32)B.surf.size(); ++s)
 			{
-				const s_sb_surface& sf = g_sbb.surf[s];
+				const s_sb_surface& sf = B.surf[s];
 				if (!sf.ok || std::fabs(sf.n.z) > 0.3f) continue;
 				const int32 x0 = cell(sf.lo.x), x1 = cell(sf.hi.x), y0 = cell(sf.lo.y), y1 = cell(sf.hi.y);
 				if ((int64_t)(x1 - x0 + 1) * (int64_t)(y1 - y0 + 1) > 400) continue;     // huge walls: not a slot's side
-				for (int32 x = x0; x <= x1; ++x)
-					for (int32 y = y0; y <= y1; ++y) grid[key(x, y)].push_back(s);
+				rg.push_back({ x0, x1, y0, y1, s });
+				gx0 = (std::min)(gx0, x0); gx1 = (std::max)(gx1, x1); gy0 = (std::min)(gy0, y0); gy1 = (std::max)(gy1, y1);
 			}
-			std::vector<uint32> seen;
-			for (auto& sm : g_sbb.seams)
+			struct ent_t { v3 n; uint32 s; };
+			std::vector<uint32> start; std::vector<ent_t> ent; std::vector<int64_t> keys;
+			int64_t nx = 0, ny = 0; bool dense = false;
+			auto key = [](int32 x, int32 y) { return ((int64_t)x << 32) ^ (int64_t)(uint32)y; };
+			if (!rg.empty())
 			{
-				if (sm.gap) continue;
-				const v3 d = sm.b - sm.a;
-				const float l = len(d);
-				if (l < 1e-3f) continue;
-				const v3 u = d * (1.f / l);
-				const v3 c = cross(u, v3{ 0.f, 0.f, 1.f });
-				if (len(c) < 0.5f) continue;
-				const v3 across = norm(c);
-				bool pos = false, neg = false;
-				seen.clear();
-				const int32 x0 = cell((std::min)(sm.a.x, sm.b.x) - 0.05f), x1 = cell((std::max)(sm.a.x, sm.b.x) + 0.05f);
-				const int32 y0 = cell((std::min)(sm.a.y, sm.b.y) - 0.05f), y1 = cell((std::max)(sm.a.y, sm.b.y) + 0.05f);
-				for (int32 x = x0; x <= x1 && !(pos && neg); ++x)
-					for (int32 y = y0; y <= y1 && !(pos && neg); ++y)
+				nx = (int64_t)gx1 - gx0 + 1; ny = (int64_t)gy1 - gy0 + 1;
+				dense = nx * ny <= (1 << 24);
+				if (dense)
+				{
+					start.assign((size_t)(nx * ny + 1), 0);
+					for (const rg_t& r : rg) for (int32 x = r.x0; x <= r.x1; ++x) for (int32 y = r.y0; y <= r.y1; ++y) ++start[(size_t)((int64_t)(y - gy0) * nx + (x - gx0)) + 1];
+					for (size_t c = 0; c + 1 < start.size(); ++c) start[c + 1] += start[c];
+					ent.resize(start.back());
+					std::vector<uint32> fill(start.begin(), start.end() - 1);
+					for (const rg_t& r : rg) for (int32 x = r.x0; x <= r.x1; ++x) for (int32 y = r.y0; y <= r.y1; ++y) ent[fill[(size_t)((int64_t)(y - gy0) * nx + (x - gx0))]++] = { B.surf[r.s].n, r.s };
+				}
+				else
+				{
+					std::vector<std::pair<int64_t, ent_t>> kv;
+					for (const rg_t& r : rg) for (int32 x = r.x0; x <= r.x1; ++x) for (int32 y = r.y0; y <= r.y1; ++y) kv.push_back({ key(x, y), { B.surf[r.s].n, r.s } });
+					std::stable_sort(kv.begin(), kv.end(), [](const auto& p, const auto& q) { return p.first < q.first; });
+					for (size_t i = 0; i < kv.size(); ++i)
 					{
-						const auto it = grid.find(key(x, y));
-						if (it == grid.end()) continue;
-						for (const uint32 s : it->second)
-						{
-							if (std::find(seen.begin(), seen.end(), s) != seen.end()) continue;
-							seen.push_back(s);
-							const s_sb_surface& f = g_sbb.surf[s];
-							if (std::fabs(dot(f.n, u)) > 0.15f) continue;              // its normal must point across the seam
-							const float side = dot(f.n, across);
-							if (std::fabs(side) < 0.9f) continue;
-							int on = 0;                                               // hanging from the seam: 2+ corners on its line
-							for (const v3& q : f.poly)
-							{
-								const float tt = dot(q - sm.a, u);
-								if (tt < -0.5f || tt > l + 0.5f) continue;
-								if (len(q - (sm.a + u * tt)) < 0.03f) ++on;
-							}
-							if (on < 2) continue;
-							if (side > 0.f) pos = true; else neg = true;
-						}
+						if (i == 0 || kv[i].first != kv[i - 1].first) { keys.push_back(kv[i].first); start.push_back((uint32)i); }
+						ent.push_back(kv[i].second);
 					}
-				sm.slot = pos && neg;
+					start.push_back((uint32)kv.size());
+				}
 			}
+			auto cell_range = [&](int32 x, int32 y, uint32& b, uint32& e) -> bool
+			{
+				if (rg.empty()) return false;
+				if (dense)
+				{
+					if (x < gx0 || x > gx1 || y < gy0 || y > gy1) return false;
+					const size_t c = (size_t)((int64_t)(y - gy0) * nx + (x - gx0));
+					b = start[c]; e = start[c + 1]; return b != e;
+				}
+				const int64_t k = key(x, y);
+				const auto it = std::lower_bound(keys.begin(), keys.end(), k);
+				if (it == keys.end() || *it != k) return false;
+				const size_t c = (size_t)(it - keys.begin());
+				b = start[c]; e = start[c + 1]; return true;
+			};
+			constexpr size_t k_chunk = 256;
+			const size_t nchunk = (B.seams.size() + k_chunk - 1) / k_chunk;
+			std::atomic<bool> stop{ false };
+			sbq_for_chunks<int>(nchunk, [&](size_t c, int&)
+			{
+				if (stop.load(std::memory_order_relaxed)) return;
+				if (B.cancelled()) { stop.store(true); return; }                             // Reach worker: a cancelled build stops here
+				for (size_t si = c * k_chunk; si < (std::min)(B.seams.size(), (c + 1) * k_chunk); ++si)
+				{
+					auto& sm = B.seams[si];
+					if (sm.gap) continue;
+					const v3 d = sm.b - sm.a;
+					const float l = len(d);
+					if (l < 1e-3f) continue;
+					const v3 u = d * (1.f / l);
+					const v3 cr = cross(u, v3{ 0.f, 0.f, 1.f });
+					if (len(cr) < 0.5f) continue;
+					const v3 across = norm(cr);
+					bool pos = false, neg = false;
+					const int32 x0 = cell((std::min)(sm.a.x, sm.b.x) - 0.05f), x1 = cell((std::max)(sm.a.x, sm.b.x) + 0.05f);
+					const int32 y0 = cell((std::min)(sm.a.y, sm.b.y) - 0.05f), y1 = cell((std::max)(sm.a.y, sm.b.y) + 0.05f);
+					for (int32 x = x0; x <= x1 && !(pos && neg); ++x)
+						for (int32 y = y0; y <= y1 && !(pos && neg); ++y)
+						{
+							uint32 eb, ee;
+							if (!cell_range(x, y, eb, ee)) continue;
+							for (uint32 k = eb; k < ee && !(pos && neg); ++k)
+							{
+								const ent_t& en = ent[k];
+								if (std::fabs(dot(en.n, u)) > 0.15f) continue;             // its normal must point across the seam
+								const float side = dot(en.n, across);
+								if (std::fabs(side) < 0.9f) continue;
+								if (side > 0.f ? pos : neg) continue;                      // that side is already seen
+								const s_sb_surface& f = B.surf[en.s];
+								int on = 0;                                               // hanging from the seam: 2+ corners on its line
+								for (const v3& q : f.poly)
+								{
+									const float tt = dot(q - sm.a, u);
+									if (tt < -0.5f || tt > l + 0.5f) continue;
+									if (len(q - (sm.a + u * tt)) < 0.03f) ++on;
+								}
+								if (on < 2) continue;
+								if (side > 0.f) pos = true; else neg = true;
+							}
+						}
+					sm.slot = pos && neg;
+				}
+			});
 		}
 
 		// is the seam edge a-b (either way round) a slot seam?
 		bool sb_slot_at(v3 a, v3 b)
 		{
-			for (const auto& sm : g_sbb.seams)
-				if (sm.slot && ((len(sm.a - a) < 1e-3f && len(sm.b - b) < 1e-3f) || (len(sm.a - b) < 1e-3f && len(sm.b - a) < 1e-3f))) return true;
+			std::vector<uint32> cand_m;
+			sb_seams_near(v3{ (std::min)(a.x, b.x) - 0.01f, (std::min)(a.y, b.y) - 0.01f, 0.f }, v3{ (std::max)(a.x, b.x) + 0.01f, (std::max)(a.y, b.y) + 0.01f, 0.f }, cand_m);
+			for (const uint32 mi : cand_m)
+				if (const auto& sm = g_sbb.seams[mi]; sm.slot && ((len(sm.a - a) < 1e-3f && len(sm.b - b) < 1e-3f) || (len(sm.a - b) < 1e-3f && len(sm.b - a) < 1e-3f))) return true;
 			return false;
 		}
 
@@ -996,6 +1674,22 @@ namespace h2cv::sb
 		std::vector<std::string> g_sb_spot_other;       // the file's lines for other maps, written back as they were
 		uint64_t g_sb_map_key = 0;
 		bool g_sb_predicted_monsters = true, g_sb_predicted_dreadnoughts = true;   // HCM: which predicted kinds are drawn
+		// HCM "Monster approach speed" (user, 2026-11-03): hide spots whose approach needs a faster landing than this (u/s; 100 = off)
+		float g_sb_predicted_max_approach = 100.f;
+		// the landing speed a spot's approach needs (u/s; 0 = unknown). Worked out: the SLOWEST working approach the recipe measured -
+		// the bottom of its fall range (contiguous from the best, measured at the best heading + drift) with the best drift. Not worked
+		// out: the offline scan's approach (its best one - an upper bound on what is needed)
+		inline float sb_approach_speed(const h2cv::sbscan::Spot& s)
+		{
+			if (s.recipe)
+			{
+				const float dm2 = s.rDriftX * s.rDriftX + s.rDriftY * s.rDriftY;
+				const float f = s.rFallLo > 0.f ? s.rFallLo : s.rFall;
+				return std::sqrt(f * f + dm2);
+			}
+			if (s.fall > 0.f) return std::sqrt(s.fall * s.fall + s.driftX * s.driftX + s.driftY * s.driftY);
+			return 0.f;
+		}
 		float g_sb_predicted_range = 60.f;   // HCM: predicted spots are drawn within this distance (the GUI slider)
 		bool g_sb_scan_pending = false;
 		uint64_t g_sb_pred_key = 0;          // HCM: the prediction-file key of the loaded level (sb_scan_start)
@@ -1005,6 +1699,8 @@ namespace h2cv::sb
 			uint64_t h = 1469598103934665603ull;
 			auto mix = [&](int64_t v) { h ^= (uint64_t)v; h *= 1099511628211ull; };
 			mix((int64_t)g_sbb.surf.size()); if (legacy) mix((int64_t)g_sbb.seams.size());
+			if (g_reach) mix(0x52434831);   // 'RCH1': Reach maps never share a key with Halo 2's or Halo 3's
+			else if (g_gen3) mix(0x47454E33);   // Gen3 maps never share a key with Halo 2's
 			for (size_t i = 0; i < g_sbb.surf.size() && i < 64; ++i)
 			{
 				if (g_sbb.surf[i].poly.empty()) continue;
@@ -1189,6 +1885,7 @@ namespace h2cv::sb
 			g_sbb.surf.resize(g_sbb.obj_surf);
 			g_sbb.seams.resize(g_sbb.obj_seam);
 			g_sb_shown.clear();                                     // seam indices past the level's change
+			struct bump { ~bump() { ++g_sb_geo_gen; } } bump_on_exit;   // the xy grids: rebuilt on next use
 			if (tris.empty()) return;
 			const v3 ref = tris[0].a;
 			double vol = 0.0;
@@ -1260,6 +1957,8 @@ namespace h2cv::sb
 					(s < (size_t)g_sbb.surface_count ? nstruct : ninst) += 1; nvert += (int64_t)sf.poly.size();
 				}
 				for (int64_t v : { nstruct, ninst, nvert }) { geo ^= (uint64_t)v; geo *= 1099511628211ull; }
+				if (g_reach) { geo ^= 0x52434831ull; geo *= 1099511628211ull; }   // Reach ('RCH1'): its own prediction files
+				else if (g_gen3) { geo ^= 0x47454E33ull; geo *= 1099511628211ull; }   // Gen3: its own prediction files
 			}
 			{
 				// a cache saved by the previous builds under the old map key: adopt it under the geometry key
@@ -1281,16 +1980,563 @@ namespace h2cv::sb
 			h2cv::sbscan::start(geo, std::move(out), g_sbs.feet.x, g_sbs.feet.y, (g_settings.spotscan_curtick && g_sbs.tps > 0) ? g_sbs.tps : 30);
 		}
 
+		// ================================================================================================================
+		// Halo: Reach (2026-11-04, REACH_BOUNCE_VIEWER_DESIGN.md D3b / D5). Reach maps are big (m50: 1.6 M collision polygons, ~10x
+		// Mombasa), so the whole bounce cache - adapted bsps, surfaces, seams, gaps, fins, junctions, slots - is built on a WORKER
+		// thread into its own s_sb_bsp (the build functions take the target by reference) and swapped into g_sbb on the render
+		// thread at the start of sb::frame. Threading rules:
+		//  - the worker touches NO global the render thread writes: it reads game memory (SEH-guarded), owns its s_sb_bsp and its
+		//    adapted copies, and publishes through `done` (release) -> the render thread reads `result` only after done (acquire);
+		//  - one job at a time; a different map / bsp set sets job->cancel (checked between stages) and the render thread starts the
+		//    next job only after the old one finished; a result is used only if it still matches the map and mask asked for and
+		//    carries the current generation (reset() bumps it);
+		//  - while a build runs g_sbb keeps drawing the previous cache (same map, other bsp set); after a map change it is dropped.
+		// ================================================================================================================
+
+		// ---- the Reach cache's STATIC occlusion grid (2026-11-05; offline prototype HCM Reach Bounce Perf\sgrid.h) ----
+		// sb_blocked_g's blockers grid was gathered and built every planning tick (16k surfaces in Reach's dense spots) and each ray
+		// scanned every 4 wu column of its bbox, full height. This one is built once with the cache: 2 wu cells (surfaces over 64
+		// cells in a 16 wu level), per cell the tall surfaces (> 2 wu high) and the small ones sorted by lo.z, entries carry the bbox;
+		// a ray visits only the cells its segment crosses (padded 0.01) and only the small surfaces in its height window. The
+		// per-surface test is sb_blocked_g's, on the same blockers (ok, bbox meets the tick's [blo, bhi] box), so the answer is the
+		// same: 0 mismatches on 13.7 M rays on m50, 1.6 M of them adversarial (slivers, sb_inside's tolerance; independent review).
+		// Surfaces are binned by the bbox of sb_inside's TOLERANT region (each edge pushed out by 2e-5/|edge|), slivers whose region
+		// is not bounded within 1 wu go to an always-tested list.
+		struct s_sb_raygrid
+		{
+			struct Entry { float lx, ly, lz, hx, hy, hz; uint32 idx; };
+			struct Level
+			{
+				double cs = 1, x0 = 0, y0 = 0, inv = 1; int nx = 0, ny = 0;
+				std::vector<uint32> start, mid;   // cell c: tall [start[c], mid[c]), small [mid[c], start[c+1]) sorted by lz
+				std::vector<Entry> ent;
+				int cxi(double x) const { int v = (int)std::floor((x - x0) * inv); return v < 0 ? 0 : (v >= nx ? nx - 1 : v); }
+				int cyi(double y) const { int v = (int)std::floor((y - y0) * inv); return v < 0 ? 0 : (v >= ny ? ny - 1 : v); }
+			};
+			Level L[2];
+			std::vector<Entry> fuzzy;
+			std::vector<uint32> stamp; uint32 gen = 0;
+			double pad = 0.01; double mem_mb = 0;
+			static bool inflate(const s_sb_surface& sf, float& xl, float& xh, float& yl, float& yh)
+			{
+				const size_t k = sf.poly.size();
+				struct D { double x, y, z; };
+				auto sub = [](D a, D b) { return D{ a.x - b.x, a.y - b.y, a.z - b.z }; };
+				auto dt = [](D a, D b) { return a.x * b.x + a.y * b.y + a.z * b.z; };
+				auto cr = [](D a, D b) { return D{ a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x }; };
+				D n{ sf.n.x, sf.n.y, sf.n.z }; { const double l = std::sqrt(dt(n, n)); if (l < 1e-12) return false; n = { n.x / l, n.y / l, n.z / l }; }
+				xl = sf.lo.x; xh = sf.hi.x; yl = sf.lo.y; yh = sf.hi.y;
+				if (k < 3) return false;
+				const D o{ sf.poly[0].x, sf.poly[0].y, sf.poly[0].z };
+				D u{ 0, 0, 0 };
+				for (size_t i = 1; i < k; ++i)
+				{
+					D e = sub(D{ sf.poly[i].x, sf.poly[i].y, sf.poly[i].z }, o); const double pp = dt(e, n); e = { e.x - n.x * pp, e.y - n.y * pp, e.z - n.z * pp };
+					if (dt(e, e) > dt(u, u)) u = e;
+				}
+				const double ul = std::sqrt(dt(u, u));
+				if (ul < 1e-9) return false;
+				u = { u.x / ul, u.y / ul, u.z / ul };
+				const D w = cr(n, u);
+				std::vector<D> P(k);
+				double bx0 = 1e30, bx1 = -1e30, by0 = 1e30, by1 = -1e30;
+				for (size_t i = 0; i < k; ++i)
+				{
+					const D d = sub(D{ sf.poly[i].x, sf.poly[i].y, sf.poly[i].z }, o);
+					P[i] = { dt(d, u), dt(d, w), 0 };
+					bx0 = (std::min)(bx0, P[i].x); bx1 = (std::max)(bx1, P[i].x); by0 = (std::min)(by0, P[i].y); by1 = (std::max)(by1, P[i].y);
+				}
+				const double M = 1.0, tau = 2e-5;
+				const double sx0 = bx0 - M, sx1 = bx1 + M, sy0 = by0 - M, sy1 = by1 + M;
+				double minx = 1e30, maxx = -1e30, miny = 1e30, maxy = -1e30;
+				auto addp = [&](double px, double py) {
+					const double X = o.x + u.x * px + w.x * py, Y = o.y + u.y * px + w.y * py;
+					minx = (std::min)(minx, X); maxx = (std::max)(maxx, X); miny = (std::min)(miny, Y); maxy = (std::max)(maxy, Y);
+				};
+				for (size_t i = 0; i < k; ++i) addp(P[i].x, P[i].y);
+				for (int sgn = -1; sgn <= 1; sgn += 2)
+				{
+					std::vector<std::pair<double, double>> poly = { {sx0, sy0}, {sx1, sy0}, {sx1, sy1}, {sx0, sy1} }, nx;
+					for (size_t i = 0; i < k && !poly.empty(); ++i)
+					{
+						const double ex = P[(i + 1) % k].x - P[i].x, ey = P[(i + 1) % k].y - P[i].y;
+						if (ex * ex + ey * ey < 1e-24) continue;
+						auto f = [&](const std::pair<double, double>& q) { return sgn * (ex * (q.second - P[i].y) - ey * (q.first - P[i].x)) + tau; };
+						nx.clear();
+						for (size_t j = 0; j < poly.size(); ++j)
+						{
+							const auto a = poly[j], b = poly[(j + 1) % poly.size()];
+							const double fa = f(a), fb = f(b);
+							if (fa >= 0) nx.push_back(a);
+							if ((fa >= 0) != (fb >= 0)) { const double t = fa / (fa - fb); nx.push_back({ a.first + (b.first - a.first) * t, a.second + (b.second - a.second) * t }); }
+						}
+						poly.swap(nx);
+					}
+					for (const auto& q : poly)
+					{
+						if (std::fabs(q.first - sx0) < 1e-6 || std::fabs(q.first - sx1) < 1e-6 || std::fabs(q.second - sy0) < 1e-6 || std::fabs(q.second - sy1) < 1e-6) return false;
+						addp(q.first, q.second);
+					}
+				}
+				xl = (float)(std::min)((double)sf.lo.x, minx); xh = (float)(std::max)((double)sf.hi.x, maxx);
+				yl = (float)(std::min)((double)sf.lo.y, miny); yh = (float)(std::max)((double)sf.hi.y, maxy);
+				return true;
+			}
+			// false: cancelled (B.cancel) - the grid is then incomplete and must not be used
+			bool build(const s_sb_bsp& B, double cs0 = 2.0, int maxCells0 = 64)
+			{
+				const size_t N = B.surf.size();
+				std::vector<float> ixl(N), ixh(N), iyl(N), iyh(N); std::vector<uint8_t> st(N, 0);
+				double mnx = 1e30, mny = 1e30, mxx = -1e30, mxy = -1e30;
+				for (size_t i = 0; i < N; ++i)
+				{
+					if ((i & 4095) == 0 && B.cancelled()) return false;
+					const s_sb_surface& sf = B.surf[i];
+					if (!sf.ok || sf.poly.empty()) continue;
+					float xl, xh, yl, yh;
+					if (!inflate(sf, xl, xh, yl, yh)) { st[i] = 2; fuzzy.push_back({ sf.lo.x, sf.lo.y, sf.lo.z, sf.hi.x, sf.hi.y, sf.hi.z, (uint32)i }); continue; }
+					st[i] = 1; ixl[i] = xl - (float)pad; ixh[i] = xh + (float)pad; iyl[i] = yl - (float)pad; iyh[i] = yh + (float)pad;
+					mnx = (std::min)(mnx, (double)ixl[i]); mny = (std::min)(mny, (double)iyl[i]); mxx = (std::max)(mxx, (double)ixh[i]); mxy = (std::max)(mxy, (double)iyh[i]);
+				}
+				if (mnx > mxx) { stamp.assign(N, 0); return true; }   // nothing binned (fuzzy only)
+				const double cs[2] = { cs0, 16.0 };
+				for (int l = 0; l < 2; ++l)
+				{
+					Level& V = L[l]; V.cs = cs[l]; V.inv = 1.0 / cs[l]; V.x0 = std::floor(mnx) - 1; V.y0 = std::floor(mny) - 1;
+					V.nx = (int)std::ceil((mxx - V.x0) * V.inv) + 1; V.ny = (int)std::ceil((mxy - V.y0) * V.inv) + 1;
+				}
+				std::vector<uint8_t> lev(N, 255);
+				for (size_t i = 0; i < N; ++i)
+				{
+					if (st[i] != 1) continue;
+					const Level& V = L[0];
+					const int64_t c = (int64_t)(V.cxi(ixh[i]) - V.cxi(ixl[i]) + 1) * (V.cyi(iyh[i]) - V.cyi(iyl[i]) + 1);
+					lev[i] = c <= maxCells0 ? 0 : 1;
+				}
+				auto tall = [&B](size_t i) { return B.surf[i].hi.z - B.surf[i].lo.z > 2.f; };
+				for (int l = 0; l < 2; ++l)
+				{
+					if (B.cancelled()) return false;
+					Level& V = L[l]; const size_t nc = (size_t)V.nx * V.ny;
+					std::vector<uint32> ct(nc + 1, 0), cs_(nc + 1, 0);
+					for (size_t i = 0; i < N; ++i)
+					{
+						if (lev[i] != l) continue;
+						const int ax = V.cxi(ixl[i]), bx = V.cxi(ixh[i]), ay = V.cyi(iyl[i]), by = V.cyi(iyh[i]);
+						auto& cnt = tall(i) ? ct : cs_;
+						for (int y = ay; y <= by; ++y) for (int x = ax; x <= bx; ++x) ++cnt[(size_t)y * V.nx + x];
+					}
+					V.start.assign(nc + 1, 0); V.mid.assign(nc, 0);
+					for (size_t c = 0; c < nc; ++c) { V.mid[c] = V.start[c] + ct[c]; V.start[c + 1] = V.mid[c] + cs_[c]; }
+					V.ent.resize(V.start[nc]);
+					std::vector<uint32> ft(nc), fs(nc);
+					for (size_t c = 0; c < nc; ++c) { ft[c] = V.start[c]; fs[c] = V.mid[c]; }
+					for (size_t i = 0; i < N; ++i)
+					{
+						if (lev[i] != l) continue;
+						const s_sb_surface& sf = B.surf[i];
+						const Entry e{ sf.lo.x, sf.lo.y, sf.lo.z, sf.hi.x, sf.hi.y, sf.hi.z, (uint32)i };
+						const int ax = V.cxi(ixl[i]), bx = V.cxi(ixh[i]), ay = V.cyi(iyl[i]), by = V.cyi(iyh[i]);
+						auto& fill = tall(i) ? ft : fs;
+						for (int y = ay; y <= by; ++y) for (int x = ax; x <= bx; ++x) V.ent[fill[(size_t)y * V.nx + x]++] = e;
+					}
+					for (size_t c = 0; c < nc; ++c) if (V.start[c + 1] - V.mid[c] > 1) std::sort(V.ent.begin() + V.mid[c], V.ent.begin() + V.start[c + 1], [](const Entry& a, const Entry& b) { return a.lz < b.lz; });
+				}
+				stamp.assign(N, 0); gen = 0;
+				double bytes = (double)stamp.size() * 4 + (double)fuzzy.size() * sizeof(Entry);
+				for (int l = 0; l < 2; ++l) bytes += (double)L[l].start.size() * 4 + (double)L[l].mid.size() * 4 + (double)L[l].ent.size() * sizeof(Entry);
+				mem_mb = bytes / (1024.0 * 1024.0);
+				return true;
+			}
+			// the same boolean as sb_blocked_g(...) over the blockers {ok surfaces whose bbox meets [blo, bhi]} (render thread only)
+			bool blocked(const s_sb_bsp& B, v3 p0, v3 p1, const v3& blo, const v3& bhi)
+			{
+				if (++gen == 0) { std::fill(stamp.begin(), stamp.end(), 0u); gen = 1; }
+				const v3 lo{ (std::min)(p0.x, p1.x), (std::min)(p0.y, p1.y), (std::min)(p0.z, p1.z) };
+				const v3 hi{ (std::max)(p0.x, p1.x), (std::max)(p0.y, p1.y), (std::max)(p0.z, p1.z) };
+				const bool inbox = lo.x >= blo.x && hi.x <= bhi.x && lo.y >= blo.y && hi.y <= bhi.y && lo.z >= blo.z && hi.z <= bhi.z;
+				auto test = [&](const Entry& e) -> bool {
+					if (e.hx < lo.x || e.lx > hi.x || e.hy < lo.y || e.ly > hi.y || e.hz < lo.z || e.lz > hi.z) return false;
+					if (!inbox && (e.hx < blo.x || e.lx > bhi.x || e.hy < blo.y || e.ly > bhi.y || e.hz < blo.z || e.lz > bhi.z)) return false;
+					if (stamp[e.idx] == gen) return false;
+					stamp[e.idx] = gen;
+					const s_sb_surface& sf = B.surf[e.idx];
+					const float d0 = dot(p0 - sf.poly[0], sf.n), d1 = dot(p1 - sf.poly[0], sf.n);
+					if ((d0 > 0.f && d1 > 0.f) || (d0 < 0.f && d1 < 0.f) || d0 == d1) return false;
+					return sb_inside(sf.poly, sf.n, p0 + (p1 - p0) * (d0 / (d0 - d1)));
+				};
+				for (const Entry& e : fuzzy) if (test(e)) return true;
+				const double zl = lo.z, zh = hi.z;
+				const double dx = (double)p1.x - p0.x, dy = (double)p1.y - p0.y;
+				const double ylo = (double)lo.y - pad, yhi = (double)hi.y + pad;
+				for (int l = 0; l < 2; ++l)
+				{
+					const Level& V = L[l];
+					if (V.ent.empty()) continue;
+					const int r0 = V.cyi(ylo), r1 = V.cyi(yhi);
+					for (int row = r0; row <= r1; ++row)
+					{
+						const double bl = V.y0 + row * V.cs - pad, bh = V.y0 + (row + 1) * V.cs + pad;
+						double tA = 0, tB = 1;
+						if (std::fabs(dy) >= 1e-9)
+						{
+							double t1 = (bl - p0.y) / dy, t2 = (bh - p0.y) / dy; if (t1 > t2) std::swap(t1, t2);
+							tA = (std::max)(0.0, t1); tB = (std::min)(1.0, t2); if (tA > tB) continue;
+						}
+						double xa = p0.x + tA * dx, xb = p0.x + tB * dx; if (xa > xb) std::swap(xa, xb);
+						const int c0 = V.cxi(xa - pad), c1 = V.cxi(xb + pad);
+						for (int col = c0; col <= c1; ++col)
+						{
+							const size_t c = (size_t)row * V.nx + col;
+							for (uint32 k = V.start[c]; k < V.mid[c]; ++k) if (test(V.ent[k])) return true;
+							const Entry* b = V.ent.data() + V.mid[c]; const Entry* e = V.ent.data() + V.start[c + 1];
+							if (b == e) continue;
+							const float lb = (float)zl - 2.001f;
+							const Entry* it = std::lower_bound(b, e, lb, [](const Entry& a, float v) { return a.lz < v; });
+							for (; it != e && it->lz <= zh; ++it) if (test(*it)) return true;
+						}
+					}
+				}
+				return false;
+			}
+		};
+
+		struct s_reach_build { s_sb_bsp bsp; std::vector<std::unique_ptr<sb_bsp_copy>> copies; };
+		struct s_reach_job
+		{
+			std::string map; uint32 mask = 0; uint32_t gen = 0;
+			std::atomic<bool> done{ false }, cancel{ false };
+			std::atomic<size_t> surfaces{ 0 };
+			std::atomic<int> stage{ 0 };                 // 0 reading the map, 1 surfaces and seams, 2 gaps / fins / junctions / slots
+			std::unique_ptr<s_reach_build> result;       // written by the worker before done
+			std::vector<std::unique_ptr<s_reach_build>> old;   // replaced caches: freed by the worker, not on the render thread
+		};
+		std::shared_ptr<s_reach_job> g_reach_job;
+		std::atomic<uint32_t> g_reach_gen{ 1 };
+		std::string g_reach_map;                          // the map g_sbb holds (g_sbb_owner == 2)
+		uint32 g_reach_mask = 0;                          // ... and the bsp set it was built for
+		std::string g_reach_fail_key; ULONGLONG g_reach_retry_ms = 0;   // a failed read is retried after 5 s (resources may still be loading)
+		uint32 g_reach_seen_mask = 0; ULONGLONG g_reach_seen_ms = 0;    // the mask must hold still for a moment before a build starts
+		std::string g_reach_status;                       // for the panel ("" = nothing to say)
+		std::vector<std::unique_ptr<s_reach_build>> g_reach_old;   // caches swapped out / dropped, handed to the next job to free (1.6 M surfaces = a hitch)
+		void sb_reach_retire()                            // g_sbb + g_bsp_copies -> g_reach_old; g_sbb is left empty
+		{
+			if (!g_sbb.bsp && g_sbb.surf.empty() && g_bsp_copies.empty()) { g_sbb = s_sb_bsp{}; return; }
+			auto old = std::make_unique<s_reach_build>();
+			old->bsp = std::move(g_sbb); old->copies = std::move(g_bsp_copies);
+			g_sbb = s_sb_bsp{}; g_bsp_copies.clear();
+			g_reach_old.push_back(std::move(old));
+		}
+
+
+		// ---- the Reach cache's analysis on disk (2026-11-05) ----
+		// Gaps / fins / junctions / slots took ~19 s on m50 (reading the map and making the surfaces and seams: ~0.4 s) and were
+		// redone for every map and zone set. They depend only on the surfaces and seams, so their result is saved per map + bsp set
+		// in ReachBounceCache\<map>_<mask>.bin (HCM folder), keyed by a hash of those inputs - every field, two independent
+		// 64-bit hashes - so a file is only used for the exact geometry it was made from. Stored: the seams the analysis changed
+		// (index + value), the seams it appended, and the gaps, fins and junctions lists.
+		std::string sb_hcm_dir();   // with the spot scanner
+		constexpr uint32 kReachDiskVersion = 1;   // bump when gaps / fins / junctions / slots change what they produce
+		struct s_reach_disk_key { uint64_t a = 0, b = 0; };
+		s_reach_disk_key sb_reach_disk_key(const s_sb_bsp& B)
+		{
+			uint64_t a = 1469598103934665603ull, c = 0x9E3779B97F4A7C15ull;
+			auto mix = [&](uint32 v) { a ^= v; a *= 1099511628211ull; c += v + 0x632BE59BD9B4E019ull; c ^= c >> 31; c *= 0xBF58476D1CE4E5B9ull; };
+			auto mf = [&](float f) { uint32 v; std::memcpy(&v, &f, 4); mix(v); };
+			auto mv = [&](v3 q) { mf(q.x); mf(q.y); mf(q.z); };
+			mix(kReachDiskVersion); mix((uint32)sizeof(s_sb_seam)); mix((uint32)sizeof(s_sb_gap)); mix((uint32)sizeof(s_sb_fin));
+			mix((uint32)B.surf.size());
+			for (const auto& sf : B.surf)
+			{
+				mix(sf.ok ? 1u : 0u); mix(sf.flags); mix(sf.base); mv(sf.n); mv(sf.lo); mv(sf.hi);
+				mix((uint32)sf.poly.size()); for (const v3 q : sf.poly) mv(q);
+				mix((uint32)sf.edges.size()); for (const uint32 e : sf.edges) mix(e);
+			}
+			mix((uint32)B.seams.size());
+			for (const auto& m : B.seams) { mv(m.a); mv(m.b); mix(m.s0); mix(m.s1); mf(m.bend); mix(m.gap ? 1u : 0u); mf(m.width); mix(m.slot ? 1u : 0u); mix(m.junction ? 1u : 0u); }
+			mix((uint32)B.gaps.size()); mix((uint32)B.fins.size()); mix((uint32)B.junctions.size());
+			return { a, c };
+		}
+		bool sb_seam_same(const s_sb_seam& x, const s_sb_seam& y)
+		{
+			auto fe = [](float p, float q) { return std::memcmp(&p, &q, 4) == 0; };
+			auto ve = [&](v3 p, v3 q) { return fe(p.x, q.x) && fe(p.y, q.y) && fe(p.z, q.z); };
+			return ve(x.a, y.a) && ve(x.b, y.b) && x.s0 == y.s0 && x.s1 == y.s1 && fe(x.bend, y.bend) && x.gap == y.gap && fe(x.width, y.width) && x.slot == y.slot && x.junction == y.junction;
+		}
+		std::string sb_reach_disk_path(const std::string& map, uint32 mask)
+		{
+			const std::string hcm = sb_hcm_dir();
+			if (hcm.empty() || map.empty()) return "";
+			std::string m; for (const char ch : map) m += (std::isalnum((unsigned char)ch) || ch == '_' || ch == '-') ? ch : '_';
+			const std::string dir = hcm + "\\ReachBounceCache";
+			CreateDirectoryA(dir.c_str(), nullptr);
+			char name[160]; snprintf(name, sizeof(name), "\\%s_%08X.bin", m.c_str(), mask);
+			return dir + name;
+		}
+		struct s_reach_disk_head { char magic[4]; uint32 ver, sseam, sgap, sfin, nbase; uint64_t ka, kb; uint64_t nchanged, nappended, ngap, nfin, njun; };
+		// B holds the surfaces and the seams BEFORE the analysis; on a match its seams / gaps / fins / junctions become the result
+		bool sb_reach_disk_load(const std::string& path, const s_reach_disk_key& k, s_sb_bsp& B)
+		{
+			FILE* f = nullptr;
+			if (path.empty() || fopen_s(&f, path.c_str(), "rb") != 0 || !f) return false;
+			s_reach_disk_head h{};
+			bool ok = fread(&h, sizeof(h), 1, f) == 1 && std::memcmp(h.magic, "RBC1", 4) == 0 && h.ver == kReachDiskVersion
+				&& h.sseam == sizeof(s_sb_seam) && h.sgap == sizeof(s_sb_gap) && h.sfin == sizeof(s_sb_fin) && h.ka == k.a && h.kb == k.b
+				&& h.nbase == (uint32)B.seams.size() && h.nchanged <= h.nbase && h.nappended < 10000000 && h.ngap < 10000000 && h.nfin < 10000000 && h.njun < 10000000;
+			std::vector<uint32> ci; std::vector<s_sb_seam> cv, app; std::vector<s_sb_gap> gaps; std::vector<s_sb_fin> fins; std::vector<uint32> jun;
+			if (ok)
+			{
+				ci.resize((size_t)h.nchanged); cv.resize((size_t)h.nchanged); app.resize((size_t)h.nappended);
+				gaps.resize((size_t)h.ngap); fins.resize((size_t)h.nfin); jun.resize((size_t)h.njun);
+				auto rd = [&](void* d, size_t n) { return n == 0 || fread(d, 1, n, f) == n; };
+				char tail[4] = {};
+				ok = rd(ci.data(), ci.size() * 4) && rd(cv.data(), cv.size() * sizeof(s_sb_seam)) && rd(app.data(), app.size() * sizeof(s_sb_seam))
+					&& rd(gaps.data(), gaps.size() * sizeof(s_sb_gap)) && rd(fins.data(), fins.size() * sizeof(s_sb_fin)) && rd(jun.data(), jun.size() * 4)
+					&& rd(tail, 4) && std::memcmp(tail, "RBCE", 4) == 0;
+				for (const uint32 i : ci) if (i >= h.nbase) ok = false;
+			}
+			fclose(f);
+			if (!ok) return false;
+			for (size_t i = 0; i < ci.size(); ++i) B.seams[ci[i]] = cv[i];
+			B.seams.insert(B.seams.end(), app.begin(), app.end());
+			B.gaps.swap(gaps); B.fins.swap(fins); B.junctions.swap(jun);
+			return true;
+		}
+		void sb_reach_disk_save(const std::string& path, const s_reach_disk_key& k, const std::vector<s_sb_seam>& base, const s_sb_bsp& B)
+		{
+			if (path.empty() || B.seams.size() < base.size()) return;
+			std::vector<uint32> ci; std::vector<s_sb_seam> cv;
+			for (size_t i = 0; i < base.size(); ++i) if (!sb_seam_same(base[i], B.seams[i])) { ci.push_back((uint32)i); cv.push_back(B.seams[i]); }
+			s_reach_disk_head h{};
+			std::memcpy(h.magic, "RBC1", 4); h.ver = kReachDiskVersion; h.sseam = sizeof(s_sb_seam); h.sgap = sizeof(s_sb_gap); h.sfin = sizeof(s_sb_fin);
+			h.nbase = (uint32)base.size(); h.ka = k.a; h.kb = k.b; h.nchanged = ci.size(); h.nappended = B.seams.size() - base.size();
+			h.ngap = B.gaps.size(); h.nfin = B.fins.size(); h.njun = B.junctions.size();
+			const std::string tmp = path + ".tmp";
+			FILE* f = nullptr;
+			if (fopen_s(&f, tmp.c_str(), "wb") != 0 || !f) return;
+			auto wr = [&](const void* d, size_t n) { return n == 0 || fwrite(d, 1, n, f) == n; };
+			bool ok = wr(&h, sizeof(h)) && wr(ci.data(), ci.size() * 4) && wr(cv.data(), cv.size() * sizeof(s_sb_seam))
+				&& wr(B.seams.data() + base.size(), (B.seams.size() - base.size()) * sizeof(s_sb_seam))
+				&& wr(B.gaps.data(), B.gaps.size() * sizeof(s_sb_gap)) && wr(B.fins.data(), B.fins.size() * sizeof(s_sb_fin))
+				&& wr(B.junctions.data(), B.junctions.size() * 4) && wr("RBCE", 4);
+			ok = (fclose(f) == 0) && ok;
+			if (ok) ok = MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+			if (!ok) DeleteFileA(tmp.c_str());
+		}
+
+		void sb_reach_work(std::shared_ptr<s_reach_job> job, uintptr_t tls)
+		{
+			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+			try
+			{
+				job->old.clear();                            // the caches this one replaces (freed here, off the render thread)
+				const ULONGLONG t0 = GetTickCount64();
+				std::vector<CollisionWorld::Bsp3> set;
+				std::string log;
+				reach::BspStats st;
+				const bool ok = reach::readCollisionBsps(tls, job->mask, set, log, &st);
+				{ char hd[160]; snprintf(hd, sizeof(hd), "Reach bounce geometry read (map %s, bsp mask %08X):\n", job->map.c_str(), job->mask); PLOG_INFO << "[CollisionViewer] " << hd << log; }   // per-bsp lines: longer than LOGF's buffer
+				if (!ok || job->cancel.load()) { job->done.store(true, std::memory_order_release); return; }
+				job->surfaces.store(st.surfaces); job->stage.store(1);
+				auto res = std::make_unique<s_reach_build>();
+				s_sb_bsp& B = res->bsp;
+				B.cancel = &job->cancel;                    // the long pair loops stop early on a cancelled build
+				B.skip_invalid = true;                      // flags & 0x10: invalid, non-collidable material, seam faces between loaded bsps
+				// the same shape as the Halo 3 / ODST branch of sb_bsp_update: every bsp's world first (the level rows), then each
+				// bsp's instanced geometry in bsp order
+				for (auto& b3 : set)
+				{
+					const collision_bsp* w3 = sb_adapt(b3.world, res->copies);
+					if (!B.bsp) B.bsp = w3;
+					B.edge_count += w3->edges.count;
+					sb_add_bsp(w3, nullptr, 1.f, v3{ 0.f, 0.f, 0.f }, B);
+					b3.world = CollBsp{};                    // the adapted copy is the one kept
+					job->surfaces.store(B.surf.size());
+					if (job->cancel.load()) { job->done.store(true, std::memory_order_release); return; }
+				}
+				if (!B.bsp) { job->done.store(true, std::memory_order_release); return; }
+				B.surface_count = (int32)B.surf.size();
+				size_t ninst = 0; for (const auto& b3 : set) ninst += b3.igInst.size();
+				B.instance_count = (int32)ninst;
+				B.inst_base.assign(ninst, 0xFFFFFFFFu);
+				size_t ii = 0;
+				for (auto& b3 : set)
+				{
+					std::vector<const collision_bsp*> ad(b3.igDefs.size(), nullptr);
+					for (const auto& in : b3.igInst)
+					{
+						const int d = in.def;
+						if (d >= 0 && (size_t)d < b3.igDefs.size() && (size_t)d < b3.igOk.size() && b3.igOk[(size_t)d] && !b3.igDefs[(size_t)d].surfaces.empty())
+						{
+							if (!ad[(size_t)d]) ad[(size_t)d] = sb_adapt(b3.igDefs[(size_t)d], res->copies);
+							B.inst_base[ii] = (uint32)B.surf.size();
+							sb_add_bsp(ad[(size_t)d], in.m + 1, in.m[0], v3{ in.m[10], in.m[11], in.m[12] }, B);   // m[1..9] rotation, m[0] scale, m[10..12] position
+						}
+						++ii;
+						if ((ii & 255) == 0) { job->surfaces.store(B.surf.size()); if (job->cancel.load()) { job->done.store(true, std::memory_order_release); return; } }
+					}
+					b3.igDefs.clear(); b3.igDefs.shrink_to_fit();
+				}
+				set.clear(); set.shrink_to_fit();
+				job->surfaces.store(B.surf.size()); job->stage.store(2);
+				const ULONGLONG t1 = GetTickCount64();
+				// the analysis: from ReachBounceCache\ when this exact geometry was analysed before, else worked out and saved
+				const s_reach_disk_key dk = sb_reach_disk_key(B);
+				const std::string dpath = sb_reach_disk_path(job->map, job->mask);
+				const bool from_disk = sb_reach_disk_load(dpath, dk, B);
+				if (!from_disk)
+				{
+					const std::vector<s_sb_seam> seams0 = B.seams;   // before: the file stores what the analysis changes
+					sb_find_gaps(B);        if (job->cancel.load()) { job->done.store(true, std::memory_order_release); return; }
+					sb_find_fins(B);        if (job->cancel.load()) { job->done.store(true, std::memory_order_release); return; }
+					sb_find_junctions(B);   if (job->cancel.load()) { job->done.store(true, std::memory_order_release); return; }
+					sb_mark_slots(B);       if (job->cancel.load()) { job->done.store(true, std::memory_order_release); return; }
+					sb_reach_disk_save(dpath, dk, seams0, B);
+				}
+				const ULONGLONG t2 = GetTickCount64();
+				{
+					const ULONGLONG tg = GetTickCount64();
+					auto rg = std::make_shared<s_sb_raygrid>();
+					if (!rg->build(B)) { job->done.store(true, std::memory_order_release); return; }
+					B.rgrid = std::move(rg);
+					LOGF("Reach bounce cache: static occlusion grid %.1f MB, %llu ms", B.rgrid->mem_mb, (unsigned long long)(GetTickCount64() - tg));
+				}
+				B.obj_surf = B.surf.size(); B.obj_seam = B.seams.size();
+				B.sgrid = s_sb_xygrid{}; B.sgrid_on = false;   // the build-time grid is not used on g_sbb (g_sb_surf_grid is)
+				size_t ok_surf = 0; for (const auto& s : B.surf) if (s.ok) ++ok_surf;
+				LOGF("Reach bounce cache built (map %s): %d bsps, %zu surfaces (%zu usable), %zu instances (%zu with collision), %zu non-collidable surfaces and %zu seam faces left out, "
+					"%zu seams, %zu gaps, %zu fins, %zu junctions - %llu ms (%llu ms of it gaps / fins / junctions / slots, %s)",
+					job->map.c_str(), st.bsps, B.surf.size(), ok_surf, st.instances, st.instancesLive, st.nonCollidable, st.seamLeftOut,
+					B.seams.size(), B.gaps.size(), B.fins.size(), B.junctions.size(),
+					(unsigned long long)(GetTickCount64() - t0), (unsigned long long)(t2 - t1), from_disk ? "read from ReachBounceCache" : "worked out and saved");
+				job->result = std::move(res);
+			}
+			catch (const std::exception& ex) { LOGF("Reach bounce geometry build failed: %s", ex.what()); }
+			catch (...) { LOGF("Reach bounce geometry build failed (unknown exception)"); }
+			job->done.store(true, std::memory_order_release);
+		}
+
+		// render thread: the finished cache replaces g_sbb (the old one's adapted copies go with it)
+		void sb_reach_swap(s_reach_job& job)
+		{
+			sb_reach_retire();                    // the old cache is freed by the next job's worker
+			g_sbb = std::move(job.result->bsp);
+			g_sbb.cancel = nullptr;               // the job (and its flag) goes away
+			g_bsp_copies = std::move(job.result->copies);
+			job.result.reset();
+			g_sbb_owner = 2; g_reach_map = job.map; g_reach_mask = job.mask;
+			g_sb_shown.clear(); g_sb_plan_tick = 0xFFFFFFFF; g_sb_fins_logged = false;
+			++g_sb_geo_gen;
+			sb_spots_on_map();                    // this map's remembered monster / dreadnought spots (g_sbb is in place)
+			g_sbb.obj_surf = g_sbb.surf.size(); g_sbb.obj_seam = g_sbb.seams.size(); g_sb_obj_sig = 0;
+			++g_sb_geo_gen;
+			g_sb_scan_pending = true;
+			if (g_out) g_out->message = "Reach bounce geometry ready: " + std::to_string(g_sbb.surf.size()) + " surfaces, " + std::to_string(g_sbb.seams.size()) + " seams";
+		}
+
+		void sb_reach_drop()
+		{
+			sb_reach_retire(); g_sbb_owner = 0; g_reach_map.clear(); g_reach_mask = 0;
+			g_sb_shown.clear(); g_sb_plan_tick = 0xFFFFFFFF; ++g_sb_geo_gen;
+		}
+
+		void sb_reach_update()
+		{
+			g_reach_status.clear();
+			if (g_sbb_owner != 2 && g_sbb.bsp) sb_reach_drop();       // another game's cache (Halo 3 -> Reach): never draw it on this map
+			const ULONGLONG now = GetTickCount64();
+			const std::string map = reach::mapName();
+			const uint32 mask = reach::activeBspMask();
+			const uintptr_t tls = reach::thisThreadTls();
+			// a finished build: used if it is still the map and bsp set asked for
+			if (g_reach_job && g_reach_job->done.load(std::memory_order_acquire))
+			{
+				std::shared_ptr<s_reach_job> job = std::move(g_reach_job);
+				g_reach_job.reset();
+				if (job->result && !job->cancel.load() && job->gen == g_reach_gen.load() && job->map == map && job->mask == mask) sb_reach_swap(*job);
+				else if (!job->result && !job->cancel.load()) { g_reach_fail_key = job->map + "/" + std::to_string(job->mask); g_reach_retry_ms = now + 5000; }
+			}
+			if (map.empty() || !tls) { g_reach_status = map.empty() ? "bounce geometry: the map name could not be read" : "bounce geometry: waiting for the game thread"; return; }
+			if (!g_reach_map.empty() && map != g_reach_map) sb_reach_drop();          // a different map: nothing of the old one is drawn
+			if (g_reach_job && g_reach_job->map != map) g_reach_job->cancel.store(true);
+			if (mask == 0) { g_reach_status = "bounce geometry: waiting for the level (no bsp loaded yet)"; return; }
+			if (mask != g_reach_seen_mask) { g_reach_seen_mask = mask; g_reach_seen_ms = now; }
+			if (g_sbb.bsp && g_sbb_owner == 2 && g_reach_map == map && g_reach_mask == mask) return;   // up to date
+			if (g_reach_job)
+			{
+				if (g_reach_job->map == map && g_reach_job->mask == mask && !g_reach_job->cancel.load())
+				{
+					static const char* const k_stage[] = { "reading the map", "adding surfaces and seams", "finding gaps, fins and junctions" };
+					char b[160]; snprintf(b, sizeof(b), "bounce geometry: loading (%zu surfaces) - %s", g_reach_job->surfaces.load(), k_stage[(std::min)(2, g_reach_job->stage.load())]);
+					g_reach_status = b;
+				}
+				else { g_reach_job->cancel.store(true); g_reach_status = "bounce geometry: loading (the bsp set changed - starting over)"; }
+				return;
+			}
+			if (now - g_reach_seen_ms < 400) { g_reach_status = "bounce geometry: loading (waiting for the zone set to settle)"; return; }   // a zone switch changes the mask a few times
+			if (map + "/" + std::to_string(mask) == g_reach_fail_key && now < g_reach_retry_ms) { g_reach_status = "bounce geometry: could not read the map (see the HCM log) - retrying"; return; }
+			auto job = std::make_shared<s_reach_job>();
+			job->map = map; job->mask = mask; job->gen = g_reach_gen.load();
+			job->old = std::move(g_reach_old); g_reach_old.clear();
+			g_reach_job = job;
+			g_reach_status = "bounce geometry: loading (0 surfaces) - reading the map";
+			LOGF("Reach bounce geometry: building for map %s, bsp mask %08X on a worker", map.c_str(), mask);
+			if (g_out && !g_sbb.bsp) g_out->message = "Reach bounce geometry: loading the map's collision (a big map takes a while) ...";
+			try { std::thread([job, tls]() { sb_reach_work(job, tls); }).detach(); }
+			catch (...) { g_reach_job.reset(); g_reach_fail_key = map + "/" + std::to_string(mask); g_reach_retry_ms = now + 5000; }
+		}
+
 		void sb_bsp_update()
 		{
+			SbTimer sbt_(SBT_BSP);
 			// HCM: the resident structure bsp's collision (CollisionWorld) and its instanced geometry, rebuilt on every bsp load
 			static uintptr_t s_id = 0;
-			if (!g_world || !g_world->valid()) { g_sbb = s_sb_bsp{}; s_id = 0; return; }
+			if (g_reach) { sb_reach_update(); return; }    // Halo: Reach: the worker-built cache (above)
+			if (g_sbb_owner == 2) { g_sbb = s_sb_bsp{}; g_bsp_copies.clear(); g_sbb_owner = 0; g_reach_map.clear(); g_reach_mask = 0; ++g_sb_geo_gen; s_id = 0; }   // Reach's cache: not for this game
+			if (!g_reach_old.empty()) g_reach_old.clear();   // Reach caches waiting for a next Reach job that will not come (another game now)
+			if (!g_world || !g_world->valid()) { g_sbb = s_sb_bsp{}; ++g_sb_geo_gen; s_id = 0; g_sbb_owner = 0; return; }
 			if (g_world->sbspId() == s_id && g_sbb.bsp) return;
 			s_id = g_world->sbspId();
-			g_sbb = s_sb_bsp{};
+			g_sbb = s_sb_bsp{}; ++g_sb_geo_gen; g_sbb_owner = 1;
 			g_sb_shown.clear(); g_sb_plan_tick = 0xFFFFFFFF;
 			g_bsp_copies.clear();
+			g_sbb.skip_invalid = g_gen3;   // sb_add_bsp: Gen3 leaves out flags & 0x10 surfaces
+			if (g_gen3)
+			{
+				// Halo 3 / ODST: every ACTIVE structure bsp (a zone set loads several) - all their worlds first (the level rows), then
+				// each bsp's instanced geometry placements, in bsp order
+				const auto& set = g_world->bsps3();
+				for (const auto& b3 : set)
+				{
+					const collision_bsp* w3 = sb_adapt(b3.world);
+					if (!g_sbb.bsp) g_sbb.bsp = w3;
+					g_sbb.edge_count += w3->edges.count;
+					sb_add_bsp(w3, nullptr, 1.f, v3{ 0.f, 0.f, 0.f });
+				}
+				if (!g_sbb.bsp) return;
+				g_sbb.surface_count = (int32)g_sbb.surf.size();
+				size_t ninst = 0; for (const auto& b3 : set) ninst += b3.igInst.size();
+				g_sbb.instance_count = (int32)ninst;
+				g_sbb.inst_base.assign(ninst, 0xFFFFFFFFu);
+				size_t ii = 0;
+				for (const auto& b3 : set)
+				{
+					std::vector<const collision_bsp*> ad(b3.igDefs.size(), nullptr);
+					for (const auto& in : b3.igInst)
+					{
+						const int d = in.def;
+						if (d >= 0 && (size_t)d < b3.igDefs.size() && (size_t)d < b3.igOk.size() && b3.igOk[(size_t)d] && !b3.igDefs[(size_t)d].surfaces.empty())
+						{
+							if (!ad[(size_t)d]) ad[(size_t)d] = sb_adapt(b3.igDefs[(size_t)d]);
+							g_sbb.inst_base[ii] = (uint32)g_sbb.surf.size();
+							sb_add_bsp(ad[(size_t)d], in.m + 1, in.m[0], v3{ in.m[10], in.m[11], in.m[12] });
+						}
+						++ii;
+					}
+				}
+			}
+			else
+			{
 			const collision_bsp* w = sb_adapt(g_world->worldBsp());
 			g_sbb.bsp = w; g_sbb.surface_count = w->surfaces.count; g_sbb.edge_count = w->edges.count;
 			sb_add_bsp(w, nullptr, 1.f, v3{ 0.f, 0.f, 0.f });
@@ -1309,6 +2555,7 @@ namespace h2cv::sb
 				const float* m = inst[i].m;           // [0] scale, [1..3] forward, [4..6] left, [7..9] up, [10..12] position
 				sb_add_bsp(adapted[(size_t)d], m + 1, m[0], v3{ m[10], m[11], m[12] });
 			}
+			}   // Halo 2
 			sb_find_gaps();
 			sb_find_fins();
 			sb_find_junctions();
@@ -1316,6 +2563,7 @@ namespace h2cv::sb
 			g_sb_fins_logged = false;
 			sb_spots_on_map();                    // this map's remembered monster / dreadnought spots
 			g_sbb.obj_surf = g_sbb.surf.size(); g_sbb.obj_seam = g_sbb.seams.size(); g_sb_obj_sig = 0;   // objects come after
+			++g_sb_geo_gen;                       // the xy grids: rebuilt on next use
 			g_sb_scan_pending = true;             // HCM: predicted spots are scanned once the Predicted toggle is on (sb_draw)
 		}
 
@@ -1332,13 +2580,13 @@ namespace h2cv::sb
 		}
 
 		// does the segment cross any of these surfaces (from either side)?
-		bool sb_blocked(const std::vector<uint32>& surfaces, v3 p0, v3 p1)
+		bool sb_blocked(const std::vector<uint32>& surfaces, v3 p0, v3 p1, s_sb_bsp& B)
 		{
 			const v3 lo{ (std::min)(p0.x, p1.x), (std::min)(p0.y, p1.y), (std::min)(p0.z, p1.z) };
 			const v3 hi{ (std::max)(p0.x, p1.x), (std::max)(p0.y, p1.y), (std::max)(p0.z, p1.z) };
 			for (const uint32 s : surfaces)
 			{
-				const s_sb_surface& sf = g_sbb.surf[s];
+				const s_sb_surface& sf = B.surf[s];
 				if (sf.hi.x < lo.x || sf.lo.x > hi.x || sf.hi.y < lo.y || sf.lo.y > hi.y || sf.hi.z < lo.z || sf.lo.z > hi.z) continue;
 				const float d0 = dot(p0 - sf.poly[0], sf.n), d1 = dot(p1 - sf.poly[0], sf.n);
 				if ((d0 > 0.f && d1 > 0.f) || (d0 < 0.f && d1 < 0.f) || d0 == d1) continue;
@@ -1416,8 +2664,9 @@ namespace h2cv::sb
 				lo = { (std::min)(lo.x, q.x), (std::min)(lo.y, q.y), (std::min)(lo.z, q.z) };
 				hi = { (std::max)(hi.x, q.x), (std::max)(hi.y, q.y), (std::max)(hi.z, q.z) };
 			}
-			std::vector<uint32> near_surfaces;
-			for (int32 s = 0; s < (int32)g_sbb.surf.size(); ++s)
+			std::vector<uint32> near_surfaces, cand_s;
+			sb_surfs_near(lo, hi, cand_s);
+			for (const uint32 s : cand_s)
 			{
 				const s_sb_surface& sf = g_sbb.surf[(size_t)s];
 				if (!sf.ok || sf.n.z < 0.2f) continue;      // floors and slopes you can land on
@@ -1495,9 +2744,9 @@ namespace h2cv::sb
 			for (size_t i = 0; i < k; ++i)
 			{
 				const collision_edge* ed = sf.src->edges[sf.edges[i]];
-				const uint32 el = (uint32)(uint16)ed->left_surface, er = (uint32)(uint16)ed->right_surface;
+				const uint32 el = ed->left_surface, er = ed->right_surface;
 				const uint32 other_local = (el == local) ? er : el;
-				if ((int32)other_local >= sf.src->surfaces.count) continue;
+				if (other_local >= (uint32)sf.src->surfaces.count) continue;
 				const uint32 other = sf.base + other_local;
 				if (!g_sbb.surf[other].ok || !sb_seam_pair(s, other)) continue;
 				const v3 ea = sf.poly[i], eb = sf.poly[(i + 1) % k];
@@ -1817,7 +3066,7 @@ namespace h2cv::sb
 			if (ns) { sd = norm(ns->b - ns->a); n0 = g_sbb.surf[ns->s0].n; n1 = g_sbb.surf[ns->s1].n; }
 			const v3 sp = ns ? sb_closest_on_segment(feet, ns->a, ns->b) : v3{ 0.f, 0.f, 0.f };
 			float sx = 0.f, sy = 0.f; int keys = 0;
-			sb_read_input(sx, sy, keys);
+			if (!g_gen3) sb_read_input(sx, sy, keys);
 			if (!g_sb_fins_logged)
 			{
 				for (size_t i = 0; i < g_sbb.fins.size(); ++i)
@@ -2001,7 +3250,9 @@ namespace h2cv::sb
 			struct s_push { v3 n; };
 			std::vector<s_push> pushes;
 			const float r = k_sb_pill_r;
-			for (uint32 s = 0; s < (uint32)g_sbb.surf.size(); ++s)
+			std::vector<uint32> cand_s;
+			sb_surfs_near(v3{ at.x - r, at.y - r, 0.f }, v3{ at.x + r, at.y + r, 0.f }, cand_s);
+			for (const uint32 s : cand_s)
 			{
 				const s_sb_surface& sf = g_sbb.surf[s];
 				if (!sf.ok || sf.n.z <= 0.2f) continue;
@@ -2402,7 +3653,9 @@ namespace h2cv::sb
 			const v3 lo{ (std::min)(a.x, b.x) - reach, (std::min)(a.y, b.y) - reach, (std::min)(a.z, b.z) - reach };
 			const v3 hi{ (std::max)(a.x, b.x) + reach, (std::max)(a.y, b.y) + reach, (std::max)(a.z, b.z) + reach };
 			std::vector<std::pair<uint32, float>> inside;
-			for (uint32 s = 0; s < (uint32)g_sbb.surf.size(); ++s)
+			std::vector<uint32> cand_s;
+			sb_surfs_near(lo, hi, cand_s);
+			for (const uint32 s : cand_s)
 			{
 				const s_sb_surface& sf = g_sbb.surf[s];
 				if (!sf.ok || sf.hi.x < lo.x || sf.lo.x > hi.x || sf.hi.y < lo.y || sf.lo.y > hi.y || sf.hi.z < lo.z || sf.lo.z > hi.z) continue;
@@ -2478,6 +3731,8 @@ namespace h2cv::sb
 		// reloaded. Runs hidden (CREATE_NO_WINDOW) at idle priority; output in <game>\superbounce_scan\scan_log.txt ----
 		std::atomic<int> g_sb_force_launch{ 0 };   // logged ticks left to ignore after HCM's Force Launch (noteForceLaunch)
 		std::atomic<bool> g_sb_scan_request{ false }, g_sb_scan_done{ false };
+		std::atomic<bool> g_sb_recipe_redo_req{ false };   // "Redo approaches here": every spot in range, replacing saved ones
+		std::atomic<bool> g_sb_recipe_request{ false };   // the "Work out approaches" button (2026-11-03): recipes run only on it
 		std::atomic<HANDLE> g_sb_scan_proc{ nullptr };
 		std::atomic<DWORD> g_sb_scan_exit{ 0 };
 		DWORD g_sb_scan_t0 = 0; float g_sb_scan_r = 0.f; int g_sb_scan_tick_used = 30; bool g_sb_scan_slow_used = false;
@@ -2514,10 +3769,18 @@ namespace h2cv::sb
 			{ if (fm) fclose(fm); if (g_out) g_out->message = "Spot scan: cannot write " + dir; return; }
 			fprintf(fm, "# M,surface,havok key,normal x,y,z,vertices,x,y,z ...\n");
 			fprintf(ff, "# havok key,flags,breakable,material\n");
+			// only the surfaces within the scan radius (+3 wu: a pill's reach and the pair search's margin) - the scanner's work no
+			// longer grows with the map (2026-11-02: Halo 3 / ODST maps have millions of triangles); the scan's points are cut to the
+			// sphere anyway (--sphere), so the result is the same
+			const float keep_r = g_settings.spotscan_radius + 3.f;
 			for (size_t s = 0; s < g_sbb.surf.size(); ++s)
 			{
 				const s_sb_surface& sf = g_sbb.surf[s];
 				if (!sf.ok || sf.poly.size() < 3) continue;
+				{
+					const float dx = (std::max)((std::max)(sf.lo.x - feet.x, feet.x - sf.hi.x), 0.f), dy = (std::max)((std::max)(sf.lo.y - feet.y, feet.y - sf.hi.y), 0.f), dz = (std::max)((std::max)(sf.lo.z - feet.z, feet.z - sf.hi.z), 0.f);
+					if (dx * dx + dy * dy + dz * dz > keep_r * keep_r) continue;
+				}
 				fprintf(fm, "M,%u,%08x,%.5f,%.5f,%.5f,%d", (unsigned)s, key[s], sf.n.x, sf.n.y, sf.n.z, (int)sf.poly.size());
 				for (const v3& p : sf.poly) fprintf(fm, ",%.4f,%.4f,%.4f", p.x, p.y, p.z);
 				fprintf(fm, "\n");
@@ -2555,32 +3818,215 @@ namespace h2cv::sb
 			if (g_out) g_out->message = std::string("Spot scan started (") + (gpu ? "GPU" : "CPU") + ")";
 		}
 
+		// ---- "Work out approaches" on the GPU (2026-11-03): <HCM>\SpotScanner\h2sbrecipe_gpu.exe runs HCM's recipe sweep on the GPU
+		// (verified byte-identical to H2CV_SbScan.cpp's recipe on headlong; ~10x the CPU threads, ~4x in --gentle mode, which keeps
+		// each GPU launch ~10 ms and pauses as long between them so the game keeps drawing). Its input: the spots of the request that
+		// lack a recipe and the surfaces around them, floats printed in full, keyed by their index in HCM's surface order (the
+		// tool's surface order = key order = the recipe code's). Its rows are merged into the spots and the map's recipe cache.
+		std::atomic<HANDLE> g_sb_recipe_proc{ nullptr };
+		std::atomic<bool> g_sb_recipe_done{ false };
+		std::atomic<DWORD> g_sb_recipe_exit{ 0 };
+		DWORD g_sb_recipe_t0 = 0, g_sb_recipe_lastmerge = 0; int g_sb_recipe_n = 0, g_sb_recipe_merged = 0;
+		bool g_sb_recipe_redo = false; int g_sb_recipe_run = 0;   // the running GPU job replaces saved approaches; its run number
+		std::string g_sb_recipe_out;
+		// true: started (or nothing to do); false: no GPU tool / could not start - the caller falls back to the CPU
+		bool sb_recipe_gpu_launch(v3 feet, bool redo)
+		{
+			if (g_sb_recipe_proc.load()) { if (g_out) g_out->message = "Approaches are already being worked out"; return true; }
+			const std::string hcm = sb_hcm_dir();
+			const std::string exe = hcm + "\\SpotScanner\\h2sbrecipe_gpu.exe";
+			if (GetFileAttributesA(exe.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+			const std::vector<h2cv::sbscan::Spot> todo = h2cv::sbscan::recipeTargets(feet.x, feet.y, feet.z, g_sb_predicted_range, redo);
+			if (todo.empty())
+			{
+				if (g_out) g_out->message = "Every predicted spot within " + std::to_string((int)g_sb_predicted_range) + " wu already has its approach";
+				return true;
+			}
+			char cwd[MAX_PATH] = {};
+			GetCurrentDirectoryA(MAX_PATH, cwd);
+			const std::string dir = std::string(cwd) + "\\superbounce_scan";
+			CreateDirectoryA(dir.c_str(), nullptr);
+			const std::string mapcsv = dir + "\\recipe_map.csv", flagcsv = dir + "\\recipe_map.flags.csv", spotcsv = dir + "\\recipe_spots.csv";
+			g_sb_recipe_out = dir + "\\recipe_out.csv";
+			const std::string logf = dir + "\\recipe_log.txt";
+			DeleteFileA(g_sb_recipe_out.c_str());
+			// the box the sweep can touch: the spots, 1.5 wu around (the near list's 1 wu + slack), 2 below to 6 above (its height window)
+			v3 lo = { todo[0].x, todo[0].y, todo[0].z }, hi = lo;
+			for (const auto& t : todo) { lo = { (std::min)(lo.x, t.x), (std::min)(lo.y, t.y), (std::min)(lo.z, t.z) }; hi = { (std::max)(hi.x, t.x), (std::max)(hi.y, t.y), (std::max)(hi.z, t.z) }; }
+			lo = lo - v3{ 1.5f, 1.5f, 2.f }; hi = hi + v3{ 1.5f, 1.5f, 6.f };
+			FILE* fm = nullptr; FILE* ff = nullptr; FILE* fs = nullptr;
+			if (fopen_s(&fm, mapcsv.c_str(), "w") != 0 || !fm || fopen_s(&ff, flagcsv.c_str(), "w") != 0 || !ff || fopen_s(&fs, spotcsv.c_str(), "w") != 0 || !fs)
+			{ if (fm) fclose(fm); if (ff) fclose(ff); if (fs) fclose(fs); return false; }
+			fprintf(fm, "# M,surface,key (HCM's keys),normal x,y,z,vertices,x,y,z ... (floats in full)\n");
+			fprintf(ff, "# key,flags,breakable,material\n");
+			// the level + instanced geometry the recipe code has, with sb_scan_start's keys (both sides sort the surfaces by key)
+			std::vector<uint32> key(g_sbb.surf.size(), 0);
+			for (size_t s = 0; s < g_sbb.surf.size() && s < (size_t)g_sbb.surface_count; ++s) key[s] = 0x20000000u | (uint32)s;
+			for (size_t ib = 0; ib < g_sbb.inst_base.size(); ++ib)
+			{
+				const uint32 b = g_sbb.inst_base[ib];
+				if (b == 0xFFFFFFFFu) continue;
+				for (size_t s = b; s < g_sbb.surf.size() && g_sbb.surf[s].base == b; ++s) key[s] = 0xA0000000u | ((uint32)(s - b) << 16) | (uint32)ib;
+			}
+			// + the objects the viewer keeps (baked scenery - part of the level's Havok shape), with the scan export's keys
+			// (2026-11-03: the approaches were worked out WITHOUT them while "Scan around me" found the spot WITH them - a debris
+			// spot got a straight-up arrow, the game launches ~45 deg toward 328; with the object the arrow points 327-330)
+			for (size_t s = g_sbb.obj_surf; s < g_sbb.surf.size(); ++s) key[s] = 0xC0000000u | (uint32)(s - g_sbb.obj_surf);
+			for (size_t i = 0; i < g_sbb.surf.size(); ++i)
+			{
+				const s_sb_surface& sf = g_sbb.surf[i];
+				if (!sf.ok || sf.poly.size() < 3) continue;
+				if (sf.hi.x < lo.x || sf.lo.x > hi.x || sf.hi.y < lo.y || sf.lo.y > hi.y || sf.hi.z < lo.z || sf.lo.z > hi.z) continue;
+				fprintf(fm, "M,%u,%08x,%.9g,%.9g,%.9g,%d", (unsigned)i, key[i], sf.n.x, sf.n.y, sf.n.z, (int)sf.poly.size());
+				for (const v3& q : sf.poly) fprintf(fm, ",%.9g,%.9g,%.9g", q.x, q.y, q.z);
+				fprintf(fm, "\n");
+				fprintf(ff, "%08x,%d,0,0\n", key[i], (int)sf.flags);
+			}
+			for (const auto& t : todo) fprintf(fs, "%.9g,%.9g,%.9g\n", t.x, t.y, t.z);
+			fclose(fm); fclose(ff); fclose(fs);
+			char args[2048];
+			snprintf(args, sizeof(args), "\"%s\" \"%s\" \"%s\" \"%s\" --tick %d --gentle", exe.c_str(), mapcsv.c_str(), spotcsv.c_str(), g_sb_recipe_out.c_str(), h2cv::sbscan::tick());
+			SECURITY_ATTRIBUTES sa{ sizeof(sa), nullptr, TRUE };
+			HANDLE hl = CreateFileA(logf.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+			STARTUPINFOA si{}; si.cb = sizeof(si);
+			if (hl != INVALID_HANDLE_VALUE) { si.dwFlags = STARTF_USESTDHANDLES; si.hStdOutput = hl; si.hStdError = hl; si.hStdInput = nullptr; }
+			PROCESS_INFORMATION pi{};
+			const BOOL ok = CreateProcessA(nullptr, args, nullptr, nullptr, hl != INVALID_HANDLE_VALUE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
+				nullptr, (hcm + "\\SpotScanner").c_str(), &si, &pi);
+			if (hl != INVALID_HANDLE_VALUE) CloseHandle(hl);
+			if (!ok) return false;
+			CloseHandle(pi.hThread);
+			g_sb_recipe_proc = pi.hProcess; g_sb_recipe_t0 = g_sb_recipe_lastmerge = GetTickCount(); g_sb_recipe_n = (int)todo.size(); g_sb_recipe_merged = 0; g_sb_recipe_redo = redo; ++g_sb_recipe_run;
+			std::thread([h = pi.hProcess]() {
+				WaitForSingleObject(h, INFINITE);
+				DWORD code = 1; GetExitCodeProcess(h, &code); CloseHandle(h);
+				g_sb_recipe_exit = code; g_sb_recipe_proc = nullptr; g_sb_recipe_done = true;
+			}).detach();
+			if (g_out) g_out->message = "Working out approaches for " + std::to_string(todo.size()) + " spots within " + std::to_string((int)g_sb_predicted_range) + " wu (GPU)";
+			return true;
+		}
+
+		// Gen3 (2026-11-02): a predicted spot counts only on LOADED geometry - an upward surface of the active bsp set holding (x, y)
+		// at the spot's landing height (the per-map file holds every bsp's spots; a zone set loads a few of them). Cached per spot
+		// until the geometry changes (g_sb_geo_gen).
+		bool sb_spot_loaded(const h2cv::sbscan::Spot& sp)
+		{
+			static std::unordered_map<uint64_t, bool> s_cache; static uint32 s_gen = 0;
+			if (s_gen != g_sb_geo_gen) { s_cache.clear(); s_gen = g_sb_geo_gen; }
+			const uint64_t key = (uint64_t)(int64_t)std::lround(sp.x * 100.f) * 0x9E3779B97F4A7C15ull ^ (uint64_t)(int64_t)std::lround(sp.y * 100.f) * 0xC2B2AE3D27D4EB4Full
+				^ (uint64_t)(int64_t)std::lround(sp.z * 100.f) * 0x165667B19E3779F9ull;
+			const auto it = s_cache.find(key);
+			if (it != s_cache.end()) return it->second;
+			bool on = false;
+			std::vector<uint32> cand;
+			sb_surfs_near(v3{ sp.x, sp.y, 0.f }, v3{ sp.x, sp.y, 0.f }, cand, g_sbb, false);   // unsorted: any floor under it will do
+			for (const uint32 si : cand)
+			{
+				const s_sb_surface& sf = g_sbb.surf[si];
+				if (!sf.ok || sf.n.z < 0.3f || sf.poly.empty()) continue;
+				if (sp.x < sf.lo.x - 0.01f || sp.x > sf.hi.x + 0.01f || sp.y < sf.lo.y - 0.01f || sp.y > sf.hi.y + 0.01f) continue;
+				const v3 p0 = sf.poly[0];
+				const float z = p0.z - (sf.n.x * (sp.x - p0.x) + sf.n.y * (sp.y - p0.y)) / sf.n.z;
+				if (std::fabs(z - sp.z) > 0.05f) continue;
+				if (sb_inside(sf.poly, sf.n, v3{ sp.x, sp.y, z })) { on = true; break; }
+			}
+			s_cache.emplace(key, on);
+			return on;
+		}
+
+		// the predicted spots near you, filtered + in drawing order (2026-11-03): made on a short-lived background thread once a
+		// tick (or when a filter setting changes) - done on the render thread it was a burst on every tick's frame, and the
+		// uneven frame times made G-Sync screens flicker. The render thread draws the newest finished list.
+		struct s_pred_list { std::vector<h2cv::sbscan::Spot> spots; std::vector<std::pair<float, size_t>> order; size_t total = 0, hidden = 0, withRecipe = 0; };
+		std::mutex g_pred_m;
+		std::shared_ptr<const s_pred_list> g_pred_ready;
+		std::atomic<bool> g_pred_busy{ false };
 		void sb_draw_predicted(v3 feet)
 		{
-			static std::vector<h2cv::sbscan::Spot> s_spots;
-			static uint32 s_tick = 0;
-			if (g_sbs.tick != s_tick) { s_tick = g_sbs.tick; h2cv::sbscan::setPlayer(feet.x, feet.y, feet.z); h2cv::sbscan::spots(s_spots); }   // once per tick
-			std::vector<std::pair<float, size_t>> near_spots;
+			SbTimer sbt_(SBT_SPOTS);
+			static std::shared_ptr<const s_pred_list> s_cur = std::make_shared<s_pred_list>();
+			static uint32 s_tick = 0xFFFFFFFF;
+			static uint64_t s_filter_sig = 0;
+			static bool s_pending = true;
 			// the loaded file's tick rate decides the lines (60 tick: monsters 35+, dreadnoughts 60+ provisional - 2026-11-01)
 			const int pt = h2cv::sbscan::tick();
 			const float lineM = h2cv::sbscan::lineMonster(pt), lineD = h2cv::sbscan::lineDreadnought(pt);
-			for (size_t i = 0; i < s_spots.size(); ++i)
+			uint64_t fsig = 1469598103934665603ull;
+			for (const float f : { g_sb_predicted_range, g_sb_predicted_max_approach, lineM, (float)g_settings.predicted_hide_narrow, (float)g_sb_predicted_monsters, (float)g_sb_predicted_dreadnoughts })
+			{ uint32 b; std::memcpy(&b, &f, 4); fsig ^= b; fsig *= 1099511628211ull; }
+			if (g_sbs.tick != s_tick) { s_tick = g_sbs.tick; h2cv::sbscan::setPlayer(feet.x, feet.y, feet.z); s_pending = true; }
+			if (fsig != s_filter_sig) { s_filter_sig = fsig; s_pending = true; }
+			if (s_pending && !g_pred_busy.exchange(true))
 			{
-				if (s_spots[i].best < lineM) continue;   // a normal bounce at this tick rate (60-tick files from before the tick-aware lines list them all)
-				if (g_settings.predicted_hide_narrow && s_spots[i].share20 < 0.01f && s_spots[i].best < lineD) continue;   // the optional 1% filter
-				// narrow windows (< 1% of the tested approaches) are shown too, thin and dim (2026-11-01: headlong's lightpost tops,
-				// 0.3-0.4%, were hidden - the user launches off them every time; the window is room for error, not a chance)
-				// the kind filter, by the scan's ceiling (see the ring colour below)
-				if (s_spots[i].best >= lineD ? !g_sb_predicted_dreadnoughts : !g_sb_predicted_monsters) continue;
-				const float dx = s_spots[i].x - feet.x, dy = s_spots[i].y - feet.y;
-				if (dx * dx + dy * dy < g_sb_predicted_range * g_sb_predicted_range) near_spots.push_back({ dx * dx + dy * dy, i });
+				s_pending = false;
+				struct In { float fx, fy, range, maxApp, lineM, lineD; bool narrow, mons, dreads; };
+				const In in{ feet.x, feet.y, g_sb_predicted_range, g_sb_predicted_max_approach, lineM, lineD, g_settings.predicted_hide_narrow, g_sb_predicted_monsters, g_sb_predicted_dreadnoughts };
+				std::thread([in]() {
+					auto L = std::make_shared<s_pred_list>();
+					h2cv::sbscan::spots(L->spots, in.fx, in.fy, in.range, L->total);
+					const auto& sp = L->spots;
+					for (size_t i = 0; i < sp.size(); ++i)
+					{
+						if (sp[i].recipe) ++L->withRecipe;
+						if (sp[i].best < in.lineM) continue;   // a normal bounce at this tick rate (60-tick files from before the tick-aware lines list them all)
+						// the optional 1% filter - dreadnoughts too (user, 2026-11-02: Mombasa's knife-edge 44s, a 1-2 cm strip x one 1 cm
+						// start height, read 0.3-0.8% and are unhittable in play). Off: narrow windows are drawn thin and dim
+						if (in.narrow && sp[i].share20 < 0.01f) continue;
+						// the kind filter, by the scan's ceiling (see the ring colour below)
+						if (sp[i].best >= in.lineD ? !in.dreads : !in.mons) continue;
+						const float dx = sp[i].x - in.fx, dy = sp[i].y - in.fy;
+						if (dx * dx + dy * dy >= in.range * in.range) continue;
+						if (in.maxApp < 100.f && sb_approach_speed(sp[i]) > in.maxApp) { ++L->hidden; continue; }   // needs too fast a landing
+						L->order.push_back({ dx * dx + dy * dy, i });
+					}
+					std::sort(L->order.begin(), L->order.end());
+					{ std::scoped_lock lk(g_pred_m); g_pred_ready = std::move(L); }
+					g_pred_busy = false;
+				}).detach();
 			}
-			std::sort(near_spots.begin(), near_spots.end());
+			{ std::scoped_lock lk(g_pred_m); if (g_pred_ready) { s_cur = std::move(g_pred_ready); g_pred_ready.reset(); } }
+			const s_pred_list& PL = *s_cur;
+			const std::vector<h2cv::sbscan::Spot>& s_spots = PL.spots;
+			const std::vector<std::pair<float, size_t>>& near_spots = PL.order;
+			const size_t s_total = PL.total, hidden_fast = PL.hidden;
+			// the ring: a 16-point circle worked out once (it was 16 cos / sin calls per spot per frame)
+			static float s_ring[17][2]; static bool s_ring_ok = false;
+			if (!s_ring_ok) { for (int i = 0; i <= 16; ++i) { s_ring[i][0] = std::cos(6.2831853f * (float)i / 16.f) * 0.25f; s_ring[i][1] = std::sin(6.2831853f * (float)i / 16.f) * 0.25f; } s_ring_ok = true; }
 			const ImU32 cApproach = IM_COL32(255, 220, 40, 240);
+			// the rings and arrows are made once per change (2026-11-05): the content of the spots in range, the loaded bsps, the
+			// tick-rate lines - they were remade for every spot every frame (~3 ms worst on Reach). Each frame appends them and runs
+			// the loop for the labels only (the nearest few), with line() switched off.
+			static std::shared_ptr<const s_pred_list> s_geo_list; static uint64_t s_geo_key = 0;   // held: a new list can never reuse its address
+			static std::vector<LineVertex> s_geo_thin, s_geo_thick;
+			if (s_geo_list != s_cur)
+			{
+				s_geo_list = s_cur;
+				// order-independent (the list is nearest first, so it reorders as you move): a sum of per-spot hashes
+				uint64_t h = (uint64_t)near_spots.size() * 0xD6E8FEB86659FD93ull;
+				for (const auto& o : near_spots)
+				{
+					const h2cv::sbscan::Spot& q = s_spots[o.second];
+					uint64_t hs = 1469598103934665603ull;
+					for (const float f : { q.x, q.y, q.z, q.best, q.share20, q.recipe ? 1.f : 0.f, q.rBest, q.rDriftX, q.rDriftY, q.rHeadLo, q.rHeadHi, q.rLaunchX, q.rLaunchY, q.rLaunchZ })
+					{ uint32 b; std::memcpy(&b, &f, 4); hs ^= b; hs *= 1099511628211ull; }
+					h += hs ^ (hs >> 29);
+				}
+				s_geo_key = h;
+			}
+			uint64_t geo_key = s_geo_key ^ ((uint64_t)g_sb_geo_gen * 0x9E3779B97F4A7C15ull);
+			{ uint32 b; std::memcpy(&b, &lineD, 4); geo_key ^= (uint64_t)b << 17; std::memcpy(&b, &lineM, 4); geo_key ^= (uint64_t)b << 3; }
+			static uint64_t s_geo_built = 0; static bool s_geo_have = false;
+			static std::vector<Label> s_geo_labels;   // the launch arrows' own texts (per spot, part of the cache)
+			const bool rebuild = !s_geo_have || geo_key != s_geo_built;
+			// one pass over the spots: cache mode (g_sb_geo_pass: lines + arrows, no nearest-spot labels) or labels mode
+			// (g_sb_lines_off: only the nearest-spot labels, stopping after the 6th)
+			auto pass = [&]() {
 			size_t labelled = 0;
 			for (size_t k = 0; k < near_spots.size() && k < 10000; ++k)
 			{
+				if (g_sb_lines_off && labelled >= 6) break;   // labels only: none after the 6th
 				const h2cv::sbscan::Spot& s = s_spots[near_spots[k].second];
+				if (g_gen3 && g_sbb.surface_count > 0 && !sb_spot_loaded(s)) continue;   // a bsp that is not loaded
 				const v3 at{ s.x, s.y, s.z };
 				// the kind (ring colour, filter) comes from the SCAN's ceiling: the offline scan runs the full current model;
 				// the in-game recipe only adds the approach (it used to reclassify - and, with monsters hidden, hide - a
@@ -2589,13 +4035,10 @@ namespace h2cv::sb
 				const bool narrow = s.share20 < 0.01f;   // a window under 1%: a thin, dim ring
 				const ImU32 c = dread ? IM_COL32(255, 255, 255, narrow ? 140 : 230) : IM_COL32(60, 230, 255, narrow ? 140 : 230);
 				for (int i = 0; i < 16; i += 2)
-				{
-					const float a0 = 6.2831853f * (float)i / 16.f, a1 = 6.2831853f * (float)(i + 1) / 16.f;
-					line(at + v3{ std::cos(a0) * 0.25f, std::sin(a0) * 0.25f, 0.03f }, at + v3{ std::cos(a1) * 0.25f, std::sin(a1) * 0.25f, 0.03f }, c, narrow ? 1.f : 2.f);
-				}
+					line(at + v3{ s_ring[i][0], s_ring[i][1], 0.03f }, at + v3{ s_ring[i + 1][0], s_ring[i + 1][1], 0.03f }, c, narrow ? 1.f : 2.f);
 				if (!s.recipe)
 				{
-					if (labelled < 6 && g_settings.superbounce_seam_text)
+					if (!g_sb_geo_pass && labelled < 6 && g_settings.superbounce_seam_text)
 					{
 						char t[220];
 						snprintf(t, sizeof(t), "PREDICTED %s: up to %.0f u/s - window %.1f%% (working out the approach...)", dread ? "DREADNOUGHT" : "MONSTER", s.best, s.share20 * 100.f);
@@ -2623,8 +4066,8 @@ namespace h2cv::sb
 				// where it sends you
 				const v3 lv{ s.rLaunchX, s.rLaunchY, s.rLaunchZ };
 				const float ll = len(lv);
-				if (ll > 1.f) sb_dir_arrow(at + v3{ 0.f, 0.f, 0.1f }, lv * (1.f / ll), s.rBest, c);
-				if (labelled < 4 && g_settings.superbounce_seam_text)
+				if (ll > 1.f && !g_sb_lines_off) sb_dir_arrow(at + v3{ 0.f, 0.f, 0.1f }, lv * (1.f / ll), s.rBest, c);   // cached with the lines (its text too)
+				if (!g_sb_geo_pass && labelled < 4 && g_settings.superbounce_seam_text)
 				{
 					char t1[220], t2[260], t3[200];
 					snprintf(t1, sizeof(t1), "PREDICTED %s %.1f u/s - window %.1f%% for %.0f+, %.1f%% for %.0f+ around this approach%s", dread ? "DREADNOUGHT" : "MONSTER", s.rBest, s.rShare20 * 100.f, lineM, s.rShare35 * 100.f, lineD, pt != 30 ? " (60-tick lines: provisional)" : "");
@@ -2646,12 +4089,33 @@ namespace h2cv::sb
 					++labelled;
 				}
 			}
+			};
+			if (rebuild)
+			{
+				Output geo_tmp; Output* const out_saved = g_out;
+				g_out = &geo_tmp; g_sb_geo_pass = true;
+				pass();
+				g_out = out_saved; g_sb_geo_pass = false;
+				s_geo_thin.swap(geo_tmp.thin); s_geo_thick.swap(geo_tmp.thick); s_geo_labels.swap(geo_tmp.labels); s_geo_built = geo_key; s_geo_have = true;
+			}
+			if (g_out)
+			{
+				g_out->thin.insert(g_out->thin.end(), s_geo_thin.begin(), s_geo_thin.end()); g_out->thick.insert(g_out->thick.end(), s_geo_thick.begin(), s_geo_thick.end());
+				g_out->labels.insert(g_out->labels.end(), s_geo_labels.begin(), s_geo_labels.end());
+			}
+			g_sb_lines_off = true; pass(); g_sb_lines_off = false;   // this frame's nearest-spot labels
 			const float pr = h2cv::sbscan::progress();
-			size_t withRecipe = 0;
-			for (const auto& s : s_spots) if (s.recipe) ++withRecipe;
+			const size_t withRecipe = PL.withRecipe;
 			const int tickShown = (g_settings.spotscan_curtick && g_sbs.tps > 0) ? g_sbs.tps : 30;
-			if (pr >= 1.f) sb_panel(ImVec4(0.24f, 0.9f, 1.f, 1.f), "spot predictions (%d tick): %zu spots (%zu within %.0f wu, %zu approaches worked out)", tickShown, s_spots.size(), near_spots.size(), g_sb_predicted_range, withRecipe);
+			if (pr >= 1.f) sb_panel(ImVec4(0.24f, 0.9f, 1.f, 1.f), "spot predictions (%d tick): %zu spots (%zu within %.0f wu, %zu approaches worked out)", tickShown, s_total, near_spots.size(), g_sb_predicted_range, withRecipe);
+			if (pr >= 1.f && hidden_fast > 0) sb_panel(ImVec4(0.24f, 0.9f, 1.f, 1.f), "%zu more hidden: their approach needs a landing faster than %.0f u/s", hidden_fast, g_sb_predicted_max_approach);
 			else sb_panel(ImVec4(1.f, 0.75f, 0.3f, 1.f), "spot predictions (%d tick): no prediction file for this level - press \"Scan around me\" (or toggle Predicted off / on to retry the file)", tickShown);
+			{
+				int d = 0, t = 0;
+				if (g_sb_recipe_proc.load()) sb_panel(ImVec4(0.24f, 0.9f, 1.f, 1.f), "working out approaches on the GPU: %d of %d spots - %lu s", g_sb_recipe_merged, g_sb_recipe_n, (unsigned long)((GetTickCount() - g_sb_recipe_t0) / 1000));
+				else if (h2cv::sbscan::recipeStatus(d, t)) sb_panel(ImVec4(0.24f, 0.9f, 1.f, 1.f), "working out approaches: %d of %d", d, t);
+				else if (pr >= 1.f && withRecipe < near_spots.size()) sb_panel(ImVec4(0.65f, 0.65f, 0.65f, 1.f), "%zu spots here have no approach yet - press \"Work out approaches\"", near_spots.size() - withRecipe);
+			}
 			if (HANDLE h = g_sb_scan_proc.load()) sb_panel(ImVec4(0.24f, 0.9f, 1.f, 1.f), "spot scan running: %.0f wu around you, %d tick%s - %lu s", g_sb_scan_r, g_sb_scan_tick_used, g_sb_scan_slow_used ? ", slow mode 4-50 u/s" : "", (unsigned long)((GetTickCount() - g_sb_scan_t0) / 1000));
 		}
 
@@ -2732,6 +4196,157 @@ namespace h2cv::sb
 			g_sb_panel.push_back({ c, b });
 		}
 
+		// ---- the per-seam physics check (2026-11-01; a pure function of its inputs since 2026-11-05) ----
+		// Your height and fall fix WHEN you land; your forward speed decides WHERE you are on that tick - so forward speeds 0..2.25
+		// along your heading are tried with the scan's exact rules (h2cv::sbscan::landingLaunch). Halo 2 / 3 / ODST run it in the
+		// planning tick; Reach on a worker thread: its dense instance meshes made the 6 checks a tick cost up to ~25 ms (offline
+		// bench on m50, HCM Reach Bounce Perf\) - a whole frame every tick. landingLaunch is thread-safe (the job under its mutex,
+		// its memo and near cache thread_local).
+		struct s_sb_phys_in { uint32 si = 0, tick = 0, geo = 0, epoch = 0; bool jump = false; v3 feet{}, vel{}, near_pt{}; float jump_speed = 0.f, dt = 0.f; };
+		struct s_sb_phys_out { int adj = 0; float adj_lo = 0.f, adj_hi = 0.f, adj_launch = 0.f; };
+		s_sb_phys_out sb_phys_check(const s_sb_phys_in& q)
+		{
+			s_sb_phys_out o;
+			const bool jump = q.jump;
+			const v3 feet = q.feet, vel = q.vel, near_pt = q.near_pt;
+			const float jump_speed = q.jump_speed, dt = q.dt;
+			// step the fall tick by tick (the game's order: move, then find contacts at the new position - swept if fast)
+			// until the rules find a contact: the landing tick. A slow (starting-bounce) fall lands sunk in, unswept.
+			const float g1 = k_sb_gravity * dt;
+			const v3 hv{ vel.x, vel.y, 0.f };
+			const float h0 = len(hv);
+			v3 u = (!jump && h0 > 0.3f) ? hv * (1.f / h0) : v3{ near_pt.x - feet.x, near_pt.y - feet.y, 0.f };
+			u = len(u) > 1e-4f ? u * (1.f / len(u)) : v3{ 1.f, 0.f, 0.f };
+			bool ok[10] = {}; float lv[10] = {}; int nok = 0;
+			for (int i = 0; i < 10; ++i)
+			{
+				const float h = 0.25f * (float)i;
+				float x = feet.x, y = feet.y, z = feet.z, vz = jump ? jump_speed : vel.z, out[3];
+				for (int k = 0; k < 600 && z > near_pt.z - 0.6f; ++k)
+				{
+					// contacts only while descending (a jump's rise, or a ceiling, is not the landing)
+					if (vz - g1 < 0.f && z - near_pt.z < 1.5f && h2cv::sbscan::landingLaunch(x, y, z, u.x * h, u.y * h, vz - g1, out))
+					{
+						if (out[2] > 4.f) { ok[i] = true; lv[i] = std::sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]); ++nok; }
+						break;
+					}
+					vz -= g1; z += vz * dt; x += u.x * h * dt; y += u.y * h * dt;
+				}
+			}
+			const int i0 = jump ? 9 : (std::max)(0, (std::min)(9, (int)std::lround(h0 / 0.25f)));   // the jump's baseline: hold forward (2.25)
+			int pick = -1;
+			if (ok[i0]) { o.adj = 1; pick = i0; }
+			else if (nok > 0)
+			{
+				int ib = -1, ia = -1;
+				for (int i = i0 - 1; i >= 0; --i) if (ok[i]) { ib = i; break; }
+				for (int i = i0 + 1; i < 10; ++i) if (ok[i]) { ia = i; break; }
+				if (ib >= 0 && (ia < 0 || i0 - ib <= ia - i0)) { o.adj = -1; pick = ib; } else { o.adj = 2; pick = ia; }
+			}
+			else o.adj = 3;
+			if (pick >= 0)
+			{
+				int lo = pick, hi = pick;
+				while (lo > 0 && ok[lo - 1]) --lo;
+				while (hi < 9 && ok[hi + 1]) ++hi;
+				o.adj_lo = 0.25f * (float)lo; o.adj_hi = 0.25f * (float)hi;
+				for (int i = lo; i <= hi; ++i) o.adj_launch = (std::max)(o.adj_launch, lv[i]);
+			}
+			return o;
+		}
+		void sb_phys_apply(s_sb_rated& r, const s_sb_phys_out& o, uint32 src) { r.adj = o.adj; r.adj_lo = o.adj_lo; r.adj_hi = o.adj_hi; r.adj_launch = o.adj_launch; r.adj_src = src; }
+
+		// Reach: the worker. One thread, this planning tick's checks nearest seam first; a new tick's list replaces what was not started.
+		struct s_sb_phys_worker
+		{
+			std::mutex m; std::condition_variable cv;
+			std::vector<s_sb_phys_in> todo;
+			std::vector<std::pair<s_sb_phys_in, s_sb_phys_out>> done;
+			bool stop = false;
+		};
+		std::shared_ptr<s_sb_phys_worker> g_sb_pw;
+		struct s_sb_phys_last { uint32 tick = 0; s_sb_phys_out o; };
+		std::unordered_map<uint32, s_sb_phys_last> g_sb_phys_last;   // the newest worker result per seam (seam indices of g_sb_phys_geo's cache)
+		uint32 g_sb_phys_geo = 0;
+		uint32 g_sb_phys_epoch = 1;          // bumped when time goes back (revert / restart): older requests and results are dropped
+		bool g_sb_pw_failed = false;          // the worker thread could not be made: Reach runs the checks in the planning tick
+		void sb_phys_worker_loop(std::shared_ptr<s_sb_phys_worker> w)
+		{
+			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+			for (;;)
+			{
+				s_sb_phys_in q;
+				{
+					std::unique_lock<std::mutex> lk(w->m);
+					w->cv.wait(lk, [&w] { return w->stop || !w->todo.empty(); });
+					if (w->stop) return;
+					q = w->todo.front(); w->todo.erase(w->todo.begin());
+				}
+				s_sb_phys_out o;
+				// the scan job (and its tick rate) must be the same, ready one before and after: start() on the render thread swaps
+				// it (a new cache, another tick rate) and meanwhile landingLaunch would see no job or a mixed tick rate
+				const uint64_t js0 = h2cv::sbscan::readySerial();
+				if (js0 == 0) continue;
+				try { o = sb_phys_check(q); }
+				catch (...) { continue; }
+				if (h2cv::sbscan::readySerial() != js0) continue;
+				std::scoped_lock lk(w->m);
+				if (w->stop) return;
+				w->done.push_back({ q, o });
+			}
+		}
+		bool sb_phys_ensure_worker()
+		{
+			if (g_sb_pw) return true;
+			if (g_sb_pw_failed) return false;
+			auto w = std::make_shared<s_sb_phys_worker>();
+			try { std::thread([w]() { sb_phys_worker_loop(w); }).detach(); }
+			catch (...) { g_sb_pw_failed = true; LOGF("bounce viewer: the physics worker thread could not be started - the checks run in the frame"); return false; }
+			g_sb_pw = w;
+			return true;
+		}
+		void sb_phys_submit(std::vector<s_sb_phys_in>&& qs)
+		{
+			if (!g_sb_pw) return;
+			{ std::scoped_lock lk(g_sb_pw->m); g_sb_pw->todo = std::move(qs); }
+			g_sb_pw->cv.notify_one();
+		}
+		void sb_phys_stop()
+		{
+			if (g_sb_pw) { { std::scoped_lock lk(g_sb_pw->m); g_sb_pw->stop = true; g_sb_pw->todo.clear(); g_sb_pw->done.clear(); } g_sb_pw->cv.notify_all(); g_sb_pw.reset(); }
+			g_sb_phys_last.clear(); g_sb_pw_failed = false; ++g_sb_phys_epoch;
+		}
+		// time went back (revert / restart): nothing computed for the old timeline may show
+		void sb_phys_rewind()
+		{
+			++g_sb_phys_epoch;
+			g_sb_phys_last.clear();
+			if (g_sb_pw) { std::scoped_lock lk(g_sb_pw->m); g_sb_pw->todo.clear(); g_sb_pw->done.clear(); }
+		}
+		// render thread, every frame: the worker's results into g_sb_phys_last, and into the ratings that asked for them - only a
+		// result newer than the one a rating shows, and never one from a different cache (seam indices change with it)
+		void sb_phys_drain(float dt)
+		{
+			if (g_sb_phys_geo != g_sb_geo_gen) { g_sb_phys_last.clear(); g_sb_phys_geo = g_sb_geo_gen; }
+			if (!g_sb_pw) return;
+			std::vector<std::pair<s_sb_phys_in, s_sb_phys_out>> got;
+			{ std::scoped_lock lk(g_sb_pw->m); got.swap(g_sb_pw->done); }
+			for (const auto& qo : got)
+			{
+				const s_sb_phys_in& q = qo.first;
+				if (q.geo != g_sb_geo_gen || q.epoch != g_sb_phys_epoch || q.dt != dt) continue;   // another cache, timeline or tick rate
+				s_sb_phys_last& last = g_sb_phys_last[q.si];
+				if (q.tick >= last.tick) { last.tick = q.tick; last.o = qo.second; }
+				const auto it = g_sb_shown.find(q.si);
+				if (it == g_sb_shown.end()) continue;
+				s_sb_rated& r = it->second.r;
+				if (!r.phys_req || q.tick + 1 > it->second.seen) continue;               // that rating did not ask, or is older than the request
+				if (q.tick + 3 < it->second.seen) continue;                               // more than 2 ticks older than the rating (as the provisional rule)
+				if (r.adj_src != 0xFFFFFFFF && r.adj_src >= q.tick) continue;          // it already shows this or a newer result
+				sb_phys_apply(r, qo.second, q.tick);
+			}
+		}
+
 		void draw_superbounce(int32 user)
 		{
 			if (user != 0 || !g_sbs.ok) return;                 // the local player only
@@ -2743,7 +4358,7 @@ namespace h2cv::sb
 			g_sb_tick_scale = (float)tps / 30.f;                     // launches (and the limits naming them) scale with the tick rate
 			const bool airborne = g_sbs.airborne;
 			const uintptr_t own = g_sbs.ent;
-			const bool charged = own && sb_charged(own);
+			const bool charged = g_gen3 ? g_sbs.armed : (own && sb_charged(own));   // Gen3: h3sb's armed state (level -3)
 			const v3 center = feet + v3{ 0.f, 0.f, 0.36f };
 
 			// live: the pairs Havok will couple at its next solve
@@ -2756,6 +4371,7 @@ namespace h2cv::sb
 			const uint32 tick = g_sbs.tick;
 			if (tick != g_sbl.prev_tick)
 			{
+				SbTimer sbt_(SBT_LEARN);
 				const float dvz = vel.z - g_sbl.prev_vz;
 				const v3 dvh{ vel.x - g_sbl.prev_vhv.x, vel.y - g_sbl.prev_vhv.y, 0.f };   // sideways kicks (before prev_vhv moves on)
 				// HCM's own Force Launch wrote this velocity (noteForceLaunch arms 3 logged ticks; the write lands in one of them):
@@ -2770,7 +4386,7 @@ namespace h2cv::sb
 					const v3 change = vh_now - g_sbl.prev_vhv;
 					const float step = k_sb_air_friction * dt, moved = len(change);
 					float sx = 0.f, sy = 0.f; int keys = 0;
-					sb_read_input(sx, sy, keys);
+					if (!g_gen3) sb_read_input(sx, sy, keys);
 					const bool stick = std::sqrt(sx * sx + sy * sy) > 0.25f || keys != 0;
 					v3 target = vh_now;
 					bool steering = false;
@@ -2810,10 +4426,13 @@ namespace h2cv::sb
 						g_sbl.jump_speed = vel.z;   // a jump from standing (not a launch): the first airborne tick's speed
 				}
 				// a launch: at least 4 u/s up (a landing stops near 0 and a jump take-off is 3.08 u/s) or a sideways kick
-				if (charged && own && !forced && g_sbl.prev_vz < -2.f && (vel.z > 4.f || len(dvh) > 4.f))
+				// Gen3 (2026-11-02): no Havok entity - h3sb's armed state this tick or the last, not while flying
+				const bool can_launch = g_gen3 ? ((charged || g_sbl.prev_charged) && !g_sbs.flying) : (charged && own);
+				if (can_launch && !forced && g_sbl.prev_vz < -2.f && (vel.z > 4.f || len(dvh) > 4.f))
 				{
 					std::vector<s_sb_contact> cs;
-					sb_read_contacts(own, cs);
+					if (own) sb_read_contacts(own, cs);
+					g_sbl.last_bounce = len(vel); g_sbl.last_bounce_until = tick + 2;   // its top speed: this tick or the next two
 					g_sbl.have_bounce = true; g_sbl.bounce_tick = tick; g_sbl.bounce_up = vel.z; g_sbl.bounce_down = -g_sbl.prev_vz; g_sbl.bounce_side = len(dvh);
 					++g_sb_streak;                                          // bounces in a row, and the level's record
 					if (g_sb_streak > g_sb_record) { g_sb_record = g_sb_streak; sb_records_save(); }
@@ -2824,6 +4443,7 @@ namespace h2cv::sb
 					snprintf(g_sbl.bounce_what + used, sizeof(g_sbl.bounce_what) - used, ", %.2f deep (squeeze needs %.2f)", deepest, k_sb_depth_min);
 					g_sb_bounce_pairs = live;
 				}
+				else if (!forced && tick <= g_sbl.last_bounce_until && tick + 2 >= g_sbl.last_bounce_until) g_sbl.last_bounce = (std::max)(g_sbl.last_bounce, len(vel));
 				// a charged landing (falling, then stopped or launched): counted on a remembered spot; a monster-size launch
 				// (20+ u/s) makes one where there is none
 				if (charged && !forced && g_sbl.prev_vz < -1.5f && dvz > 1.5f && tick == g_sbl.prev_tick + 1)
@@ -2837,12 +4457,14 @@ namespace h2cv::sb
 				if (airborne) g_sb_ground_n = 0;
 				else if (++g_sb_ground_n >= 3) g_sb_streak = 0;
 				if (airborne && vel.z < -1.5f) g_sb_last_air = g_sb_pred;            // what this fall is rated as, before it lands
-				g_sbl.was_airborne = airborne; g_sbl.prev_vz = vel.z; g_sbl.prev_tick = tick; g_sbl.prev_feet = feet;
+				g_sbl.was_airborne = airborne; g_sbl.prev_vz = vel.z; g_sbl.prev_tick = tick; g_sbl.prev_feet = feet; g_sbl.prev_charged = charged;
 			}
 
+			// "Seams, path and landing" off (2026-11-05): none of the viewer's own drawing - the spots and the HUD only
+			const bool base = g_settings.superbounce_seams;
 			const std::vector<s_sb_pair>* drawn_pairs = &live;
 			if (live.empty() && g_sbl.have_bounce && tick >= g_sbl.bounce_tick && tick - g_sbl.bounce_tick <= (uint32)(2 * tps)) drawn_pairs = &g_sb_bounce_pairs;
-			for (const auto& pr : *drawn_pairs)
+			if (base) for (const auto& pr : *drawn_pairs)
 			{
 				const ImU32 c = pr.factor >= 5.f ? IM_COL32(80, 230, 90, 255) : pr.factor >= 2.f ? IM_COL32(255, 210, 50, 255) : IM_COL32(170, 170, 170, 200);
 				line(pr.p0, pr.p1, c, 2.f);
@@ -2859,6 +4481,8 @@ namespace h2cv::sb
 
 			if (!g_sbb.bsp) return;
 			// a squeeze already loaded (inside two opposite faces, e.g. after ghosting in): what Havok will do with it
+			if (!base) g_sb_loaded_text[0] = 0;   // nothing stale in the panel while the base viewer is off
+			if (base)
 			{
 				v3 ca = feet + v3{ 0.f, 0.f, k_sb_pill_r }, cb = feet + v3{ 0.f, 0.f, k_sb_pill_h - k_sb_pill_r };
 				float cr = k_sb_pill_r;
@@ -2890,6 +4514,29 @@ namespace h2cv::sb
 				s_prev = g_settings.superbounce_predicted; s_prevTick = tickNow;
 			}
 			if (g_sb_scan_request.exchange(false)) sb_spot_scan_launch(feet);
+			// the GPU run's rows as they come (the tool flushes each spot's row): merged once a second, so the arrows appear while it runs
+			if (g_sb_recipe_proc.load() && GetTickCount() - g_sb_recipe_lastmerge >= 1000)
+			{
+				g_sb_recipe_lastmerge = GetTickCount();
+				g_sb_recipe_merged += h2cv::sbscan::mergeRecipes(g_sb_recipe_out, g_sb_recipe_redo, g_sb_recipe_run);
+			}
+			if (g_sb_recipe_done.exchange(false))
+			{
+				g_sb_recipe_merged += h2cv::sbscan::mergeRecipes(g_sb_recipe_out, g_sb_recipe_redo, g_sb_recipe_run);
+				const int merged = g_sb_recipe_merged;
+				if (g_out) g_out->message = g_sb_recipe_exit.load() == 0
+					? "Approaches worked out (GPU): " + std::to_string(merged) + " of " + std::to_string(g_sb_recipe_n) + " spots, " + std::to_string((GetTickCount() - g_sb_recipe_t0) / 1000) + " s"
+					: "The GPU approach run failed (superbounce_scan\\recipe_log.txt) - " + std::to_string(merged) + " spots merged";
+			}
+			const bool redoReq = g_sb_recipe_redo_req.exchange(false);
+			if (g_sb_recipe_request.exchange(false) && !sb_recipe_gpu_launch(feet, redoReq))
+			{
+				// no GPU tool (or it could not start): HCM's own threads - every predicted spot within the drawing range, from here
+				h2cv::sbscan::requestRecipes(feet.x, feet.y, feet.z, g_sb_predicted_range);
+				int d = 0, t = 0; h2cv::sbscan::recipeStatus(d, t);
+				if (g_out) g_out->message = t > 0 ? "Working out approaches for " + std::to_string(t) + " spots within " + std::to_string((int)g_sb_predicted_range) + " wu"
+					: "Every predicted spot within " + std::to_string((int)g_sb_predicted_range) + " wu already has its approach";
+			}
 			if (g_sb_scan_done.exchange(false))
 			{
 				h2cv::sbscan::reload();
@@ -2900,6 +4547,7 @@ namespace h2cv::sb
 				if (g_sb_scan_pending) { g_sb_scan_pending = false; sb_scan_start(); }
 				sb_draw_predicted(feet);
 			}
+			if (base) {   // ---- the base viewer: gaps / fins, landing path, seams, debounce finder (to "end of the base viewer") ----
 			if (g_settings.superbounce_gaps)
 			{
 				// junctions (a piece meeting the floor at an angle) within 60 wu, in cyan, the nearest 6 labelled
@@ -2999,6 +4647,7 @@ namespace h2cv::sb
 				static bool s_hit = false;
 				if (tick != s_path_tick)
 				{
+					SbTimer sbt_(SBT_PATH);
 					s_path_tick = tick;
 					s_hit = sb_predict_landing(feet, vel, dt, g_sbl.target, s_path);
 				}
@@ -3039,10 +4688,13 @@ namespace h2cv::sb
 			// qualified, fading, and a seam on screen is only dropped beyond 9.5 wu (8 to appear).
 			const uint32 hold = (uint32)(1.5f * (float)tps);
 			const float apex = jump_speed * jump_speed / (2.f * k_sb_gravity);
-			if (g_sb_plan_tick != 0xFFFFFFFF && tick < g_sb_plan_tick) g_sb_shown.clear();   // time went back (revert, restart)
+			if (g_sb_plan_tick != 0xFFFFFFFF && tick < g_sb_plan_tick) { g_sb_shown.clear(); sb_phys_rewind(); }   // time went back (revert, restart)
+			sb_phys_drain(dt);   // Reach: the physics checks the worker finished since the last frame
 			if (tick != g_sb_plan_tick)
 			{
+				SbTimer sbt_(SBT_SEAMS);
 				g_sb_plan_tick = tick;
+				std::vector<s_sb_phys_in> phys_reqs;   // Reach: this tick's physics checks, for the worker
 				// in the air the search also covers where this fall lands, as far as air control can still move that (high up: a
 				// wide area), with no limit on how far below you
 				const bool air_wide = airborne && g_sb_air_tick == tick;
@@ -3056,18 +4708,31 @@ namespace h2cv::sb
 					bhi.x = (std::max)(bhi.x, lc.x + air_r + 2.f); bhi.y = (std::max)(bhi.y, lc.y + air_r + 2.f);
 					blo.z = (std::min)(blo.z, lc.z - 31.f);
 				}
-				std::vector<uint32> blockers;
-				for (int32 s = 0; s < (int32)g_sbb.surf.size(); ++s)
+				// Reach: the cache's static grid answers the occlusion tests (the same answers, no per-tick gather / build)
+				s_sb_raygrid* const rgrid = g_reach ? g_sbb.rgrid.get() : nullptr;
+				auto blocked = [&](v3 a, v3 b) { return rgrid ? rgrid->blocked(g_sbb, a, b, blo, bhi) : sb_blocked_g(g_sb_grid, a, b); };
+				std::vector<uint32> blockers, cand_s;
+				if (!rgrid) sb_surfs_near(blo, bhi, cand_s, g_sbb, false);   // unsorted: a blocker's order only changes which one is hit first
+				for (const uint32 cs : cand_s)
 				{
+					const int32 s = (int32)cs;
 					const s_sb_surface& sf = g_sbb.surf[(size_t)s];
 					if (!sf.ok) continue;
 					if (sf.hi.x < blo.x || sf.lo.x > bhi.x || sf.hi.y < blo.y || sf.lo.y > bhi.y || sf.hi.z < blo.z || sf.lo.z > bhi.z) continue;
 					blockers.push_back((uint32)s);
 				}
-				sb_grid_build(g_sb_grid, blockers, blo, bhi);
+				if (!rgrid) sb_grid_build(g_sb_grid, blockers, blo, bhi);
 				// the seams to rate: near you, and in the air near where you land - nearest the landing first, at most 96
 				std::vector<std::pair<float, uint32>> cand;
-				for (uint32 si = 0; si < (uint32)g_sbb.seams.size(); ++si)
+				std::vector<uint32> cand_m;
+				{
+					// the seams within reach of you (9.5 wu) and, in the air, of where you land (air_r + 1.5)
+					const float rf = 9.5f, rl = air_wide ? air_r + 1.5f : 0.f;
+					v3 qlo{ feet.x - rf, feet.y - rf, 0.f }, qhi{ feet.x + rf, feet.y + rf, 0.f };
+					if (air_wide) { qlo.x = (std::min)(qlo.x, lc.x - rl); qlo.y = (std::min)(qlo.y, lc.y - rl); qhi.x = (std::max)(qhi.x, lc.x + rl); qhi.y = (std::max)(qhi.y, lc.y + rl); }
+					sb_seams_near(qlo, qhi, cand_m, false);   // unsorted: the candidates are sorted by (distance, index) below
+				}
+				for (const uint32 si : cand_m)
 				{
 					const s_sb_seam& sm = g_sbb.seams[si];
 					if ((std::min)(sm.a.z, sm.b.z) > feet.z - 0.3f || (std::max)(sm.a.z, sm.b.z) < feet.z - max_drop) continue;
@@ -3104,15 +4769,15 @@ namespace h2cv::sb
 						const float mx = mid.x - feet.x, my = mid.y - feet.y, d2 = mx * mx + my * my;
 						const float lx = mid.x - lc.x, ly = mid.y - lc.y, l2 = lx * lx + ly * ly;
 						if (d2 > reach * reach && !(air_wide && l2 <= rr * rr)) continue;
-						if (sb_blocked_g(g_sb_grid, mid + v3{ 0.f, 0.f, 0.05f }, v3{ mid.x, mid.y, feet.z + 0.05f })) continue;   // covered
+						if (blocked(mid + v3{ 0.f, 0.f, 0.05f }, v3{ mid.x, mid.y, feet.z + 0.05f })) continue;   // covered
 						open |= 1u << k;
 						const float sel = air_wide ? l2 : d2;            // in the air: the piece nearest where you land
 						if (sel >= best_d2) continue;
 						// straight there at your height (walking off, or already falling), or over the top of a jump
-						const bool walk_ok = !sb_blocked_g(g_sb_grid, feet + v3{ 0.f, 0.f, 0.6f }, v3{ mid.x, mid.y, feet.z + 0.6f });
+						const bool walk_ok = !blocked(feet + v3{ 0.f, 0.f, 0.6f }, v3{ mid.x, mid.y, feet.z + 0.6f });
 						const bool jump_ok = !airborne
-							&& !sb_blocked_g(g_sb_grid, v3{ mid.x, mid.y, feet.z + 0.05f }, v3{ mid.x, mid.y, feet.z + apex + 0.05f })
-							&& !sb_blocked_g(g_sb_grid, feet + v3{ 0.f, 0.f, apex + 0.3f }, v3{ mid.x, mid.y, feet.z + apex + 0.3f });
+							&& !blocked(v3{ mid.x, mid.y, feet.z + 0.05f }, v3{ mid.x, mid.y, feet.z + apex + 0.05f })
+							&& !blocked(feet + v3{ 0.f, 0.f, apex + 0.3f }, v3{ mid.x, mid.y, feet.z + apex + 0.3f });
 						if (walk_ok || jump_ok) { best_d2 = sel; near_pt = mid; near_walk = walk_ok; near_jump = jump_ok; }
 					}
 					if (best_d2 >= 1e8f) continue;
@@ -3168,50 +4833,24 @@ namespace h2cv::sb
 					// PHYSICS (2026-11-01): a seam that is not green. Your height and fall fix WHEN you land (the landing tick and the
 					// start height); your forward speed decides WHERE you are on that tick - so try forward speeds 0..2.25 along your
 					// heading with the scan's exact rules: keep it, slow down, speed up, or none (starting bounces included)
-					if (airborne && r.q != 2 && phys_budget > 0)
+					// every nearby seam, green ones too (2026-11-01: the old depth model showed a seam fully green that the game - and the
+					// physics - do not launch: the sweep ended 0.03 above the slope). The physics decides the colour where it has run.
+					if (phys_budget > 0)
 					{
 						--phys_budget;
-						// step the fall tick by tick (the game's order: move, then find contacts at the new position - swept if fast)
-						// until the rules find a contact: the landing tick. A slow (starting-bounce) fall lands sunk in, unswept.
-						const float g1 = k_sb_gravity * dt;
-						const v3 hv{ vel.x, vel.y, 0.f };
-						const float h0 = len(hv);
-						v3 u = h0 > 0.3f ? hv * (1.f / h0) : v3{ near_pt.x - feet.x, near_pt.y - feet.y, 0.f };
-						u = len(u) > 1e-4f ? u * (1.f / len(u)) : v3{ 1.f, 0.f, 0.f };
-						bool ok[10] = {}; float lv[10] = {}; int nok = 0;
-						for (int i = 0; i < 10; ++i)
+						// on the ground: the JUMP from here (take-off jump_speed), holding forward toward the seam (2026-11-01)
+						s_sb_phys_in q;
+						q.si = si; q.tick = tick; q.geo = g_sb_geo_gen; q.epoch = g_sb_phys_epoch; q.jump = !airborne; q.feet = feet; q.vel = vel; q.near_pt = near_pt; q.jump_speed = jump_speed; q.dt = dt;
+						r.phys_req = true;
+						if (g_reach && sb_phys_ensure_worker())
 						{
-							const float h = 0.25f * (float)i;
-							float x = feet.x, y = feet.y, z = feet.z, vz = vel.z, out[3];
-							for (int k = 0; k < 600 && z > near_pt.z - 0.6f; ++k)
-							{
-								if (z - near_pt.z < 1.5f && h2cv::sbscan::landingLaunch(x, y, z, u.x * h, u.y * h, vz - g1, out))
-								{
-									if (out[2] > 4.f) { ok[i] = true; lv[i] = std::sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]); ++nok; }
-									break;
-								}
-								vz -= g1; z += vz * dt; x += u.x * h * dt; y += u.y * h * dt;
-							}
+							// Reach (2026-11-05): on the worker - its result patches this rating when it lands (sb_phys_drain). Meanwhile the
+							// seam keeps its last result if that is at most 2 ticks old, so its colour does not drop back every tick
+							phys_reqs.push_back(q);
+							const auto pl = g_sb_phys_last.find(si);
+							if (pl != g_sb_phys_last.end() && pl->second.tick + 2 >= tick) sb_phys_apply(r, pl->second.o, pl->second.tick);
 						}
-						const int i0 = (std::max)(0, (std::min)(9, (int)std::lround(h0 / 0.25f)));
-						int pick = -1;
-						if (ok[i0]) { r.adj = 1; pick = i0; }
-						else if (nok > 0)
-						{
-							int ib = -1, ia = -1;
-							for (int i = i0 - 1; i >= 0; --i) if (ok[i]) { ib = i; break; }
-							for (int i = i0 + 1; i < 10; ++i) if (ok[i]) { ia = i; break; }
-							if (ib >= 0 && (ia < 0 || i0 - ib <= ia - i0)) { r.adj = -1; pick = ib; } else { r.adj = 2; pick = ia; }
-						}
-						else r.adj = 3;
-						if (pick >= 0)
-						{
-							int lo = pick, hi = pick;
-							while (lo > 0 && ok[lo - 1]) --lo;
-							while (hi < 9 && ok[hi + 1]) ++hi;
-							r.adj_lo = 0.25f * (float)lo; r.adj_hi = 0.25f * (float)hi;
-							for (int i = lo; i <= hi; ++i) r.adj_launch = (std::max)(r.adj_launch, lv[i]);
-						}
+						else sb_phys_apply(r, sb_phys_check(q), tick);   // Halo 2 / 3 / ODST: here, as before (Reach too if no worker)
 					}
 					// a seam's launch is the tilt line; a gap's grows with the arrival speed (sb_gap_range)
 					r.best_launch = down <= 0.f ? 0.f : sb_up_estimate(std::atan(k_sb_best_tilt)) * g_sb_tick_scale;
@@ -3224,6 +4863,7 @@ namespace h2cv::sb
 					e.r = r;
 					for (int k = 0; k < pieces; ++k) if (open & (1u << k)) e.piece_seen[k] = tick + 1;
 				}
+				if (!phys_reqs.empty()) sb_phys_submit(std::move(phys_reqs));
 				for (auto it = g_sb_shown.begin(); it != g_sb_shown.end();)
 				{
 					if (tick + 1 - it->second.seen > hold) it = g_sb_shown.erase(it); else ++it;
@@ -3269,8 +4909,9 @@ namespace h2cv::sb
 				const s_sb_rated& r = e.r;
 				const float age = (float)(tick + 1 - e.seen) / (float)(std::max)(1u, (unsigned)hold);
 				// the physics check overrides the colour: light blue = slow your forward speed, purple = speed it up, green = keep it
-				const bool red = r.q == 0 && r.adj != 1 && r.adj != -1 && r.adj != 2;
-				const ImU32 cq = r.adj == -1 ? IM_COL32(90, 170, 255, 255) : r.adj == 2 ? IM_COL32(200, 110, 255, 255) : r.adj == 1 ? IM_COL32(80, 230, 90, 255) : sb_quality_color(r.q);
+				// adj 3 = the physics found no forward speed that launches: red, whatever the old depth model said
+				const bool red = (r.q == 0 && r.adj != 1 && r.adj != -1 && r.adj != 2) || r.adj == 3;
+				const ImU32 cq = r.adj == -1 ? IM_COL32(90, 170, 255, 255) : r.adj == 2 ? IM_COL32(200, 110, 255, 255) : r.adj == 1 ? IM_COL32(80, 230, 90, 255) : r.adj == 3 ? sb_quality_color(0) : sb_quality_color(r.q);
 				const ImU32 c = sb_fade(cq, (1.f - 0.7f * age) * (red ? 0.35f : 1.f));
 				const float wl = red ? 1.f : (labelled[i] ? 3.f : 1.5f);
 				for (int k = 0; k < r.pieces; ++k)
@@ -3332,11 +4973,12 @@ namespace h2cv::sb
 				text(r.near_pt + v3{ 0.f, 0.f, 0.15f }, c, t);
 				if (r.adj != 0)
 				{
-					char tp[200];
-					if (r.adj == 1) snprintf(tp, sizeof(tp), "PHYSICS: launches at your forward speed (%.2f-%.2f u/s work) -> about %.0f u/s", r.adj_lo, r.adj_hi, r.adj_launch);
-					else if (r.adj == -1) snprintf(tp, sizeof(tp), "PHYSICS: SLOW DOWN - forward %.2f-%.2f u/s launches (tap / fragment forward) -> about %.0f u/s", r.adj_lo, r.adj_hi, r.adj_launch);
-					else if (r.adj == 2) snprintf(tp, sizeof(tp), "PHYSICS: SPEED UP - forward %.2f-%.2f u/s launches (max 2.25) -> about %.0f u/s", r.adj_lo, r.adj_hi, r.adj_launch);
-					else snprintf(tp, sizeof(tp), "PHYSICS: no forward speed (0-2.25) launches from this fall");
+					char tp[220];
+					const char* ph = r.air ? "PHYSICS" : "PHYSICS (JUMP from here)";
+					if (r.adj == 1) snprintf(tp, sizeof(tp), "%s: launches %s (%.2f-%.2f u/s forward work) -> about %.0f u/s", ph, r.air ? "at your forward speed" : "holding forward", r.adj_lo, r.adj_hi, r.adj_launch);
+					else if (r.adj == -1) snprintf(tp, sizeof(tp), "%s: SLOW DOWN - forward %.2f-%.2f u/s launches (tap / fragment forward) -> about %.0f u/s", ph, r.adj_lo, r.adj_hi, r.adj_launch);
+					else if (r.adj == 2) snprintf(tp, sizeof(tp), "%s: SPEED UP - forward %.2f-%.2f u/s launches (max 2.25) -> about %.0f u/s", ph, r.adj_lo, r.adj_hi, r.adj_launch);
+					else snprintf(tp, sizeof(tp), "%s: no forward speed (0-2.25) launches %s", ph, r.air ? "from this fall" : "from a jump here");
 					text(r.near_pt + v3{ 0.f, 0.f, 0.55f }, c, tp);
 				}
 				if (i == 0 && r.q >= 1 && r.down > 0.f && !r.flat)
@@ -3347,6 +4989,125 @@ namespace h2cv::sb
 				}
 			}
 
+			// DEBOUNCE FINDER (2026-11-02): where and how to land so the pill falls through a seam / edge - see patch_debounce_finder.py.
+			// Charged only, the Debounce option on; recomputed every 3rd tick on a 9 x 7 grid (0.05 wu) around the seam nearest the landing.
+			if (g_settings.superbounce_debounce && charged && g_sbs.ok)
+			{
+				struct s_db { uint32 tick = 0; bool ok = false; v3 at{}, vh{}, along{}; float chg = 1e9f; int best = 0, good = 0, tried = 0; };
+				static s_db s_d;
+				const v3 from = (airborne && g_sb_air_tick == tick) ? g_sb_air_at : feet;
+				if (tick != s_d.tick && (tick % 3 == 0 || !s_d.ok))
+				{
+					SbTimer sbt_(SBT_DEBOUNCE);
+					s_d = s_db{}; s_d.tick = tick;
+					// the seam nearest the landing, among the rated (in-reach) seams below you
+					float bd = airborne ? 2.5f : 5.f; bool found = false; v3 ba{}, bb{};
+					const float vz_up = airborne ? vel.z : jump_speed;
+					const float apex = feet.z + (vz_up > 0.f ? vz_up * vz_up / (2.f * k_sb_gravity) : 0.f);
+					for (const auto& kv : g_sb_shown)
+					{
+						const s_sb_rated& r = kv.second.r;
+						const v3 c = sb_closest_on_segment(from, r.a, r.b);
+						const float d = std::sqrt((c.x - from.x) * (c.x - from.x) + (c.y - from.y) * (c.y - from.y));
+						if (d < bd && c.z < apex - 0.1f) { bd = d; found = true; ba = r.a; bb = r.b; }   // reached while descending
+					}
+					if (found)
+					{
+						const v3 c0 = sb_closest_on_segment(from, ba, bb);
+						v3 along = norm(v3{ bb.x - ba.x, bb.y - ba.y, 0.f });
+						if (len(along) < 0.5f) along = v3{ 1.f, 0.f, 0.f };
+						const v3 across{ -along.y, along.x, 0.f };
+						const float g1 = k_sb_gravity * dt;
+						const float vz0 = airborne ? vel.z : jump_speed;   // on the ground: the jump from here
+						// when you land: the fall from your height down to the seam's (the per-target sim finds the exact tick)
+						float z = feet.z, vz = vz0; int k = 0;
+						while (k < 900 && z + (vz - g1) * dt > c0.z + 0.02f) { vz -= g1; z += vz * dt; ++k; }
+						const float t_land = (float)(k + 1) * dt;
+						constexpr int NA = 9, NC = 7;
+						bool hit[NA][NC] = {};
+						v3 land[NA][NC] = {};
+						for (int ia = 0; ia < NA; ++ia)
+							for (int ic = 0; ic < NC; ++ic)
+							{
+								const v3 tp = c0 + along * (0.05f * (float)(ia - NA / 2)) + across * (0.05f * (float)(ic - NC / 2));
+								const v3 vh{ (tp.x - feet.x) / t_land, (tp.y - feet.y) / t_land, 0.f };
+								if (len(vh) > 2.25f) continue;                          // beyond the biped's horizontal speed
+								++s_d.tried;
+								// the whole fall: a contact that leaves you moving down (a level edge push) keeps falling with the solved
+								// velocity; any contact that pushes you up (a landing or a bounce) catches you
+								float x = feet.x, y = feet.y, zz = feet.z, v = vz0, hx = vh.x, hy = vh.y, out[3];
+								bool touched = false, caught = false; v3 first{};
+								for (int kk = 0; kk < 900 && zz > c0.z - 0.6f; ++kk)
+								{
+									if (v - g1 < 0.f && zz - c0.z < 1.5f && h2cv::sbscan::landingLaunch(x, y, zz, hx, hy, v - g1, out))
+									{
+										if (out[2] > -1.f) { caught = true; break; }
+										if (!touched) { touched = true; first = v3{ x, y, c0.z }; }
+										hx = out[0]; hy = out[1]; v = out[2] + g1;   // this tick moves with the solved velocity
+									}
+									v -= g1; zz += v * dt; x += hx * dt; y += hy * dt;
+								}
+								// through the FLOOR, not off a ledge: a shallow straight-down landing where you ended up is caught
+								if (touched && !caught && zz <= c0.z - 0.6f && h2cv::sbscan::landingLaunch(x, y, c0.z - 0.03f, 0.f, 0.f, -4.5f, out) && out[2] > -1.f)
+								{
+									hit[ia][ic] = true; land[ia][ic] = first;
+								}
+							}
+						for (int ia = 0; ia < NA; ++ia)
+							for (int ic = 0; ic < NC; ++ic)
+							{
+								if (!hit[ia][ic]) continue;
+								++s_d.good;
+								int n = 0;
+								for (int da = -1; da <= 1; ++da)
+									for (int dc = -1; dc <= 1; ++dc)
+									{
+										const int a2 = ia + da, c2 = ic + dc;
+										if (a2 >= 0 && a2 < NA && c2 >= 0 && c2 < NC && hit[a2][c2]) ++n;
+									}
+								const v3 tp = c0 + along * (0.05f * (float)(ia - NA / 2)) + across * (0.05f * (float)(ic - NC / 2));
+								const v3 vh{ (tp.x - feet.x) / t_land, (tp.y - feet.y) / t_land, 0.f };
+								const float chg = len(vh - v3{ vel.x, vel.y, 0.f });   // ties: the smallest change to how you move now
+								if (n > s_d.best || (n == s_d.best && chg < s_d.chg))
+								{
+									s_d.best = n; s_d.chg = chg;
+									s_d.at = land[ia][ic];
+									s_d.vh = vh; s_d.along = along;
+								}
+							}
+						s_d.ok = s_d.best > 0;
+					}
+				}
+				if (s_d.ok)
+				{
+					const ImU32 pink = IM_COL32(255, 80, 200, 255);
+					for (int i = 0; i < 24; ++i)
+					{
+						const float a0 = 6.2831853f * (float)i / 24.f, a1 = 6.2831853f * (float)(i + 1) / 24.f;
+						line(s_d.at + v3{ std::cos(a0) * 0.12f, std::sin(a0) * 0.12f, 0.02f }, s_d.at + v3{ std::cos(a1) * 0.12f, std::sin(a1) * 0.12f, 0.02f }, pink, 3.f);
+					}
+					// the approach: an arrow coming IN along the direction to move (a shaft behind the ring, the head at it)
+					const float sp = len(s_d.vh);
+					const v3 dir = sp > 0.05f ? s_d.vh * (1.f / sp) : v3{ 0.f, 0.f, 0.f };
+					if (sp > 0.05f)
+					{
+						const v3 tip = s_d.at + v3{ 0.f, 0.f, 0.05f } - dir * 0.14f, tail = tip - dir * 0.8f;
+						line(tail, tip, pink, 3.f);
+						const v3 side{ -dir.y, dir.x, 0.f };
+						line(tip, tip - dir * 0.15f + side * 0.08f, pink, 3.f);
+						line(tip, tip - dir * 0.15f - side * 0.08f, pink, 3.f);
+					}
+					char td[200];
+					const float hd = std::atan2(dir.y, dir.x) * 57.29578f;
+					const float cross = std::acos((std::min)(1.f, std::fabs(dir.x * s_d.along.x + dir.y * s_d.along.y))) * 57.29578f;
+					if (sp > 0.05f) snprintf(td, sizeof(td), "DEBOUNCE: land on the pink ring moving %.2f u/s, heading %.0f deg, crossing the seam at %.0f deg (window %d of 9; %d of %d points fall through)",
+						sp, hd < 0 ? hd + 360.f : hd, cross, s_d.best, s_d.good, s_d.tried);
+					else snprintf(td, sizeof(td), "DEBOUNCE: land on the pink ring falling straight (window %d of 9; %d of %d points fall through)", s_d.best, s_d.good, s_d.tried);
+					text(s_d.at + v3{ 0.f, 0.f, 0.28f }, pink, td);
+				}
+			}
+
+			}   // ---- end of the base viewer ----
 			// summary: the charge state on the HUD; everything else in the Info panel's superbounce section
 			if (g_sb_hud < 0) g_sb_hud = charged ? 1 : 0;
 			g_sb_speed_now = len(vel);
@@ -3446,19 +5207,177 @@ namespace h2cv::sb
 		}
 	}
 
-	void frame(const CollisionWorld& world, const Options& opt, Output& out)
+	// Halo 3 / ODST (2026-11-02): the player is the Halo 2 body of Poorboy's h3sb.dll - its exported status (armed = level -3,
+	// airborne, velocity) and bipeds (this machine's player's feet). A tick = a new updated_ms; the tick rate = h3sb_tick.txt beside
+	// the dll (30 / 60). No Havok entity here: live contacts / pairs stay Halo 2 only.
+	typedef int (*ArmFn)();
+	static ArmFn g_h3sb_arm = nullptr;    // h3sb_arm (the charge options)
+	static std::string g_h3sb_map;        // the map h3sb reports
+	static int sb_h3sb_tick(HMODULE mod)
 	{
+		static int s_tps = 60; static ULONGLONG s_read = 0;   // no file: MCC's own rate for these games (60); HCM writes 30 with "30 tick" on
+		const ULONGLONG now = GetTickCount64();
+		if (now - s_read < 1000) return s_tps;
+		s_read = now;
+		wchar_t path[MAX_PATH] = {};
+		if (!GetModuleFileNameW(mod, path, MAX_PATH)) return s_tps;
+		wchar_t* slash = wcsrchr(path, L'\\');
+		if (!slash) return s_tps;
+		wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"h3sb_tick.txt");
+		FILE* f = nullptr;
+		if (_wfopen_s(&f, path, L"r") == 0 && f) { int t = 0; if (fscanf_s(f, "%d", &t) == 1 && (t == 30 || t == 60)) s_tps = t; fclose(f); }
+		return s_tps;
+	}
+	static void sb_state_gen3()
+	{
+		typedef int (*StatusFn)(H3sbStatus*);
+		typedef int (*BipedsFn)(H3sbBiped*, int);
+		static HMODULE s_mod = nullptr; static StatusFn s_status = nullptr; static BipedsFn s_bipeds = nullptr;
+		// looked up every frame: h3sb_mode.txt 9 unloads the dll (its old function pointers would be dangling)
+		const HMODULE mod = GetModuleHandleW(L"h3sb.dll");
+		if (mod != s_mod)
+		{
+			s_mod = mod;
+			s_status = mod ? (StatusFn)GetProcAddress(mod, "h3sb_status") : nullptr;
+			s_bipeds = mod ? (BipedsFn)GetProcAddress(mod, "h3sb_bipeds") : nullptr;
+			g_h3sb_arm = mod ? (ArmFn)GetProcAddress(mod, "h3sb_arm") : nullptr;
+		}
+		if (!s_mod) return;   // Poorboy's mod not loaded (Halo 2 physics never switched on): no Halo 2 body to show
+		if (!s_status || !s_bipeds) return;
+		H3sbStatus st{}; st.size = sizeof(st);
+		const uint32 diag_gt0 = g_reach ? eng::gameTick() : 0;   // Reach: the game tick just before the reading (step picker below)
+		if (!s_status(&st) || !st.have_body) return;
+		if (GetTickCount64() - st.updated_ms > 1000) return;   // menu, paused or loading
+		H3sbBiped b[64];
+		const int n = s_bipeds(b, 64);
+		int me = -1;
+		for (int i = 0; i < n && i < 64; ++i) if (b[i].local) { me = i; break; }
+		if (me < 0) return;
+		g_sbs.feet = v3{ b[me].feet[0], b[me].feet[1], b[me].feet[2] };
+		g_sbs.vel = v3{ st.velocity[0], st.velocity[1], st.velocity[2] };
+		g_sbs.airborne = st.airborne != 0;
+		g_sbs.armed = st.armed != 0;
+		g_sbs.flying = st.size >= (int32_t)(offsetof(H3sbStatus, flying) + sizeof(st.flying)) && st.flying != 0;
+		static uint64_t s_last = 0; static uint32 s_tick = 1;
+		g_sbs.tps = sb_h3sb_tick(s_mod);
+		if (g_reach && g_sbs.tps * 2 == 60)
+		{
+			// Reach (2026-11-05): the game runs 60 ticks, the Halo 2 body steps at 30. h3sb reports a reading every game tick; on
+			// the tick between two steps its position is a midpoint the body never occupies, and its 'airborne' is always 0.
+			// Measured against h3sb_ticks_000.bin (user's m50 session, 13,650 readings; Documents\Halo Mod And Tools\HCM Reach
+			// Bounce Perf\phase\): (1) the reading's game tick = max(Reach's game tick read before the call, last + 1) - right on
+			// 13,649; (2) the status velocity changes only on the tick AFTER a step (6,484 of 6,484), so a change marks the phase,
+			// and the readings on step ticks are the body's true post-step (position, velocity) - the pairing ODST gives every
+			// tick - picked right on 99.9%; (3) airborne = the last step changed vz by exactly gravity (every fall over 5 u/s did).
+			// Only those step readings reach the viewer, and its tick counts body steps (30 a second), as in ODST.
+			static uint32 s_eff = 0; static bool s_have_eff = false; static int s_phase = -1;
+			static v3 s_prev_vel{}; static uint32 s_prev_eff = 0; static bool s_have_prev = false;
+			static v3 s_feet{}, s_vel{}; static bool s_air = false, s_have_step = false; static uint32 s_step_eff = 0;
+			if (st.updated_ms != s_last)
+			{
+				s_last = st.updated_ms;
+				const v3 feet_now{ b[me].feet[0], b[me].feet[1], b[me].feet[2] };
+				const v3 vel_now{ st.velocity[0], st.velocity[1], st.velocity[2] };
+				const uint32 gt = diag_gt0;
+				uint32 eff = !s_have_eff ? gt : (std::max)(gt, s_eff + 1);
+				if (gt != 0 && (gt + 50 < eff || gt > eff + 50)) { eff = gt; s_phase = -1; s_have_prev = false; s_have_step = false; }   // revert / reload
+				s_eff = eff; s_have_eff = true;
+				if (s_have_prev && eff - s_prev_eff == 1)
+				{
+					const float dv = (std::max)((std::max)(std::fabs(vel_now.x - s_prev_vel.x), std::fabs(vel_now.y - s_prev_vel.y)), std::fabs(vel_now.z - s_prev_vel.z));
+					if (dv > 1e-3f) s_phase = (int)((eff + 1) & 1);
+				}
+				s_prev_vel = vel_now; s_prev_eff = eff; s_have_prev = true;
+				const bool step = gt == 0 || s_phase < 0 || (int)(eff & 1) == s_phase;   // no game tick / phase yet: every reading (as before)
+				if (step)
+				{
+					if (s_have_step && eff - s_step_eff == 2) s_air = std::fabs((vel_now.z - s_vel.z) + k_sb_gravity / (float)g_sbs.tps) < 2e-3f;
+					else if (!s_have_step) s_air = false;
+					s_feet = feet_now; s_vel = vel_now; s_step_eff = eff; s_have_step = true;
+					++s_tick;
+				}
+			}
+			g_sbs.feet = s_feet; g_sbs.vel = s_vel; g_sbs.airborne = s_air;
+		}
+		else if (st.updated_ms != s_last) { s_last = st.updated_ms; ++s_tick; }
+		g_sbs.tick = s_tick;
+		g_sbs.ok = true;
+		g_h3sb_map.assign(st.map, strnlen(st.map, sizeof(st.map)));
+		if (!g_reach) h2cv::sbscan::setMapFile(g_h3sb_map);   // the offline whole-map scan (2026-11-02); Reach: frame() names it from the game's own map name
+	}
+
+	// Halo 3 / ODST charge options (2026-11-02): h3sb_arm() puts the Halo 2 body at level -3 on its next driven tick.
+	//   Force: re-armed on every h3sb tick it is not armed.
+	//   Keep: Halo 2's rule (keep_charge) by the game tick - a revert (the tick goes back) brings the charge back if you were armed
+	//   as you reverted, or at the tick you went back to (when that checkpoint was made: the armed history by game tick)
+	struct s_keep3
+	{
+		std::string map; uint32 gtick = 0, sbtick = 0, armTick = 0, until = 0; bool charged = false, pending = false;
+		std::map<uint32, bool> hist;   // game tick -> armed, where it changed
+	} g_keep3;
+	static void gen3_arm_once()
+	{
+		if (g_h3sb_arm && g_keep3.armTick != g_sbs.tick) { g_keep3.armTick = g_sbs.tick; g_h3sb_arm(); }
+	}
+	static void gen3_charge(const Options& opt, Output& out)
+	{
+		uint32 gt = eng::gameTick();
+		if (g_reach && gt == 0) gt = g_keep3.gtick;   // Reach: the game thread's TLS not found this frame = no information, not a revert
+		if (g_keep3.map != g_h3sb_map) { g_keep3 = s_keep3{}; g_keep3.map = g_h3sb_map; }   // a new map: nothing to restore
+		if (opt.forceCharge)
+		{
+			if (!g_sbs.armed) gen3_arm_once();
+			g_keep3.charged = true; g_keep3.pending = false; g_keep3.gtick = gt;
+			return;
+		}
+		if (g_keep3.gtick != 0 && gt + 2 < g_keep3.gtick)
+		{
+			// time went back: a revert (or a restart)
+			bool then = false;
+			auto it = g_keep3.hist.upper_bound(gt);
+			if (it != g_keep3.hist.begin()) then = std::prev(it)->second;
+			g_keep3.hist.erase(g_keep3.hist.upper_bound(gt), g_keep3.hist.end());
+			if (g_keep3.charged || then) { g_keep3.pending = true; g_keep3.until = g_sbs.tick + 90; }
+		}
+		g_keep3.gtick = gt;
+		if (g_keep3.pending)
+		{
+			if (g_sbs.armed) { g_keep3.pending = false; out.message = "Charge kept through the revert"; }
+			else if (g_sbs.tick > g_keep3.until) { g_keep3.pending = false; out.message = "Could not restore the charge after the revert"; }
+			else { gen3_arm_once(); return; }
+		}
+		if (g_keep3.hist.empty() || g_keep3.hist.rbegin()->second != g_sbs.armed)
+		{
+			g_keep3.hist[gt] = g_sbs.armed;
+			while (g_keep3.hist.size() > 4096) g_keep3.hist.erase(g_keep3.hist.begin());
+		}
+		g_keep3.charged = g_sbs.armed;
+	}
+
+	void frame(const CollisionWorld& world, const Options& optIn, Output& out)
+	{
+		Options opt = optIn;
+		if (opt.reach) { opt.gen3 = true; opt.objects = false; opt.record = false; }   // Reach: h3sb's Halo 2 body like Halo 3; no objects, no recorder
+		LARGE_INTEGER qpcF, qpc0; QueryPerformanceFrequency(&qpcF); QueryPerformanceCounter(&qpc0);
+		for (double& t : g_sbt) t = 0;
+		g_sbt_sb = 0;
+		const double sbt_state0 = sb_qpc_ms();
 		out = Output{};
 		g_out = &out;
 		g_world = &world;
 		g_settings.superbounce = opt.on;
-		g_settings.superbounce_record = opt.record;
+		g_gen3 = opt.gen3;
+		g_reach = opt.reach;
+		if (!opt.gen3) h2cv::sbscan::setMapFile("");   // Halo 2: the key file only
+		g_settings.superbounce_record = opt.record && !opt.gen3;   // the recorder logs Halo 2 contacts
 		g_settings.superbounce_gaps = opt.highlight;
 		g_settings.superbounce_seam_text = opt.seamText;
 		g_settings.superbounce_debounce = opt.debounce;
 		g_settings.superbounce_spots = opt.spots;
+		g_settings.superbounce_seams = opt.seams;
 		g_settings.superbounce_predicted = opt.predicted;
 		g_sb_predicted_range = std::clamp(opt.predictedRange, 10.f, 1000.f);
+		g_sb_predicted_max_approach = std::clamp(opt.predictedMaxApproach, 5.f, 100.f);
 		g_sb_predicted_monsters = opt.predictedMonsters; g_sb_predicted_dreadnoughts = opt.predictedDreadnoughts;
 		g_settings.predicted_heights = opt.predictedHeights; g_settings.predicted_hide_narrow = opt.predictedHideNarrow; g_settings.spotscan_slow = opt.scanSlow; g_settings.spotscan_curtick = opt.scanCurrentTick;
 		g_settings.spotscan_radius = std::clamp(opt.scanRadius, 1.f, 4096.f);
@@ -3466,8 +5385,13 @@ namespace h2cv::sb
 		g_sb_hud = -1; g_sb_speed_now = -1.f;
 		g_sbs = s_sb_state{};
 		uintptr_t units[4] = {};
-		h2::localPlayerUnits(units);
-		if (units[0] && !h2::vehicleOfUnit(units[0]))
+		if (g_gen3)
+		{
+			sb_state_gen3();                         // Halo 3 / ODST / Reach: the Halo 2 body of Poorboy's h3sb.dll
+			if (g_reach) h2cv::sbscan::setMapFile(reach::mapName(), "reach");   // superbounce_predicted_reach_<map>[_t<tick>].csv
+		}
+		else h2::localPlayerUnits(units);
+		if (!g_gen3 && units[0] && !h2::vehicleOfUnit(units[0]))
 		{
 			const uintptr_t ent = h2::havokEntityForObject(units[0]);
 			const h2::Capsule cap = ent ? h2::entityCapsule(ent) : h2::Capsule{};
@@ -3498,37 +5422,192 @@ namespace h2cv::sb
 				g_sbs.ok = true;
 			}
 		}
+		if (g_reach && opt.on)
+		{
+			// Reach: the geometry loads even before the Halo 2 body shows up; what the panel says while it does not
+			if (!g_sbs.ok) { sb_bsp_update(); sb_panel(ImVec4(1.f, 0.75f, 0.3f, 1.f), "Halo 2 physics body not running (Poorboy's h3sb): switch \"Halo 2 physics\" on for Halo: Reach to see bounces"); }
+			if (!g_reach_status.empty()) sb_panel(ImVec4(1.f, 0.75f, 0.3f, 1.f), "%s", g_reach_status.c_str());
+		}
 		if (opt.on && g_sbs.ok)
 		{
 			// scenery / crates / machines: their collision triangles (CollisionWorld's, world space) into the cache - after
 			// the level, rebuilt only when one of them moves or the set changes (positions quantised to 1 cm)
 			sb_bsp_update();
-			const auto& ot = world.objectOccluders();
-			std::vector<sb_tri> tris;
-			tris.reserve(ot.size());
-			uint64_t sig = 1469598103934665603ull ^ (uint64_t)ot.size();
-			for (const auto& t : ot)
+			g_sbt[SBT_STATE] += sb_qpc_ms() - sbt_state0;
+			// OBJECTS: STILL ONES ONLY (2026-11-03). Each object (its run of triangles) is fingerprinted - positions to 1 cm, a
+			// slice of ~2048 triangles per frame, so the cost is flat (all at once was 5.75 ms on one frame and flickered G-Sync).
+			// One that moved is left out of the viewer's set until it has been still for 2 s: an animated object (the user's
+			// walk-through searchlight on a rooftop, fans, moving platforms) kept the set rebuilding 5 times a second at ~6 ms a
+			// time, and a moving surface is no place to predict a bounce on anyway. The set is rebuilt on a tick, at most every
+			// 6 ticks, when an object leaves or rejoins it; objects appearing / disappearing, time going back or a fresh level at once.
+			struct s_objstate { uint64_t h = 0; uint32 changed = 0; bool in = true; };
+			static std::unordered_map<uint32_t, s_objstate> s_os;
+			static uint32 s_obj_tick = 0xFFFFFFFF, s_obj_built_tick = 0; static size_t s_span_count = (size_t)-1, s_tri_count = (size_t)-1;
+			static size_t s_next_span = 0; static bool s_obj_dirty = false;
+			// "Include objects" off (user, 2026-11-03): the objects' surfaces + seams are dropped once and nothing here runs
+			static bool s_objs_on = true;
+			if (!opt.objects)
 			{
-				tris.push_back({ v3{ t.a.x, t.a.y, t.a.z }, v3{ t.b.x, t.b.y, t.b.z }, v3{ t.c.x, t.c.y, t.c.z } });
-				for (const h2::Vec3* pt : { &t.a, &t.b, &t.c })
+				if (s_objs_on) { sb_objects_set({}, 2); s_objs_on = false; s_os.clear(); }
+				g_sb_obj_tris = 0; g_sb_obj_out = 0;
+			}
+			else
+			{
+			if (!s_objs_on) { s_objs_on = true; g_sb_obj_sig = 0; s_os.clear(); }   // back on: rebuilt on the next tick
+			const auto& ot = world.objectOccluders();
+			std::vector<CollisionWorld::ObjSpan> whole;   // no per-object runs (should not happen on Halo 2): all of it as one
+			if (world.objectSpans().empty() && !ot.empty()) { CollisionWorld::ObjSpan w; w.count = (uint32_t)ot.size(); whole.push_back(w); }
+			// ONLY BAKED SCENERY (2026-11-03, halo2.dll RE): scenery baked into the level's Havok shape is part of the level pair -
+			// the player collides with it like the level and it shares the level's charge (rocks / boulders bounce). Unbaked
+			// scenery has no player collision at all (the user's walk-through searchlight). Crates and machines are separate
+			// Havok bodies built from their PHYSICS model (not the coll model drawn here); the player's pair with each starts
+			// uncharged whenever it is created (S = 0, sub_1809E2540) and Keep Charge only charges the level pair - they launch
+			// only when that pair fails a bisection itself (and a dynamic crate must be heavy: panel trucks 2000-9000 vs the
+			// pill's 125). See the note in memory h2-object-bounceability.
+			std::vector<CollisionWorld::ObjSpan> bakedSpans;
+			size_t nUnbaked = 0, nBodies = 0;
+			for (const auto& sp : (world.objectSpans().empty() ? whole : world.objectSpans()))
+			{
+				if (sp.baked) bakedSpans.push_back(sp);
+				else if (sp.type == 6) ++nUnbaked;
+				else ++nBodies;
+			}
+			g_sb_obj_unbaked = nUnbaked; g_sb_obj_bodies = nBodies;
+			const auto& SP = bakedSpans;
+			const bool objTick = g_sbs.tick != s_obj_tick;
+			if (objTick) s_obj_tick = g_sbs.tick;
+			const uint32 stillTicks = (uint32)(2 * (g_sbs.tps > 0 ? g_sbs.tps : 30));
+			auto q = [](float v) { return (uint64_t)(int64_t)(v * 100.f + (v >= 0.f ? 0.5f : -0.5f)); };
+			auto spanHash = [&](const CollisionWorld::ObjSpan& sp) {
+				uint64_t h = 1469598103934665603ull ^ (uint64_t)sp.count;
+				for (uint32_t i = sp.first; i < sp.first + sp.count && i < ot.size(); ++i)
+					for (const h2::Vec3* pt : { &ot[i].a, &ot[i].b, &ot[i].c }) { h ^= q(pt->x) * 31u + q(pt->y) * 17u + q(pt->z); h *= 1099511628211ull; }
+				return h;
+			};
+			auto describe = [](const CollisionWorld::ObjSpan& sp) {
+				char b[160];
+				snprintf(b, sizeof(b), "%s def 0x%X at (%.1f, %.1f, %.1f), %u tris", sp.type == 6 ? "scenery" : sp.type == 7 ? "machine" : sp.type == 11 ? "crate" : "object",
+					(unsigned)sp.def, sp.pos.x, sp.pos.y, sp.pos.z, sp.count);
+				return std::string(b);
+			};
+			g_sb_obj_tris = 0; for (const auto& sp : SP) g_sb_obj_tris += sp.count;
+			const bool setChanged = SP.size() != s_span_count || g_sb_obj_tris != s_tri_count;
+			const bool timeBack = g_sbs.tick < s_obj_built_tick;
+			const bool rebuildNow = setChanged || timeBack || (g_sb_obj_sig == 0 && objTick);
+			if (!rebuildNow && !SP.empty())
+			{
+				// this frame's slice: whole objects, ~2048 triangles (at least one object), each object at most once
+				SbTimer sbt_(SBT_OBJ);
+				size_t done = 0;
+				for (size_t n = 0; n < SP.size() && done < 2048; ++n)
 				{
-					sig ^= (uint64_t)std::llround(pt->x * 100.f) * 31u + (uint64_t)std::llround(pt->y * 100.f) * 17u + (uint64_t)std::llround(pt->z * 100.f);
-					sig *= 1099511628211ull;
+					if (s_next_span >= SP.size()) s_next_span = 0;
+					const auto& sp = SP[s_next_span++];
+					s_objstate& st = s_os[sp.datum];
+					const uint64_t h = spanHash(sp);
+					if (h != st.h)
+					{
+						st.h = h; st.changed = g_sbs.tick;
+						if (st.in) { st.in = false; s_obj_dirty = true; g_sb_movers = describe(sp); }   // moved: out while it moves
+					}
+					else if (!st.in && g_sbs.tick - st.changed >= stillTicks) { st.in = true; s_obj_dirty = true; }   // still again
+					done += (std::max)(sp.count, 64u);
 				}
 			}
-			sb_objects_set(tris, sig == 0 ? 1 : sig);
+			if (rebuildNow || (s_obj_dirty && objTick && g_sbs.tick - s_obj_built_tick >= 6))
+			{
+				SbTimer sbt_(SBT_OBJ);
+				if (rebuildNow)
+				{
+					// fresh fingerprints; objects already known keep their state (one that moved meanwhile is out), new ones are in
+					std::unordered_map<uint32_t, s_objstate> fresh;
+					for (const auto& sp : SP)
+					{
+						s_objstate st;
+						st.h = spanHash(sp);
+						const auto it = s_os.find(sp.datum);
+						if (!timeBack && it != s_os.end())
+						{
+							st.changed = it->second.changed; st.in = it->second.in;
+							if (it->second.h != st.h) { st.changed = g_sbs.tick; if (st.in) g_sb_movers = describe(sp); st.in = false; }
+						}
+						fresh[sp.datum] = st;
+					}
+					s_os.swap(fresh);
+				}
+				std::vector<sb_tri> tris;
+				uint64_t sig = 1469598103934665603ull;
+				size_t nout = 0;
+				for (const auto& sp : SP)
+				{
+					const s_objstate& st = s_os[sp.datum];
+					if (!st.in) { ++nout; continue; }
+					sig ^= st.h ^ ((uint64_t)sp.datum << 20); sig *= 1099511628211ull;
+					for (uint32_t i = sp.first; i < sp.first + sp.count && i < ot.size(); ++i)
+					{
+						const auto& t = ot[i];
+						tris.push_back({ v3{ t.a.x, t.a.y, t.a.z }, v3{ t.b.x, t.b.y, t.b.z }, v3{ t.c.x, t.c.y, t.c.z } });
+					}
+				}
+				g_sb_obj_out = nout;
+				const uint64_t before = g_sb_obj_sig;
+				sb_objects_set(tris, sig == 0 || sig == 2 ? 1 : sig);
+				if (g_sb_obj_sig != before) ++g_sb_obj_rebuilds;
+				s_obj_built_tick = g_sbs.tick; s_span_count = SP.size(); s_tri_count = g_sb_obj_tris; s_obj_dirty = false;
+			}
+			}
 		}
-		if (opt.on) draw_superbounce(0);
-		if (opt.forceCharge && g_sbs.ok) force_charge();
-		else if (opt.keepCharge && g_sbs.ok) keep_charge(out);
+		if (opt.on) { const double t0 = sb_qpc_ms(); draw_superbounce(0); g_sbt_sb = sb_qpc_ms() - t0; }
+		{
+			SbTimer sbt_(SBT_CHARGE);
+			if (!g_gen3 && opt.forceCharge && g_sbs.ok) force_charge();          // charge options: halo2.dll memory
+			else if (!g_gen3 && opt.keepCharge && g_sbs.ok) keep_charge(out);
+			else if (g_gen3 && (opt.forceCharge || opt.keepCharge) && g_sbs.ok) gen3_charge(opt, out);   // Halo 3 / ODST: h3sb_arm
+		}
+		{
+			// HCM's own cost per frame, for spotting uneven frames (G-Sync flicker): average + worst over the last second
+			static double s_sum = 0, s_max = 0, s_avgShown = 0, s_maxShown = 0; static int s_n = 0; static ULONGLONG s_t0 = 0;
+			static double s_worst[SBT_N + 1] = {}, s_worstShown[SBT_N + 1] = {};
+			static int s_rebuildsShown = 0;
+			LARGE_INTEGER qpc1; QueryPerformanceCounter(&qpc1);
+			const double ms = (double)(qpc1.QuadPart - qpc0.QuadPart) * 1000.0 / (double)qpcF.QuadPart;
+			s_sum += ms; ++s_n;
+			if (ms > s_max) { s_max = ms; for (int k = 0; k < SBT_N; ++k) s_worst[k] = g_sbt[k]; s_worst[SBT_SB] = g_sbt_sb; }
+			const ULONGLONG now = GetTickCount64();
+			if (now - s_t0 >= 1000)
+			{
+				s_avgShown = s_n ? s_sum / s_n : 0; s_maxShown = s_max; for (int k = 0; k <= SBT_N; ++k) s_worstShown[k] = s_worst[k];
+				s_sum = 0; s_max = 0; s_n = 0; s_t0 = now;
+				s_rebuildsShown = g_sb_obj_rebuilds; g_sb_obj_rebuilds = 0;
+			}
+			if (opt.on)
+			{
+				sb_panel(ImVec4(0.6f, 0.6f, 0.6f, 1.f), "viewer cost: %.2f ms a frame on average, worst %.2f ms (last second)", s_avgShown, s_maxShown);
+				std::string w = "  worst frame:";
+				for (int k = 0; k < SBT_N; ++k)
+					if (s_worstShown[k] >= 0.05) { char b[48]; snprintf(b, sizeof(b), " %s %.2f", k_sbt_name[k], s_worstShown[k]); w += b; }
+				// the viewer's drawing beyond its timed parts (lines, labels, the seams' and landings' drawing)
+				const double inner = s_worstShown[SBT_LEARN] + s_worstShown[SBT_PATH] + s_worstShown[SBT_SEAMS] + s_worstShown[SBT_DEBOUNCE] + s_worstShown[SBT_SPOTS];
+				const double drawRest = (std::max)(0.0, s_worstShown[SBT_SB] - inner);
+				char b[96]; snprintf(b, sizeof(b), " drawing %.2f", drawRest); w += b;
+				const double named = s_worstShown[SBT_SB] + s_worstShown[SBT_OBJ] + s_worstShown[SBT_CHARGE] + s_worstShown[SBT_STATE];
+				snprintf(b, sizeof(b), " | other %.2f ms", (std::max)(0.0, s_maxShown - named)); w += b;
+				sb_panel(ImVec4(0.6f, 0.6f, 0.6f, 1.f), "%s", w.c_str());
+				if (opt.objects) sb_panel(ImVec4(0.6f, 0.6f, 0.6f, 1.f), "  objects: %zu triangles of baked scenery, rebuilt %d times in the last second; %zu left out while moving", g_sb_obj_tris, s_rebuildsShown, g_sb_obj_out);
+				if (opt.objects) sb_panel(ImVec4(0.6f, 0.6f, 0.6f, 1.f), "  not used: %zu scenery with no player collision, %zu crates / machines (own bodies)", g_sb_obj_unbaked, g_sb_obj_bodies);
+				if (opt.objects && g_sb_obj_out > 0 && !g_sb_movers.empty()) sb_panel(ImVec4(0.6f, 0.6f, 0.6f, 1.f), "  last left out: %s", g_sb_movers.c_str());
+				else sb_panel(ImVec4(0.6f, 0.6f, 0.6f, 1.f), "  objects: off (Include objects)");
+			}
+		}
 		for (const auto& l : g_sb_panel) out.panel.push_back({ ImGui::ColorConvertFloat4ToU32(l.c), l.t });
 		out.hud = g_sb_hud;
 		out.speed = g_sb_speed_now;
-		out.streak = g_sb_streak; out.record = g_sb_record;
+		out.streak = g_sb_streak; out.record = g_sb_record; out.lastBounce = g_sbl.last_bounce;
 		g_out = nullptr;
 	}
 
 	void requestSpotScan() { g_sb_scan_request = true; }
+	void requestRecipes(bool redo) { if (redo) g_sb_recipe_redo_req = true; g_sb_recipe_request = true; }
 
 	void noteForceLaunch() { g_sb_force_launch.store(3); }
 
@@ -3536,6 +5615,15 @@ namespace h2cv::sb
 
 	void reset()
 	{
+		g_reach_gen.fetch_add(1);                          // a Reach build still running is stale (its result is dropped)
+		if (g_reach_job)
+		{
+			// the session ends: let the worker stop before the session's log goes (the long loops poll cancel every 1024 items)
+			g_reach_job->cancel.store(true);
+			for (int i = 0; i < 500 && !g_reach_job->done.load(std::memory_order_acquire); ++i) Sleep(10);
+		}
+		g_reach_job.reset(); g_reach_old.clear(); g_reach_map.clear(); g_reach_mask = 0; g_sbb_owner = 0;
+		sb_phys_stop();                                    // Reach's physics worker (it exits at its next wake-up)
 		g_sbb = s_sb_bsp{};
 		g_bsp_copies.clear();
 		g_sb_shown.clear();

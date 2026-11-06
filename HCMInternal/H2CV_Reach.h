@@ -8,6 +8,7 @@
 // rasterizer's surface table (set_depth_stencil_surface 0x2743A4, first-person pass 0x26EA78), reversed float depth.
 // All reads are SEH-guarded (Mem.h).
 #include "H2CV_Halo2.h"
+#include "H2CV_Collision.h"      // CollBsp / CollisionWorld::Bsp3 (the bounce viewer's Reach reader hands back the Halo 3 shapes)
 #include <d3d11.h>
 #include <cstdint>
 #include <string>
@@ -58,4 +59,22 @@ namespace reach
 	bool readCollision(uintptr_t gameTls, uint32_t mask, Polys& out, std::string& log);
 	// the calling thread's haloreach TLS block (TLS[TlsIndex], TlsIndex = u32 haloreach+0xC17B18), 0 if none
 	uintptr_t thisThreadTls();
+
+	// the game tick (u32 @ +0x0C of the game-time struct *(gameTLS + 0xA0); tick rate i16 @+6) read through the game thread's TLS
+	// block, found by a thread walk (H2CV_ReachOob). 0 when it can't be found / read. Render thread.
+	uint32_t gameTick();
+
+	// ---- the bounce viewer's geometry (2026-11-04): the same Bsp3 shape CollisionWorld gives Halo 3 / ODST ----
+	// One Bsp3 per LOADED structure bsp (mask bit i = scenario bsp i; 0 = all): `world` = the structure collision_bsp parsed with
+	// planes / surfaces (plane, flip, firstEdge, material, flags) / edges (v0 v1 fwd rev left right, CollBsp::kNone for "no
+	// surface") / vertices, small (16-bit) or large (32-bit) layout; `igDefs` + `igOk` = the instanced-geometry definitions'
+	// collision bsps (by definition index); `igInst` = ALL the bsp's placements in table order (def = -1 for the ones the game
+	// does not collide with: render only, no physics block, bad scale / transform / definition) with m[0] scale, m[1..9] the
+	// rotation r[0..8] as stored, m[10..12] the position, so that h2cv::igTransform(m, v) = ((x r0 + y r3 + z r6) s + px, ...) -
+	// exactly the game's world formula (see the comment in readCollisionBsps).
+	// Flags fix-ups (mirroring what Poorboy's h3sb leaves out): surfaces whose collision material (sbsp +0x58, i16 @+20) is < 0
+	// get flags |= 0x10, and so do the seam faces between LOADED bsps (a coplanar, opposite-facing face of another loaded bsp
+	// holding its centre). Any thread (only reads game memory); gameTls as for readCollision.
+	struct BspStats { int bsps = 0; size_t surfaces = 0, instances = 0, instancesLive = 0, nonCollidable = 0, seamLeftOut = 0; };
+	bool readCollisionBsps(uintptr_t gameTls, uint32_t mask, std::vector<h2cv::CollisionWorld::Bsp3>& out, std::string& log, BspStats* stats = nullptr);
 }

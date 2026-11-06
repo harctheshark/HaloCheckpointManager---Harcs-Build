@@ -18,7 +18,7 @@ namespace HCMExternal.Converters
 
             switch ((MCCHookStateEnum)value)
             {
-                case MCCHookStateEnum.MCCNotFound: return "MCC process not found.";
+                case MCCHookStateEnum.MCCNotFound: return "Halo Not Found";
                 case MCCHookStateEnum.InternalInjecting: return "Internal Injecting..";
                 case MCCHookStateEnum.InternalInjectError: return "Error injecting!";
                 case MCCHookStateEnum.InternalInitialising: return "Internal Initialising";

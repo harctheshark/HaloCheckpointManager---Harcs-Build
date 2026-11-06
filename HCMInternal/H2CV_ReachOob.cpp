@@ -83,6 +83,15 @@ namespace hr
 		return sOk;
 	}
 
+	uint32_t gameTick()
+	{
+		if (!base() || !buildOk()) return 0;
+		const uintptr_t t = findGameTls();
+		if (!okp(t)) return 0;
+		const uintptr_t tt = q(t + kTlsGameTime);
+		return okp(tt) ? u32(tt + 0xC, 0) : 0;
+	}
+
 	bool readDeath(Death& out)
 	{
 		out = Death{};

@@ -9,6 +9,7 @@
 // Tag memory: a tag "pointer" is a u32 count/offset pair {count, offset}; the address is  tagHeap + 4 * offset  (the engine
 // adds the offset to a HINSTANCE-typed base, i.e. x4 - the research report's "tagHeap + u32" is that value x4).
 #include "H2CV_Halo2.h"
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -64,6 +65,12 @@ namespace h3
 	// Resolve scenario structure bsp `index` to its collision data. `why` receives the failure reason.
 	bool resolveBsp(int index, BspRes& out, std::string* why = nullptr);
 	uintptr_t igDefBsp(const BspRes& r, uint32_t defIndex);
+	// BSP SEAMS (2026-11-02): the closing faces at a structure bsp's border with its neighbour (level transitions). A collision
+	// material's seam index (sbsp collision materials +0x28, 0x18-byte rows, i16 @+0x14) points into the sbsp's seam identifiers
+	// (+0x10, 0x28-byte rows, a 16-byte id @+0); a surface of that material is no collision while the bsp holding the same id is
+	// loaded too (h3sb leaves exactly these out: "seam surfaces (borders with other loaded BSPs) left out"). Same layout in ODST.
+	struct SeamInfo { std::vector<int16_t> matSeam; std::vector<std::array<uint32_t, 4>> ids; };
+	bool seamInfo(uintptr_t sbsp, SeamInfo& out);
 
 	// Breakable-surface row of (bsp, group): 12 dwords = 384 bits, bit set = intact. False when the bsp has no row (nothing breakable /
 	// pool unreadable) - callers then treat every breakable as intact.

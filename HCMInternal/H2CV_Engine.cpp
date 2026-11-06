@@ -38,7 +38,7 @@ namespace h2cv
 		uintptr_t base() { return isReach() ? reach::base() : isH3() ? h3::base() : h2::base(); }
 		bool buildOk() { return isReach() ? reach::buildOk() : isH3() ? h3::buildOk() : h2::buildOk(); }
 		h2::Camera readCamera() { return isReach() ? reach::readCamera() : isH3() ? h3::readObserverCamera() : h2::readCamera(); }
-		uint32_t gameTick() { return isReach() ? 0 : isH3() ? h3::gameTick() : h2::gameTick(); }
+		uint32_t gameTick() { return isReach() ? reach::gameTick() : isH3() ? h3::gameTick() : h2::gameTick(); }
 		std::string levelCode()
 		{
 			if (isReach()) return "";

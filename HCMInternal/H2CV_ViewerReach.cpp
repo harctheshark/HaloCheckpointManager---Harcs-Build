@@ -468,10 +468,13 @@ namespace h2cv
 		const auto tStart = std::chrono::steady_clock::now();
 		mRxNote.clear();
 		mRxMaskUsed = false;
+		// the Collision Viewer's own drawing runs only while it is on; the superbounce viewer (below) draws without it
+		const bool cvOn = settings.collision;
+		const bool gameOk = reach::base() && reach::buildOk();
 		std::string map;
 		if (!reach::base()) mRxNote = "haloreach.dll is not loaded";
 		else if (!reach::buildOk()) mRxNote = "unsupported Halo: Reach build (needs MCC 1.3528)";
-		else
+		else if (cvOn)
 		{
 			map = reach::mapName();
 			if (map != mRxMap) { mRxMap = map; mRxNextCheckMs = 0; }
@@ -485,9 +488,9 @@ namespace h2cv
 		const h2::Camera cam = reach::readCamera();
 		const std::shared_ptr<ReachScene> sc = (mRxScene && mRxScene->map == map) ? mRxScene : nullptr;
 		if (mRxNote.empty() && !cam.ok) mRxNote = "no game camera (menu or loading)";
-		if (mRxNote.empty() && !sc) mRxNote = mRxLoad ? "building the collision ..." : "waiting for the collision (gathered once the game runs)";
+		if (cvOn && mRxNote.empty() && !sc) mRxNote = mRxLoad ? "building the collision ..." : "waiting for the collision (gathered once the game runs)";
 
-		if (cam.ok && sc && !sc->lines.empty())
+		if (cvOn && cam.ok && sc && !sc->lines.empty())
 		{
 			const int occ = settings.occlusion.load();
 			const bool own = occ != (int)Occlusion::XRay;
@@ -596,9 +599,39 @@ namespace h2cv
 			}
 			mR.clearGameDepth();
 		}
+		// superbounce viewer (2026-11-04): the Halo 2 body of Poorboy's h3sb.dll, the bsps read from tag memory. Reach has no render
+		// hook, so it is drawn here at Present with the camera record's pos / fwd / up / vfov (as the collision lines are), unoccluded
+		// like the Halo 2 / Halo 3 bounce lines; the game's depth is not used. The labels are projected with the same camera.
+		if (gameOk && superbounceActive() && cam.ok)
+		{
+			mLabelScaleX = mLabelScaleY = 1.f;
+			if (mR.begin(mCtx, mRtv, mW, mH, cam.pos, cam.fwd, cam.up, cam.vfov, 0.01f))
+			{
+				drawSuperbounce();
+				mR.end();
+			}
+		}
+		else { mSbLabels.clear(); mSb = sb::Output{}; }   // menus / loading: no stale CHARGED, last bounce or panel lines
+		drawSuperbounceOverlay(ImGui::GetBackgroundDrawList(), gameOk);
 		const float cpuMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - tStart).count();
 		mRxCpuMs = mRxCpuMs <= 0.f ? cpuMs : mRxCpuMs * 0.95f + cpuMs * 0.05f;
-		if (settings.hud) drawHudReach(cam);
+		if (settings.hud && cvOn) drawHudReach(cam);
+		drawReachBouncePanel();
+	}
+
+	// the superbounce Info-panel section on Reach (its loading state, the charge, the last launch and its verdict): its own small
+	// window on the left, below the Collision Viewer's panel while that is up
+	void Viewer::drawReachBouncePanel()
+	{
+		if (!settings.hud || !settings.superbounce || !settings.infoSuperbounce || mSb.panel.empty()) return;
+		ImGui::SetNextWindowPos(ImVec2(12.f, settings.collision ? ImGui::GetIO().DisplaySize.y * 0.5f : 12.f), ImGuiCond_Always);
+		ImGui::SetNextWindowBgAlpha(0.55f);
+		if (ImGui::Begin("Superbounce viewer##reachsb", nullptr, ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize |
+			ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav))
+		{
+			for (const auto& l : mSb.panel) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(l.rgba), "%s", l.text.c_str());
+		}
+		ImGui::End();
 	}
 
 	void Viewer::drawHudReach(const h2::Camera& cam)

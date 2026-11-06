@@ -6,6 +6,7 @@
 #include "MultilevelPointer.h"
 #include "InjectRequirements.h"
 #include "IGetMCCVersion.h"
+#include "H2CheckpointGametype.h"
 
 // The game's current checkpoint as bytes, for a replay file to carry (so one file is the whole replay: no separate
 // dump / inject / revert). read() is DumpCheckpoint's read (the current buffer of a double-buffered game, the game DLL's
@@ -96,6 +97,8 @@ public:
         if (mReq->preserveLocations)
             for (auto& [offset, vec] : mPreserve->locations)
                 std::memcpy(data.data() + offset, (const void*)(loc + offset), vec.size());
+        // Halo 2: the replay's start checkpoint under the session's gametype, or a clear refusal (H2CheckpointGametype.h)
+        if (mGame.operator GameState::Value() == GameState::Value::Halo2) H2Gametype::prepareInject(data, loc);
         std::fill(data.end() - 10, data.end(), (byte)0);
         // ⚠ As InjectCheckpoint ACTUALLY behaves: it zeroes the SHA bytes (inclusive range) and its computed SHA never
         // lands (SHAout is reserve()d, so its size() - the copy length - is 0). Every injection HCM has done went in with a

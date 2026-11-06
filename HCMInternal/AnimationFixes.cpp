@@ -14,6 +14,7 @@
 #include <mutex>
 #include <chrono>
 #include <cstring>
+#include <cmath>
 
 namespace
 {
@@ -277,7 +278,8 @@ namespace
 	constexpr uintptr_t kRvaCurrentLevelCode     = 0xE70E68;
 	constexpr uintptr_t kRvaObjDatumResolver     = 0x8D7000;
 	constexpr ptrdiff_t kObjDatumPhaseOffset     = 0x144;
-	constexpr float     kCyclotronSeamThreshold  = 0.05f;
+	constexpr float     kCyclotronSeamThreshold  = 0.05f;   // fallback only (the tick before was not seen): the old window
+	constexpr uintptr_t kRvaGameTimeGlobals      = 0x15FE008;  // *(...) = game time globals; +8 u32 game tick (as H2CV_Halo2.h GAME_TIME)
 	using ObjDatumResolverFn = uintptr_t(__fastcall*)(uintptr_t);
 
 	// ---- Fix 1b gate: act ONLY while the FP rocket launcher's barrel-spin animation is playing ----
@@ -537,6 +539,20 @@ private:
 
 
 	// ---- Fix 2: cyclotron elevator interp (inline-hook the interp gate) ----
+	// The elevator's phase (object +0x144) ramps 0 -> 1 and wraps (...0.965 -> 0.007). The wrap is a real jump in its pose, and
+	// the engine's blend (last tick's pose -> this tick's) would run it backward through the whole travel for one tick. ONLY that
+	// interval is skipped (2026-11-05; before, every tick with phase < 0.05 was: the wrap tick plus, depending on where the
+	// wrap landed, the next one - a visible 30 Hz step near the end of the loop). The phase is remembered once per game tick;
+	// a tick whose phase moved by more than half a cycle since the tick before is the wrap.
+	// Why the phase read here belongs to the newest recorded pose (RE of the tick, sub_1806A7790): swap prev <- curr
+	// (sub_180723520), the game tick (sub_1806A72A0 -> sub_1808DD920: object_update, which advances the machine, THEN node
+	// matrices + populate sub_180723380 via sub_1808D7630 / sub_1808DC1B0), end (sub_1807235A0: objects not populated keep
+	// last tick's pose; clears "in progress"). So at render time curr = the pose of the phase the object holds now.
+	// When the tick before was not seen (several ticks in one frame, a revert, the first frame), the old window decides:
+	// phase < 0.05 always contains the wrap tick (a tick advances the phase ~0.042).
+	inline static uint32_t sCycloTick = 0, sCycloPrevTick = 0;
+	inline static float sCycloPhase = -1.f, sCycloPrevPhase = -1.f;   // < 0: not seen
+	inline static ULONGLONG sCycloSeenMs = 0;   // the last call for the elevator: a gap > 1 s (other map, reload, off screen) = start over
 	static __int64 __fastcall cyclotronGateDetour(uint32_t a1, uint32_t* a2)
 	{
 		__int64 result = sCyclotronGateHook->getInlineHook().call<__int64, uint32_t, uint32_t*>(a1, a2);
@@ -565,7 +581,30 @@ private:
 		uintptr_t datum = resolver(entry);
 		if (!datum || IsBadReadPtr((void*)(datum + kObjDatumPhaseOffset), 4)) return result;
 
-		if (*(float*)(datum + kObjDatumPhaseOffset) < kCyclotronSeamThreshold)
+		const float phase = *(float*)(datum + kObjDatumPhaseOffset);
+		uint32_t tick = 0; bool tickOk = false;
+		if (!IsBadReadPtr((void*)(base + kRvaGameTimeGlobals), 8))
+		{
+			const uintptr_t gt = *(uintptr_t*)(base + kRvaGameTimeGlobals);
+			if (gt && !IsBadReadPtr((void*)(gt + 8), 4)) { tick = *(uint32_t*)(gt + 8); tickOk = true; }
+		}
+		// one sample per game tick, taken outside the interpolator's tick update (render time). After a gap (not called for over
+		// a second) the samples belong to another session, even when the tick number happens to match: start over.
+		const ULONGLONG nowMs = GetTickCount64();
+		const bool fresh = nowMs - sCycloSeenMs < 1000;
+		sCycloSeenMs = nowMs;
+		if (tickOk && *(uint8_t*)(base + kRvaInterpInProgress) == 0 && (tick != sCycloTick || !fresh))
+		{
+			if (fresh) { sCycloPrevTick = sCycloTick; sCycloPrevPhase = sCycloPhase; }
+			else { sCycloPrevTick = 0; sCycloPrevPhase = -1.f; }
+			sCycloTick = tick; sCycloPhase = (phase >= 0.f && phase <= 1.f) ? phase : -1.f;
+		}
+		bool seam;
+		if (tickOk && tick == sCycloTick && sCycloTick - sCycloPrevTick == 1 && sCycloPhase >= 0.f && sCycloPrevPhase >= 0.f)
+			seam = std::fabs(sCycloPhase - sCycloPrevPhase) > 0.5f;    // the wrap (either direction): this tick's blend only
+		else
+			seam = phase < kCyclotronSeamThreshold;                     // the tick before is not known: the old window
+		if (seam)
 		{
 			if (a2) *a2 = 0xFFFFFFFF;
 			return 0;

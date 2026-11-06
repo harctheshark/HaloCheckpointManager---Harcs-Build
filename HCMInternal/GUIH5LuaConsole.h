@@ -200,12 +200,8 @@ public:
 
 		ImGui::Checkbox("Allow Sleep (experimental)##h5Console", &mAsThread);
 		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("Run the chunk as one of the engine's own script threads, so Sleep, SleepUntil "
-				"and coroutine.yield work.\n\nLeave this OFF unless you need those. Off runs the chunk "
-				"immediately, which is the better-tested path; a chunk that sleeps will then fail with "
-				"\"attempt to yield across metamethod/C-call boundary\" rather than doing anything worse."
-				"\n\n⚠ This path called an engine function whose arguments were originally misread, which "
-				"crashed the game. The mistake is fixed and guarded, but it has not been proven in-game yet.");
+			ImGui::SetTooltip("Runs the chunk as an engine script thread so Sleep / SleepUntil / coroutine.yield work.\n"
+				"Leave OFF unless you need them (off is the better-tested path). Not yet proven in-game.");
 		used += GUIFrameHeightWithSpacing;
 
 		if (!mStatus.empty())

@@ -107,6 +107,7 @@
 #include "UncapRenderSections.h"
 #include "CollisionViewer.h"
 #include "LaunchTrajectory.h"
+#include "MPRevertRepair.h"
 #include "ChaseCamera.h"
 #include "Halo2Physics.h"
 #include "FarClipDistance.h"

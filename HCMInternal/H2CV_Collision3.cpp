@@ -201,10 +201,85 @@ namespace h2cv
 		mPlaneAgree = mPlaneDisagree = 0; mB3.clear(); mB3.reserve(act.size()); mIgDefs.clear(); mIgInstances.clear(); mWorld = {};
 		mCreasesBuilt = false;
 		size_t igInstances = 0, igLive = 0;
+		// bsp seams (2026-11-02): a seam face (its collision material has a seam index) is left out where another loaded bsp has a
+		// seam face lying on it - the two bsps' closing faces of a shared border (h3sb: "seam surfaces (borders with other loaded
+		// BSPs) left out", 33 + 33 on h100 bsp 3 + 8). The seam identifiers' 16-byte ids did not tell the bsps apart (every seam
+		// face matched), so the faces are matched by place: the centroid of one on the other's polygon, planes parallel.
+		std::vector<CollBsp> worlds(act.size());
+		std::vector<uint8_t> parsed(act.size(), 0);
+		for (size_t i = 0; i < act.size(); ++i) parsed[i] = worlds[i].parse3(act[i].worldBsp, act[i].large) ? 1 : 0;
+		struct SeamFace { uint32_t s; Vec3 c, n, lo, hi; std::vector<Vec3> poly; };
+		std::vector<std::vector<SeamFace>> sf(act.size());
+		for (size_t i = 0; i < act.size(); ++i)
+		{
+			if (!parsed[i]) continue;
+			h3::SeamInfo si;
+			if (!h3::seamInfo(act[i].sbsp, si)) continue;
+			const CollBsp& w = worlds[i];
+			for (uint32_t s = 0; s < (uint32_t)w.surfaces.size(); ++s)
+			{
+				const uint16_t m = w.surfaces[s].material;
+				if (m >= si.matSeam.size() || si.matSeam[m] < 0) continue;
+				SeamFace f; f.s = s;
+				if (!w.polygon(s, f.poly) || f.poly.size() < 3) continue;
+				f.c = { 0, 0, 0 }; f.lo = f.hi = f.poly[0];
+				for (const Vec3& v : f.poly)
+				{
+					f.c = { f.c.x + v.x, f.c.y + v.y, f.c.z + v.z };
+					f.lo = { std::min(f.lo.x, v.x), std::min(f.lo.y, v.y), std::min(f.lo.z, v.z) };
+					f.hi = { std::max(f.hi.x, v.x), std::max(f.hi.y, v.y), std::max(f.hi.z, v.z) };
+				}
+				const float k = 1.f / (float)f.poly.size(); f.c = { f.c.x * k, f.c.y * k, f.c.z * k };
+				const Vec3 a = f.poly[0], b = f.poly[1], c = f.poly[2];
+				const Vec3 u{ b.x - a.x, b.y - a.y, b.z - a.z }, v{ c.x - a.x, c.y - a.y, c.z - a.z };
+				Vec3 n{ u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x };
+				const float nl = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+				if (nl < 1e-8f) continue;
+				f.n = { n.x / nl, n.y / nl, n.z / nl };
+				sf[i].push_back(std::move(f));
+			}
+		}
+		// p on face f (within 0.01 of its plane, inside its edges - either winding)
+		auto onFace = [](const SeamFace& f, const Vec3& p) {
+			const float e = 0.01f;
+			if (p.x < f.lo.x - e || p.x > f.hi.x + e || p.y < f.lo.y - e || p.y > f.hi.y + e || p.z < f.lo.z - e || p.z > f.hi.z + e) return false;
+			const Vec3 a = f.poly[0];
+			if (std::fabs((p.x - a.x) * f.n.x + (p.y - a.y) * f.n.y + (p.z - a.z) * f.n.z) > e) return false;
+			int pos = 0, neg = 0;
+			const size_t k = f.poly.size();
+			for (size_t i = 0; i < k; ++i)
+			{
+				const Vec3 q0 = f.poly[i], q1 = f.poly[(i + 1) % k];
+				const Vec3 ed{ q1.x - q0.x, q1.y - q0.y, q1.z - q0.z }, w{ p.x - q0.x, p.y - q0.y, p.z - q0.z };
+				const Vec3 cr{ ed.y * w.z - ed.z * w.y, ed.z * w.x - ed.x * w.z, ed.x * w.y - ed.y * w.x };
+				const float sd = cr.x * f.n.x + cr.y * f.n.y + cr.z * f.n.z;
+				if (sd > 1e-4f) ++pos; else if (sd < -1e-4f) ++neg;
+			}
+			return pos == 0 || neg == 0;
+		};
+		for (size_t i = 0; i < act.size(); ++i)
+		{
+			size_t out = 0;
+			for (const SeamFace& f : sf[i])
+			{
+				bool joined = false;
+				for (size_t o = 0; o < act.size() && !joined; ++o)
+				{
+					if (o == i) continue;
+					for (const SeamFace& g : sf[o])
+						if (std::fabs(f.n.x * g.n.x + f.n.y * g.n.y + f.n.z * g.n.z) > 0.999f && (onFace(g, f.c) || onFace(f, g.c))) { joined = true; break; }
+				}
+				if (joined) { worlds[i].surfaces[f.s].flags |= kInvalid; ++out; }
+			}
+			if (!sf[i].empty()) LOGF("collision: bsp %d  %zu seam surfaces (borders with other loaded bsps) left out, %zu kept (the bsp beyond is not loaded)", act[i].index, out, sf[i].size() - out);
+		}
+		size_t ai = (size_t)-1;
 		for (const h3::BspRes& r : act)
 		{
+			++ai;
 			Bsp3 b; b.index = r.index; b.sbsp = r.sbsp; b.how = r.how;
-			if (!b.world.parse3(r.worldBsp, r.large)) { LOGF("collision: bsp %d world collision_bsp @0x%llX (%s) failed to parse", r.index, (unsigned long long)r.worldBsp, r.how.c_str()); continue; }
+			if (!parsed[ai]) { LOGF("collision: bsp %d world collision_bsp @0x%llX (%s) failed to parse", r.index, (unsigned long long)r.worldBsp, r.how.c_str()); continue; }
+			b.world = std::move(worlds[ai]);
 			if (r.igInstances && r.igInstanceCount && r.igDefs)
 			{
 				const uint32_t iN = r.igInstanceCount;
@@ -284,7 +359,7 @@ namespace h2cv
 		{
 			if (why.empty()) why = mask ? "no bsp resolved" : "no structure bsp active (menu / loading)";
 			if (why != mWhy3) { mWhy3 = why; LOGF("collision: nothing to draw (active mask 0x%X): %s", mask, why.c_str()); }
-			if (mSbsp) { for (auto& l : mLines) l.clear(); for (auto& g : mGrid) g = LineGrid{}; mStaticTris.clear(); mObjectTris.clear(); mBarrierTris.clear(); mKillTris.clear(); mB3.clear(); }
+			if (mSbsp) { for (auto& l : mLines) l.clear(); for (auto& g : mGrid) g = LineGrid{}; mStaticTris.clear(); mObjectTris.clear(); mObjSpans.clear(); mBarrierTris.clear(); mKillTris.clear(); mB3.clear(); }
 			mSbsp = 0; mSig3 = 0;
 			return;
 		}
@@ -341,7 +416,7 @@ namespace h2cv
 				if (be.slot >= 0 && (size_t)be.slot < mB3.size() && (solid(be.slot, be.left) || solid(be.slot, be.right))) out.push_back(be.l);
 		}
 		if (wantObjects) gatherObjects3();
-		else { for (Cat c : { Cat::Scenery, Cat::Crate, Cat::Machine }) mLines[(int)c].clear(); mObjectTris.clear(); }
+		else { for (Cat c : { Cat::Scenery, Cat::Crate, Cat::Machine }) mLines[(int)c].clear(); mObjectTris.clear(); mObjSpans.clear(); }
 	}
 
 	// Scenery / crates / machines: the Havok shapes the player actually collides with (box, sphere, capsule, convex hull, lists and
@@ -350,7 +425,7 @@ namespace h2cv
 	void CollisionWorld::gatherObjects3()
 	{
 		for (Cat c : { Cat::Scenery, Cat::Crate, Cat::Machine }) mLines[(int)c].clear();
-		mObjectTris.clear();
+		mObjectTris.clear(); mObjSpans.clear();
 		mObjSkipped3 = 0;
 		std::vector<h2::ObjectRef> objs;
 		h3::enumerateObjects(objs);

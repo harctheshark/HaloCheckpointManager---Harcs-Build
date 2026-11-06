@@ -17,6 +17,7 @@
 #include "GUIHCESwitchZoneSet.h"
 #include "GUIH5SwitchZoneSet.h"
 #include "GUIMCCSwitchZoneSet.h"
+#include "GUIMapLauncher.h"
 #include "GUIInvulnerability.h"
 #include "GUIHeading.h"
 #include "GUISubHeading.h"
@@ -40,6 +41,7 @@
 #include "GUIVec3.h"
 #include "GUIVec2.h"
 #include "GUIButtonAndInt.h"
+#include "SwitchBSP.h"   // SwitchBSPNames: the BSP names for the switch control
 #include "GUIWaypointList.h"
 #include "GUISkullToggle.h"
 #include "GUIHCESkullToggle.h"
@@ -217,6 +219,7 @@ private:
 							createNestedElement(GUIElementEnum::advanceTicksGUI),
 							createNestedElement(GUIElementEnum::pauseAlsoBlocksInputGUI),
 							createNestedElement(GUIElementEnum::pauseAlsoFreesCursorGUI),
+							createNestedElement(GUIElementEnum::pauseAlsoFreezesEffectsGUI),
 							}));
 
 
@@ -227,6 +230,10 @@ private:
 					case GUIElementEnum::pauseAlsoBlocksInputGUI:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 							(game, ToolTipCollection("Makes this pause feature also block game input"), std::nullopt, "Pause also blocks game input", settings->pauseAlsoBlocksInput));
+
+					case GUIElementEnum::pauseAlsoFreezesEffectsGUI:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+							(game, ToolTipCollection("On: pausing also freezes particles, smoke and grass/decorator wind, like MCC's own pause. Off: they keep animating while the game is paused."), std::nullopt, "Pause also freezes effects", settings->pauseAlsoFreezesEffects));
 
 					case GUIElementEnum::pauseAlsoFreesCursorGUI:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -254,6 +261,10 @@ private:
 				case GUIElementEnum::HideWatermarkIncludeMessagesGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Hides the HCM message log too."), std::nullopt, "Also hide HCM messages", settings->hideWatermarkHideMessages));
+
+				case GUIElementEnum::mapLauncherGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIMapLauncher>
+						(game, ToolTipCollection("Launch a map from MCC's mod map packs (or Halo 2 stock maps) with the lobby's gametype. Pick a map, press Play, then Start in a Halo 2 custom game lobby. Halo 2 only for now.")));
 
 				case GUIElementEnum::presetsHeadingGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
@@ -304,6 +315,7 @@ private:
 							createNestedElement(GUIElementEnum::h5ForceRevertGUI),
 							createNestedElement(GUIElementEnum::forceRevertGUI),
 							createNestedElement(GUIElementEnum::forceDoubleRevertGUI),
+							createNestedElement(GUIElementEnum::mpRevertRepairGUI),
 							createNestedElement(GUIElementEnum::forceCoreSaveGUI),
 							createNestedElement(GUIElementEnum::forceCoreLoadGUI),
 							createNestedElement(GUIElementEnum::injectCheckpointGUI),
@@ -459,7 +471,7 @@ private:
 
 				case GUIElementEnum::h5TriggerOverlayToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Draw the scenario's trigger volumes in 3D.\n\nCategories are read from the scenario's own index blocks, not from volume names, so they are correct even though Halo 5 cannot resolve a volume name back to text at runtime.\n\n\u26a0 Sector-shaped volumes (about half of them) are arbitrary geometry, not boxes. That mesh is not decoded yet, so they are drawn as their BOUNDING BOX and are hidden by default.\n\n\u26a0 If the boxes do not line up with the world, set FOV below to match your in-game field of view - Halo 5 exposes no FOV value we can read."), std::nullopt, "Trigger Overlay##h5", settings->h5TriggerOverlayToggle));
+						(game, ToolTipCollection("Draw the scenario's trigger volumes in 3D. Sector-shaped volumes are drawn as bounding boxes and hidden by default. If boxes don't line up with the world, set FOV below to your in-game FOV."), std::nullopt, "Trigger Overlay##h5", settings->h5TriggerOverlayToggle));
 
 				case GUIElementEnum::h5TriggerOverlaySettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -495,19 +507,19 @@ private:
 
 					case GUIElementEnum::h5TriggerOverlayUseLiveActivity:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Colour regular volumes by whether a mission script has ACTUALLY tested them in the last moment, instead of by whether the level's script mentions them anywhere.\n\nThis hooks the engine's own named script bindings (volume_test_players and friends), so a volume lights up exactly when something is polling it. Halo 5 registers its script functions by name, so this catches script polls and nothing else - the engine's AI and damage systems do not route through those bindings.\n\n\u26a0 Falls back to the old static answer if the hooks are not installed, rather than painting everything dead.\n\n\u26a0 Kill volumes and zone-set volumes are engine-driven and never go through a script binding, so they keep their category colour and are never shown as inert."), std::nullopt, "Live Script Activity##h5tv", settings->h5TriggerOverlayUseLiveActivity));
+							(game, ToolTipCollection("Colour regular volumes by whether a mission script actually tested them just now, not just whether the script mentions them. Kill and zone-set volumes keep their category colour."), std::nullopt, "Live Script Activity##h5tv", settings->h5TriggerOverlayUseLiveActivity));
 
 					case GUIElementEnum::h5TriggerOverlayActivityWindowMs:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(50.f, 10000.f)>>
-							(game, ToolTipCollection("How long after a script tests a volume it still counts as live, in milliseconds.\n\nMission scripts poll on their own cadence rather than every tick, so too short a window makes live volumes flicker in and out."), "Activity Window (ms)##h5tv", settings->h5TriggerOverlayActivityWindowMs));
+							(game, ToolTipCollection("How long after a script tests a volume it still counts as live, in milliseconds. Too short a window makes live volumes flicker."), "Activity Window (ms)##h5tv", settings->h5TriggerOverlayActivityWindowMs));
 
 					case GUIElementEnum::h5TriggerOverlaySpeedrunOnly:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Draws ONLY the volumes a speedrun has to touch: the level's goal advance volumes plus its end trigger.\n\nUnlike the HaloCER version this is NOT a community name list - it is read out of the level's own decompiled script, where each goal declares exactly one gotoVolume and entering it is the whole advance condition. Matched by string_id hash, so a renamed volume drops out rather than silently matching the wrong one.\n\nAll 15 campaign levels are mapped (100 volumes).\n\n⚠ NOT EVERY STEP IS A VOLUME. The engine has four advance mechanisms and only one of them is a trigger volume - a goal that advances on a Warden kill, a device or a script flag has nothing to draw. So this shows a SUBSET of the route, not all of it; the per-level notes in H5_Speedrun_Notes carry the rest.\n\n⚠ \"Not a speedrun volume\" does NOT mean skippable: a door can still be in the way. It means the mission does not advance on it."), std::nullopt, "Speedrun Triggers Only##h5tv", settings->h5TriggerOverlaySpeedrunOnly));
+							(game, ToolTipCollection("Draws only the volumes a speedrun must touch: the level's goal advance volumes plus its end trigger. Not every step is a volume (kills, devices, flags), so this shows a subset of the route."), std::nullopt, "Speedrun Triggers Only##h5tv", settings->h5TriggerOverlaySpeedrunOnly));
 
 					case GUIElementEnum::h5TriggerOverlayEditNameFilter:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-							(game, ToolTipCollection("Choose exactly which trigger volumes to draw, by name, from a checkbox list of the ones in this level. Has a search box, All / None per category, and a Speedrun only button.\n\nVolumes on the minimum completion path are tagged green.\n\nSelecting names switches the filter on for you. An empty list means EVERYTHING, not nothing.\n\nYou must be in a level with the Trigger Overlay on, otherwise there are no volume names to show yet."), std::nullopt, "Filter by Name...##h5tv", settings->h5TriggerOverlayEditNameFilterEvent));
+							(game, ToolTipCollection("Pick which trigger volumes to draw by name from a checkbox list. Needs a level loaded with the Trigger Overlay on. An empty list means everything is drawn; selecting names turns the filter on."), std::nullopt, "Filter by Name...##h5tv", settings->h5TriggerOverlayEditNameFilterEvent));
 
 					case GUIElementEnum::h5TriggerOverlayShowKill:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -535,11 +547,11 @@ private:
 
 					case GUIElementEnum::h5TriggerOverlayHitMessages:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Print a message whenever you ENTER or EXIT a trigger volume.\n\n\u26a0 This is where YOU are standing, tested geometrically - it is not the same as a script having looked at the volume, and entering one does not mean anything happened. Sector-shaped volumes are not included, because their stored extents are placeholders and cannot be tested.\n\nWorks with the overlay itself switched off."), std::nullopt, "Report Volumes Entered/Exited##h5tv", settings->h5TriggerOverlayHitMessages));
+							(game, ToolTipCollection("Print a message when you enter or exit a trigger volume. This is based on where you stand, not on a script testing it. Sector-shaped volumes are not included. Works with the overlay off."), std::nullopt, "Report Volumes Entered/Exited##h5tv", settings->h5TriggerOverlayHitMessages));
 
 					case GUIElementEnum::h5TriggerOverlayColourByScript:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Colour volumes by whether a SCRIPT can actually hit or wake them, instead of by category.\n\nBlue - a mission script polls, queries or acts on this volume.\nRed  - nothing references it. It is inert.\nKill and zone-set volumes keep their own colours: they are driven by the ENGINE and appear in no script, so colouring them red would be wrong.\n\n\u26a0 This is read from the compiled mission scripts in your H5_Scripts folder, matched to live volumes by name hash - it is not a live trace of what the game is doing right now. A volume can be script-reachable and still never fire on your route. Levels with no script tag in the corpus will show as inert; add their .lua and regenerate to widen coverage."), std::nullopt, "Colour By Script Activity##h5tv", settings->h5TriggerOverlayColourByScript));
+							(game, ToolTipCollection("Colour volumes by script use instead of category: blue = a mission script uses it, red = nothing references it. Read from your H5_Scripts folder, not live. Kill/zone-set volumes keep their colours."), std::nullopt, "Colour By Script Activity##h5tv", settings->h5TriggerOverlayColourByScript));
 
 					case GUIElementEnum::h5TriggerOverlayScriptedColor:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<false>>
@@ -579,19 +591,19 @@ private:
 
 				case GUIElementEnum::h5InvincibilityGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Player takes no damage and cannot be killed.\n\nSets the engine's own per-object damage flags (cannot_take_damage + cannot_die) rather than rewriting your health, so nothing fights it.\n\n\u26a0 Re-applied every tick, because the engine zeroes those flags when you respawn.\n\n\u26a0 Falling damage uses a separate system that has not been traced, and this is untested in multiplayer - treat it as campaign/Forge for now."), std::nullopt, "Invincibility##h5", settings->h5InvincibilityToggle));
+						(game, ToolTipCollection("Player takes no damage and cannot be killed. Re-applied every tick. Falling damage is untraced and multiplayer is untested, so treat it as campaign/Forge only."), std::nullopt, "Invincibility##h5", settings->h5InvincibilityToggle));
 
 				case GUIElementEnum::h5InfiniteAmmoGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Weapons never run out of reserve ammo, AND grenades never run out.\n\nSets the engine's own per-unit \"infinite ammo\" property on your biped - the same switch the weapon code itself reads (weapon_has_infinite_ammo), not a health-bar style value rewrite.\n\nGrenades work differently: the engine has no infinite-grenade flag, so all three types (frag / plasma / splinter) are topped back up to your own carry limit as you throw them. The HUD keeps showing the normal number rather than something silly.\n\n⚠ Re-applied every frame, because respawning builds a NEW biped whose constructor turns it back off.\n\nYou will still reload - for that, use Bottomless Clip."), std::nullopt, "Infinite Ammo##h5", settings->h5InfiniteAmmoToggle));
+						(game, ToolTipCollection("Weapons and grenades never run out of reserve ammo. Re-applied every frame, so it survives respawns. You still reload; use Bottomless Clip to stop that."), std::nullopt, "Infinite Ammo##h5", settings->h5InfiniteAmmoToggle));
 
 				case GUIElementEnum::h5BottomlessClipGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("The magazine never empties, so you never reload. Grenades are kept topped up too.\n\nA separate engine property from Infinite Ammo, sitting right beside it. Turning both on is fine - this is the stronger of the two.\n\n⚠ Re-applied every frame; a respawn resets it."), std::nullopt, "Bottomless Clip##h5", settings->h5BottomlessClipToggle));
+						(game, ToolTipCollection("The magazine never empties, so you never reload, and grenades stay topped up. Stronger than Infinite Ammo; both can be on together. A respawn resets it, so it is re-applied every frame."), std::nullopt, "Bottomless Clip##h5", settings->h5BottomlessClipToggle));
 
 				case GUIElementEnum::h5OneShotKillGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Multiplies the damage YOU DEAL, so anything dies in one hit.\n\nSets the engine's per-unit weapon, melee AND grenade damage scalars on your biped - all three, because they are independent and scaling only the weapon one would leave melee and nades stock.\n\n⚠ This is an OUTGOING multiplier and does not change what you take. Halo 5 keeps incoming damage in different fields entirely.\n\n⚠ Re-applied every frame; a respawn resets it."), std::nullopt, "One Shot Kill##h5", settings->h5OneShotKillToggle));
+						(game, ToolTipCollection("Multiplies the damage you deal (weapon, melee and grenade) so anything dies in one hit. Outgoing damage only; incoming damage is unchanged. Re-applied every frame; a respawn resets it."), std::nullopt, "One Shot Kill##h5", settings->h5OneShotKillToggle));
 
 				case GUIElementEnum::h5OneShotKillMultiplierGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1000.f)>>
@@ -599,7 +611,7 @@ private:
 
 				case GUIElementEnum::h5GameSpeedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Scales the SIMULATION, using the engine's own game speed field rather than faking the process clock.\n\nOnly the simulation scales - rendering and the frame pacer keep real time.\n\n⚠ Suppresses scripted slow-motion effects while it is on: the engine drives those by ramping this same field, so we zero the ramp every tick to stop it stomping your value.\n\n⚠ The engine clamps its own catch-up budget at 15x - above that the simulation stops keeping up instead of going faster."), std::nullopt, "Game Speed##h5", settings->h5GameSpeedToggle));
+						(game, ToolTipCollection("Scales the simulation speed only; rendering and the frame pacer keep real time. Suppresses scripted slow-motion while on. Above 15x the simulation stops keeping up instead of going faster."), std::nullopt, "Game Speed##h5", settings->h5GameSpeedToggle));
 
 				case GUIElementEnum::h5GameSpeedAmountGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.01f, 15.f)>>
@@ -607,15 +619,15 @@ private:
 
 				case GUIElementEnum::h5OutOfBoundsBypassGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Fly out of bounds forever without being removed.\n\nDisables BOTH mechanisms that remove you:\n\n1. The player \"went outside of the world\" death - the engine counts ticks spent outside and kills you after half a second. We zero that counter every tick, so it never gets there. No code is patched.\n\n2. The Havok broadphase exit - when a rigid body leaves the broadphase the engine DELETES the owning object. That one cannot be starved, so the 5-byte delete call is NOPed while this is on, found by signature and restored exactly as it was when you switch off.\n\n⚠ Outside the broadphase you collide with nothing until you come back inside."), std::nullopt, "Havok Broadphase Deletion Bypass##h5", settings->h5OutOfBoundsBypassToggle));
+						(game, ToolTipCollection("Fly out of bounds forever without being removed or killed. Outside the broadphase you collide with nothing until you come back inside."), std::nullopt, "Havok Broadphase Deletion Bypass##h5", settings->h5OutOfBoundsBypassToggle));
 
 				case GUIElementEnum::h5PauseMenuFixGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Removes the ~3 second delay before you can reopen the pause menu.\n\nThe engine records the game time each time the menu opens and refuses to reopen it until 3 seconds of UNPAUSED gameplay have passed. This keeps that timestamp far in the past.\n\nWrites one float that nothing else in the game reads - it does not patch any code, and the 3.0 second constant itself is shared by 268 other places and is left alone."), std::nullopt, "Pause Menu Fix##h5", settings->h5PauseMenuFixToggle));
+						(game, ToolTipCollection("Removes the roughly 3 second delay before you can reopen the pause menu."), std::nullopt, "Pause Menu Fix##h5", settings->h5PauseMenuFixToggle));
 
 				case GUIElementEnum::h5HavokOverlayToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Draw the live Havok collision geometry.\n\nStatic level collision first, then instanced geometry, then dynamic object shapes.\n\n\u26a0 The level holds 2.37 MILLION collision triangles, so only what is near you is decoded. Raise Radius to see more and expect the triangle budget to bite; the budget exists so a big radius draws less rather than stalling the frame.\n\nWireframe by default - solid collision is an opaque wall you cannot read."), std::nullopt, "Havok Debugger##h5", settings->h5HavokOverlayToggle));
+						(game, ToolTipCollection("Draw the live Havok collision geometry (static level, instanced, then dynamic objects), wireframe by default. Only collision near you is decoded; raise Radius to see more."), std::nullopt, "Havok Debugger##h5", settings->h5HavokOverlayToggle));
 
 				case GUIElementEnum::h5HavokOverlaySettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -648,11 +660,11 @@ private:
 
 					case GUIElementEnum::h5HavokOverlayLayerFilter:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputString>
-							(game, ToolTipCollection("Which collision LAYERS to draw. Leave EMPTY to draw everything (the default).\n\nNot every collision surface is one you can walk into - Halo puts bullet-only and vehicle-only geometry on their own layers, so the overlay otherwise outlines walls you pass straight through.\n\nWhen the overlay rebuilds it reports the layers this level actually has, with body and triangle counts, as an on-screen message - e.g. \"0x1D: 6 bodies, 2270990 tris\". Turn layers off one at a time to find the one you want, then put it here.\n\nAccepts decimal or hex, comma or space separated: 29  or  0x1D, 0x1C\n\n\u26a0 This is an explicit list, NOT the engine's own collision matrix. Halo 5 does have one (hknp's 32x32 collisionLookupTable) but reading it needs the world's filter pointer verified against a running game, and a guessed offset would filter by nonsense."), "Collision Layers##h5hk", settings->h5HavokOverlayLayerFilter));
+							(game, ToolTipCollection("Which collision layers to draw. Empty draws everything (default). The overlay reports the level's layers on screen; turn layers off to find yours. Decimal or hex, comma or space separated."), "Collision Layers##h5hk", settings->h5HavokOverlayLayerFilter));
 
 					case GUIElementEnum::h5HavokOverlayRadius:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 32767.f)>>
-							(game, ToolTipCollection("How far from the camera collision is decoded, in WORLD UNITS (1 WU = 10 feet).\n\nThe maximum, 32767, is far larger than any level, so it effectively means \"no distance culling - decode the whole map\".\n\nPast roughly the size of the level the TRIANGLE BUDGET below is what actually limits what you see, not this. If raising the radius stops adding geometry, raise the budget.\n\n⚠ The slider is very coarse over this range - ctrl+click it to type an exact value."), "Radius (world units)##h5hk", settings->h5HavokOverlayRadius));
+							(game, ToolTipCollection("How far from the camera collision is decoded, in world units (1 WU = 10 feet). 32767 means no distance culling. Past the level size the triangle budget limits what you see. Ctrl+click to type a value."), "Radius (world units)##h5hk", settings->h5HavokOverlayRadius));
 
 					case GUIElementEnum::h5HavokOverlayTriangleBudget:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1000.f, 400000.f)>>
@@ -680,11 +692,15 @@ private:
 
 				case GUIElementEnum::h5SwitchZoneSetGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIH5SwitchZoneSet>
-						(game, ToolTipCollection("Switch to any zone set the CURRENT map declares.\n\nThe list is read straight out of the loaded scenario tag, so it is correct on every map with no shipped per-level table - pick one and press the button.\n\nA zone set controls which BSPs are resident. Switching is how the game itself moves you between the sections of a level, so this can load geometry you have not reached yet, or unload what you are standing on.\n\nThe entry marked <- current is the one the game is on, read from the engine's own active-zone-set value.\n\nUnlike the HaloCER version, every zone set here is switchable - Halo 5 selects them by index, so even ones the tag does not name can be used."), std::nullopt, "Switch Zone Set##h5", settings->h5SwitchZoneSetEvent));
+						(game, ToolTipCollection("Switch to any zone set the current map declares. Pick one and press the button. This can load geometry you have not reached or unload what you stand on. '<- current' marks the active one."), std::nullopt, "Switch Zone Set##h5", settings->h5SwitchZoneSetEvent));
 
 				case GUIElementEnum::forceRevertGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
 						(game, ToolTipCollection("Forces a revert (without having to die or go to the pause menu)"), RebindableHotkeyEnum::forceRevert, "Force Revert", settings->forceRevertEvent));
+
+				case GUIElementEnum::mpRevertRepairGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Multiplayer: after a revert, removes network entities of objects that no longer exist and relinks restored objects - stops the spawn-then-delete revert crash."), std::nullopt, "MP revert fix", settings->mpRevertRepairToggle));
 
 				case GUIElementEnum::forceDoubleRevertGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -761,7 +777,7 @@ private:
 				// it to its storage provider - press Force Checkpoint first if you want a fresh one.
 				case GUIElementEnum::hceDumpCheckpointGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Dumps the checkpoint you're currently on into the save folder selected on HCMExternal's Halo Campaign Evolved tab (whichever tab HCMExternal is showing), or into <HCM folder>\\HaloCER Checkpoints\\ if HCMExternal has no usable folder for it. Does NOT create a checkpoint - it writes the last one the game actually made. The file is a byte-for-byte copy of that checkpoint."), RebindableHotkeyEnum::dumpCheckpoint, "Dump Checkpoint##hce", settings->dumpCheckpointEvent));
+						(game, ToolTipCollection("Dumps the checkpoint you're on to the save folder chosen in HCMExternal's Halo Campaign Evolved tab, or <HCM folder>/HaloCER Checkpoints/. It copies the last checkpoint the game made."), RebindableHotkeyEnum::dumpCheckpoint, "Dump Checkpoint##hce", settings->dumpCheckpointEvent));
 
 				case GUIElementEnum::hceDumpCheckpointSettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -780,7 +796,7 @@ private:
 					// this off means no hook is installed and no bytes are copied - and nothing to dump.
 					case GUIElementEnum::hceDumpCheckpointShadowGUI:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-							(game, ToolTipCollection("Keeps a copy of your latest checkpoint in memory so it can be dumped without creating a new one. Costs about half a millisecond each time the game checkpoints. Turn it off and there will be nothing to dump."), RebindableHotkeyEnum::hceShadowCheckpointsHotkey, "Keep last checkpoint ready to dump##hce", settings->hceShadowCheckpoints));
+							(game, ToolTipCollection("Keeps a copy of your latest checkpoint in memory so it can be dumped without making a new one. Costs about half a millisecond per checkpoint. Off means there is nothing to dump."), RebindableHotkeyEnum::hceShadowCheckpointsHotkey, "Keep last checkpoint ready to dump##hce", settings->hceShadowCheckpoints));
 
 				// Halo Campaign Evolved's own checkpoint injection. Deliberately reuses injectCheckpointEvent (and so
 				// the existing injectCheckpoint hotkey) and MCC's three warning settings - HaloCER and the MCC games
@@ -794,7 +810,7 @@ private:
 				// recomputes the digest on every injection instead.
 				case GUIElementEnum::hceInjectCheckpointGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Replaces the game's current checkpoint with one you dumped earlier, so your next revert loads it. Uses the checkpoint selected on HCMExternal's Halo Campaign Evolved tab while that tab is the one showing; otherwise opens a file browser in that tab's save folder (or in <HCM folder>\\HaloCER Checkpoints\\ while your older dumps are only there). HCM re-checksums the file and checks it against your current level, difficulty and game build before writing anything."), RebindableHotkeyEnum::injectCheckpoint, "Inject Checkpoint##hce", settings->injectCheckpointEvent));
+						(game, ToolTipCollection("Replaces the game's current checkpoint with one you dumped earlier, so your next revert loads it. Uses the checkpoint selected in HCMExternal, or opens a file browser. Checks level and difficulty."), RebindableHotkeyEnum::injectCheckpoint, "Inject Checkpoint##hce", settings->injectCheckpointEvent));
 
 				case GUIElementEnum::hceInjectCheckpointSettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -809,23 +825,23 @@ private:
 
 					case GUIElementEnum::hceInjectCheckpointForcesRevert:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-							(game, ToolTipCollection("Automatically revert to the checkpoint you injected, immediately after injecting it.\n\nDANGER: on Halo Campaign Evolved a checkpoint the engine rejects does NOT fail quietly - it RESTARTS THE LEVEL and your run is gone. With this on there is no gap between injecting and finding out."), RebindableHotkeyEnum::hceInjectCheckpointForcesRevertHotkey, "Force revert after injecting##hce", settings->injectCheckpointForcesRevert));
+							(game, ToolTipCollection("Automatically revert to the checkpoint right after injecting it. DANGER: a checkpoint the engine rejects restarts the level and your run is gone, with no gap to notice first."), RebindableHotkeyEnum::hceInjectCheckpointForcesRevertHotkey, "Force revert after injecting##hce", settings->injectCheckpointForcesRevert));
 
 					case GUIElementEnum::hceInjectCheckpointLevelCheck:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-							(game, ToolTipCollection("If the checkpoint you are injecting was made on a different level (or a different part of one) than you are playing, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the engine compares these fields itself, and a mismatch RESTARTS THE LEVEL on your next revert."), RebindableHotkeyEnum::hceInjectCheckpointLevelCheckHotkey, "Warn on injecting to wrong level##hce", settings->injectCheckpointLevelCheck));
+							(game, ToolTipCollection("Warns with an 'are you sure?' popup if the checkpoint you inject is from a different level or part of one. Leave ON: a mismatch restarts the level on your next revert."), RebindableHotkeyEnum::hceInjectCheckpointLevelCheckHotkey, "Warn on injecting to wrong level##hce", settings->injectCheckpointLevelCheck));
 
 					case GUIElementEnum::hceInjectCheckpointDifficultyCheck:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-							(game, ToolTipCollection("If the checkpoint you are injecting was made on a different difficulty, or with different skulls, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the engine compares these fields itself, and a mismatch RESTARTS THE LEVEL on your next revert."), RebindableHotkeyEnum::hceInjectCheckpointDifficultyCheckHotkey, "Warn on injecting to wrong difficulty##hce", settings->injectCheckpointDifficultyCheck));
+							(game, ToolTipCollection("Warns with an 'are you sure?' popup if the injected checkpoint was made on a different difficulty or skulls. Leave ON: a mismatch restarts the level on your next revert."), RebindableHotkeyEnum::hceInjectCheckpointDifficultyCheckHotkey, "Warn on injecting to wrong difficulty##hce", settings->injectCheckpointDifficultyCheck));
 
 					case GUIElementEnum::hceInjectCheckpointRewriteIdentity:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-							(game, ToolTipCollection("Makes checkpoints shared between players actually work.\n\nA checkpoint carries the identity of whoever saved it - not just in its header, but baked through the player structures inside the saved game state. It therefore loads normally and then KILLS YOU a second or two later. This rewrites that identity to yours as the file is injected.\n\nInjecting your own checkpoints is unaffected: everything already matches and nothing is changed.\n\nLeave this ON unless you are deliberately investigating a checkpoint's original contents."), RebindableHotkeyEnum::hceInjectCheckpointRewriteIdentityHotkey, "Re-identify shared checkpoints as mine##hce", settings->hceInjectCheckpointRewriteIdentity));
+							(game, ToolTipCollection("Makes checkpoints shared between players work by rewriting the saver's identity to yours on injection. Without it they load, then kill you seconds later. Leave ON."), RebindableHotkeyEnum::hceInjectCheckpointRewriteIdentityHotkey, "Re-identify shared checkpoints as mine##hce", settings->hceInjectCheckpointRewriteIdentity));
 
 					case GUIElementEnum::hceInjectCheckpointVersionCheck:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-							(game, ToolTipCollection("If the checkpoint you are injecting was made by a different build of Halo Campaign Evolved, warn you with an \"are you sure?\" popup.\n\nLeave this ON: the game state layout changes between builds, so this is the mismatch most likely to restart your level (or worse)."), RebindableHotkeyEnum::hceInjectCheckpointVersionCheckHotkey, "Warn on injecting from wrong game build##hce", settings->injectCheckpointVersionCheck));
+							(game, ToolTipCollection("Warns with an 'are you sure?' popup if the injected checkpoint came from a different Halo Campaign Evolved build. Leave ON: a mismatch is the likeliest cause of a level restart."), RebindableHotkeyEnum::hceInjectCheckpointVersionCheckHotkey, "Warn on injecting from wrong game build##hce", settings->injectCheckpointVersionCheck));
 
 				case GUIElementEnum::injectCoreGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -943,7 +959,7 @@ private:
 
 					case GUIElementEnum::replayPlayGUI:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-							(game, ToolTipCollection("Play the loaded replay. Real input is blocked and the recorded inputs are fed from the revert: a replay with its checkpoint inside injects it first; an older one needs the matching checkpoint loaded by hand. Playback starts on your revert."), RebindableHotkeyEnum::replayPlayHotkey, "Play Replay", settings->replayPlayEvent));
+							(game, ToolTipCollection("Play the loaded replay. Real input is blocked and recorded inputs are fed from the revert. An older replay needs its matching checkpoint loaded by hand. Playback starts on your revert."), RebindableHotkeyEnum::replayPlayHotkey, "Play Replay", settings->replayPlayEvent));
 
 					case GUIElementEnum::replayStopPlaybackGUI:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -1066,32 +1082,32 @@ private:
 
 				case GUIElementEnum::sphereSpecularForceToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: forces sphere (spherical) lights to show specular highlights at all times. Stock, the engine zeroes a sphere light's specular unless a cinematic is playing, so sphere lights only glint during cutscenes. Reverts to stock on disable. Build 1.3528 only."), std::nullopt, "Sphere Specular Force", settings->sphereSpecularForceToggle
+						(game, ToolTipCollection("Halo 2: forces sphere lights to always show specular highlights. Stock, they only glint during cutscenes. Reverts to stock when disabled. Build 1.3528 only."), std::nullopt, "Sphere Specular Force", settings->sphereSpecularForceToggle
 						));
 
 				case GUIElementEnum::offscreenShadowCastersToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: keeps instanced geometry AND objects casting projective-light shadows when they leave the camera frustum (turn away from a caster near a projective light and its shadow normally vanishes, while the BSP's shadow persists). Inflates the caster's bounding-sphere radius (set by the multiplier below) only in the visibility test, so off-camera casters keep casting. Stored data untouched; fully reverts on disable. Build 1.3528 only."), std::nullopt, "Off-Screen Shadow Casters", settings->offscreenShadowCastersToggle
+						(game, ToolTipCollection("Halo 2: instanced geometry and objects keep casting projective-light shadows when off-camera. The multiplier below sets the bounding radius inflation. Build 1.3528 only."), std::nullopt, "Off-Screen Shadow Casters", settings->offscreenShadowCastersToggle
 						));
 
 				case GUIElementEnum::offscreenShadowCastersMultiplierGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloatStepper>
-						(game, ToolTipCollection("Halo 2: bounding-sphere radius multiplier for Off-Screen Shadow Casters. Higher = casters keep shadowing from further off-camera (25 is a good default). Live-editable; too high in a dense scene can hit the visibility caps."), "  Off-Screen Caster Radius x", settings->offscreenShadowCastersMultiplier
+						(game, ToolTipCollection("Halo 2: bounding-sphere radius multiplier for off-screen shadow casters. Higher keeps shadows from further off-camera (25 is a good default). Too high in a dense scene can hit the visibility caps."), "  Off-Screen Caster Radius x", settings->offscreenShadowCastersMultiplier
 						));
 
 				case GUIElementEnum::uncapDropShadowsToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: raises the engine's 32-shadow caps to 120 and enlarges the rasterizer pool to 8MB, so far more drop-shadows render at once without the sky/water de-rendering. Relocates the shadow buffers via code caves; fully reverts on disable. Build 1.3528 only."), std::nullopt, "Uncap Drop Shadows", settings->uncapDropShadowsToggle
+						(game, ToolTipCollection("Halo 2: raises the 32-shadow cap to 120 and the rasterizer pool to 8MB, so many more drop-shadows render at once. Fully reverts on disable. Build 1.3528 only."), std::nullopt, "Uncap Drop Shadows", settings->uncapDropShadowsToggle
 						));
 
 				case GUIElementEnum::uncapVisibilityLimitsToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: raises the per-frame visibility caps for visible objects, instanced geometry and building meshes from 256/128/384 to 4096, so large maps stop de-rendering chunks of the level (\"overflowed visibility index collection count\"). Does NOT raise clusters-per-region (128). Takes effect on the next level load. Build 1.3528 only."), std::nullopt, "Uncap Visibility Limits", settings->uncapVisibilityLimitsToggle
+						(game, ToolTipCollection("Halo 2: raises the visibility caps for objects, instanced geometry and building meshes from 256/128/384 to 4096, so big maps stop de-rendering chunks. Applies on next level load. Build 1.3528 only."), std::nullopt, "Uncap Visibility Limits", settings->uncapVisibilityLimitsToggle
 						));
 
 				case GUIElementEnum::uncapClusterLimitToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: beats the 128 region-clusters-per-region wall that makes chunks of large maps stop rendering from a high vantage (\"overflowed region clusters during region building\"). Raises the cap to 255 - relocates the region buffer's index/volume arrays into slack, relocates + enlarges the subpart-mask pool, widens the per-region cluster bitvector 128->256 bits, makes the cluster index map unsigned, and grows the clusters submit sub-collection. Pairs with Uncap Visibility Limits for very dense views. Toggle-off drains in a crash-safe order. Offline only. Build 1.3528 only."), std::nullopt, "Uncap Cluster Limit", settings->uncapClusterLimitToggle
+						(game, ToolTipCollection("Halo 2: raises the 128 region-clusters-per-region cap to 255, fixing chunks of large maps not rendering from high vantage points. Pairs with Uncap Visibility Limits. Offline only. Build 1.3528 only."), std::nullopt, "Uncap Cluster Limit", settings->uncapClusterLimitToggle
 						));
 
 				case GUIElementEnum::collisionViewerToggleGUI:
@@ -1126,7 +1142,7 @@ private:
 
 				case GUIElementEnum::collisionViewerOcclusionGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::CollisionViewerOcclusionEnum, 260.f>>
-						(game, ToolTipCollection("(Halo 3 / ODST: InFrame draws at the first-person pass against the game's depth, before the gun and the bloom - the lines get bloomed; PostBloom draws over the finished frame against a copy of the game's own depth taken at Present, which then holds the world and the gun - no bloom on the lines, walls and the gun still hide them.) How lines are hidden behind the scene. InFrame_NoBloom: drawn inside the game's frame just before the first-person pass, against the game's own depth (your biped, AI, everything rendered hides them; the gun and HUD draw over them) - the game's bloom is switched off while shown, exactly like Cartographer's xlive overlay. PostBloom_KeepsBloom: world depth copied at the first-person pass, gun folded in, lines drawn after bloom. OwnCollisionDepth: drawn at Present against the viewer's own collision depth (automatic fallback in remastered graphics / menus). XRay: no occlusion."), "Occlusion", settings->collisionViewerOcclusion));
+						(game, ToolTipCollection("How lines are hidden behind the scene: InFrame_NoBloom, PostBloom_KeepsBloom, OwnCollisionDepth (the viewer's own depth), or XRay (no occlusion). InFrame turns the game's bloom off while shown."), "Occlusion", settings->collisionViewerOcclusion));
 
 				case GUIElementEnum::collisionViewerShowBspGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1166,7 +1182,7 @@ private:
 
 				case GUIElementEnum::collisionViewerTimGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Havok's per-polygon TIM (cached 'at least this far away' distance) for every polygon of the level around your capsule. White = touching (label cN), grey = measured, yellow = skipped (TIM > 0), orange/red with '!' = OVER-CREDITED: Havok thinks the polygon is farther than it is (the ghosting state). The edge the TIM was measured against is thick white, label ends in '<'."), std::nullopt, "TIM overlay", settings->collisionViewerTim));
+						(game, ToolTipCollection("Shows Havok's per-polygon TIM (cached minimum distance) around your capsule. White = touching, grey = measured, yellow = skipped, orange/red with '!' = over-credited (the ghosting state)."), std::nullopt, "TIM overlay", settings->collisionViewerTim));
 
 				case GUIElementEnum::collisionViewerTimLabelsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1240,7 +1256,7 @@ private:
 
 				case GUIElementEnum::collisionViewerGhostGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIToggleWithChildren<GUIToggleWithChildrenParameters::ShowWhenTrue, false>>
-						(game, ToolTipCollection("Halo 2 ghosting: your Havok capsule turns lime while a backstep rewind is active (S > 0) or a nearby polygon is stale/over-credited, red at S = -3 (bisection failed). The options below appear when this is ticked."), std::nullopt, "Ghost debug (desync view)", settings->collisionViewerGhost, headerChildElements
+						(game, ToolTipCollection("Halo 2 ghosting: your Havok capsule turns lime while a backstep rewind is active (S > 0) or a nearby polygon is stale or over-credited, red at S = -3. More options appear when ticked."), std::nullopt, "Ghost debug (desync view)", settings->collisionViewerGhost, headerChildElements
 							{
 							createNestedElement(GUIElementEnum::collisionViewerGhostPlayerHeadingGUI),
 							createNestedElement(GUIElementEnum::collisionViewerGhostLevelHeadingGUI),
@@ -1346,20 +1362,30 @@ private:
 
 				case GUIElementEnum::collisionViewerSuperbounceGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2: where you will land and what that landing launches. The seams below you are coloured by how likely a launch is - LIKELY (green, about 9 in 10), EDGE (orange, about 1 in 2 to 2 in 3), LOTTERY (yellow, about 1 in 30: it needs Havok's contact a tick late), GHOST SEAM (orange: a lottery seam whose late contact has launched you 2+ times, remembered per level) - with your best drift across them (8-13 deg across is an edge, 13+ slides you off); your path, the landing circle with its verdict, and the launch arrow with its speed and height. Monster gaps and dreadnought fins below you are marked and predicted too. The HUD shows only CHARGED / not charged (bottom middle); the rest goes in the Info panel's superbounce section. Reads only (Maintain charge state on reverts writes). Works without the Collision Viewer. While you touch the level, your live contact pairs are drawn with their kick factor, and each launch is classified (squeeze pair, corner, twin points) with how deep the contacts were."), std::nullopt, "Superbounce viewer", settings->collisionViewerSuperbounce));
+						(game, ToolTipCollection("Halo 2: shows where you will land and whether it launches. Seams are coloured by odds (green likely, orange edge, yellow lottery), with path and launch arrow. Halo 3/ODST/Reach need Halo 2 physics on."), std::nullopt, "Superbounce viewer", settings->collisionViewerSuperbounce));
 
 				case GUIElementEnum::collisionViewerSuperbounceSeamTextGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("The viewer's text in the world: on the seams below you (falling: arrive ... u/s, LIKELY / EDGE / LOTTERY ...), your landing's verdict and drift hint, and the squeeze-loaded note. Off: only the colours, and the launch arrows with their speed and height (u/s up, wu high)."), std::nullopt, "Seam info text", settings->collisionViewerSuperbounceSeamText));
+						(game, ToolTipCollection("Shows the viewer's text in the world: seam verdicts, your landing's verdict and drift hint, and the squeeze-loaded note. Off: only the colours and launch arrows with speed and height."), std::nullopt, "Seam info text", settings->collisionViewerSuperbounceSeamText));
 
 				case GUIElementEnum::collisionViewerSuperbounceSpeedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Your current speed (u/s, the whole velocity) just above the CHARGED / not charged indicator at the bottom of the screen."), std::nullopt, "Speed above the charge indicator", settings->collisionViewerSuperbounceSpeed
 						));
 
+				case GUIElementEnum::collisionViewerSuperbounceObjectsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Include objects (scenery, crates, machines) in the superbounce viewer: their seams and surfaces in launch checks. Off: only the level's own collision is used, with no cost from objects."), std::nullopt, "Include objects", settings->collisionViewerSuperbounceObjects
+						));
+
 				case GUIElementEnum::collisionViewerSuperbounceDebounceGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Flags landings and seams where a late contact would start so far below the floor (0.19+) that the pill falls through instead of launching - a debounce. A LOTTERY that needs that late contact turns red; a LIKELY / EDGE landing notes the risk."), std::nullopt, "Debounce predictor", settings->collisionViewerSuperbounceDebounce
+						(game, ToolTipCollection("Flags landings and seams where a late contact would start so far below the floor (0.19+) that you fall through instead of launching. A LOTTERY needing it turns red; LIKELY / EDGE notes the risk."), std::nullopt, "Debounce predictor", settings->collisionViewerSuperbounceDebounce
+						));
+
+				case GUIElementEnum::collisionViewerSuperbounceSeamsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Draws the viewer's seams, path, landing circle, launch arrow and contact pairs. Off: only monster/dreadnought spots and the CHARGED indicator show. Charge options, recording and scans still work."), std::nullopt, "Seams, path and landing", settings->collisionViewerSuperbounceSeams
 						));
 
 				case GUIElementEnum::collisionViewerSuperbounceSpotsGUI:
@@ -1369,20 +1395,20 @@ private:
 
 				case GUIElementEnum::collisionViewerSuperbouncePredictedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("The spot scanner's PREDICTED monster / dreadnought spots: places a charged landing can launch 20+ u/s (35+: a dreadnought) by the engine's own contact and solver rules. The map is scanned in the background when it loads (nearest places first) and cached per map. Dashed rings (cyan monster, white dreadnought); near you each gets a yellow arrow for the direction to be MOVING when you land (with the good range of headings), an arrow for where it launches you, and the exact fall speed, drift and odds."), std::nullopt, "Predicted monster / dreadnought spots", settings->collisionViewerSuperbouncePredicted
+						(game, ToolTipCollection("Shows predicted monster (20+ u/s) and dreadnought (35+ u/s) launch spots as dashed rings, with arrows for approach heading and launch, fall speed, drift and odds. Scanned per map in background."), std::nullopt, "Predicted monster / dreadnought spots", settings->collisionViewerSuperbouncePredicted
 						));
 
 				case GUIElementEnum::collisionViewerSuperbounceRecordGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Writes superbounce_log.csv in the game's folder: every tick your position, velocity and the nearest seam / fin (T), each launch (B), the touched triangles with their face normals (H), the map's fins (F), the viewer's verdict for every airborne tick (V) and your live contact points with their solver slots (P)."), std::nullopt, "Record bounces (superbounce_log.csv)", settings->collisionViewerSuperbounceRecord));
+						(game, ToolTipCollection("Writes superbounce_log.csv in the game's folder: per-tick position, velocity and nearest seam, each launch, touched triangles, fins, viewer verdicts and live contact points."), std::nullopt, "Record bounces (superbounce_log.csv)", settings->collisionViewerSuperbounceRecord));
 
 				case GUIElementEnum::collisionViewerSuperbounceHighlightGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Marks the whole map's candidates: monster gaps (two steep faces 0.02-0.35 apart with room above, magenta) and fins (thin solids whose sides lean 1-10 degrees from parallel - a DREADNOUGHT when the launch estimate is 35+ u/s - orange; fins that would push you down are left out; with their launch direction and the headroom above). Work in progress."), std::nullopt, "Highlight possible monster bounces (WIP)", settings->collisionViewerSuperbounceHighlight));
+						(game, ToolTipCollection("Marks the whole map's candidates: monster gaps (magenta) and fins (orange; a dreadnought when the launch estimate is 35+ u/s), with launch direction and headroom. Work in progress."), std::nullopt, "Highlight possible monster bounces (WIP)", settings->collisionViewerSuperbounceHighlight));
 
 				case GUIElementEnum::collisionViewerSuperbounceKeepChargeGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2: a crouch charge survives checkpoints and reverts. Making a checkpoint (yours or the game's) rebuilds the physics and would lose the charge: if you were charged, the rebuilt (body, level) pair gets its penetration level -3 back. Each checkpoint remembers whether it was made charged, so reverting to it brings the charge back - as does being charged when you revert. Forgotten when HCM injects a checkpoint, and on a new level or bsp. Writes game memory."), std::nullopt, "Maintain charge state on checkpoints and reverts", settings->collisionViewerSuperbounceKeepCharge));
+						(game, ToolTipCollection("Halo 2: a crouch charge survives checkpoints and reverts; reverting restores it if you were charged then or when that checkpoint was made. Writes game memory. Halo 3/ODST/Reach need Halo 2 physics on."), std::nullopt, "Maintain charge state on checkpoints and reverts", settings->collisionViewerSuperbounceKeepCharge));
 
 				case GUIElementEnum::collisionViewerInfoSuperbounceGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1390,7 +1416,7 @@ private:
 
 				case GUIElementEnum::collisionViewerSuperbounceForceChargeGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2: keeps you crouch-charged no matter what. Whenever your pair with the level exists and is not at penetration level -3, it is set to -3. Standing still lets your island fall asleep and its pair goes away (that is where a charge is normally lost at rest): you are charged again the moment you move. Overrides Maintain charge state while it is on. Works without the viewer itself. Writes game memory."), std::nullopt, "Force Charged state", settings->collisionViewerSuperbounceForceCharge));
+						(game, ToolTipCollection("Halo 2: keeps you crouch-charged at all times by setting your pair with the level to -3 whenever it exists and is not. Overrides Maintain charge state. Works without the viewer. Writes game memory."), std::nullopt, "Force Charged state", settings->collisionViewerSuperbounceForceCharge));
 
 				case GUIElementEnum::collisionViewerSuperbounceSettingsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -1399,9 +1425,12 @@ private:
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSeamTextGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSpeedGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceDebounceGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceObjectsGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSeamsGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSpotsGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedRangeGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedMaxApproachGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedMonstersGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedDreadnoughtsGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbouncePredictedHeightsGUI),
@@ -1410,6 +1439,8 @@ private:
 							createNestedElement(GUIElementEnum::collisionViewerSpotScanSlowGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSpotScanCurrentTickGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSpotScanButtonGUI),
+							createNestedElement(GUIElementEnum::collisionViewerRecipeButtonGUI),
+							createNestedElement(GUIElementEnum::collisionViewerRecipeRedoButtonGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceRecordGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceHighlightGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceKeepChargeGUI),
@@ -1418,7 +1449,7 @@ private:
 
 				case GUIElementEnum::collisionViewerKillVolumesGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2: an on-screen bar for the out-of-bounds kill - it appears full / green the moment the game starts counting (your body is inside solid / outside the level) and drains to red over the 16 ticks to the kill; it vanishes when the count resets. The info panel adds the exact numbers and the kill volume rotation: which volume is checked this tick and, for any volume you are inside, how many ticks until its turn. (Kill volume boxes themselves are not drawn here.)"), std::nullopt, "Out-of-bounds timer bar", settings->collisionViewerKillVolumes));
+						(game, ToolTipCollection("Halo 2: on-screen bar for the out-of-bounds kill. Appears full when the game starts counting, drains to red over 16 ticks to the kill; vanishes if the count resets. Info panel shows exact numbers."), std::nullopt, "Out-of-bounds timer bar", settings->collisionViewerKillVolumes));
 
 				case GUIElementEnum::collisionViewerOffsetNaturalRevertsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1426,39 +1457,39 @@ private:
 
 				case GUIElementEnum::collisionViewerGhostBelievedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Where each over-credited polygon's cached TIM believes you are: your capsule pushed away from that polygon by the over-credit, with a line back to the real capsule (up to 6). Ceiling/floor polygons put these above/below you."), std::nullopt, "Level believed poses", settings->collisionViewerGhostBelieved));
+						(game, ToolTipCollection("Shows where each over-credited polygon's cached TIM believes you are: your capsule pushed away from that polygon, with a line back to the real capsule (up to 6)."), std::nullopt, "Level believed poses", settings->collisionViewerGhostBelieved));
 
 				case GUIElementEnum::collisionViewerGhostLinkLabelsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2: labels each line between your capsule and a believed pose (level and object) with its length in world units. That length is the over-credit: how much farther away the cached TIM believes the surface is than it really is."), std::nullopt, "Believed pose distances", settings->collisionViewerGhostLinkLabels));
+						(game, ToolTipCollection("Halo 2: labels each line between your capsule and a believed pose with its length in world units, which is how much farther the cached TIM thinks the surface is than it really is."), std::nullopt, "Believed pose distances", settings->collisionViewerGhostLinkLabels));
 
 				case GUIElementEnum::collisionViewerOffsetSaveGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Halo 2 (Ghost debug on): snapshots every TIM you are holding - level polygons and object pieces, offsets included - then forces a checkpoint. The checkpoint stores the objects as usual; once it has rebuilt your physics pairs, the snapshot is written back so you keep your offsets. Uses HCM's own Force Checkpoint, unchanged."), RebindableHotkeyEnum::offsetSave, "Save Offsets (+ checkpoint)", settings->offsetSaveEvent));
+						(game, ToolTipCollection("Halo 2 (Ghost debug on): snapshots every TIM you hold, forces a checkpoint, then writes the snapshot back so you keep your offsets. Uses HCM's own Force Checkpoint."), RebindableHotkeyEnum::offsetSave, "Save Offsets (+ checkpoint)", settings->offsetSaveEvent));
 
 				case GUIElementEnum::collisionViewerOffsetLoadGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Halo 2 (Ghost debug on): forces a revert to the checkpoint made by Save Offsets, waits for your physics pairs to come back, checks you are where the offsets were saved, and writes the saved TIMs back into the matching pairs. If a newer checkpoint has replaced it (you are somewhere else after the revert), nothing is written. Uses HCM's own Force Revert, unchanged."), RebindableHotkeyEnum::offsetLoad, "Load Offsets (revert)", settings->offsetLoadEvent));
+						(game, ToolTipCollection("Halo 2, needs Ghost debug: forces a revert to the checkpoint made by Save Offsets, then writes the saved TIMs back into the matching pairs. Nothing is written if a newer checkpoint replaced it."), RebindableHotkeyEnum::offsetLoad, "Load Offsets (revert)", settings->offsetLoadEvent));
 
 				case GUIElementEnum::collisionViewerGhostPassGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2: flashes (green) every welded polygon / object piece your current offset lets you pass through. The TIM is spent linearly (n . dp per move, whatever the path); you pass when it still has some left once your capsule is fully over the surface and fully past its plane (object pieces: your centre past the piece's middle along the TIM normal). The info panel lists the numbers per offset polygon."), std::nullopt, "Pass-through prediction", settings->collisionViewerGhostPass));
+						(game, ToolTipCollection("Halo 2: flashes green every welded polygon or object piece your current offset lets you pass through. The info panel lists the numbers per offset polygon."), std::nullopt, "Pass-through prediction", settings->collisionViewerGhostPass));
 
 				case GUIElementEnum::collisionViewerGhostTravelGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2, needs Ghost debug: for each over-credited level polygon (up to 6), what keeps the over-credit alive. Coloured box = the polygon's weld zone, fixed to it: the white cross (your capsule centre) must stay inside, or the welder drops that polygon's child and its TIM with it. Red sheet = the polygon pushed to the depth where your body centre makes the TIM reach 0 (then the exact test runs and the over-credit is gone); the TIM only drains when you move toward the polygon along its normal, so the sheet stays fixed to the wall. The info panel lists each one's remaining toward-polygon budget and box overlap."), std::nullopt, "Level travel regions", settings->collisionViewerGhostTravel));
+						(game, ToolTipCollection("Halo 2, needs Ghost debug: for up to 6 over-credited polygons, shows what keeps the over-credit alive. Box = weld zone (keep the cross inside); red sheet = depth where the TIM reaches 0."), std::nullopt, "Level travel regions", settings->collisionViewerGhostTravel));
 
 				case GUIElementEnum::collisionViewerGhostTravelObjectsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2, needs Ghost debug: the travel region for over-credited OBJECT TIMs (up to 6), drawn and listed separately from the level ones because they live differently. Red sheet = the same TIM reset plane (for a moving object it moves too: its motion drains the TIM as well). Box = where the white cross (your capsule centre) must stay, fixed to the object: baked scenery = the level welder's zone around the object; crate / machine / vehicle / other biped = the broadphase zone (its real broadphase box grown by your capsule plus your broadphase margin) - leave it and the whole pair is destroyed and EVERY TIM against that object resets at once. Collision-model pieces also have their own welder zone (thin, oriented with the object). Runs the object scan even with 'Believed poses - objects' off."), std::nullopt, "Object travel regions", settings->collisionViewerGhostTravelObjects));
+						(game, ToolTipCollection("Halo 2, needs Ghost debug: travel region for over-credited object TIMs (up to 6). Red sheet = TIM reset plane; box = where your capsule centre must stay. Leaving it resets every TIM on that object."), std::nullopt, "Object travel regions", settings->collisionViewerGhostTravelObjects));
 
 				case GUIElementEnum::collisionViewerWeldZonesNearGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2 (on foot): weld zones of every level polygon and rigid body near you, fixed to the geometry: a polygon / object has a welder child (a TIM) while the white cross (your capsule centre) is inside its zone. A zone is its box grown by your capsule's half-size plus the engine's margin (level welder: 1.5x the collision tolerance; rigid bodies: your broadphase margin). Moving adds a little extra reach in your direction of travel. Lime = welded polygon, orange = welded object, cyan = near polygon, pale orange = near body. Only zones within 'Weld zone range' of the cross are drawn (up to 600, nearest first). Works without Ghost debug."), std::nullopt, "Weld zones (nearby)", settings->collisionViewerWeldZonesNear));
+						(game, ToolTipCollection("Halo 2 (on foot): draws weld zones of nearby level polygons and rigid bodies; a welder child exists while the white cross (capsule centre) is inside. Within 'Weld zone range'."), std::nullopt, "Weld zones (nearby)", settings->collisionViewerWeldZonesNear));
 
 				case GUIElementEnum::collisionViewerWeldZonesWeldedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2 (on foot): weld zones of ONLY the polygons and objects currently welded to you - every level polygon / baked scenery piece that has a welder child, and every rigid body with a broadphase pair against your biped. Cheaper than the nearby view; ignores the range."), std::nullopt, "Weld zones (welded only)", settings->collisionViewerWeldZonesWelded));
+						(game, ToolTipCollection("Halo 2 (on foot): weld zones of only the polygons and objects currently welded to you. Cheaper than the nearby view; ignores the range."), std::nullopt, "Weld zones (welded only)", settings->collisionViewerWeldZonesWelded));
 
 				case GUIElementEnum::collisionViewerSuperbouncePredictedMonstersGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1472,12 +1503,12 @@ private:
 
 				case GUIElementEnum::collisionViewerSuperbouncePredictedHeightsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Predicted spots: also show the START HEIGHT band of the worked-out approach - how high your feet are above the landing surface at the start of the landing tick (the tick you first touch it) for the launch to work. Monsters / dreadnoughts are deterministic: the tick-based sink depth decides them."), std::nullopt, "Show start heights", settings->collisionViewerSuperbouncePredictedHeights
+						(game, ToolTipCollection("Predicted spots: also shows the start height band of the approach, meaning how high your feet are above the landing surface at the start of the landing tick for the launch to work."), std::nullopt, "Show start heights", settings->collisionViewerSuperbouncePredictedHeights
 						));
 
 				case GUIElementEnum::collisionViewerSuperbouncePredictedHideNarrowGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Predicted spots: hide monsters whose window is under 1% of the tested approaches (fewer rings; dreadnoughts are always shown). Off: every prediction, the narrow ones drawn thin and dim. A narrow window is not a chance - it is a precise approach."), std::nullopt, "Hide narrow windows (under 1%)", settings->collisionViewerSuperbouncePredictedHideNarrow
+						(game, ToolTipCollection("Predicted spots: hide monsters and dreadnoughts whose window is under 1% of tested approaches (fewer rings). Off: show all, narrow ones thin and dim. A narrow window is a precise approach, not luck."), std::nullopt, "Hide narrow windows (under 1%)", settings->collisionViewerSuperbouncePredictedHideNarrow
 						));
 
 				case GUIElementEnum::collisionViewerSpotScanRadiusGUI:
@@ -1491,16 +1522,28 @@ private:
 
 				case GUIElementEnum::collisionViewerSpotScanCurrentTickGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Scan and show predictions at the game's CURRENT tick rate (e.g. 60) instead of 30. Each tick rate has its own prediction file. Note: the launch model was validated at 30 tick; 60-tick predictions are less certain."), std::nullopt, "Use current tick rate", settings->collisionViewerSpotScanCurrentTick
+						(game, ToolTipCollection("Scan and show predictions at the game's current tick rate (e.g. 60) instead of 30. Each tick rate has its own prediction file. The launch model was validated at 30 tick; 60-tick is less certain."), std::nullopt, "Use current tick rate", settings->collisionViewerSpotScanCurrentTick
 						));
 
 				case GUIElementEnum::collisionViewerSpotScanButtonGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-						(game, ToolTipCollection("Scan the geometry around you for monster / dreadnought spots with the spot scanner (GPU, runs hidden in the background), then merge the results into this map's prediction file and show them. Uses the radius / slow mode / tick rate options above."), std::nullopt, "Scan around me", settings->collisionViewerSpotScanEvent));
+						(game, ToolTipCollection("Scans the geometry around you for monster / dreadnought spots on the GPU in the background, then merges results into this map's prediction file. Uses the radius, slow mode and tick rate options above."), std::nullopt, "Scan around me", settings->collisionViewerSpotScanEvent));
+
+				case GUIElementEnum::collisionViewerRecipeRedoButtonGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+						(game, ToolTipCollection("Re-works the approaches for every predicted spot within the Predicted spots range, replacing saved ones. Use for spots worked out by an older HCM. Uses the GPU tool; never runs on its own."), std::nullopt, "Redo approaches here", settings->collisionViewerRecipeRedoEvent));
+
+				case GUIElementEnum::collisionViewerRecipeButtonGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+						(game, ToolTipCollection("Works out approach and launch direction, heading, fall and drift ranges and start heights for each predicted spot within the Predicted spots range. Runs in background, saved per map. Never automatic."), std::nullopt, "Work out approaches", settings->collisionViewerRecipeEvent));
 
 				case GUIElementEnum::collisionViewerSuperbouncePredictedRangeGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(10.f, 1000.f)>>
 						(game, ToolTipCollection("Predicted monster / dreadnought spots: only spots within this distance of you (wu) are drawn, nearest first (at most 800). Raise it on big maps to find them."), "Predicted spots range (wu)", settings->collisionViewerSuperbouncePredictedRange));
+
+				case GUIElementEnum::collisionViewerSuperbouncePredictedMaxApproachGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(5.f, 100.f)>>
+						(game, ToolTipCollection("Hides predicted monster/dreadnought spots whose approach needs a landing speed above this (u/s, falling plus moving). 100 = no limit. Press Work out approaches for exact numbers."), "Monster approach speed (u/s)", settings->collisionViewerSuperbouncePredictedMaxApproach));
 
 				case GUIElementEnum::collisionViewerWeldZoneRangeGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 20.f)>>
@@ -1508,7 +1551,7 @@ private:
 
 				case GUIElementEnum::collisionViewerGhostBelievedObjectsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2: believed poses for TIMs against OBJECTS, drawn in orange. Covers static scenery baked into the level (its physics or collision model, reached through the level welder) and, for a biped, every pair with another rigid body: crates, machines, vehicles, dynamic scenery, other bipeds. Each skipped child whose cached TIM over-credits the real gap to the object puts a copy of your capsule where that TIM believes you are. While on, object suspects also turn the capsule lime, show as desync edges, and go to the desync logger (source \"object\"). The info panel lists the object pairs and any leaf agents whose TIMs can't be read."), std::nullopt, "Object believed poses", settings->collisionViewerGhostBelievedObjects));
+						(game, ToolTipCollection("Halo 2: believed poses for TIMs against objects, drawn orange: baked scenery plus every rigid body pair (crates, vehicles, other bipeds). Suspects turn the capsule lime and go to the desync logger."), std::nullopt, "Object believed poses", settings->collisionViewerGhostBelievedObjects));
 
 				case GUIElementEnum::collisionViewerGhostTrailGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1520,7 +1563,7 @@ private:
 
 				case GUIElementEnum::collisionViewerGhostJumpGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 3 / ODST: the last position JUMP. Halo 3's Havok integrates every step with centre-of-mass 0 := centre-of-mass 1 of the previous step, so a gap between them means the body was moved between two ticks by something other than the simulation - a raw position write (Force Teleport), or an engine path that skips the safe reposition. Yellow = where the next step started, red-orange = where the body was at the end of the previous step; the info panel says whether Halo's own object position moved with it."), std::nullopt, "Jump markers (raw position writes)", settings->collisionViewerGhostJump));
+						(game, ToolTipCollection("Halo 3 / ODST: shows the last position jump, where the body was moved between ticks by something other than the simulation (e.g. Force Teleport). Yellow = next step start, red-orange = previous end."), std::nullopt, "Jump markers (raw position writes)", settings->collisionViewerGhostJump));
 
 				case GUIElementEnum::collisionViewerGhostRewindGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1564,7 +1607,7 @@ private:
 
 				case GUIElementEnum::collisionViewerCreasesGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Highlights concave edges whose two surfaces meet at less than 90 degrees. This was a first guess at 'geometry you can desync on' and is already disproved (90-degree corners ghost too) - use the Desync logger for real data. Yellow = just under 90 degrees, red = very sharp."), std::nullopt, "Acute-crease prediction (unproven)", settings->collisionViewerCreases));
+						(game, ToolTipCollection("Highlights concave edges where two surfaces meet at under 90 degrees. Only a first guess at desync geometry, already disproved; use the Desync logger instead. Yellow = just under 90, red = very sharp."), std::nullopt, "Acute-crease prediction (unproven)", settings->collisionViewerCreases));
 
 				case GUIElementEnum::collisionViewerCreaseFacesGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1572,7 +1615,7 @@ private:
 
 				case GUIElementEnum::collisionViewerGhostLogGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("While Ghost debug is on, writes every backstep, detected rewind and TIM over-credit episode to GhostDesyncLog_<date>.jsonl next to HCMInternal.dll: map, tick, body position / PREV / CUR, velocity and integrate velocity, S, the over-credited polygon (world/instanced, surface, flags, material, vertices, normal, centroid), TIM, true distance, over-credit, the believed-shift direction, normal.velocity, and the surfaces you were touching. One JSON object per line. Turning it off closes the file; on again starts a new one."), std::nullopt, "Desync logger", settings->collisionViewerGhostLog));
+						(game, ToolTipCollection("While Ghost debug is on, writes every backstep, rewind and TIM over-credit episode to GhostDesyncLog_<date>.jsonl next to HCMInternal.dll, one JSON object per line. Turning it off closes the file."), std::nullopt, "Desync logger", settings->collisionViewerGhostLog));
 
 				case GUIElementEnum::collisionViewerLineWidthGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 8.f)>>
@@ -1596,7 +1639,7 @@ private:
 
 				case GUIElementEnum::uncapRenderSectionsToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: fixes the player model and far scenery/instances flickering in and out when you move fast on big maps (e.g. Metropolis). The engine stops accepting render sections at 850 per frame and objects are added last, so they are what gets dropped; this raises the limit to 4096 by moving the per-section arrays into a bigger block. Applies live (it waits a moment for the renderer to pause; if it never does, nothing is changed and it says so) and stays on across level loads; turning it off restores the stock 850 (the cap drops at once; if the renderer is too busy to move the arrays back, that part finishes by itself at the next level load). Works alongside the baked halo2.dll builds - a baked dll that already includes this uncap is detected and left alone. Offline only. Halo 2 build 1.3528 only."), std::nullopt, "Uncap Render Sections", settings->uncapRenderSectionsToggle
+						(game, ToolTipCollection("Halo 2: fixes the player model and far scenery flickering when moving fast on big maps (e.g. Metropolis) by raising the 850 render-section limit to 4096. Applies live, offline only. Build 1.3528 only."), std::nullopt, "Uncap Render Sections", settings->uncapRenderSectionsToggle
 						));
 
 				case GUIElementEnum::chaseCameraFovGUI:
@@ -1614,7 +1657,7 @@ private:
 			// ---- Poorboy's Mods (ported from Poorboys Checkpoint Manager by Poorboy, MIT): Halo2Physics.cpp, GUIH2Physics.h, BottomlessClip.cpp ----
 			case GUIElementEnum::halo2PhysicsHeadingGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
-					(game, ToolTipCollection("Poorboy's mods for Halo 3, ODST and Reach (ported from Poorboys Checkpoint Manager by Poorboy), kept apart from Halo Checkpoint Manager's own features above: Halo 2's physics (player body, movement, jump, superbounces), button combos and lunges, fly, save spot, bottomless clip"), "Poorboy's Mods", headerChildElements
+					(game, ToolTipCollection("Poorboy's mods for Halo 3, ODST and Reach, ported from Poorboys Checkpoint Manager: Halo 2 physics, button combos and lunges, fly, save spot, bottomless clip."), "Poorboy's Mods", headerChildElements
 						{
 						createNestedElement(GUIElementEnum::h2pStatusGUI),
 						createNestedElement(GUIElementEnum::h2pPhysicsToggleGUI),
@@ -1643,11 +1686,11 @@ private:
 
 				case GUIElementEnum::h2pArmGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Puts the Halo 2 body in the armed state now (what standing up inside geometry does), so you can go straight to a bounce spot. Like Halo 2, it is lost if you stand still long enough to fall asleep. Bind it to a key or a controller button with the .. button"), RebindableHotkeyEnum::h2pArmHotkey, "Arm now", settings->h2pArmEvent));
+						(game, ToolTipCollection("Puts the Halo 2 body in the armed state now (what standing up inside geometry does) so you can go straight to a bounce spot. Lost if you stand still long enough to sleep. Bindable with the .. button."), RebindableHotkeyEnum::h2pArmHotkey, "Arm now", settings->h2pArmEvent));
 
 				case GUIElementEnum::h2pFlyToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Fly your player where you look: stick forward/back/sideways, jump up, crouch down, through walls. Works online in custom games (others see you fly) and with Halo 2 physics on or off. To watch without being seen, use Free Camera (Camera section). Always starts off; bind it with the .. button"), RebindableHotkeyEnum::h2pFlyHotkey, "Fly", settings->h2pFlyToggle));
+						(game, ToolTipCollection("Fly where you look: stick to move, jump up, crouch down, through walls. Works online in custom games (others see you fly), with Halo 2 physics on or off. Always starts off."), RebindableHotkeyEnum::h2pFlyHotkey, "Fly", settings->h2pFlyToggle));
 
 				case GUIElementEnum::h2pFlySpeedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 40.f)>>
@@ -1670,7 +1713,7 @@ private:
 
 				case GUIElementEnum::h2pCombosToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2's button combos: melee cancels (BXR, BXB, double shot) and melee lock; X during a weapon switch swaps at once (YX); the plasma pistol double grenade (charged shot, then about a second later grenade, grenade).\nWith Halo 2 physics on, Halo 2's lunges too: a melee or sword lunge flies straight at the target with no gravity and keeps going if you cancel it (butterflying: spam melee + reload at an enemy standing on your head while he jumps); sword flying: rifle in hand locked on someone, Y, X, then RT at once: the sword lunges at what the rifle had locked"), RebindableHotkeyEnum::h2pCombosHotkey, "Halo 2 button combos", settings->h2pCombosToggle));
+						(game, ToolTipCollection("Halo 2's button combos: melee cancels (BXR, BXB, double shot), melee lock, YX instant weapon swap, plasma pistol double grenade. With Halo 2 physics on, also Halo 2's melee and sword lunges."), RebindableHotkeyEnum::h2pCombosHotkey, "Halo 2 button combos", settings->h2pCombosToggle));
 
 				case GUIElementEnum::h2pNoFallDeathsToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -1678,32 +1721,32 @@ private:
 
 				case GUIElementEnum::h2pDisableAIGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Switches the AI off, as the game's own ai_enable false: enemies and allies stand still and don't shoot. For campaign practice and videos: Theatre films replay it exactly (Cheats' Freeze AI does not). Works with Halo 2 physics on or off; starts off every time"), RebindableHotkeyEnum::h2pDisableAIHotkey, "Disable AI", settings->h2pDisableAIToggle));
+						(game, ToolTipCollection("Switches the AI off (ai_enable false): enemies and allies stand still and don't shoot. Theatre films replay it exactly. Works with Halo 2 physics on or off; starts off every time."), RebindableHotkeyEnum::h2pDisableAIHotkey, "Disable AI", settings->h2pDisableAIToggle));
 
 				case GUIElementEnum::h2pForgeBounceGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("With Halo 2 physics on: Forge objects count as part of the map for the Halo 2 body, so the seams between Forge pieces (and between a piece and the map) bounce like map seams. For building your own bounce maps. Off = Halo 2's own rule (every object is its own body; in Reach Forge pieces are then not solid for the Halo 2 body)"), RebindableHotkeyEnum::h2pForgeBounceHotkey, "Forge bounces", settings->h2pForgeBounceToggle));
+						(game, ToolTipCollection("With Halo 2 physics on: Forge objects count as part of the map for the Halo 2 body, so seams between Forge pieces bounce like map seams. For building your own bounce maps. Off = Halo 2's own rule."), RebindableHotkeyEnum::h2pForgeBounceHotkey, "Forge bounces", settings->h2pForgeBounceToggle));
 
 				case GUIElementEnum::spotSaveGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Saves where you are: the place, your speed, crouch, which way you look and Halo 2's armed state. Back to spot puts you there again. Unlike a revert it moves only your own player and rolls nothing else back, so it is made for multiplayer jumping (online too). Works with Halo 2 physics on or off. Bind it with the .. button"), RebindableHotkeyEnum::spotSaveHotkey, "Save spot", settings->spotSaveEvent));
+						(game, ToolTipCollection("Saves your place, speed, crouch, look direction and Halo 2's armed state. Back to spot returns you there. Unlike a revert it moves only your player, so it suits multiplayer jumping (online too)."), RebindableHotkeyEnum::spotSaveHotkey, "Save spot", settings->spotSaveEvent));
 
 				case GUIElementEnum::spotBackGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Puts you back at the saved spot, looking the same way, at the same speed, armed again if you were. Others online see you there. Objects stay where they are: for crates and the like use Force Checkpoint / Force Revert. Bind it with the .. button"), RebindableHotkeyEnum::spotBackHotkey, "Back to spot", settings->spotBackEvent));
+						(game, ToolTipCollection("Puts you back at the saved spot with the same facing and speed, armed again if you were. Others online see you there. Objects stay put; use Force Checkpoint / Revert. Bindable with the .. button."), RebindableHotkeyEnum::spotBackHotkey, "Back to spot", settings->spotBackEvent));
 
 				case GUIElementEnum::h2pBottomlessClipGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Your magazine never empties, plasma batteries don't drain and your grenades never run out (you need at least one of a kind). Reserve ammo still counts and plasma weapons still overheat. Reload first: a part-empty magazine stays as it is"), RebindableHotkeyEnum::bottomlessClip, "Bottomless Clip", settings->bottomlessClipToggle));
+						(game, ToolTipCollection("Your magazine never empties, plasma batteries don't drain and grenades never run out (need at least one of a kind). Reserve ammo still counts; plasma weapons still overheat. Reload first."), RebindableHotkeyEnum::bottomlessClip, "Bottomless Clip", settings->bottomlessClipToggle));
 
 				case GUIElementEnum::chaseCameraToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Forces the engine's own third-person chase camera (the one it uses for vehicles) on you while you are on foot - Halo 2, Halo 3, Halo 3: ODST, Halo: Reach and Halo 4. Uses the game's own camera code and blend, and goes straight back to first person when turned off. Aim follows the camera. MCC build 1.3528 only. While Free Camera is on you see the free camera; the chase camera returns when Free Camera is turned off."), RebindableHotkeyEnum::chaseCamera, "Chase Camera", settings->chaseCameraToggle
+						(game, ToolTipCollection("Forces the engine's third-person chase camera (the vehicle one) on you while on foot, in Halo 2, 3, ODST, Reach and 4. Off returns to first person. Free Camera overrides it. MCC build 1.3528 only."), RebindableHotkeyEnum::chaseCamera, "Chase Camera", settings->chaseCameraToggle
 						));
 
 				case GUIElementEnum::h2ArmorColourToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: live-recolours your MasterChief biped using the game's own change-color setter (the exact call the engine makes when applying a player's colours), so it's correct and holds across respawns. Set the two colours below. Campaign or MP. Build 1.3528 only."), std::nullopt, "MasterChief Colour", settings->h2ArmorColourToggle
+						(game, ToolTipCollection("Halo 2: live-recolours your MasterChief biped using the game's own colour setter, holding across respawns. Set the two colours below. Campaign or MP. Build 1.3528 only."), std::nullopt, "MasterChief Colour", settings->h2ArmorColourToggle
 						));
 
 				case GUIElementEnum::h2ArmorColourPrimaryPicker:
@@ -1724,7 +1767,7 @@ private:
 
 				case GUIElementEnum::h2ArmorEmblemToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: show a custom image on your MasterChief's biped emblem (shoulders/chest) by injecting it over the game's emblem texture. Click 'Load Emblem...' to pick a PNG, animated GIF, or a VIDEO (mp4/mov/mkv/...) - GIFs and videos animate (video loops, no audio; use a small clip). Transparency supported. Visible in 3rd-person / Theater / to other players. Build 1.3528 only."), std::nullopt, "Custom Emblem", settings->h2ArmorEmblemToggle
+						(game, ToolTipCollection("Halo 2: shows a custom image on your MasterChief's emblem. Click 'Load Emblem...' to pick a PNG, animated GIF or video (loops, no audio; use a small clip). Build 1.3528 only."), std::nullopt, "Custom Emblem", settings->h2ArmorEmblemToggle
 						));
 
 				case GUIElementEnum::h2ArmorEmblemLoadButton:
@@ -1733,7 +1776,7 @@ private:
 
 				case GUIElementEnum::h2ShadowResolutionCombo:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::H2ShadowResolution, 90.f>>
-						(game, ToolTipCollection("Halo 2: dynamic (projected-light) shadow-buffer resolution + render-detail extras. Retail = engine default, no changes. RetailLOD = keep ~1024 shadows but force max detail: L6 cinematic LOD on every object AND disable object distance-culling (scenery, crates, device machines etc. stop popping out - their model tag's max-draw distance is set to 4096 units). x2048/x4096/x8192 = that shadow res (x4096 ~ 128MB, x8192 ~ 512MB VRAM and may fail to allocate) PLUS the same L6 LOD + no-distance-cull. Ports the Cartographer shadow-resolution / static-LOD / draw-distance tweaks. Applies live; distance-cull re-applies each map load. Pick Retail to revert everything. Build 1.3528 only."), "Shadow / Detail", settings->h2ShadowResolutionSetting));
+						(game, ToolTipCollection("Halo 2: shadow-buffer resolution and detail. Retail = no changes. RetailLOD = max LOD, no object distance-culling. x2048/x4096/x8192 add that shadow res (x8192 ~512MB VRAM). Build 1.3528 only."), "Shadow / Detail", settings->h2ShadowResolutionSetting));
 
 				case GUIElementEnum::farClipDistanceGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloatStepper>
@@ -1742,12 +1785,12 @@ private:
 
 				case GUIElementEnum::sunScaleFixToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: keeps the sun a constant size when Far Clip Distance is raised. Anchors the sun glow and its occlusion query at the fixed corona distance instead of the far-clip plane (otherwise the sun shrinks to a hard square at high far clip)."), std::nullopt, "Sun Scale Fix", settings->sunScaleFixToggle
+						(game, ToolTipCollection("Halo 2: keeps the sun a constant size when Far Clip Distance is raised, instead of shrinking to a hard square at high far clip."), std::nullopt, "Sun Scale Fix", settings->sunScaleFixToggle
 						));
 
 				case GUIElementEnum::fpScaleFixToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Halo 2: renders the first-person legs/body at a fixed reference FOV so they stop stretching when you change FOV. Runtime port of the 'Static FP Legs' code cave. Requires a loaded Halo 2 game; tune with the two values below."), std::nullopt, "FP Scale Fix", settings->fpScaleFixToggle
+						(game, ToolTipCollection("Halo 2: renders the first-person legs/body at a fixed reference FOV so they stop stretching when you change FOV. Needs a loaded Halo 2 game; tune with the two values below."), std::nullopt, "FP Scale Fix", settings->fpScaleFixToggle
 						));
 
 				case GUIElementEnum::fpScaleFixLegSizeGUI:
@@ -1762,17 +1805,17 @@ private:
 
 				case GUIElementEnum::animationFixesToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: bundle of animation/interpolation fixes - the rocket launcher firing-spin barrel pop (60 tick), the rocket launcher animation pop, the Cyclotron elevator's loop-seam interpolation glitch, first-person leg jitter (forces the FP legs/body to always interpolate so they're smooth at high/uncapped FPS instead of stepping per-tick), and crouch interpolation (stops the world stepping/juddering at low tick rates while you crouch up/down - the eye height is interpolated instead of snapping per-tick). Re-applies on map loads while enabled."), std::nullopt, "Animation Fixes", settings->animationFixesToggle
+						(game, ToolTipCollection("Halo 2: bundle of animation fixes: rocket launcher barrel and animation pops, Cyclotron elevator loop glitch, first-person leg jitter, and crouch judder at low tick rates. Re-applies on map load."), std::nullopt, "Animation Fixes", settings->animationFixesToggle
 						));
 
 				case GUIElementEnum::havokDebuggerGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Starts an in-process Havok Visual Debugger server. Connect the Havok Visual Debugger client to 127.0.0.1:25001. Halo 3: live Havok world (collision, broadphase, islands, soft ceilings). Halo 2: static world BSP collision (in the 'BSP Collision' tab). Halo Campaign Evolved: live object collision, static world collision, centre of mass, havok islands, trigger volumes and soft ceilings - note the first world walk hitches the game for a moment while it is built. Re-establishes on each enable so map switches don't need a restart."), std::nullopt, "Havok Debugger", settings->havokDebuggerToggle
+						(game, ToolTipCollection("Starts an in-process Havok Visual Debugger server; connect the client to 127.0.0.1:25001. Halo 3: live world. Halo 2: static BSP collision. Halo CE: live and static collision. First walk hitches."), std::nullopt, "Havok Debugger", settings->havokDebuggerToggle
 						));
 
 				case GUIElementEnum::masterTickrateEnableGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIToggleWithChildren<GUIToggleWithChildrenParameters::AlwaysShowChildren, false>>
-						(game, ToolTipCollection("Arms the master simulation tickrate. Off by default and never saved to a preset - the 30/60 toggle and value box below are always visible (and reflect the real tickrate), but only take effect while this is checked, so you can't change the tickrate by accident. Unchecking it restores the game's stock 60 Hz. Supported in Halo 2, Halo 3, ODST, Halo 4, Reach and Campaign Evolved - all of which run at 60 by default. Halo 1 (CE) is absent on purpose: its 30 Hz is structural, not a field, so there is nothing to write."), std::nullopt, "Master Tickrate", settings->masterTickrateEnabled, headerChildElements
+						(game, ToolTipCollection("Arms the master simulation tickrate. Off by default and not saved to presets; the 30/60 toggle and value box only work while checked. Unchecking restores stock 60 Hz. Not available for Halo 1 (CE)."), std::nullopt, "Master Tickrate", settings->masterTickrateEnabled, headerChildElements
 							{
 							createNestedElement(GUIElementEnum::masterTickrateToggleGUI),
 							createNestedElement(GUIElementEnum::masterTickrateCustomGUI),
@@ -1780,12 +1823,12 @@ private:
 
 				case GUIElementEnum::masterTickrateToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-						(game, ToolTipCollection("Flips the master simulation tickrate between 60 and 30 Hz (and the matching seconds-per-tick). Requires a loaded game. Each game runs at its own rate (60) until you pick one here; the last rate you picked for that game is then re-applied on every level load and mission restart for the rest of the session."), std::nullopt, "Toggle Tickrate (60/30)", settings->masterTickrateFlipEvent
+						(game, ToolTipCollection("Flips the master simulation tickrate between 60 and 30 Hz. Needs a loaded game. Games run at 60 until you pick; your last pick is re-applied on every level load and mission restart this session."), std::nullopt, "Toggle Tickrate (60/30)", settings->masterTickrateFlipEvent
 						));
 
 				case GUIElementEnum::masterTickrateCustomGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<SliderParam<int>{}, true>>
-						(game, ToolTipCollection("Type a master simulation tickrate (Hz) from 3 to 32766, then press Enter to apply (it does NOT apply while you're still typing). The matching seconds-per-tick (dt = 1/rate) is written for you so game speed stays 1x. Values below 3 and above 32766 are rejected - the engine stores the tickrate as a signed 16-bit int, and rates of 1-2 crash the game. Requires a loaded game; the game resets the rate on every map load, so HCM re-applies it for you. Halo 2 additionally matches the Havok collision scalar and rebuilds live collision; the other games need the timing write only."), "Custom Tickrate (Hz)", settings->customTickrate
+						(game, ToolTipCollection("Master tickrate in Hz, 3 to 32766; press Enter to apply (not while typing). Needs a loaded game; HCM re-applies it on every map load. Rates of 1-2 crash the game and are rejected."), "Custom Tickrate (Hz)", settings->customTickrate
 						));
 
 				case GUIElementEnum::aiFreezeGUI:
@@ -2062,22 +2105,28 @@ private:
 									(game, ToolTipCollection("The velocity to set, in absolute world-axes. This REPLACES your current velocity rather than adding to it."), "Launch: ##hceForceLaunchAbsoluteVec3", settings->forceLaunchAbsoluteVec3));
 
 				case GUIElementEnum::switchBSPGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIButtonAndInt<true>>
-						(game, ToolTipCollection("Loads a different part of the map by index"), RebindableHotkeyEnum::switchBSP, 
-							((game.operator GameState::Value() == GameState::Value::Halo1 || game.operator GameState::Value() == GameState::Value::Halo2) ? "Switch BSP to" : "Switch Zone Set to"), 
+				{
+					auto el = std::make_shared<GUIButtonAndInt<true>>
+						(game, ToolTipCollection("Loads a different part of the map by index"), RebindableHotkeyEnum::switchBSP,
+							((game.operator GameState::Value() == GameState::Value::Halo1 || game.operator GameState::Value() == GameState::Value::Halo2) ? "Switch BSP to" : "Switch Zone Set to"),
 							"Index",
-							settings->switchBSPIndex, settings->switchBSPEvent));
+							settings->switchBSPIndex, settings->switchBSPEvent);
+					// Halo 2: the BSP's name after the index, all of them on hover (2026-11-02)
+					if (game.operator GameState::Value() == GameState::Value::Halo2)
+						el->setNames([](int i) { return SwitchBSPNames::describe(i); }, []() { return SwitchBSPNames::listAll(); });
+					return std::optional<std::shared_ptr<IGUIElement>>(el);
+				}
 
 				// Halo 2 / H3 / ODST / Reach / H4 / H2A MP / HaloCER. See HavokBroadphaseBypass.h.
 				case GUIElementEnum::havokBroadphaseBypassGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Stops the game DELETING an object whose physics body leaves the Havok broadphase - the physics world's bounding box. Without this, a physics object that leaves it (a crate, a vehicle, a ragdoll, and in most games you) can be removed from the game as soon as it crosses out.\n\nOnly this deletion is disabled. The separate 'went outside of the world' death timer still applies, as do kill volumes. In Halo 2, anything past +/-32768 world units is still erased, and so are AI units that reach terminal velocity outside the world. Bodies the engine moves itself (keyframed/fixed) were never deleted this way. Outside the broadphase an object collides with nothing until it comes back inside.\n\nPatches one instruction in the game, found by a byte signature and checked before writing; turning it off restores the original bytes."),
+						(game, ToolTipCollection("Stops the game deleting an object whose physics body leaves the Havok broadphase. The 'went outside of the world' timer and kill volumes still apply. Outside it, objects collide with nothing."),
 							std::nullopt, "Havok Broadphase Bypass", settings->havokBroadphaseBypassToggle));
 
 				// Halo 3 / ODST / Reach / Halo 4. Replaced "Switch BSP Set" (a raw binary BSP mask). See MCCSwitchZoneSet.h.
 				case GUIElementEnum::mccSwitchZoneSetGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIMCCSwitchZoneSet>
-						(game, ToolTipCollection("Switch to any zone set the CURRENT level declares.\n\nThe list is read straight out of the loaded scenario tag, so it is correct on every level with no shipped per-level table - pick one and press the button. The one the game is on is marked '<- current'.\n\nA zone set controls which BSPs and designer zones are resident. Switching is how the game itself moves you between the sections of a level: this asks the game to do exactly what a switch_zone_set script command does, so it loads/unloads geometry and AI zones the normal way. Expect a short hitch while it loads.\n\nA revert or level load cancels a switch that has not run yet."),
+						(game, ToolTipCollection("Switch to any zone set the current level declares. Pick one and press the button. Loads/unloads geometry and AI zones the normal way, with a short hitch. A revert or level load cancels a pending one."),
 							RebindableHotkeyEnum::switchZoneSet, "Switch Zone Set", settings->switchZoneSetEvent));
 
 
@@ -2342,7 +2391,7 @@ private:
 					// Declared in GUI GROUP 4 (GuiElementEnum.h) - groups 1-3 are at the MSVC C1009 ceiling.
 					case GUIElementEnum::display2DInfoShowZoneSet:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-							(game, ToolTipCollection("Shows the zone set the game is currently on - its index in the level's zone set list and, in Halo 3, ODST, Reach and Halo 4, its name.\n\n\"(loading)\" is appended while the game is still switching to it, i.e. not every BSP it needs is resident yet. The engine publishes the new index the moment a switch STARTS, so without that suffix the row would claim you are already in the new zone set.\n\nShows the index alone when the name cannot be read on this game build. -1 / none while no level is loaded."), std::nullopt,
+							(game, ToolTipCollection("Shows the current zone set: its index, plus its name in Halo 3, ODST, Reach and Halo 4. '(loading)' is appended while the switch is still in progress. -1 / none when no level is loaded."), std::nullopt,
 								("Show Current Zone Set"),
 								settings->display2DInfoShowZoneSet));
 
@@ -2542,10 +2591,7 @@ private:
 				// transition rows - the titles cannot coexist in one process.
 				case GUIElementEnum::h5DisplayInfoShowZoneSetPrep:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Show what a zone set switch is currently DOING, as two extra rows:\n\n"
-							"  Preparing Zone Set - True while a switch is in flight\n"
-							"  Prepared Zone Set  - the incoming zone set's name, or NULL when nothing is preparing\n\n"
-							"The 'Zone Set' row shows the zone set that is committed, so it does not change until the new one is actually resident."),
+						(game, ToolTipCollection("Shows two extra rows: Preparing Zone Set (True while a switch is in flight) and Prepared Zone Set (the incoming name, or NULL). The Zone Set row only changes once the new one is resident."),
 							std::nullopt, "Show Zone Set Transition##h5", settings->hceDisplayInfoShowZoneSetPrep));
 
 				case GUIElementEnum::h5DisplayInfoToggleGUI:
@@ -2592,23 +2638,20 @@ private:
 
 					case GUIElementEnum::hceDisplayInfoShowBSP:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-							(game, ToolTipCollection("Show the current BSP index.\n\nNote: the underlying global is actually the current ZONE SET index, not a BSP index - it is what HaloScript's current_zone_set returns. The row name is kept for compatibility; 'Show Current Zone Set' below shows the same value as a readable name."), RebindableHotkeyEnum::hceDisplayInfoShowBSPHotkey, "Show Current BSP", settings->hceDisplayInfoShowBSP));
+							(game, ToolTipCollection("Show the current BSP index. The value is actually the zone set index (what current_zone_set returns). 'Show Current Zone Set' below shows the same value as a name."), RebindableHotkeyEnum::hceDisplayInfoShowBSPHotkey, "Show Current BSP", settings->hceDisplayInfoShowBSP));
 
 				case GUIElementEnum::hceDisplayInfoShowZoneSetPrep:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Show what a zone set switch is currently DOING, as two extra rows:\n\n"
-							"  Preparing Zone Set - True while a switch is in flight\n"
-							"  Prepared Zone Set  - the incoming zone set's name, or NULL when nothing is preparing\n\n"
-							"The 'Current Zone Set' row above shows the zone set that is fully loaded and committed, so it does not change until the new one is actually resident."),
+						(game, ToolTipCollection("Shows two extra rows: Preparing Zone Set (True while a switch is in flight) and Prepared Zone Set (the incoming name, or NULL). Current Zone Set only changes once the new one is resident."),
 							RebindableHotkeyEnum::hceDisplayInfoShowZoneSetPrepHotkey, "Show Zone Set Transition", settings->hceDisplayInfoShowZoneSetPrep));
 
 				case GUIElementEnum::hceDisplayInfoShowZoneSet:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Show the name of the zone set that is fully loaded and COMMITTED. A zone set is the set of structure BSPs and designer zones the engine currently has resident; it is what zone-set trigger volumes switch between.\n\nThis does not change the moment a Begin Zone Set Change fires - the engine publishes the new index before the BSPs finish loading, so this row waits until the incoming zone set is actually resident.\n\nTo watch a switch in progress, enable 'Show Zone Set Transition' below."), RebindableHotkeyEnum::hceDisplayInfoShowZoneSetHotkey, "Show Current Zone Set", settings->hceDisplayInfoShowZoneSet));
+						(game, ToolTipCollection("Show the name of the zone set that is fully loaded and committed. Waits until a switch's BSPs are resident. To watch a switch in progress, enable 'Show Zone Set Transition' below."), RebindableHotkeyEnum::hceDisplayInfoShowZoneSetHotkey, "Show Current Zone Set", settings->hceDisplayInfoShowZoneSet));
 
 				case GUIElementEnum::hceDisplayInfoShowCameraDiag:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("DIAGNOSTIC. Shows the internal state of the render-camera election: how often the camera hook has fired, whether a camera was ever adopted, how long ago it last updated, and which check is rejecting candidates.\n\nThis exists because HCM writes no log file under Linux/Proton, so on that platform this row is the only way to see why the 3D overlays might be stuck. If the overlays follow the camera correctly, you do not need it.\n\nAlso shows, under Wine/Proton only, the process's open file-descriptor count against its ceiling. That is the instrument for the Linux crash whose null pointer comes from the GAME failing to open a .pak file - if the count climbs toward the ceiling while an overlay is on, descriptor exhaustion is confirmed."), RebindableHotkeyEnum::hceDisplayInfoShowCameraDiagHotkey, "Show Diagnostics", settings->hceDisplayInfoShowCameraDiag));
+						(game, ToolTipCollection("DIAGNOSTIC. Shows the render-camera election state: hook fire count, whether a camera was adopted, last update age and the rejecting check. Under Wine/Proton also the open file-descriptor count."), RebindableHotkeyEnum::hceDisplayInfoShowCameraDiagHotkey, "Show Diagnostics", settings->hceDisplayInfoShowCameraDiag));
 
 					case GUIElementEnum::hceDisplayInfoShowTick:
 						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -2939,7 +2982,7 @@ private:
 			// ---- Launch Trajectory (Halo 2) ----
 			case GUIElementEnum::launchTrajectoryToggleGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Draws the path you will take if you are launched from your CURRENT velocity - through every wall and floor contact, sliding along surfaces and then along the ground - to where you are expected to come to rest.\n\nBuilt for momentum-storage launches: while the stored velocity is held the line is drawn in the Stored colour, and after you launch the prediction made just before release stays on screen (Pre-Launch colour) next to the path you actually flew (Actual colour), so you can see how good it was.\n\nModel (read from halo2.dll 1.3528): each tick v is capped to Max Speed, then v.z -= gravity * tick length, then p += v * tick length. Gravity and tick length are read live, so physics_set_gravity and skulls are followed.\n\nGravity, air friction, ground friction and wall impacts are all measured from real launches. Walkable Slope is still an estimate. Not modelled: stick input (air control).\n\nThe velocity used is the Havok body velocity, the same number Display 2D Info shows for Halo 2.\n\nHalo: Reach: the flight is drawn with Reach gravity and tick length read live from haloreach.dll, with no collision yet and none of the Halo 2 measurements (friction, release ticks, release kick, 4.085 impacts, fall death) assumed. Turn on Log Launches To File in Reach so those can be measured for Reach the same way."), std::nullopt, "Launch Trajectory", settings->launchTrajectoryToggle));
+					(game, ToolTipCollection("Draws your predicted path if launched from your current velocity, through wall and floor contacts to rest. For momentum-storage launches: stored, pre-launch and actual paths in different colours."), std::nullopt, "Launch Trajectory", settings->launchTrajectoryToggle));
 
 			case GUIElementEnum::launchTrajectorySettingsGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -3028,7 +3071,7 @@ private:
 
 			case GUIElementEnum::launchTrajectoryStopAtCollisionGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Collide with the level (world BSP and instanced geometry, read the same way as the Collision Viewer): slide along what you hit and come to rest on the ground. Off: the pure ballistic arc, straight through everything, for the full Max Prediction Length."), std::nullopt, "Collide With World##launchTrajectory", settings->launchTrajectoryStopAtCollision));
+					(game, ToolTipCollection("Collide with the level (world BSP and instanced geometry): slide along what you hit and rest on the ground. Off: the pure ballistic arc straight through everything for the full Max Prediction Length."), std::nullopt, "Collide With World##launchTrajectory", settings->launchTrajectoryStopAtCollision));
 
 			case GUIElementEnum::launchTrajectoryIncludeBarriersGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -3040,7 +3083,7 @@ private:
 
 			case GUIElementEnum::launchTrajectoryUseBodyExtentsGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Collide using three rays - the top and bottom of your capsule as well as its centre - so floors and ceilings are hit when your feet or head reach them. Off: centre of mass only. Walls are still hit by the centre line, so a side impact can be up to one capsule radius late."), std::nullopt, "Use Body Height##launchTrajectory", settings->launchTrajectoryUseBodyExtents));
+					(game, ToolTipCollection("Collide with three rays (capsule top, bottom and centre) so floors and ceilings are hit when feet or head reach them. Off: centre only, so side impacts can be up to one capsule radius late."), std::nullopt, "Use Body Height##launchTrajectory", settings->launchTrajectoryUseBodyExtents));
 
 			case GUIElementEnum::launchTrajectoryIgnoreFirstTicksGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
@@ -3048,7 +3091,7 @@ private:
 
 			case GUIElementEnum::launchTrajectoryGroundDecelGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
-					(game, ToolTipCollection("How fast you slow down while sliding on walkable ground with no stick input, in wu/s per second. Measured from your launch logs: 9.60 (a constant slow-down). The Actual path label shows the value measured on each landing."), "Ground Friction (wu/s^2)##launchTrajectory", settings->launchTrajectoryGroundDecel));
+					(game, ToolTipCollection("How fast you slow down while sliding on walkable ground with no stick input, in wu/s per second. Measured from launch logs: 9.60, a constant slow-down."), "Ground Friction (wu/s^2)##launchTrajectory", settings->launchTrajectoryGroundDecel));
 
 			case GUIElementEnum::launchTrajectoryRestitutionGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
@@ -3056,31 +3099,31 @@ private:
 
 			case GUIElementEnum::launchTrajectoryMaxSlopeGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 89.f)>>
-					(game, ToolTipCollection("Surfaces flatter than this (degrees from horizontal) can be stood on: landing on one grounds you and you slide to a stop. Steeper surfaces are slid down under gravity. Halo 2: 50 - the \"maximum slope angle\" in both masterchief.biped and dervish.biped."), "Walkable Slope (deg)##launchTrajectory", settings->launchTrajectoryMaxSlope));
+					(game, ToolTipCollection("Surfaces flatter than this (degrees from horizontal) can be stood on; steeper ones are slid down. Halo 2: 50, the maximum slope angle in both masterchief.biped and dervish.biped."), "Walkable Slope (deg)##launchTrajectory", settings->launchTrajectoryMaxSlope));
 
 			case GUIElementEnum::launchTrajectoryLogToFileGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Write one CSV per launch to <HCM folder>\\LaunchLogs: every tick of what the game actually did next to what the overlay predicted, the model constants used, and quick fits measured from the real path (gravity, air drag, ground slow-down, integration order). Recording starts when stored momentum is released and stops when you come to rest, revert, die or teleport. A summary is shown in the message log. Send these files back to refine the model."), std::nullopt, "Log Launches To File##launchTrajectory", settings->launchTrajectoryLogToFile));
+					(game, ToolTipCollection("Writes one CSV per launch to the LaunchLogs folder in the HCM folder: game vs predicted values each tick, plus fitted constants. Records from momentum release until rest, revert, death or teleport."), std::nullopt, "Log Launches To File##launchTrajectory", settings->launchTrajectoryLogToFile));
 
 			case GUIElementEnum::launchTrajectoryLogSpeedUpsGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Also log launches that had no storage phase: any tick where your speed jumps from below Minimum Speed to above it (explosions, vehicle hits, grenade jumps). The prediction for these starts from the first fast tick."), std::nullopt, "Also Log Launches Without Storage##launchTrajectory", settings->launchTrajectoryLogSpeedUps));
+					(game, ToolTipCollection("Also log launches with no storage phase: any tick where speed jumps from below Minimum Speed to above it (explosions, vehicle hits, grenade jumps)."), std::nullopt, "Also Log Launches Without Storage##launchTrajectory", settings->launchTrajectoryLogSpeedUps));
 
 			case GUIElementEnum::launchTrajectoryAirFrictionGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
-					(game, ToolTipCollection("How fast your HORIZONTAL speed drops while airborne with no stick input, in wu/s per second. Measured from your launch logs: exactly 1.050 (a constant slow-down, not a percentage). Vertical speed only changes by gravity."), "Air Friction (wu/s^2)##launchTrajectory", settings->launchTrajectoryAirFriction));
+					(game, ToolTipCollection("How fast your horizontal speed drops while airborne with no stick input, in wu/s per second. Measured from launch logs: exactly 1.050, a constant slow-down. Vertical speed only changes by gravity."), "Air Friction (wu/s^2)##launchTrajectory", settings->launchTrajectoryAirFriction));
 
 			case GUIElementEnum::launchTrajectoryWallBackstepGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Measured from 40+ impacts in your launch logs: when a tick would run you into anything - wall, ceiling, object or the ground - at more than 4.085 wu/s into the surface, your whole velocity is cut to exactly 4.085 wu/s (same direction) and you creep in at that speed until you touch. 4.085 = sqrt(2 x gravity x 2 wu), so it follows gravity changes. Gentler contacts just remove the part of the velocity going into the surface (land and slide). Off: every contact is the gentle kind."), std::nullopt, "Hard Impacts Cut Speed To 4.085##launchTrajectory", settings->launchTrajectoryWallBackstep));
+					(game, ToolTipCollection("Impacts faster than 4.085 wu/s into a surface cut your velocity to exactly 4.085 wu/s, same direction. Gentler contacts only remove the part going into the surface. Off: all contacts are gentle."), std::nullopt, "Hard Impacts Cut Speed To 4.085##launchTrajectory", settings->launchTrajectoryWallBackstep));
 
 			case GUIElementEnum::launchTrajectoryGroundSlideMaxSpeedGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
-					(game, ToolTipCollection("Above this speed a body sliding on the ground gets only Air Friction, not Ground Friction. Measured: full ground friction at up to 6.1 wu/s, only air friction at 11.9 wu/s. The exact switch point is somewhere in between (default 9) - a landing that slides at 6-12 wu/s in a launch log will pin it down."), "Ground Friction Only Below (wu/s)##launchTrajectory", settings->launchTrajectoryGroundSlideMaxSpeed));
+					(game, ToolTipCollection("Above this speed a body sliding on the ground gets only Air Friction, not Ground Friction. Measured between 6.1 and 11.9 wu/s; default 9."), "Ground Friction Only Below (wu/s)##launchTrajectory", settings->launchTrajectoryGroundSlideMaxSpeed));
 
 			case GUIElementEnum::launchTrajectoryReleaseModelGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Model what happens as stored momentum is released from the ground (measured from your logs): the release tick adds one tick of ground friction back to your horizontal speed and skips gravity, then for 4 ticks you are still slowed as if on the ground (Release Friction, along your whole velocity) before normal flight. This took the error over 10-second flights from ~45 wu to under 1 wu.\n\nThe extra upward kick many releases get on the release tick (+3 to +19 wu/s in your logs) is not part of the stored velocity - see Release Kick. Without it the pre-launch line leaves the kick out; the live line picks it up from the next tick."), std::nullopt, "Model Release Ticks##launchTrajectory", settings->launchTrajectoryReleaseModel));
+					(game, ToolTipCollection("Models stored momentum released from the ground: the release tick adds one tick of ground friction back and skips gravity, then 4 ticks of ground-style slowing (Release Friction)."), std::nullopt, "Model Release Ticks##launchTrajectory", settings->launchTrajectoryReleaseModel));
 
 			case GUIElementEnum::launchTrajectoryReleaseFrictionGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
@@ -3088,11 +3131,11 @@ private:
 
 			case GUIElementEnum::launchTrajectoryH2DecompGroundGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Experimental: three Halo 2 ground-movement details from the Xbox decompilation - each tick on the ground the velocity is pushed 0.234 wu/s into the surface, gravity acts while you are still slowing down, and at creases the ground direction is combined from up to three contacts. Replayed against 766 of your Halo 2 logs they changed almost nothing (within 0.3 wu), so it is off by default; turn it on to compare."), std::nullopt, "Halo 2: Decompiled Ground Details (experimental)##launchTrajectory", settings->launchTrajectoryH2DecompGround));
+					(game, ToolTipCollection("Experimental: three Halo 2 ground-movement details from the Xbox decompilation. Replayed against 766 Halo 2 logs they changed almost nothing (within 0.3 wu), so off by default; turn on to compare."), std::nullopt, "Halo 2: Decompiled Ground Details (experimental)##launchTrajectory", settings->launchTrajectoryH2DecompGround));
 
 			case GUIElementEnum::launchTrajectoryReleaseKickGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
-					(game, ToolTipCollection("Upward speed added on the release tick of a stored launch. Releasing by tapping forward gives an extra upward kick that is not in the stored velocity: your forward-tap releases got +1.4 to +6.0 wu/s (median of 19: ~3.5). Set 0 for releases that do not kick. The floor-depth idea did not hold up: the measured depth was the same for every launch while the kick varied."), "Release Kick (wu/s)##launchTrajectory", settings->launchTrajectoryReleaseKick));
+					(game, ToolTipCollection("Upward speed added on the release tick of a stored launch. Forward-tap releases got +1.4 to +6.0 wu/s (median ~3.5). Set 0 for releases that do not kick."), "Release Kick (wu/s)##launchTrajectory", settings->launchTrajectoryReleaseKick));
 
 			case GUIElementEnum::launchTrajectoryFallDeathGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -3100,15 +3143,15 @@ private:
 
 			case GUIElementEnum::launchTrajectoryFallDeathSpeedGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
-					(game, ToolTipCollection("Downward speed at which the mid-air fall death happens. From the game: sqrt(2 x 3.2086613 x maximum falling distance), with the globals tag's maximum falling distance of 14 = 9.4785 wu/s (the code that turns the falling distances into speeds is at 0x696E9C in the Halo 2 Sapien; 3.2086613 is Halo 1's gravity, still used for falling). Matches all 20 logged deaths: last alive at 9.4785, dead by 9.481."), "Fall Death Speed (wu/s)##launchTrajectory", settings->launchTrajectoryFallDeathSpeed));
+					(game, ToolTipCollection("Downward speed at which the mid-air fall death happens. For Halo 2, the globals tag's maximum falling distance of 14 gives 9.4785 wu/s. Matched all 20 logged deaths."), "Fall Death Speed (wu/s)##launchTrajectory", settings->launchTrajectoryFallDeathSpeed));
 
 			case GUIElementEnum::launchTrajectoryNextHitToggleGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("A second line: where you would go if you took one more hit like the last one (sword lunge, melee, rocket, grenade - anything that suddenly added more than 4 wu/s). It uses the exact velocity change that hit gave you. Appears once a hit has been seen this session."), std::nullopt, "Show One-More-Hit Line##launchTrajectory", settings->launchTrajectoryNextHitToggle));
+					(game, ToolTipCollection("Draws a second line: where you would go if you took one more hit like the last one (sword lunge, melee, rocket, grenade; anything adding over 4 wu/s). Appears once a hit has been seen this session."), std::nullopt, "Show One-More-Hit Line##launchTrajectory", settings->launchTrajectoryNextHitToggle));
 
 			case GUIElementEnum::launchTrajectoryNextHitRotateWithViewGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Turn the hit's push with your view: a melee or sword hit pushes the way you are aiming, so if you look elsewhere the next hit goes elsewhere. Off: the next hit pushes in exactly the same world direction as the last one (better for an explosion from a fixed spot)."), std::nullopt, "One-More-Hit Follows Your Aim##launchTrajectory", settings->launchTrajectoryNextHitRotateWithView));
+					(game, ToolTipCollection("Turns the hit's push with your view: a melee or sword hit pushes where you aim. Off: the next hit pushes in the same world direction as the last (better for an explosion from a fixed spot)."), std::nullopt, "One-More-Hit Follows Your Aim##launchTrajectory", settings->launchTrajectoryNextHitRotateWithView));
 
 			case GUIElementEnum::launchTrajectoryNextHitColorGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<false>>
@@ -3116,19 +3159,19 @@ private:
 
 			case GUIElementEnum::launchTrajectoryReleaseKickRangeGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
-					(game, ToolTipCollection("While storing, also draw two dimmed lines for the release kick this much lower and higher than Release Kick, to show where you could end up. The kick is the one thing the stored state does not reveal: with each launch's real kick plugged in, all 6 of your latest logs matched to 0.1-0.3 wu over 2 s and the fall death to within a tick. 0 = off."), "Release Kick Spread (+/- wu/s)##launchTrajectory", settings->launchTrajectoryReleaseKickRange));
+					(game, ToolTipCollection("While storing, also draws two dimmed lines for the release kick this much lower and higher than Release Kick, showing where you could end up. 0 = off."), "Release Kick Spread (+/- wu/s)##launchTrajectory", settings->launchTrajectoryReleaseKickRange));
 
 			case GUIElementEnum::launchTrajectoryReachCrouchReleaseGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Reach crouch storage stores your speed pointing straight down into the floor, so the plain prediction just goes into the ground. With this on, while that kind of storage is held the line shows the RELEASE instead: the stored speed (times Release Speed Ratio) turned horizontal, DOWN THE SLOPE you are stored on. Measured: 9 releases with your view anywhere from 334 to 47 degrees (and once backwards, 194) all went the same way - straight opposite the stored speed's small sideways part, i.e. downhill. On flat floor that part is ~0 and the direction is unknown, so the line falls back to your aim (the label says which). Stored speeds above ~31 wu/s are flagged as a death risk: the release tick usually dips into the floor at about 0.39 x the stored speed first, and every dip of 13.4 wu/s or more killed you (stored 34.6, 40.9, 41.4) while 11.4 and less never did (28.5 and below). Two releases at 44.8 and 50.2 skipped the dip and survived."), std::nullopt, "Reach: Show Crouch Storage Release##launchTrajectory", settings->launchTrajectoryReachCrouchRelease));
+					(game, ToolTipCollection("Reach crouch storage: the line shows the release, with stored speed turned horizontal down the slope you are on. On flat floor it falls back to your aim. Stored speeds over ~31 wu/s risk death."), std::nullopt, "Reach: Show Crouch Storage Release##launchTrajectory", settings->launchTrajectoryReachCrouchRelease));
 
 			case GUIElementEnum::launchTrajectoryReachReleaseRatioGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
-					(game, ToolTipCollection("Horizontal speed after a crouch-storage release (once on the ground), as a fraction of the stored speed. Your 17 logged releases: 0.72 - 0.86, mean ~0.82 (the slowest ones, under 12 wu/s, keep the least)."), "Reach: Release Speed Ratio##launchTrajectory", settings->launchTrajectoryReachReleaseRatio));
+					(game, ToolTipCollection("Horizontal speed after a crouch-storage release (once on the ground), as a fraction of the stored speed. Your 17 logged releases ranged 0.72 - 0.86, mean ~0.82."), "Reach: Release Speed Ratio##launchTrajectory", settings->launchTrajectoryReachReleaseRatio));
 
 			case GUIElementEnum::launchTrajectoryHudStoredGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("While momentum is stored, show the stored speed - and where the prediction ends (or the fall death / Reach release death risk) - in big text under the crosshair, so it can be read in first person, where the label at your feet is off screen."), std::nullopt, "Show Stored Speed On HUD##launchTrajectory", settings->launchTrajectoryHudStored));
+					(game, ToolTipCollection("While momentum is stored, shows the stored speed and where the prediction ends (or the fall/Reach release death risk) in big text under the crosshair, readable in first person."), std::nullopt, "Show Stored Speed On HUD##launchTrajectory", settings->launchTrajectoryHudStored));
 
 			case GUIElementEnum::launchTrajectoryHudScaleGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
@@ -3140,11 +3183,11 @@ private:
 
 			case GUIElementEnum::launchTrajectoryReachGameCollisionGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Reach: test the predicted path with the game's own collision test (collision_test_vector, the same function projectiles and the camera use) instead of the overlay's copy of the level: exact terrain, every rock and placed piece, and - with Include Objects - scenery, crates and machines, on any map. It runs on the game thread each tick, so the lines are drawn one tick behind; off falls back to the copy of the level."), std::nullopt, "Reach: Use The Game's Own Collision##launchTrajectory", settings->launchTrajectoryReachGameCollision));
+					(game, ToolTipCollection("Reach: tests the predicted path with the game's own collision test instead of the overlay's level copy, for exact terrain and objects (with Include Objects). Lines draw a tick behind."), std::nullopt, "Reach: Use The Game's Own Collision##launchTrajectory", settings->launchTrajectoryReachGameCollision));
 
 			case GUIElementEnum::launchTrajectoryBenchRunGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-					(game, ToolTipCollection("Launch Test Bench: repeats your storage launch automatically from YOUR checkpoint. Set it up first: stand where only the storage inputs are left to do, Force Checkpoint, and turn on Disable Natural Checkpoints (so the game does not overwrite it). Then each run: revert, spam crouch (and melee if set) with the real keys, wait for the storage, tap the release key, let the launch play out (it is logged), revert, and go again with the timing shifted by the Step. Keys are sent to the game window - keep MCC focused and hands off. Needs the Launch Trajectory overlay on. Switches itself off when the runs are done; turning it off stops it. Bind a hotkey to start / stop it without the menu open - the bench waits until the menu is closed before it starts (keys sent while the menu has focus do not reach the game)."), RebindableHotkeyEnum::launchTrajectoryBenchHotkey, "Run Launch Test Bench##launchTrajectory", settings->launchTrajectoryBenchRun));
+					(game, ToolTipCollection("Launch Test Bench: repeats your storage launch from your checkpoint. First Force Checkpoint and turn on Disable Natural Checkpoints. Sends real keys, so keep MCC focused. Needs Launch Trajectory on."), RebindableHotkeyEnum::launchTrajectoryBenchHotkey, "Run Launch Test Bench##launchTrajectory", settings->launchTrajectoryBenchRun));
 
 			case GUIElementEnum::launchTrajectoryBenchRunsGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
@@ -3188,7 +3231,7 @@ private:
 
 			case GUIElementEnum::launchTrajectoryBenchMeleeKeyGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
-					(game, ToolTipCollection("The key spammed at the start of each cycle (Halo 2: the sword attack). Windows virtual-key code: 1 = left mouse, 2 = right mouse, 4 = middle mouse, 5 / 6 = side buttons; Q = 81, V = 86, F = 70, E = 69 (letters A-Z = 65-90)."), "Test Bench: Attack Key (VK code, 1 = left mouse)##launchTrajectory", settings->launchTrajectoryBenchMeleeKey));
+					(game, ToolTipCollection("Key spammed at the start of each cycle (Halo 2: sword attack). Windows virtual-key code: 1 = left mouse, 2 = right, 4 = middle, 5/6 = side buttons; Q = 81, V = 86, F = 70, E = 69 (A-Z = 65-90)."), "Test Bench: Attack Key (VK code, 1 = left mouse)##launchTrajectory", settings->launchTrajectoryBenchMeleeKey));
 
 			case GUIElementEnum::launchTrajectoryBenchReleaseKeyGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<>>
@@ -3196,7 +3239,7 @@ private:
 
 			case GUIElementEnum::launchTrajectoryBenchSpeedStartGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
-					(game, ToolTipCollection("Sweep the stored speed: while stored, the bench sets your stored speed to this (keeping its direction) on the first run, then adds the Speed Step every run - e.g. 10 with step 0.5 covers 10 to 34.5 wu/s in 50 runs. 0 = leave the stored speed as the storage made it. The log records what the game actually stored, so if the game ignores the change it shows."), "Test Bench: Stored Speed Start (wu/s, 0 = off)##launchTrajectory", settings->launchTrajectoryBenchSpeedStart));
+					(game, ToolTipCollection("Sweeps the stored speed: sets it to this on the first run, then adds the Speed Step each run (e.g. 10 with step 0.5 covers 10 to 34.5 wu/s in 50 runs). 0 = leave the stored speed alone."), "Test Bench: Stored Speed Start (wu/s, 0 = off)##launchTrajectory", settings->launchTrajectoryBenchSpeedStart));
 
 			case GUIElementEnum::launchTrajectoryBenchSpeedStepGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
@@ -3204,7 +3247,7 @@ private:
 
 			case GUIElementEnum::launchTrajectoryMaxSpeedGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
-					(game, ToolTipCollection("The engine caps every Havok body's linear velocity to 100 wu/s each tick before applying gravity (sub_180711C00 called from sub_180712850). If your launches beat the line, set this to 0 to disable the cap in the prediction."), "Max Speed Cap (wu/s, 0 = off)##launchTrajectory", settings->launchTrajectoryMaxSpeed));
+					(game, ToolTipCollection("The engine caps every Havok body's linear velocity to 100 wu/s each tick before gravity. If your launches beat the line, set this to 0 to disable the cap in the prediction."), "Max Speed Cap (wu/s, 0 = off)##launchTrajectory", settings->launchTrajectoryMaxSpeed));
 
 			case GUIElementEnum::launchTrajectoryDampingGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 5.f)>>
@@ -3429,7 +3472,7 @@ private:
 
 			case GUIElementEnum::havokSleepCountdownToggleGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("A window for your biped's Havok physics island: how many ticks until Havok puts it to sleep (deactivates it) if nothing in it moves, as a draining bar with the JUMP line (a jump pressed on it freezes you at the apex), its quiet-round count (x/5), the ticks to its next short and long checks, whether tantrums work this cycle, and per body whether it would pass the check now or what keeps it awake (airborne biped, driven vehicle, ...). Shows 'asleep' once it has gone to sleep. Every jump you start is judged under the bar: PERFECT, EARLY by N or LATE by N ticks, with your hit count. Read from Havok's own sleep logic in halo2.dll (MCC 1.3528 only)."), std::nullopt, "Havok Sleep Countdown", settings->havokSleepCountdownToggle));
+					(game, ToolTipCollection("Shows your biped's Havok island sleep countdown: ticks until it sleeps, the JUMP line, quiet-round count (x/5), and per-body what keeps it awake. Judges each jump PERFECT / EARLY / LATE. MCC 1.3528."), std::nullopt, "Havok Sleep Countdown", settings->havokSleepCountdownToggle));
 
 			case GUIElementEnum::havokSleepCountdownSimpleGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -3437,7 +3480,7 @@ private:
 
 			case GUIElementEnum::havokSleepAutoJumpGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-					(game, ToolTipCollection("Presses jump for you on the tick the countdown reaches the JUMP line (2 ticks left at 30 tick/s, 1 at 60), when every body in your island is still and tantrums work this cycle. Once per cycle: it arms again after your island has slept. Goes through the game's own jump check, like a real press. Every jump you start is judged under the bar (PERFECT / EARLY / LATE)."), std::nullopt, "Auto-jump on the line##havokSleep", settings->havokSleepAutoJump));
+					(game, ToolTipCollection("Presses jump for you when the countdown reaches the JUMP line (2 ticks left at 30 tick/s, 1 at 60), once per cycle, when your island is still. Each jump is judged PERFECT / EARLY / LATE."), std::nullopt, "Auto-jump on the line##havokSleep", settings->havokSleepAutoJump));
 
 			case GUIElementEnum::abilityMeterOverlaySettings:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -3797,7 +3840,7 @@ private:
 				// one piece of HCE's camera that is not resolved - see HCETriggerOverlay.cpp.
 				case GUIElementEnum::hceTriggerOverlayToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Draws every trigger volume in the level as a wireframe box (or, for sector volumes, their real extruded polygon) with its name. Wireframe only: HaloCER renders through D3D12, where HCM has no depth buffer to sort filled faces against, so volumes are not hidden by walls."), RebindableHotkeyEnum::triggerOverlayToggleHotkey, "Trigger Overlay##hce", settings->triggerOverlayToggle));
+						(game, ToolTipCollection("Draws every trigger volume in the level as a wireframe box (sector volumes as their extruded polygon) with its name. Wireframe only, so volumes are not hidden by walls."), RebindableHotkeyEnum::triggerOverlayToggleHotkey, "Trigger Overlay##hce", settings->triggerOverlayToggle));
 
 				case GUIElementEnum::hceTriggerOverlaySettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -3841,7 +3884,7 @@ private:
 				// every level without a shipped per-level table.
 				case GUIElementEnum::havokWorldCacheGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Save each level's collision geometry to disk the first time the Havok Debugger walks it, and load it back instantly afterwards instead of re-walking.\n\nBuilding a world costs roughly 1.5-2 seconds ON THE ENGINE THREAD - the game visibly hitches - and it happens again every time you return to a BSP set you have already seen. The collision mesh is static, so that work only needs doing once.\n\nCOSTS DISK: about 1 GB per BSP set, and around 15 GB once every level has been visited. That is why it is off by default. Use Clear World Cache below to reclaim the space."), std::nullopt, "World Collision Cache", settings->havokWorldCacheToggle));
+						(game, ToolTipCollection("Saves each level's collision geometry to disk the first time the Havok Debugger walks it, then loads it instantly. Costs about 1 GB per BSP set (~15 GB total), so off by default."), std::nullopt, "World Collision Cache", settings->havokWorldCacheToggle));
 
 				case GUIElementEnum::havokWorldCacheClearGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
@@ -3849,15 +3892,15 @@ private:
 
 				case GUIElementEnum::halo3TheaterInterpToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("EXPERIMENTAL - see below. Smooths Theater playback. Halo 3 renders Theater straight off the tick stream, and while the engine interpolates object POSITION it rebuilds the camera ORIENTATION from raw per-tick aiming - so the moment the player you are watching turns, the whole world steps. This interpolates it, and also fixes the object/shadow de-render that the naive fix causes. Gameplay is unaffected (there the camera already follows live input at frame rate).\n\nWhy experimental: this installs hand-written code hooks into Halo 3's render path - if anything looks wrong or the game becomes unstable, turn this off first. Everything it patches is restored when you do. Off by default. Only for halo3.dll builds 1.3528, 1.3495 and 1.3385 - on any other build it refuses and patches nothing.\n\nFirst-person legs: the eye follows the smoothed aim and the game draws the legs with that same smoothed camera, so they stay attached on their own. The leg hook now only collects diagnostics - its old correction made jumps judder and is switched off."), std::nullopt, "Theater Interpolation Fix (Experimental)", settings->halo3TheaterInterpToggle));
+						(game, ToolTipCollection("EXPERIMENTAL. Smooths Theater playback by interpolating camera orientation, which Halo 3 otherwise steps per tick. If the game looks wrong or unstable, turn off. Halo 3 builds 1.3528, 1.3495, 1.3385."), std::nullopt, "Theater Interpolation Fix (Experimental)", settings->halo3TheaterInterpToggle));
 
 				case GUIElementEnum::halo3TheaterInterpCrouchGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Also interpolate the crouch height change, so crouching in Theater is smooth instead of stepping.\n\nCosts a small cosmetic glitch: the first-person legs render from the biped's own interpolated nodes, which this does not move, so they separate slightly from the upper body during the height change. Turn it off to keep the legs attached and accept the crouch step."), std::nullopt, "Interpolate Crouch", settings->halo3TheaterInterpCrouch));
+						(game, ToolTipCollection("Also interpolates crouch height change so crouching in Theater is smooth. Side effect: first-person legs separate slightly from the upper body during the change. Off keeps legs attached."), std::nullopt, "Interpolate Crouch", settings->halo3TheaterInterpCrouch));
 
 				case GUIElementEnum::hceAISquadOverlayToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Prints the scenario squad (and squad group) above every live AI's head. Names are read out of the level's own scenario tag at runtime, so this works on every level. AI that have MIGRATED out of the squad they spawned in are drawn in a second colour, since those are the ones a squad-based script gate can behave unexpectedly around."), RebindableHotkeyEnum::hceAISquadOverlayToggleHotkey, "AI Squad Overlay", settings->hceAISquadOverlayToggle));
+						(game, ToolTipCollection("Prints the scenario squad (and squad group) above every live AI's head. AI that migrated out of their spawn squad are drawn in a second colour, since squad-based script gates can misbehave there."), RebindableHotkeyEnum::hceAISquadOverlayToggleHotkey, "AI Squad Overlay", settings->hceAISquadOverlayToggle));
 
 				case GUIElementEnum::hceAISquadOverlaySettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -3914,7 +3957,7 @@ private:
 
 				case GUIElementEnum::hceAISquadOverlayTraitsShownSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
-						(game, ToolTipCollection("Which classifications get their own colour. These do NOT hide anyone - an AI whose trait is switched off still gets a label, drawn in the neutral colour. Traits overlap, and the label takes the highest-priority one still enabled (Required, then Timed, then Migrated), so turning one off lets you see the trait underneath it."), "Traits Shown", headerChildElements
+						(game, ToolTipCollection("Which classifications get their own colour. They don't hide anyone: an AI with its trait off gets a neutral label. The label takes the highest-priority enabled trait (Required, Timed, Migrated)."), "Traits Shown", headerChildElements
 							{
 								createNestedElement(GUIElementEnum::hceAISquadOverlayTraitRequiredGUI),
 								createNestedElement(GUIElementEnum::hceAISquadOverlayTraitTimedGUI),
@@ -3951,7 +3994,7 @@ private:
 
 				case GUIElementEnum::hceAISquadOverlayCreatureScaleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.1f, 1.f)>>
-						(game, ToolTipCollection("Label size for CREATURES - the Flood infection forms - as a fraction of the normal label size. They are physically tiny and spawn in clumps of dozens, so at the shared size their labels become a solid block of text with no model visible behind it. 0.25 is about right; 1.0 makes them the same as everything else."), "Creature Label Size", settings->hceAISquadOverlayCreatureScale));
+						(game, ToolTipCollection("Label size for creatures (Flood infection forms) as a fraction of the normal label size. They are tiny and spawn in clumps, so 0.25 is about right; 1.0 matches everything else."), "Creature Label Size", settings->hceAISquadOverlayCreatureScale));
 
 				case GUIElementEnum::hceAISquadOverlayNeutralColourGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -3959,11 +4002,11 @@ private:
 
 				case GUIElementEnum::hceAISquadOverlayRequiredColourGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
-						(game, ToolTipCollection("Colour of AI whose death is REQUIRED to progress right now - they sit behind a script gate with no timeout, so the level will not advance while they are alive. Only the CURRENTLY ACTIVE step of the level's gate chain is coloured: on 343 Guilty Spark's tower gauntlet the six waves run one at a time, so wave 3 stays neutral until waves 1 and 2 are done."), "Required Color", settings->hceAISquadOverlayRequiredColor));
+						(game, ToolTipCollection("Colour of AI whose death is required to progress now: they sit behind a script gate with no timeout. Only the currently active step of the level's gate chain is coloured."), "Required Color", settings->hceAISquadOverlayRequiredColor));
 
 				case GUIElementEnum::hceAISquadOverlayTimedColourGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
-						(game, ToolTipCollection("Colour of AI behind a gate that gives up on its own after a timeout - killing them is faster, but waiting also works. The remaining seconds are shown next to the label when the overlay saw the gate start (if it was already running when you enabled the overlay, no countdown is shown rather than a wrong one)."), "Timed Gate Color", settings->hceAISquadOverlayTimedColor));
+						(game, ToolTipCollection("Colour of AI behind a gate that gives up on its own after a timeout: killing them is faster, waiting also works. Shows remaining seconds if the overlay saw the gate start."), "Timed Gate Color", settings->hceAISquadOverlayTimedColor));
 
 				case GUIElementEnum::hceAISquadOverlayMigratedColourGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -3971,7 +4014,7 @@ private:
 
 				case GUIElementEnum::hceBspOverlayToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Draws the level's INVISIBLE collision surfaces - the walls that block you but are never rendered. Read from a real per-surface flag in the tag, not guessed. Only TRUE structure BSP is drawn; instanced geometry is excluded, so on levels whose collision is mostly instanced this may show very little (the log records how many surfaces were found)."), RebindableHotkeyEnum::hceBspOverlayToggleHotkey, "BSP Overlay", settings->hceBspOverlayToggle));
+						(game, ToolTipCollection("Draws the level's invisible collision surfaces, the walls that block you but are never rendered. Only true structure BSP is drawn, not instanced geometry, so mostly-instanced levels may show little."), RebindableHotkeyEnum::hceBspOverlayToggleHotkey, "BSP Overlay", settings->hceBspOverlayToggle));
 
 				case GUIElementEnum::hceBspOverlaySettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -4003,7 +4046,7 @@ private:
 				// only this title can offer.
 				case GUIElementEnum::hceSoftCeilingOverlayToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Draws the level's soft ceilings - the invisible barriers that push you back, slow you down or kill you for leaving the intended space - coloured by which of the three they are. The type, the bipeds/vehicles flags and the geometry are all read out of the tag, nothing is guessed from names. As with the other 3D overlays these are not hidden by walls."), RebindableHotkeyEnum::softCeilingOverlayToggleHotkey, "Barrier Overlay##hce", settings->softCeilingOverlayToggle));
+						(game, ToolTipCollection("Draws the level's soft ceilings, the invisible barriers that push you back, slow you down or kill you, coloured by type. Read from the tag. Not hidden by walls."), RebindableHotkeyEnum::softCeilingOverlayToggleHotkey, "Barrier Overlay##hce", settings->softCeilingOverlayToggle));
 
 				case GUIElementEnum::hceSoftCeilingOverlaySettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -4023,7 +4066,7 @@ private:
 
 				case GUIElementEnum::hceSoftCeilingOverlayRenderTypes:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::SoftCeilingRenderTypes, 150.f>>
-						(game, ToolTipCollection("Whether to render barriers that apply to bipeds, vehicles, or either. Read from the scenario's own per-barrier ignore flags (ignore bipeds / ignore vehicles), so a barrier that genuinely does not affect you on foot can be hidden."), "Render Barriers Affecting:", settings->softCeilingOverlayRenderTypes));
+						(game, ToolTipCollection("Whether to render barriers that apply to bipeds, vehicles, or either, using each barrier's own ignore flags. A barrier that doesn't affect you on foot can be hidden."), "Render Barriers Affecting:", settings->softCeilingOverlayRenderTypes));
 
 				case GUIElementEnum::hceSoftCeilingOverlayRenderDirection:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::SoftCeilingRenderDirection, 100.f>>
@@ -4047,7 +4090,7 @@ private:
 
 				case GUIElementEnum::hceSoftCeilingOverlayShowDisabled:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Also draw barriers a mission script has switched OFF, in the disabled colour, instead of hiding them. Halo Campaign Evolved keeps a live enable bit per barrier and HCM reads it, so this is the real state rather than a guess. NOTE: Disable Barriers clears every one of those bits, so with it on everything correctly shows as disabled."), RebindableHotkeyEnum::hceSoftCeilingOverlayShowDisabledHotkey, "Show Disabled Barriers", settings->hceSoftCeilingOverlayShowDisabled));
+						(game, ToolTipCollection("Also draw barriers a mission script has switched off, in the disabled colour, instead of hiding them. Disable Barriers clears every enable bit, so with it on everything shows as disabled."), RebindableHotkeyEnum::hceSoftCeilingOverlayShowDisabledHotkey, "Show Disabled Barriers", settings->hceSoftCeilingOverlayShowDisabled));
 
 				case GUIElementEnum::hceSoftCeilingOverlayDisabledColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -4063,7 +4106,7 @@ private:
 
 				case GUIElementEnum::hceInvisibleGeometryOverlayToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Draws the INVISIBLE instanced collision geometry - blockers that stop you but are never rendered, such as the collision shells around props and the tube inside a50's gravity lift. Uses the collision surface's own INVISIBLE flag (verified across every level: it marks exactly the collision-only pieces), plus a guarded cross-check for pieces with no render mesh. Instanced geometry only - the structure BSP is the BSP Overlay's job. The log lists every invisible piece by name on each rebuild."), std::nullopt, "Invisible Geometry Overlay", settings->hceInvisibleGeometryOverlayToggle));
+						(game, ToolTipCollection("Draws invisible instanced collision geometry: blockers that stop you but are never rendered, like prop collision shells or the tube in a50's gravity lift. Structure BSP is the BSP Overlay's job."), std::nullopt, "Invisible Geometry Overlay", settings->hceInvisibleGeometryOverlayToggle));
 
 				case GUIElementEnum::hceInvisibleGeometryOverlaySettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -4103,7 +4146,7 @@ private:
 
 				case GUIElementEnum::hceVisibleGeometryOverlayToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Draws the collision of the VISIBLE instanced geometry - the rocks, trees, crates, pipes and other placed props the game actually renders - so you can see where their collision really is. The complement of the Invisible Geometry Overlay: every solid instanced piece is in exactly one of the two. Instanced geometry only - the structure BSP is the BSP Overlay's job. Same budget as Halo 5's Havok overlay: only pieces within the radius are drawn, nearest first, until the triangle budget is reached."), std::nullopt, "Visible Geometry Overlay", settings->hceVisibleGeometryOverlayToggle));
+						(game, ToolTipCollection("Draws collision of visible instanced geometry (rocks, trees, crates, pipes, props). Complement of the Invisible Geometry Overlay. Nearest pieces in the radius drawn up to the triangle budget."), std::nullopt, "Visible Geometry Overlay", settings->hceVisibleGeometryOverlayToggle));
 
 				case GUIElementEnum::hceVisibleGeometryOverlaySettingsSubheading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
@@ -4120,19 +4163,19 @@ private:
 
 				case GUIElementEnum::hceVisibleGeometryOverlayRadius:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 32767.f)>>
-						(game, ToolTipCollection("Only collision within this many WORLD UNITS of the camera is drawn (1 world unit = 10 feet); pieces are cut at the radius, triangle by triangle. Same default as Halo 5's Havok overlay.\n\nThe maximum, 32767, is far larger than any level, so it effectively means \"no distance limit\" - then the TRIANGLE BUDGET below is what limits what you see.\n\nThe slider is very coarse over this range - ctrl+click it to type an exact value."), "Radius (world units)##hcevis", settings->hceVisibleGeometryOverlayRadius));
+						(game, ToolTipCollection("Only collision within this many world units of the camera is drawn (1 WU = 10 feet). 32767 means no distance limit; the triangle budget below then limits what you see. Ctrl+click to type a value."), "Radius (world units)##hcevis", settings->hceVisibleGeometryOverlayRadius));
 
 				case GUIElementEnum::hceVisibleGeometryOverlayTriangleBudget:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1000.f, 400000.f)>>
-						(game, ToolTipCollection("Hard cap on collision triangles drawn. Pieces are taken nearest first and selection STOPS at this number, so a large radius draws an incomplete picture of the far end instead of stalling.\n\nInstanced collision is dense: on a50 a typical piece has 270-750 triangles and a rock cliff over 5,000, so the default draws roughly the nearest 50-150 pieces. If the far end of the radius is empty, raise this, not the radius. The log says when the budget was reached."), "Triangle Budget##hcevis", settings->hceVisibleGeometryOverlayTriangleBudget));
+						(game, ToolTipCollection("Hard cap on collision triangles drawn, nearest pieces first. If the far end of the radius is empty, raise this rather than the radius. The log says when the budget was reached."), "Triangle Budget##hcevis", settings->hceVisibleGeometryOverlayTriangleBudget));
 
 				case GUIElementEnum::hceVisibleGeometryOverlayRefreshMs:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(16.f, 5000.f)>>
-						(game, ToolTipCollection("How often the pieces around the camera are re-selected, in milliseconds - and only when the camera has moved. Collision does not move, so doing it every frame would burn CPU for an identical picture. It runs on a background thread, never the render thread."), "Refresh (ms)##hcevis", settings->hceVisibleGeometryOverlayRefreshMs));
+						(game, ToolTipCollection("How often the pieces around the camera are re-selected, in milliseconds, and only when the camera has moved. Runs on a background thread, never the render thread."), "Refresh (ms)##hcevis", settings->hceVisibleGeometryOverlayRefreshMs));
 
 				case GUIElementEnum::hceVisibleGeometryOverlayHideHiddenLines:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("ON (default): only the nearest collision surface's lines are drawn - edges on the far side of a rock, or behind another piece, are hidden, so the wireframe sits on the geometry you can see. OFF: every edge is drawn, including the ones behind other collision.\n\nOnly COLLISION hides collision: lines behind the level's own walls and terrain still show, because HCM cannot see the game's depth."), std::nullopt, "Hide Lines Behind Collision##hcevis", settings->hceVisibleGeometryOverlayHideHiddenLines));
+						(game, ToolTipCollection("ON (default): only the nearest collision surface's lines are drawn; edges behind other collision are hidden. OFF: every edge is drawn. Lines behind the level's own walls and terrain still show."), std::nullopt, "Hide Lines Behind Collision##hcevis", settings->hceVisibleGeometryOverlayHideHiddenLines));
 
 				case GUIElementEnum::hceVisibleGeometryOverlayColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -4148,27 +4191,27 @@ private:
 
 				case GUIElementEnum::hceBspOverlayInvisibleOnly:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("ON: draw only surfaces carrying the collision INVISIBLE flag. OFF (default): draw the whole structural shell. Measured warning: on the first level tested, NONE of its 575 structure surfaces had that flag set, so turning this on drew nothing - this title does not appear to mark its non-rendered structure surfaces with it. Leave it off unless a level's log shows a useful invisible count."), RebindableHotkeyEnum::hceBspOverlayInvisibleOnlyHotkey, "Invisible Surfaces Only", settings->hceBspOverlayInvisibleOnly));
+						(game, ToolTipCollection("ON: draw only surfaces with the collision INVISIBLE flag. OFF (default): draw the whole structural shell. On the first level tested no surface had the flag, so ON drew nothing. Leave it off normally."), RebindableHotkeyEnum::hceBspOverlayInvisibleOnlyHotkey, "Invisible Surfaces Only", settings->hceBspOverlayInvisibleOnly));
 
 				case GUIElementEnum::hceBspOverlayRenderStyle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::TriggerRenderStyle, 150.f>>
-						(game, ToolTipCollection("How to draw BSP surfaces. Filled faces are rebuilt from the collision edge rings; that reconstruction is verified on this build (a 575-surface BSP closed every ring), and any surface that ever failed would fall back to drawing its edges. As with trigger volumes, nothing is hidden by walls, so keep the fill fairly transparent."), "Render BSP surfaces as: ", settings->hceBspOverlayRenderStyle));
+						(game, ToolTipCollection("How to draw BSP surfaces: filled faces are rebuilt from collision edge rings, with edges as fallback. Nothing is hidden by walls, so keep the fill fairly transparent."), "Render BSP surfaces as: ", settings->hceBspOverlayRenderStyle));
 
 				case GUIElementEnum::hceBspOverlayInteriorStyle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::TriggerInteriorStyle, 100.f>>
-						(game, ToolTipCollection("What to draw for structure surfaces the camera is INSIDE - the same option the MCC trigger overlay has. NORMAL draws them exactly as from outside, which is what makes the shell read as two-sided. DON'T RENDER skips them. For a structure BSP you are almost always inside the shell, so leave this on Normal unless you specifically want the interior hidden."), "Render Solid Interior as: ", settings->hceBspOverlayInteriorStyle));
+						(game, ToolTipCollection("What to draw for structure surfaces the camera is inside. NORMAL draws them as from outside (reads as two-sided); DON'T RENDER skips them. You are usually inside the shell, so leave this on Normal."), "Render Solid Interior as: ", settings->hceBspOverlayInteriorStyle));
 
 				case GUIElementEnum::hceBspOverlayRenderDistance:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 2000.f)>>
-						(game, ToolTipCollection("How far away BSP surfaces are still drawn, in WORLD UNITS (1 world unit = 10 feet). Higher than the trigger default because the shell is one connected object - cutting it short gives you a fragment rather than a thinner picture."), "BSP Render Distance (world units)", settings->hceBspOverlayRenderDistance));
+						(game, ToolTipCollection("How far away BSP surfaces are still drawn, in world units (1 world unit = 10 feet). Higher than the trigger default because the shell is one connected object."), "BSP Render Distance (world units)", settings->hceBspOverlayRenderDistance));
 
 				case GUIElementEnum::hceBspOverlayColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
-						(game, ToolTipCollection("Colour of surfaces whose front side POINTS AT THE CAMERA. Standing in a corridor, that is the walls around you; standing outside a building, it is its exterior. (This was previously mislabelled 'outside faces', which read as inverted depending on where you stood - the test is which way a surface faces, not which room you are in.)"), "BSP Color (faces you)", settings->hceBspOverlayColor));
+						(game, ToolTipCollection("Colour of surfaces whose front side points at the camera: the walls around you in a corridor, or a building's exterior from outside. Based on which way a surface faces, not which room you are in."), "BSP Color (faces you)", settings->hceBspOverlayColor));
 
 				case GUIElementEnum::hceBspOverlayInsideColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
-						(game, ToolTipCollection("Colour of surfaces that point AWAY from the camera - typically the far side of the shell you are standing in. A separate colour is what gives an interior any sense of depth; with one colour a closed room is a flat wash."), "BSP Color (faces away)", settings->hceBspOverlayInsideColor));
+						(game, ToolTipCollection("Colour of surfaces that point away from the camera, typically the far side of the shell you are in. A separate colour gives interiors depth."), "BSP Color (faces away)", settings->hceBspOverlayInsideColor));
 
 				case GUIElementEnum::hceBspOverlayInsideAlpha:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
@@ -4176,7 +4219,7 @@ private:
 
 				case GUIElementEnum::hceBspOverlayAlpha:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
-						(game, ToolTipCollection("How opaque surfaces facing you are. A depth pre-pass means only the NEAREST surface is blended per pixel now, so this value is the one you actually see - it is no longer multiplied up by however many walls happen to be behind it."), "BSP Opacity Multiplier (faces you)", settings->hceBspOverlayAlpha));
+						(game, ToolTipCollection("How opaque surfaces facing you are. A depth pre-pass blends only the nearest surface per pixel, so this value is what you actually see."), "BSP Opacity Multiplier (faces you)", settings->hceBspOverlayAlpha));
 
 				case GUIElementEnum::hceBspOverlayWireframeAlpha:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
@@ -4184,15 +4227,15 @@ private:
 
 				case GUIElementEnum::hceBspOverlayWireframeColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
-						(game, ToolTipCollection("Colour of the BSP wireframe. Keep it clearly different from the fill colours - an outline the same colour as the face it outlines is invisible, and the outlines are a large part of what makes a surface read as a wall."), "Wireframe Color", settings->hceBspOverlayWireframeColor));
+						(game, ToolTipCollection("Colour of the BSP wireframe. Keep it clearly different from the fill colours, or the outlines become invisible."), "Wireframe Color", settings->hceBspOverlayWireframeColor));
 
 				case GUIElementEnum::hceBspOverlayLayerCompensation:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 8.f)>>
-						(game, ToolTipCollection("Makes a surface seen from INSIDE as strong as the same shell seen from outside. Looking in from outside, your view crosses several surfaces and they stack up; standing in a room it crosses only one, so it looks far weaker - and raising the opacity slider cannot fix that, because it lifts both cases equally. This pre-multiplies the single layer to the value that many stacked layers would reach. 1 = off; 3 is about what a simple room costs you."), "Inside Layer Compensation", settings->hceBspOverlayLayerCompensation));
+						(game, ToolTipCollection("Makes a surface seen from inside as strong as the same shell seen from outside, where several surfaces stack up. 1 = off; 3 is about what a simple room costs. The opacity slider can't fix this."), "Inside Layer Compensation", settings->hceBspOverlayLayerCompensation));
 
 				case GUIElementEnum::hceBspOverlayPatternContrast:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 1.f)>>
-						(game, ToolTipCollection("Draws a checker pattern on filled surfaces, locked to WORLD space. This is the reliable way to tell a SURFACE from a HOLE: a flat colour looks the same whether you are seeing a wall or seeing through a gap at something behind it, but a checker only appears where geometry actually is. It also gives an interior real depth, because the cells foreshorten with distance and angle. 0 turns it off."), "Surface Pattern Contrast", settings->hceBspOverlayPatternContrast));
+						(game, ToolTipCollection("Draws a world-space checker pattern on filled surfaces. It tells a surface from a hole, since a checker only appears where geometry is, and gives interiors depth. 0 turns it off."), "Surface Pattern Contrast", settings->hceBspOverlayPatternContrast));
 
 				case GUIElementEnum::hceBspOverlayPatternScale:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.01f, 20.f)>>
@@ -4200,62 +4243,62 @@ private:
 
 				case GUIElementEnum::hceBspOverlayOccludeFarSurfaces:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("OFF (default): every surface blends through every other, so you can see far faces behind near ones - the whole shell at once, the way wireframe already shows it. ON: a nearer surface hides the ones behind it, which makes an interior read as solid walls but means you only ever see the closest one. Same property either way, so it is your call - use OFF to survey geometry, ON to read a room."), RebindableHotkeyEnum::hceBspOverlayOccludeFarSurfacesHotkey, "Near Surfaces Hide Far Ones", settings->hceBspOverlayOccludeFarSurfaces));
+						(game, ToolTipCollection("OFF (default): every surface blends through every other, showing the whole shell at once. ON: nearer surfaces hide those behind, so interiors read as solid walls. OFF to survey, ON to read a room."), RebindableHotkeyEnum::hceBspOverlayOccludeFarSurfacesHotkey, "Near Surfaces Hide Far Ones", settings->hceBspOverlayOccludeFarSurfaces));
 
 				case GUIElementEnum::hceBspOverlaySurfaceVariation:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 0.5f)>>
-						(game, ToolTipCollection("Gives each individual collision surface a slightly different tint, so a big flat area made of several wall pieces reads as separate pieces instead of one solid slab. Varies per SURFACE, not per triangle - triangles are an arbitrary product of triangulation and varying by them would just look like noise. 0 turns it off. Each surface keeps its own tint as you move, and the variation brightens as often as it darkens, so this does not change how bright the overlay looks overall."), "Per-Surface Variation", settings->hceBspOverlaySurfaceVariation));
+						(game, ToolTipCollection("Gives each collision surface a slightly different tint so adjacent wall pieces read as separate. Varies per surface, not per triangle, and keeps overall brightness. 0 turns it off."), "Per-Surface Variation", settings->hceBspOverlaySurfaceVariation));
 
 				case GUIElementEnum::hceBspOverlayShadingStrength:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 0.8f)>>
-						(game, ToolTipCollection("How much darker a surface facing away from the light gets. 0 is flat (no shape cue at all); higher separates floors from walls from ceilings more strongly. The brightest face is always exactly the colour you picked - shading only darkens from there, and is capped so it can never make a surface invisible. If some faces look like holes, turn this DOWN or raise the opacity: a heavily darkened face at a low opacity is what reads as a hole."), "Shading Strength", settings->hceBspOverlayShadingStrength));
+						(game, ToolTipCollection("How much darker surfaces facing away from the light get. 0 is flat; higher separates floors, walls and ceilings more. If faces look like holes, lower this or raise opacity."), "Shading Strength", settings->hceBspOverlayShadingStrength));
 
 				case GUIElementEnum::hceBspOverlayFaceShading:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Shade each surface by which way it faces, so a floor, a wall and a ceiling are visibly different tones. Leave this ON. Without it every face is the identical flat colour with no boundary between one wall and the next, and standing inside a room fills the whole screen with a single block of colour - from outside you get the shape from the silhouette, but inside there is no silhouette and the tone is the only cue."), RebindableHotkeyEnum::hceBspOverlayFaceShadingHotkey, "Shade Faces By Angle", settings->hceBspOverlayFaceShading));
+						(game, ToolTipCollection("Shade each surface by which way it faces, so floors, walls and ceilings are visibly different tones. Leave ON: without it, standing inside a room fills the screen with one flat colour."), RebindableHotkeyEnum::hceBspOverlayFaceShadingHotkey, "Shade Faces By Angle", settings->hceBspOverlayFaceShading));
 
 				case GUIElementEnum::hceDisableFadeFromBlackGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Removes the fade-in from black, so you get your view back instantly. Covers EVERY fade-from-black: checkpoint reverts, level loads, mission restarts, and the fades a level script or cinematic starts. Fades TO black still play normally, so cinematic transitions out are unaffected."), RebindableHotkeyEnum::hceDisableFadeFromBlackHotkey, "Disable Fade From Black", settings->hceDisableFadeFromBlackToggle));
+						(game, ToolTipCollection("Removes the fade-in from black so you get your view back instantly: checkpoint reverts, level loads, mission restarts and script or cinematic fades. Fades to black still play."), RebindableHotkeyEnum::hceDisableFadeFromBlackHotkey, "Disable Fade From Black", settings->hceDisableFadeFromBlackToggle));
 
 				case GUIElementEnum::hceSwitchZoneSetGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHCESwitchZoneSet>
-						(game, ToolTipCollection("Switch to any zone set the CURRENT level declares.\n\nThe list is read straight out of the loaded scenario tag, so it is correct on every level with no shipped per-level table - pick one and press the button.\n\nA zone set controls which BSPs are resident. Switching is how the game itself moves you between the sections of a level, so this can load geometry you have not reached yet, or unload what you are standing on.\n\nThe entry marked <- current is the one the game is on. Note it updates as soon as the switch is REQUESTED, before the BSPs have finished loading.\n\nEvery level also ships one internal zone set with no name in the tag; it is listed for completeness but cannot be switched to, because HaloScript addresses zone sets BY NAME and it has none."), std::nullopt, "Switch Zone Set", settings->hceSwitchZoneSetEvent));
+						(game, ToolTipCollection("Switch to any zone set the current level declares. Pick one and press the button. Can load unreached geometry or unload what you stand on. '<- current' updates on request, before BSPs finish loading."), std::nullopt, "Switch Zone Set", settings->hceSwitchZoneSetEvent));
 
 				case GUIElementEnum::h5LuaConsoleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIH5LuaConsole>
-						(game, ToolTipCollection("Run Lua in Halo 5's own campaign script engine.\n\nHalo 5 scripts its campaign in Lua, not HaloScript, so anything the missions can call you can call - object_create, ai_place, volume_test_players and the rest - and the engine marshals the arguments itself.\n\nA bare name is run for you: \"game_save\" does the same as \"game_save()\". Anything taking arguments needs Lua syntax, so quoted strings and brackets - switch_zone_set(\"zs_04\"), not switch_zone_set zs_04. Names are case-sensitive.\n\nEnter runs it. Up and Down walk the command history. Tab or Right-arrow accepts the top suggestion. Autocomplete is the game's own globals table, so it lists exactly what this build can call.\n\nThe chunk is compiled and run on the simulation thread on the next tick; a level has to be loaded. Errors come back from the engine's own compiler, as console:LINE: message."), std::nullopt, settings));
+						(game, ToolTipCollection("Run Lua in Halo 5's own campaign script engine (object_create, ai_place and the rest). Needs a level loaded. A bare name runs as a call; arguments need Lua syntax. Names are case-sensitive."), std::nullopt, settings));
 
 				case GUIElementEnum::hceConsoleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHCEConsole>
-						(game, ToolTipCollection("Run HaloScript commands, with autocomplete over every name the game knows. Type a bare command - the game wraps it for you, so \"game_revert\" and \"cheat_medusa 1\" both work without brackets. Greyed-out suggestions exist in the table but are wired to a do-nothing stub, so they will not do anything. Commands run on the simulation thread on the next frame; a level has to be loaded."), RebindableHotkeyEnum::hceConsoleHotkey, settings));
+						(game, ToolTipCollection("Run HaloScript commands with autocomplete. Type a bare command such as game_revert or cheat_medusa 1, no brackets. Greyed suggestions do nothing. Runs on the next frame; a level must be loaded."), RebindableHotkeyEnum::hceConsoleHotkey, settings));
 
 				case GUIElementEnum::hceFreecamDriftGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIToggleWithChildren<GUIToggleWithChildrenParameters::ShowWhenTrue, true>>
-						(game, ToolTipCollection("Gives the free camera weight: it eases into motion and coasts to a stop instead of starting and stopping dead. Useful for cinematic shots. The camera still moves at full speed with unmodified input - only what you SEE trails it, by the coast time below."), RebindableHotkeyEnum::hceFreecamDriftHotkey, "Camera Drift", settings->hceFreecamDriftToggle, headerChildElements
+						(game, ToolTipCollection("Gives the free camera weight: it eases into motion and coasts to a stop instead of stopping dead. Good for cinematic shots. Only what you see trails the input, by the coast time below."), RebindableHotkeyEnum::hceFreecamDriftHotkey, "Camera Drift", settings->hceFreecamDriftToggle, headerChildElements
 							{
 							createNestedElement(GUIElementEnum::hceFreecamDriftAmountGUI),
 							}));
 
 				case GUIElementEnum::hceFreecamDriftAmountGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.f, 10.f, ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoRoundToFormat)>>
-						(game, ToolTipCollection("Seconds of glide after you stop moving. The default of 2 means the camera keeps coasting for about two seconds after you release, and runs about two thirds of a second behind your input while you fly. 0 turns drift off. The camera cannot overshoot or wobble at ANY setting - it only ever slows down - so the high end is safe to use, just very heavy: at 10 the rendered camera trails your input by more than three seconds of travel, which at a high Camera Move Speed is a long way. Measured in game time, so it stretches out under slow motion and Game Speed."), "Coast Time (s)##hceFreecam", settings->hceFreecamDriftAmount));
+						(game, ToolTipCollection("Seconds of glide after you stop moving. Default 2 coasts about two seconds after release. 0 turns drift off. It never overshoots, but high values trail your input heavily. Scales with Game Speed."), "Coast Time (s)##hceFreecam", settings->hceFreecamDriftAmount));
 
 				case GUIElementEnum::hceFreecamKeepPositionGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Reverting normally snaps the free camera back to wherever it was when the checkpoint was taken, because the camera's pose is part of the saved game state. With this on, HCM puts your current camera position and orientation back after the revert, so you can line up a shot once and keep re-running the attempt into it. Does not touch the camera election, so it carries none of that crash risk."), RebindableHotkeyEnum::hceFreecamKeepPositionHotkey, "Keep Freecam Position On Revert", settings->hceFreecamKeepPositionToggle));
+						(game, ToolTipCollection("Reverting normally snaps the free camera back to where it was at the checkpoint. With this on, HCM restores your current camera position and orientation after the revert."), RebindableHotkeyEnum::hceFreecamKeepPositionHotkey, "Keep Freecam Position On Revert", settings->hceFreecamKeepPositionToggle));
 
 				case GUIElementEnum::hceGameSpeedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIGameSpeed>
-						(game, ToolTipCollection("Multiply the speed of the SIMULATION (1 = normal). Unlike the Speedhack this does not touch the process clock - it writes the engine's own game-time speed, so rendering, audio and the frame pacer keep running at real time and nothing outside the game is affected. The engine stops keeping up past roughly 5x. Note that a scripted slow-motion effect is suppressed while this is on."), RebindableHotkeyEnum::hceGameSpeedHotkey, settings));
+						(game, ToolTipCollection("Multiplies the simulation speed (1 = normal). Unlike the Speedhack it does not touch the process clock; rendering and audio stay real time. Stops keeping up past about 5x. Suppresses scripted slow-mo."), RebindableHotkeyEnum::hceGameSpeedHotkey, settings));
 
 				case GUIElementEnum::hceFreecamGimbalBypassGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Removes the camera's pitch clamp so you can look past vertical without the view flipping. Patches four clamp sites plus a wrap-around routine on the camera update; every site is byte-checked first, so a game update disables this rather than corrupting code."), RebindableHotkeyEnum::hceFreecamGimbalBypassHotkey, "Gimbal Lock Bypass", settings->hceFreecamGimbalBypassToggle));
+						(game, ToolTipCollection("Removes the camera's pitch clamp so you can look past vertical without the view flipping. Byte-checked first, so a game update disables this rather than corrupting code."), RebindableHotkeyEnum::hceFreecamGimbalBypassHotkey, "Gimbal Lock Bypass", settings->hceFreecamGimbalBypassToggle));
 
 				case GUIElementEnum::hceCameraRollGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(-180.f, 180.f)>>
-						(game, ToolTipCollection("Banks the free camera about the direction it is facing, in degrees. This is NOT Gimbal Lock Bypass above - that one removes the up/down limit, this one tilts the horizon. It applies only while the free camera is on, because during normal play the game would have nothing to level your view back out with. The camera's own roll keys (default G and T) wind this slider while held. Changing camera mode - a cutscene, or toggling the free camera off and on - resets the game's roll to zero, so HCM re-applies the value four times a second."), "Camera Roll (degrees)", settings->hceCameraRollDegrees));
+						(game, ToolTipCollection("Banks the free camera about its facing direction, in degrees. Not Gimbal Lock Bypass. Only applies while the free camera is on. The camera's roll keys (default G and T) adjust it while held."), "Camera Roll (degrees)", settings->hceCameraRollDegrees));
 
 				// The two roll keys were always live on HaloCER - HCECameraRoll polls these same bindings - but
 				// they had no rebind row here, so the only way to discover or change them was the tooltip above.
@@ -4263,7 +4306,7 @@ private:
 				// share a process, so there is nothing to collide with.
 				case GUIElementEnum::hceCameraRollLeftBindingGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Tilt the camera anticlockwise. Click to nudge, or bind a key and hold to wind it continuously - one click is worth a tenth of a second of holding, so Tilt Speed governs both. Unbound by default: HaloCER has its own binding rather than borrowing MCC's G/T."), RebindableHotkeyEnum::hceCameraRollLeftBinding, "Tilt Left", settings->hceCameraTiltLeftEvent));
+						(game, ToolTipCollection("Tilt the camera anticlockwise. Click to nudge, or bind a key and hold to wind it continuously; Tilt Speed governs both. Unbound by default."), RebindableHotkeyEnum::hceCameraRollLeftBinding, "Tilt Left", settings->hceCameraTiltLeftEvent));
 
 				case GUIElementEnum::hceCameraRollRightBindingGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -4275,7 +4318,7 @@ private:
 
 				case GUIElementEnum::hceCameraMoveSpeedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.1f, 50.f)>>
-						(game, ToolTipCollection("Multiplies how fast the camera moves. Unlike Tilt Speed this is the ENGINE's own value - it scales the camera's forward, side and up translation together, so movement speeds up evenly rather than skewing. 1.0 is the game's default."), "Camera Move Speed", settings->hceCameraMoveSpeed));
+						(game, ToolTipCollection("Multiplies how fast the camera moves, scaling forward, side and up translation evenly. 1.0 is the game's default."), "Camera Move Speed", settings->hceCameraMoveSpeed));
 
 				case GUIElementEnum::hceCameraMoveSpeedResetGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -4285,11 +4328,11 @@ private:
 				// but had no rebind row, so there was no way to see or change them.
 				case GUIElementEnum::hceFieldOfViewIncreaseBindingGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Widen the field of view (zoom out). Click to nudge, or bind a key and hold to wind it continuously - one click is worth a tenth of a second of holding, so FOV Speed governs both. Only does anything while the Field of View toggle is on. Unbound by default."), RebindableHotkeyEnum::hceFieldOfViewIncreaseBinding, "FOV Up", settings->hceFieldOfViewIncreaseEvent));
+						(game, ToolTipCollection("Widen the field of view (zoom out). Click to nudge, or bind a key and hold to wind it continuously; FOV Speed governs both. Only works while the Field of View toggle is on. Unbound by default."), RebindableHotkeyEnum::hceFieldOfViewIncreaseBinding, "FOV Up", settings->hceFieldOfViewIncreaseEvent));
 
 				case GUIElementEnum::hceFieldOfViewDecreaseBindingGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Narrow the field of view (zoom in). Click to nudge, or bind a key and hold to wind it continuously - one click is worth a tenth of a second of holding, so FOV Speed governs both. Only does anything while the Field of View toggle is on. Unbound by default."), RebindableHotkeyEnum::hceFieldOfViewDecreaseBinding, "FOV Down", settings->hceFieldOfViewDecreaseEvent));
+						(game, ToolTipCollection("Narrow the field of view (zoom in). Click to nudge or hold a bound key to wind continuously; FOV Speed governs both. Only works while the Field of View toggle is on. Unbound by default."), RebindableHotkeyEnum::hceFieldOfViewDecreaseBinding, "FOV Down", settings->hceFieldOfViewDecreaseEvent));
 
 				case GUIElementEnum::hceFieldOfViewSpeedGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 360.f)>>
@@ -4301,7 +4344,7 @@ private:
 
 				case GUIElementEnum::hceFieldOfViewResetGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Puts the field of view back to the game's own default. That default is read live out of the engine (DefaultFOV on the player camera manager), so it is right for this level rather than a number baked into HCM."), RebindableHotkeyEnum::hceFieldOfViewResetHotkey, "Restore Default FOV", settings->hceFieldOfViewResetEvent));
+						(game, ToolTipCollection("Puts the field of view back to the game's own default, read live from the engine, so it is right for this level."), RebindableHotkeyEnum::hceFieldOfViewResetHotkey, "Restore Default FOV", settings->hceFieldOfViewResetEvent));
 
 				case GUIElementEnum::hceFieldOfViewToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -4317,11 +4360,11 @@ private:
 
 				case GUIElementEnum::hceSkyFixGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Stops the sky and world lighting vanishing when you go out of bounds. It works by keeping World Partition streaming areas from tearing down when you leave them. NOTE: turn it on while you are still IN bounds - if you enable it after the sky has already gone, walk back in once and it will hold from then on. Leaving it on for a whole level keeps every area you have visited loaded, so expect memory to grow and streaming to hitch on large levels; turn it off when you are done."), RebindableHotkeyEnum::hceSkyFixHotkey, "Sky Fix", settings->hceSkyFixToggle));
+						(game, ToolTipCollection("Stops the sky and world lighting vanishing out of bounds by keeping World Partition areas loaded. Turn it on while still in bounds. Memory grows and streaming may hitch on big levels; turn off after."), RebindableHotkeyEnum::hceSkyFixHotkey, "Sky Fix", settings->hceSkyFixToggle));
 
 				case GUIElementEnum::hceTriggerOverlayRenderStyle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::TriggerRenderStyle, 150.f>>
-						(game, ToolTipCollection("What style to render trigger volumes as. Halo Campaign Evolved renders through D3D12, where HCM has no depth buffer, so SOLID faces are sorted back-to-front against each other but are NOT hidden by walls."), "Render trigger volumes as: ", settings->triggerOverlayRenderStyle));
+						(game, ToolTipCollection("What style to render trigger volumes as. Halo Campaign Evolved renders through D3D12 with no depth buffer, so SOLID faces sort back-to-front against each other but are not hidden by walls."), "Render trigger volumes as: ", settings->triggerOverlayRenderStyle));
 
 				case GUIElementEnum::hceTriggerOverlayAlpha:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.1, 1.f)>>
@@ -4329,7 +4372,7 @@ private:
 
 				case GUIElementEnum::hceTriggerOverlayHighlightActive:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Colour trigger volumes that the mission scripts are ACTIVELY testing right now differently from dormant ones. Most volumes lie dormant until a script wakes them, so this shows what could actually fire."), RebindableHotkeyEnum::hceTriggerOverlayHighlightActiveHotkey, "Highlight Active Triggers", settings->hceTriggerOverlayHighlightActive));
+						(game, ToolTipCollection("Colour trigger volumes that mission scripts are actively testing right now differently from dormant ones, showing what could actually fire."), RebindableHotkeyEnum::hceTriggerOverlayHighlightActiveHotkey, "Highlight Active Triggers", settings->hceTriggerOverlayHighlightActive));
 
 				// Hit flash / hit list. These drive the SAME settings the MCC trigger overlay uses
 				// (triggerOverlayCheckHit*), because they model exactly the same thing - the script tested
@@ -4337,7 +4380,7 @@ private:
 				// requiredServicesPerGUIElement is keyed by element and the MCC ones map to the MCC cheat.
 				case GUIElementEnum::hceTriggerOverlayFlashOnHit:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Flash a trigger volume the instant a mission script tests it AND you are inside it. This is the moment you actually crossed the trigger, which is different from 'a script is watching this volume' - that state lasts for seconds either side, because scripts poll in bursts."), RebindableHotkeyEnum::hceTriggerOverlayFlashOnHitHotkey, "Flash Triggers on Hit", settings->triggerOverlayCheckHitToggle));
+						(game, ToolTipCollection("Flash a trigger volume the instant a mission script tests it and you are inside it, which is when you actually crossed the trigger, not just when a script is watching it."), RebindableHotkeyEnum::hceTriggerOverlayFlashOnHitHotkey, "Flash Triggers on Hit", settings->triggerOverlayCheckHitToggle));
 
 				case GUIElementEnum::hceTriggerOverlayHitColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPickerAlpha<true>>
@@ -4349,7 +4392,7 @@ private:
 
 				case GUIElementEnum::hceTriggerOverlayMessageOnHit:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Print the name of each trigger volume to the message feed as you hit it, building a running list of what you have actually triggered this run. Only volumes a script tested successfully are listed - not everything you merely walked through."), RebindableHotkeyEnum::hceTriggerOverlayMessageOnHitHotkey, "Print Triggers on Hit", settings->triggerOverlayMessageOnCheckHit));
+						(game, ToolTipCollection("Print each trigger volume's name to the message feed as you hit it, building a list of what you triggered this run. Only volumes a script tested successfully are listed."), RebindableHotkeyEnum::hceTriggerOverlayMessageOnHitHotkey, "Print Triggers on Hit", settings->triggerOverlayMessageOnCheckHit));
 
 				case GUIElementEnum::hceTriggerOverlayActiveColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -4368,7 +4411,7 @@ private:
 
 				case GUIElementEnum::hceTriggerOverlayShowRegular:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Ordinary trigger volumes - anything that is not a kill volume or a zone-set switch. Checkpoint-grant volumes are included here too (in their own colour), since a checkpoint trigger is just a regular trigger that also saves; turn on Checkpoint Grant Triggers by itself to see ONLY those. Includes sector volumes, whose footprint is a polygon rather than a box; that is a shape, not a different kind of trigger."), RebindableHotkeyEnum::hceTriggerOverlayShowRegularHotkey, "Regular Triggers", settings->hceTriggerOverlayShowRegular));
+						(game, ToolTipCollection("Ordinary trigger volumes, i.e. not kill volumes or zone-set switches. Includes checkpoint-grant volumes (own colour) and sector volumes. Turn on Checkpoint Grant Triggers alone to see only those."), RebindableHotkeyEnum::hceTriggerOverlayShowRegularHotkey, "Regular Triggers", settings->hceTriggerOverlayShowRegular));
 
 				case GUIElementEnum::hceTriggerOverlayShowKill:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -4376,11 +4419,11 @@ private:
 
 				case GUIElementEnum::hceTriggerOverlayShowBeginZoneSet:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("BEGIN zone-set volumes. Crossing one runs prepare_to_switch_to_zone_set, which is purely SUBTRACTIVE: it unloads the BSPs the incoming zone set does not want and loads nothing new. It also retires the designer zones that zone set forbids, which is what frees the object budget - it does not spawn anything.\n\nOne exception: if the target zone set shares NO currently-loaded BSP, the engine skips the prepare and performs a full switch instead."), RebindableHotkeyEnum::hceTriggerOverlayShowBeginZoneSetHotkey, "Begin Zoneset Triggers", settings->hceTriggerOverlayShowBeginZoneSet));
+						(game, ToolTipCollection("BEGIN zone-set volumes. Crossing one runs prepare_to_switch_to_zone_set, which only unloads BSPs and retires forbidden designer zones; it loads nothing. If no BSP is shared, a full switch occurs."), RebindableHotkeyEnum::hceTriggerOverlayShowBeginZoneSetHotkey, "Begin Zoneset Triggers", settings->hceTriggerOverlayShowBeginZoneSet));
 
 				case GUIElementEnum::hceTriggerOverlayShowCheckpointGrant:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Trigger volumes that GRANT A CHECKPOINT when you enter them. 373 of them across all 13 levels.\n\nUnlike every other category here this is not scenario data - whether a volume saves is decided by the level's HaloScript, so this is a curated list swept from the scripts. 285 grant unconditionally; the other 88 are gated on something, and for those the condition is printed on screen when you enter.\n\nOnly four are difficulty-gated in the whole game: two in a50 and one in d40 are LOWER-difficulty generosity saves that do not fire on Heroic or Legendary. No checkpoint anywhere is gated on co-op or player count."), RebindableHotkeyEnum::hceTriggerOverlayShowCheckpointGrantHotkey, "Checkpoint Grant Triggers", settings->hceTriggerOverlayShowCheckpointGrant));
+						(game, ToolTipCollection("Trigger volumes that grant a checkpoint when entered (373 across all 13 levels). A curated list from the scripts: 285 grant unconditionally; for the other 88 the condition prints when you enter."), RebindableHotkeyEnum::hceTriggerOverlayShowCheckpointGrantHotkey, "Checkpoint Grant Triggers", settings->hceTriggerOverlayShowCheckpointGrant));
 
 				case GUIElementEnum::hceTriggerOverlayCheckpointGrantColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -4388,25 +4431,25 @@ private:
 
 				case GUIElementEnum::hceTriggerOverlayShowZoneSet:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("COMMIT zone-set volumes. Crossing one runs switch_zone_set - this is the one that actually brings new BSP geometry in, and drops what the new zone set does not want. Read from the scenario's zone-set switch block, not guessed from names."), RebindableHotkeyEnum::hceTriggerOverlayShowZoneSetHotkey, "Zoneset Triggers", settings->hceTriggerOverlayShowZoneSet));
+						(game, ToolTipCollection("COMMIT zone-set volumes. Crossing one runs switch_zone_set, which brings in new BSP geometry and drops what the new zone set does not want. Read from the scenario's zone-set switch block."), RebindableHotkeyEnum::hceTriggerOverlayShowZoneSetHotkey, "Zoneset Triggers", settings->hceTriggerOverlayShowZoneSet));
 
 				// Halo Campaign Evolved name filter. Drives the SAME triggerOverlayFilterString / FilterToggle /
 				// FilterExactMatch settings as MCC's version, so presets carry across; only the picker differs.
 				case GUIElementEnum::hceTriggerOverlayNameFilterButton:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
-						(game, ToolTipCollection("Choose exactly which trigger volumes to draw, by name, from a checkbox list of the ones in this level. Has a search box, and All / None per category. Selecting names switches the filter on for you.\n\nYou must be in a level with the Trigger Overlay on, otherwise there are no volume names to show yet."), RebindableHotkeyEnum::hceTriggerOverlayEditNameFilterHotkey, "Filter by Name...##hce", settings->hceTriggerOverlayEditNameFilterEvent));
+						(game, ToolTipCollection("Choose which trigger volumes to draw by name from a checkbox list, with a search box and All / None per category. Needs a level loaded with the Trigger Overlay on. Selecting names turns the filter on."), RebindableHotkeyEnum::hceTriggerOverlayEditNameFilterHotkey, "Filter by Name...##hce", settings->hceTriggerOverlayEditNameFilterEvent));
 
 				case GUIElementEnum::hceTriggerOverlayNameFilterToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Apply the name filter chosen above. With this off, every volume the Types Shown toggles allow is drawn.\n\nAn EMPTY name list means 'draw everything', not 'draw nothing' - so turning this on before picking anything changes nothing."), RebindableHotkeyEnum::hceTriggerOverlayNameFilterToggleHotkey, "Filter by Name##hce", settings->triggerOverlayFilterToggle));
+						(game, ToolTipCollection("Apply the name filter chosen above. Off: every volume the Types Shown toggles allow is drawn. An empty name list means draw everything, so turning this on before picking anything changes nothing."), RebindableHotkeyEnum::hceTriggerOverlayNameFilterToggleHotkey, "Filter by Name##hce", settings->triggerOverlayFilterToggle));
 
 				case GUIElementEnum::hceTriggerOverlayNameFilterExactMatch:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("ON: a volume is drawn only if its name matches a chosen name exactly - which is what the checkbox picker produces.\n\nOFF: the entries are treated as case-insensitive SUBSTRINGS, so typing one word like 'kill' into the filter string draws every volume whose name contains it."), RebindableHotkeyEnum::hceTriggerOverlayNameFilterExactMatchHotkey, "Exact Name Match##hce", settings->triggerOverlayFilterExactMatch));
+						(game, ToolTipCollection("ON: a volume is drawn only if its name matches a chosen name exactly (what the picker produces). OFF: entries are case-insensitive substrings, so typing 'kill' draws every volume containing it."), RebindableHotkeyEnum::hceTriggerOverlayNameFilterExactMatchHotkey, "Exact Name Match##hce", settings->triggerOverlayFilterExactMatch));
 
 				case GUIElementEnum::hceTriggerOverlaySpeedrunOnly:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Draws ONLY the trigger volumes a speedrun has to hit, from the community completion-requirement lists. Everything else is hidden. Note this is a fixed name list, not something read from the level - if a game update renames a volume it will silently stop being shown, so do not treat it as proof that nothing else matters."), RebindableHotkeyEnum::hceTriggerOverlaySpeedrunOnlyHotkey, "Speedrun Triggers Only", settings->hceTriggerOverlaySpeedrunOnly));
+						(game, ToolTipCollection("Draws only the trigger volumes a speedrun must hit, from community completion-requirement lists. It is a fixed name list, so a game update renaming a volume silently drops it."), RebindableHotkeyEnum::hceTriggerOverlaySpeedrunOnlyHotkey, "Speedrun Triggers Only", settings->hceTriggerOverlaySpeedrunOnly));
 
 				case GUIElementEnum::hceTriggerOverlayBspColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -4414,11 +4457,11 @@ private:
 
 				case GUIElementEnum::hceTriggerOverlayBeginZoneSetColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
-						(game, ToolTipCollection("Colour of BEGIN zone-set volumes - the ones that only UNLOAD geometry and free the object budget ahead of a switch. Read from the scenario's zone-set switch block ('begin zone set', element +0x02), not guessed from names."), "Begin Zone-set Color", settings->hceTriggerOverlayBeginZoneSetColor));
+						(game, ToolTipCollection("Colour of BEGIN zone-set volumes, which only unload geometry and free the object budget ahead of a switch."), "Begin Zone-set Color", settings->hceTriggerOverlayBeginZoneSetColor));
 
 				case GUIElementEnum::hceTriggerOverlayZoneSetReport:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("When you enter a zone-set volume, print what it does to the message feed: the target zone set's name, and which structure BSPs it loads and unloads.\n\nThis is HCM's own containment test against the volume's geometry, not an engine event - the engine's zone-set evaluator is deliberately not hooked - so it can fire a fraction before or after the engine acts."), RebindableHotkeyEnum::hceTriggerOverlayZoneSetReportHotkey, "Print Zoneset Loads on Entry", settings->hceTriggerOverlayZoneSetReport));
+						(game, ToolTipCollection("On entering a zone-set volume, prints the target zone set's name and which BSPs it loads and unloads. HCM's own containment test, not an engine event, so it can fire slightly before or after it."), RebindableHotkeyEnum::hceTriggerOverlayZoneSetReportHotkey, "Print Zoneset Loads on Entry", settings->hceTriggerOverlayZoneSetReport));
 
 				case GUIElementEnum::hceTriggerOverlayKillColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -4426,7 +4469,7 @@ private:
 
 				case GUIElementEnum::hceTriggerOverlaySafeZoneColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
-						(game, ToolTipCollection("Colour of SAFE ZONES, which mean the OPPOSITE of a kill volume: the game kills you when you are inside NONE of them. Shown under the same Kill Triggers toggle, but deliberately a different colour so the two are never confused."), "Safe Zone Color", settings->hceTriggerOverlaySafeZoneColor));
+						(game, ToolTipCollection("Colour of safe zones, the opposite of a kill volume: the game kills you when you are inside none of them. Shown under the Kill Triggers toggle, in a different colour."), "Safe Zone Color", settings->hceTriggerOverlaySafeZoneColor));
 
 				case GUIElementEnum::hceTriggerOverlayLabelColour:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIColourPicker<true>>
@@ -4449,7 +4492,7 @@ private:
 					// capped big levels: on The Maw the speedrun volumes are far enough away that they matched
 					// the filter but were culled before drawing, which looks exactly like "this level has none".
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 2000.f)>>
-						(game, ToolTipCollection("How far away a trigger volume is still drawn, in WORLD UNITS (1 world unit = 10 feet, so 2000 is the whole map). Drawing the entire level at once is usually unreadable - but turn it up if a filter looks empty, because a volume that is filtered IN can still be culled OUT by distance."), "Render Distance (world units)", settings->hceTriggerOverlayRenderDistance));
+						(game, ToolTipCollection("How far away a trigger volume is still drawn, in world units (1 world unit = 10 feet; 2000 is the whole map). Turn it up if a filter looks empty, as distance can cull a filtered-in volume."), "Render Distance (world units)", settings->hceTriggerOverlayRenderDistance));
 
 				case GUIElementEnum::hceTriggerOverlayShowLabels:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>

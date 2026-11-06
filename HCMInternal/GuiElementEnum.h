@@ -87,6 +87,7 @@
 //   The trigger overlay does NOT qualify: OptionalCheatEnum::TriggerOverlay is MCC-only code, so HaloCER gets
 //   parallel hceTriggerOverlay* elements in sequence 3 driving the SAME triggerOverlay* settings.
 #define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES1 \
+((mapLauncherGUI, (NoGame)))\
 ((presetsHeadingGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((presetSaveButton, (ALL_GAMES_AND_MAINMENU)))\
 	((presetLoadButton, (ALL_GAMES_AND_MAINMENU)))\
@@ -106,6 +107,7 @@
 		((advanceTicksGUI, (ALL_SUPPORTED_GAMES)))\
 		((pauseAlsoFreesCursorGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 		((pauseAlsoBlocksInputGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+		((pauseAlsoFreezesEffectsGUI, (Halo3, Halo3ODST)))\
 	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
 	/* HaloCER: the bypass works there now - OBS picks d3d11/d3d10/d3d12_capture behind ONE shared Present hook,
 	   so D3D12Hook::setOBSBypass does the same job against Present and Present1. The backend was wired before
@@ -191,6 +193,7 @@
 		((h5TriggerOverlayRenderDistance, (HALO5_ONLY)))\
 	((forceRevertGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER_AND_H2MP)))\
 	((forceDoubleRevertGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER, Halo2MP)))\
+	((mpRevertRepairGUI, (Halo2, Halo3)))\
 	((forceCoreSaveGUI, (Halo1)))\
 	((forceCoreLoadGUI, (Halo1)))\
 	((injectCheckpointGUI, (ALL_SUPPORTED_GAMES)))\
@@ -855,27 +858,32 @@
 			((collisionViewerGhostLoggingHeadingGUI, (Halo2, Halo3, Halo3ODST)))\
 			((collisionViewerGhostColorsHeadingGUI, (Halo2, Halo3, Halo3ODST)))\
 			((collisionViewerKillVolumesGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbounceGUI, (Halo2)))\
-			((collisionViewerSuperbounceSeamTextGUI, (Halo2)))\
-			((collisionViewerSuperbounceSpeedGUI, (Halo2)))\
-			((collisionViewerSuperbounceDebounceGUI, (Halo2)))\
-			((collisionViewerSuperbounceSpotsGUI, (Halo2)))\
-			((collisionViewerSuperbouncePredictedGUI, (Halo2)))\
-			((collisionViewerSuperbouncePredictedRangeGUI, (Halo2)))\
-			((collisionViewerSuperbouncePredictedMonstersGUI, (Halo2)))\
-			((collisionViewerSuperbouncePredictedDreadnoughtsGUI, (Halo2)))\
-			((collisionViewerSuperbouncePredictedHeightsGUI, (Halo2)))\
-			((collisionViewerSuperbouncePredictedHideNarrowGUI, (Halo2)))\
-			((collisionViewerSpotScanRadiusGUI, (Halo2)))\
-			((collisionViewerSpotScanSlowGUI, (Halo2)))\
-			((collisionViewerSpotScanCurrentTickGUI, (Halo2)))\
-			((collisionViewerSpotScanButtonGUI, (Halo2)))\
+			((collisionViewerSuperbounceGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceSeamTextGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceSpeedGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceDebounceGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceObjectsGUI, (Halo2, Halo3, Halo3ODST)))\
+			((collisionViewerSuperbounceSeamsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceSpotsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbouncePredictedGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbouncePredictedRangeGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbouncePredictedMaxApproachGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbouncePredictedMonstersGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbouncePredictedDreadnoughtsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbouncePredictedHeightsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbouncePredictedHideNarrowGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSpotScanRadiusGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSpotScanSlowGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSpotScanCurrentTickGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSpotScanButtonGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerRecipeButtonGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerRecipeRedoButtonGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
 			((collisionViewerSuperbounceRecordGUI, (Halo2)))\
-			((collisionViewerSuperbounceHighlightGUI, (Halo2)))\
-			((collisionViewerSuperbounceKeepChargeGUI, (Halo2)))\
-			((collisionViewerSuperbounceForceChargeGUI, (Halo2)))\
-			((collisionViewerSuperbounceSettingsGUI, (Halo2)))\
-			((collisionViewerInfoSuperbounceGUI, (Halo2)))\
+			((collisionViewerSuperbounceHighlightGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceKeepChargeGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceForceChargeGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceSettingsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerInfoSuperbounceGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
 			((oobBarSettingsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
 			((oobBarAnchorCornerGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
 			((oobBarScreenOffsetGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\

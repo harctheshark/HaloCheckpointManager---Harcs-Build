@@ -1,6 +1,7 @@
 #pragma once
 #include "IOptionalCheat.h"
 #include "GameState.h"
+#include "H2CheckpointGametype.h"
 #include "DIContainer.h"
 #include "MultilevelPointer.h"
 #include "InjectRequirements.h"
@@ -71,6 +72,11 @@ private:
 			std::string checkpointName = std::format(
 				"Checkpoint_{:04}{:02}{:02}_{:02}{:02}{:02}",
 				t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+			// Halo 2 multiplayer: the gametype in the name (a checkpoint only loads into a session of the same gametype type)
+			if (mImplGame.operator GameState::Value() == GameState::Value::Halo2)
+			{
+				if (const std::string gt = H2Gametype::sessionGametypeForName(); !gt.empty()) checkpointName += "_" + gt;
+			}
 
 			// ask the user what they want to call it, if they want that. Otherwise we use the default checkpoint name
 			if (settings->autonameCheckpoints->GetValue() == false)

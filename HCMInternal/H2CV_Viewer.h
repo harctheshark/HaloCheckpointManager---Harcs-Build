@@ -68,7 +68,8 @@ namespace h2cv
 		// superbounce viewer (Halo 2): where you will land and what that launches; sbSeamText off = only the colours and the
 		// launch arrows' speed / height; sbRecord = superbounce_log.csv; sbHighlight = possible monster bounces (WIP);
 		// sbKeepCharge = a crouch charge survives reverts
-		std::atomic_bool superbounce{ false }, sbSeamText{ true }, sbSpeed{ true }, sbDebounce{ true }, sbSpots{ true }, sbPredicted{ true }, sbRecord{ false }, sbHighlight{ false }, sbKeepCharge{ false };
+		std::atomic_bool sbObjects{ true };   // the superbounce viewer includes objects (scenery / crates / machines)
+		std::atomic_bool superbounce{ false }, sbSeamText{ true }, sbSpeed{ true }, sbDebounce{ true }, sbSeams{ true }, sbSpots{ true }, sbPredicted{ true }, sbRecord{ false }, sbHighlight{ false }, sbKeepCharge{ false };
 		std::atomic_bool sbForceCharge{ false };       // Force Charged state: the pair with the level held at -3
 		std::atomic_bool infoSuperbounce{ true };       // its Info panel section
 		std::atomic_bool collision{ true };              // the Collision Viewer itself (off: only the info panel / bars run)
@@ -90,6 +91,7 @@ namespace h2cv
 		std::atomic_bool weldZonesWelded{ false };
 		std::atomic<float> weldZoneRange{ 1.0f };
 		std::atomic<float> sbPredictedRange{ 60.f };   // predicted spots are drawn within this distance (wu)
+		std::atomic<float> sbPredictedMaxApproach{ 100.f };   // ... whose approach needs at most this landing speed (u/s; 100 = any)
 		std::atomic_bool sbPredictedMonsters{ true }, sbPredictedDreadnoughts{ true };   // which predicted kinds are drawn
 		std::atomic_bool sbPredictedHeights{ false }, sbScanSlow{ false }, sbScanCurrentTick{ false };   // start heights; spot scan options
 		std::atomic_bool sbPredictedHideNarrow{ false };   // hide predicted monsters with a window under 1%
@@ -164,8 +166,13 @@ namespace h2cv
 		void drawKillVolumes();
 		void drawDeath3();      // Halo 3: same death bar (out-of-bounds count + kill volume turns)
 		void drawBars(ImDrawList* dl);
-		void drawSuperbounce();      // Halo 2: superbounce viewer (H2CV_Superbounce.cpp)
-		bool superbounceActive() const { return !isH3() && (settings.superbounce || settings.sbKeepCharge || settings.sbForceCharge); }
+		void drawSuperbounce();      // superbounce viewer (H2CV_Superbounce.cpp): Halo 2, Halo 3 / ODST, Halo: Reach
+		// the superbounce viewer's labels (projected by drawSuperbounce) and its HUD (CHARGED, speed, last bounce, streak, record):
+		// drawn into the background list at Present - shared by the Halo 2 / 3 path (onRender) and Halo: Reach (renderReach)
+		void drawSuperbounceOverlay(ImDrawList* dl, bool gameOk);
+		void drawReachBouncePanel();   // Halo: Reach: the superbounce Info-panel section (loading state, charge, last launch ...)
+		// Halo 3 / ODST: the viewer itself (h3sb.dll's Halo 2 body); the charge options write halo2.dll memory - Halo 2 only
+		bool superbounceActive() const { return settings.superbounce || settings.sbKeepCharge || settings.sbForceCharge; }   // Halo 3 / ODST too: h3sb_arm (2026-11-02)
 		sb::Output mSb;              // its last frame: lines, labels, the Info panel section, the HUD's charge state
 		struct SbLabel { float x, y; uint32_t col; std::string text; };
 		std::vector<SbLabel> mSbLabels;   // its labels, projected (drawn at Present)
@@ -190,7 +197,7 @@ namespace h2cv
 		void pumpGhost3();                     // move new per-tick samples (sim thread queue, else a live sample) into the analysis state
 		struct Frame3 { bool have = false; h2::GameFrame f; D3D11_VIEWPORT vp{}; uint32_t presentIdx = 0; uint32_t user = 0; };
 		Frame3 mF3;
-		bool mLogged3 = false; uint32_t mBad3 = 0; std::string mNote3;
+		bool mLogged3 = false, mLoggedVp3 = false; uint32_t mBad3 = 0; std::string mNote3;
 		// Halo 3 / ODST "after bloom": the game's main depth surface (3) as bound at the first-person pass, held so it can be
 		// copied at Present, when it holds the world AND the first-person gun (Poorboy's 1.4.0 finding, PoorboyWorldLines):
 		// the lines are drawn over the finished frame (no bloom on them) and still hidden by walls and the gun.

@@ -83,7 +83,9 @@ private:
 	ScopedCallback<ToggleEvent> mKeepChargeCallback, mForceChargeCallback;  // and its charge options (they run without it)
 	ScopedCallback<ActionEvent> mOffsetSaveCallback, mOffsetLoadCallback;   // Halo 2 offset save state
 	ScopedCallback<ActionEvent> mInjectCallback;                            // superbounce: an injected checkpoint's charge is unknown
-	ScopedCallback<ActionEvent> mSpotScanCallback;                          // superbounce: "scan around me"
+	ScopedCallback<ActionEvent> mSpotScanCallback;
+	ScopedCallback<ActionEvent> mRecipeCallback;
+	ScopedCallback<ActionEvent> mRecipeRedoCallback;                        // superbounce: "redo approaches here"                            // superbounce: "work out approaches"                          // superbounce: "scan around me"
 	std::unique_ptr<ScopedCallback<DirectXRenderEvent>> mRenderCallback;
 	std::unique_ptr<ModuleInlineHook> mFpHook, mResolveHook;
 	std::shared_ptr<MultilevelPointer> mFp3Ptr;     // Halo 3 / ODST first-person pass (InternalPointerData.xml collisionViewerFirstPersonPass)
@@ -105,6 +107,7 @@ private:
 	const h2cv::Game mCvGame;
 	std::atomic_bool mEnabled{ false };        // render / tick callbacks running: Collision Viewer OR info panel OR out-of-bounds bar
 	std::atomic_bool mCollisionOn{ false };    // the Collision Viewer itself (gates the in-frame engine-pass drawing)
+	std::atomic_bool mBounceOn{ false };       // the superbounce viewer / its charge options (Halo 3 / ODST: need the frame's camera too)
 
 	static int slotOf(GameState g)
 	{
@@ -141,7 +144,9 @@ private:
 	static int64_t __fastcall fp3Detour(int64_t a1, char a2)
 	{
 		Impl* self = sSlot[Slot].load();
-		if (self && self->mEnabled.load() && self->mCollisionOn.load())
+		// the superbounce viewer needs this frame's camera too (2026-11-02: with the Collision Viewer off it fell back to the observer
+		// camera's fov - every bounce line squeezed toward the crosshair on a 21:9 screen)
+		if (self && self->mEnabled.load() && (self->mCollisionOn.load() || self->mBounceOn.load()))
 		{
 			Fp3Args args{ self, (uintptr_t)a1, a2 == 0 };
 			guardedCall([](void* p) { auto* a = static_cast<Fp3Args*>(p); a->self->onFirstPersonPass3(a->view, a->opaque); }, &args, "first-person pass hook");
@@ -228,9 +233,12 @@ private:
 		v.sbSeamText = s.collisionViewerSuperbounceSeamText->GetValue();
 		v.sbSpeed = s.collisionViewerSuperbounceSpeed->GetValue();
 		v.sbDebounce = s.collisionViewerSuperbounceDebounce->GetValue();
+		v.sbObjects = s.collisionViewerSuperbounceObjects->GetValue();
+		v.sbSeams = s.collisionViewerSuperbounceSeams->GetValue();
 		v.sbSpots = s.collisionViewerSuperbounceSpots->GetValue();
 		v.sbPredicted = s.collisionViewerSuperbouncePredicted->GetValue();
 		v.sbPredictedRange = s.collisionViewerSuperbouncePredictedRange->GetValue();
+		v.sbPredictedMaxApproach = s.collisionViewerSuperbouncePredictedMaxApproach->GetValue();
 		v.sbPredictedMonsters = s.collisionViewerSuperbouncePredictedMonsters->GetValue();
 		v.sbPredictedDreadnoughts = s.collisionViewerSuperbouncePredictedDreadnoughts->GetValue();
 		v.sbPredictedHeights = s.collisionViewerSuperbouncePredictedHeights->GetValue();
@@ -302,13 +310,11 @@ private:
 		syncSettings(*settings);
 		if (mIsReach)
 		{
-			// Reach: the collision drawing (ViewerReach.cpp) while the Collision Viewer is on, then the out-of-bounds bars and
-			// the panel's out-of-bounds line (also without it)
-			if (mCollisionOn)
-			{
-				updateReachObjects(*settings);
-				mViewer.onRender(dev, ctx, rtv, (uint32_t)screen.x, (uint32_t)screen.y);
-			}
+			// Reach: the collision drawing (ViewerReach.cpp) while the Collision Viewer is on, the superbounce viewer (drawn from the
+			// same function, independent of the Collision Viewer's scene) while it or its charge options are on, then the
+			// out-of-bounds bars and the panel's out-of-bounds line (also without them)
+			if (mCollisionOn) updateReachObjects(*settings);
+			if (mCollisionOn || mBounceOn) mViewer.onRender(dev, ctx, rtv, (uint32_t)screen.x, (uint32_t)screen.y);
 			mViewer.onRenderReach();
 			return;
 		}
@@ -456,10 +462,12 @@ private:
 		const bool cv = which == 0 ? v : s->collisionViewerToggle->GetValue();
 		const bool info = which == 1 ? v : s->collisionViewerInfoPanel->GetValue();
 		const bool bar = which == 2 ? v : s->collisionViewerKillVolumes->GetValue();
-		const bool bounce = !mIsReach && !mIsH3 && ((which == 4 ? v : s->collisionViewerSuperbounce->GetValue())   // Halo 2 only:
-			|| (which == 5 ? v : s->collisionViewerSuperbounceKeepCharge->GetValue())                               // the viewer, or
-			|| (which == 6 ? v : s->collisionViewerSuperbounceForceCharge->GetValue()));                             // its charge options
+		// Halo 2, Halo 3 / ODST / Reach (h3sb.dll's Halo 2 body, 2026-11-02; Reach 2026-11-04): the viewer or its charge options
+		const bool bounce = ((which == 4 ? v : s->collisionViewerSuperbounce->GetValue())
+			|| (which == 5 ? v : s->collisionViewerSuperbounceKeepCharge->GetValue())
+			|| (which == 6 ? v : s->collisionViewerSuperbounceForceCharge->GetValue()));
 		const bool wasCollision = mCollisionOn.exchange(cv);
+		mBounceOn = bounce;
 		bool active = cv || info || bar || bounce;
 		if (active != mEnabled.load()) onToggle(active);
 		else if (mIsReach && active && wasCollision && !cv)
@@ -525,7 +533,11 @@ public:
 		mInjectCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->injectCheckpointEvent,
 			[this]() { if (!mIsH3 && !mIsReach) h2cv::sb::forgetCheckpointCharges(); }),
 		mSpotScanCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerSpotScanEvent,
-			[this]() { if (!mIsH3 && !mIsReach) h2cv::sb::requestSpotScan(); })
+			[this]() { h2cv::sb::requestSpotScan(); }),   // Halo 2, Halo 3, ODST, Reach
+		mRecipeCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerRecipeEvent,
+			[this]() { h2cv::sb::requestRecipes(); }),
+		mRecipeRedoCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerRecipeRedoEvent,
+			[this]() { h2cv::sb::requestRecipes(true); })
 	{
 		// offset save state: the viewer triggers HCM's own force checkpoint / force revert (unchanged) and reports here
 		mViewer.fireCheckpoint = [w = settingsWeak]() { if (auto s = w.lock()) s->forceCheckpointEvent->operator()(); };
@@ -559,10 +571,12 @@ public:
 		}
 		sSlot[mSlot] = this;
 		if (auto s = settingsWeak.lock(); s && (s->collisionViewerToggle->GetValue() || s->collisionViewerInfoPanel->GetValue() || s->collisionViewerKillVolumes->GetValue()
-			|| (!mIsReach && !mIsH3 && (s->collisionViewerSuperbounce->GetValue() || s->collisionViewerSuperbounceKeepCharge->GetValue()
-				|| s->collisionViewerSuperbounceForceCharge->GetValue()))))
+			|| s->collisionViewerSuperbounce->GetValue() || s->collisionViewerSuperbounceKeepCharge->GetValue()
+			|| s->collisionViewerSuperbounceForceCharge->GetValue()))
 		{
 			mCollisionOn = s->collisionViewerToggle->GetValue();
+			mBounceOn = s->collisionViewerSuperbounce->GetValue() || s->collisionViewerSuperbounceKeepCharge->GetValue()
+				|| s->collisionViewerSuperbounceForceCharge->GetValue();
 			bool on = true;
 			onToggle(on);
 		}

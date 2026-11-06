@@ -31,6 +31,11 @@ namespace h2cv::sbscan
 	void start(uint64_t mapKey, std::vector<Surface>&& surfaces, float nearX, float nearY, int tick = 30);
 	// re-read the prediction file (after a manual scan merged new spots into it)
 	void reload();
+	// Halo 3 / ODST (2026-11-02): a second, per-map prediction file read with the key file - the offline whole-map scan of the
+	// map's BSPs (superbounce_predicted_gen3_<map>[_t<tick>].csv; world coordinates, so it holds whichever BSPs are loaded).
+	// "" = none (Halo 2). Set before start().
+	// prefix: "gen3" (Halo 3 / ODST, the default) or "reach" - the file is superbounce_predicted_<prefix>_<map>[_t<tick>].csv
+	void setMapFile(const std::string& mapName, const char* prefix = "gen3");
 	// the monster / dreadnought lines (u/s) at a tick rate: 20 / 35 at 30 tick, 35 / 60 at 60 tick (user, 2026-11-01: 60-tick
 	// normal bounces ~24, monsters 35+; the 60-tick dreadnought line is provisional), linear between, clamped outside
 	inline float lineMonster(int tps) { const float t = tps < 30 ? 30.f : (tps > 60 ? 60.f : (float)tps); return 20.f + (t - 30.f) * 0.5f; }
@@ -42,6 +47,9 @@ namespace h2cv::sbscan
 	void cancel();
 	// the predicted spots found so far (clustered), and the progress (0..1; 1 = done or loaded)
 	void spots(std::vector<Spot>& out);
+	// only the spots within r wu (horizontally) of x, y; total = how many the map has (a whole ODST map's file holds ~175k -
+	// copying them all every tick cost ~20 MB a tick, 2026-11-02)
+	void spots(std::vector<Spot>& out, float x, float y, float r, size_t& total);
 	float progress();
 	uint64_t mapKey();
 	// one landing with the scan's exact rules on the level last handed to start(): the pill's feet at the start of the landing
@@ -49,6 +57,20 @@ namespace h2cv::sbscan
 	// before was not clear (it would have landed earlier) or only two-sided / invisible surfaces are touched. launch = the
 	// solved velocity (any direction). Thread-safe (the level is read-only once built); costs ~10-30 us.
 	bool landingLaunch(float fx, float fy, float fz, float vx, float vy, float vz, float launch[3]);
-	// where the player is (recipes are worked out for the spots within 30 wu, nearest first)
+	// the current job's serial if it is ready (0: none / not ready): a caller on another thread reads it before and after a run
+	// of landingLaunch calls and drops the results if it changed (start() swapped the job / its tick rate meanwhile)
+	uint64_t readySerial();
+	// where the player is
 	void setPlayer(float x, float y, float z);
+	// recipes (each spot's best approach + launch direction) are worked out ONLY on request (2026-11-03): every spot within r
+	// (x / y) and 30 wu (z) of x, y, z, nearest first, in the background; saved to the map's .recipes.csv as they finish
+	void requestRecipes(float x, float y, float z, float r);
+	void cancelRecipes();
+	bool recipeStatus(int& done, int& total);   // true while a request runs; done / total of it
+	// the GPU path (2026-11-03): the spots of such a request that still lack a recipe (nearest first), and the merge of the GPU tool's
+	// rows (h2sbrecipe_gpu, the same sweep - verified identical to this file's recipe on headlong) into them + the map's recipe cache
+	// all = every spot in range (the "Redo approaches here" button), not only those without a recipe
+	std::vector<Spot> recipeTargets(float x, float y, float z, float r, bool all = false);
+	// overwrite = replace the recipes the spots already have (each row once per run: a replaced spot is not replaced again)
+	int mergeRecipes(const std::string& path, bool overwrite = false, int run = 0);   // run: the redo run (a new run replaces again)
 }

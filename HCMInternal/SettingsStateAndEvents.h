@@ -459,6 +459,15 @@ public:
 			nameof(pauseAlsoFreesCursor)
 		);
 
+	// Halo 3 / ODST (2026-11-05): HCM's pause also holds the game speed at 0, so particles, contrails and decorator wind freeze
+	// as under MCC's own pause; off: they keep animating while the simulation is paused
+	std::shared_ptr<BinarySetting<bool>> pauseAlsoFreezesEffects = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(pauseAlsoFreezesEffects)
+		);
+
 	std::shared_ptr<BinarySetting<int>> advanceTicksCount = std::make_shared<BinarySetting<int>>
 		(
 			1,
@@ -599,6 +608,14 @@ public:
 			false,
 			[](bool in) { return true; },
 			nameof(autonameCoresaves)
+		);
+
+	// Halo 3 + Halo 2 MP (2026-11-05): after a revert, repair the network simulation's entity links (MPRevertRepair.cpp)
+	std::shared_ptr<BinarySetting<bool>> mpRevertRepairToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(mpRevertRepairToggle)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> forceFutureCheckpointToggle = std::make_shared<BinarySetting<bool>>
@@ -1245,6 +1262,22 @@ public:
 			[](bool in) { return true; },
 			nameof(collisionViewerSuperbounceDebounce)
 		);
+	// the superbounce viewer: include objects (scenery / crates / machines) - off = none of their collision is read or used
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceObjects = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceObjects)
+		);
+
+	// the bounce viewer's own drawing: seams below you, the landing path and circle, live contacts, gaps / fins, the debounce
+	// finder (2026-11-05). Off: only the spots (remembered / predicted) and the charge HUD - to hunt monster bounces alone
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceSeams = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceSeams)
+		);
 
 	// show the remembered monster / dreadnought spots (recorded either way)
 	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceSpots = std::make_shared<BinarySetting<bool>>
@@ -1280,6 +1313,13 @@ public:
 			true,
 			[](bool in) { return true; },
 			nameof(collisionViewerSuperbouncePredictedDreadnoughts)
+		);
+	// predicted spots: hide monsters / dreadnoughts whose approach needs more than this landing speed (u/s); 100 = no limit
+	std::shared_ptr<BinarySetting<float>> collisionViewerSuperbouncePredictedMaxApproach = std::make_shared<BinarySetting<float>>
+		(
+			100.f,
+			[](float in) { return in >= 5.f && in <= 100.f; },
+			nameof(collisionViewerSuperbouncePredictedMaxApproach)
 		);
 	// predicted spots: show the working start-height band of the approach
 	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbouncePredictedHeights = std::make_shared<BinarySetting<bool>>
@@ -1317,6 +1357,8 @@ public:
 			nameof(collisionViewerSpotScanCurrentTick)
 		);
 	std::shared_ptr<ActionEvent> collisionViewerSpotScanEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> collisionViewerRecipeEvent = std::make_shared<ActionEvent>();   // "Work out approaches" (2026-11-03)
+	std::shared_ptr<ActionEvent> collisionViewerRecipeRedoEvent = std::make_shared<ActionEvent>();   // "Redo approaches here" (2026-11-03)
 	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceRecord = std::make_shared<BinarySetting<bool>>
 		(
 			false,
@@ -4831,9 +4873,12 @@ public:
 		collisionViewerSuperbounceSeamText,
 		collisionViewerSuperbounceSpeed,
 		collisionViewerSuperbounceDebounce,
+		collisionViewerSuperbounceObjects,
+		collisionViewerSuperbounceSeams,
 		collisionViewerSuperbounceSpots,
 		collisionViewerSuperbouncePredicted,
 		collisionViewerSuperbouncePredictedRange,
+		collisionViewerSuperbouncePredictedMaxApproach,
 		collisionViewerSuperbouncePredictedMonsters,
 		collisionViewerSuperbouncePredictedDreadnoughts,
 		collisionViewerSuperbouncePredictedHeights,
@@ -4983,6 +5028,8 @@ public:
 		GUIShowingPausesGame, 
 		pauseAlsoBlocksInput,
 		pauseAlsoFreesCursor,
+		pauseAlsoFreezesEffects,
+		mpRevertRepairToggle,
 		getObjectAddressDWORD,
 				getTagAddressDWORD,
 		forceTeleportApplyToPlayer,

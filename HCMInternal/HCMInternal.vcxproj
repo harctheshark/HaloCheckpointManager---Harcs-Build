@@ -399,6 +399,8 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="MCCSwitchZoneSet.h" />
     <ClInclude Include="HavokBroadphaseBypass.h" />
     <ClInclude Include="GUIMCCSwitchZoneSet.h" />
+    <ClInclude Include="GUIMapLauncher.h" />
+    <ClInclude Include="MapLauncher.h" />
     <ClInclude Include="TagBlock.h" />
     <ClInclude Include="TagBlockReader.h" />
     <ClInclude Include="TagInfo.h" />
@@ -438,6 +440,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="UncapRenderSections.h" />
     <ClInclude Include="CollisionViewer.h" />
     <ClInclude Include="LaunchTrajectory.h" />
+    <ClInclude Include="MPRevertRepair.h" />
     <ClInclude Include="ReachCollision.h" />
     <ClInclude Include="ChaseCamera.h" />
     <ClInclude Include="Halo2Physics.h" />
@@ -837,6 +840,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="PlacementPointsOverlay.cpp" />
     <ClCompile Include="MCCZoneSets.cpp" />
     <ClCompile Include="MCCSwitchZoneSet.cpp" />
+    <ClCompile Include="MapLauncher.cpp" />
     <ClCompile Include="HavokBroadphaseBypass.cpp" />
     <ClCompile Include="TagBlockReader.cpp" />
     <ClCompile Include="TagReferenceReader.cpp" />
@@ -868,6 +872,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="UncapRenderSections.cpp" />
     <ClCompile Include="CollisionViewer.cpp" />
     <ClCompile Include="LaunchTrajectory.cpp" />
+    <ClCompile Include="MPRevertRepair.cpp" />
     <ClCompile Include="ReachCollision.cpp" />
     <ClCompile Include="ChaseCamera.cpp" />
     <ClCompile Include="Halo2Physics.cpp" />

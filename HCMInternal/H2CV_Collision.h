@@ -110,6 +110,11 @@ namespace h2cv
 		}
 		const std::vector<Tri>& staticOccluders() const { return mStaticTris; }   // world + IG, non-invisible
 		const std::vector<Tri>& objectOccluders() const { return mObjectTris; }   // scenery/crates/machines
+		// the object each run of objectOccluders() belongs to (Halo 2; Halo 3 / ODST gather no object triangles)
+		// baked: scenery baked into the level's Havok shape (h2::bakedSceneryDatums) - the player collides with it as part of the
+		// level pair (shares the level's charge). Unbaked scenery has no player collision; crates / machines are separate bodies.
+		struct ObjSpan { uint32_t datum = 0; uint8_t type = 0; uint16_t def = 0xFFFF; Vec3 pos{}; uint32_t first = 0, count = 0; bool baked = false; };
+		const std::vector<ObjSpan>& objectSpans() const { return mObjSpans; }
 		const std::vector<Tri>& barrierFills() const { return mBarrierTris; }     // invisible (*) surfaces, world + IG
 		const std::vector<Tri>& killTriggerFills() const { return mKillTris; }    // scenario kill-trigger volume faces
 
@@ -186,6 +191,7 @@ namespace h2cv
 
 		std::vector<Line> mLines[kCatCount];
 		LineGrid mGrid[kCatCount];
+		std::vector<ObjSpan> mObjSpans;
 		std::vector<Tri> mStaticTris, mObjectTris, mBarrierTris, mKillTris;
 		void buildKillTriggers();
 

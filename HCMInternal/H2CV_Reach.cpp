@@ -1,10 +1,13 @@
 #include "pch.h"
 #include "H2CV_Reach.h"
 #include "H2CV_Mem.h"
+#include "H2CV_ReachOob.h"
 #include <windows.h>
 #include <cmath>
 #include <cctype>
 #include <cstring>
+#include <algorithm>
+#include <unordered_map>
 #include <vector>
 
 namespace reach
@@ -395,5 +398,308 @@ namespace reach
 		}
 		out.start.push_back((uint32_t)out.v.size());
 		return !out.lineV.empty();
+	}
+
+	uint32_t gameTick() { return hr::gameTick(); }
+
+	// ================================================================================================================
+	// Bounce viewer geometry (2026-11-04, REACH_BOUNCE_VIEWER_DESIGN.md D2): the loaded structure bsps in the Halo 3 shape
+	// (CollisionWorld::Bsp3) so the superbounce module's gen3 path takes them unchanged.
+	// ================================================================================================================
+	namespace
+	{
+		using h2cv::CollBsp;
+		using h2cv::CollisionWorld;
+		using h2cv::IgInstance;
+		constexpr uint8_t kFlagInvalid = 0x10;
+
+		// A Reach collision_bsp (header 0x6C = Halo 3's 0x60 with one extra 12-byte block at index 1, so every block with Halo 3
+		// index >= 1 sits 12 bytes later: planes +0x18, surfaces +0x48, edges +0x54, vertices +0x60) -> a CollBsp.
+		// Element layouts are Halo 3's (CollBsp::parse3): small surface 12 B {u16 plane (bit 15 flip), u16 first edge, i16 material,
+		// u16 breakBit, u16 breakGroup, u8 flags @+10}, edge 12 B {u16 v0 v1 fwd rev left right}, vertex 16 B; large surface 16 B
+		// {u32 plane (bit 31 flip), u32 first edge, i16 material @+8, ..., u8 flags @+14}, edge 24 B {u32 x6}, vertex 20 B; plane
+		// 16 B {i, j, k, d}. Block addresses are Reach-encoded (tagAddr). "No surface" (small 0xFFFF / large 0xFFFFFFFF) becomes
+		// CollBsp::kNone in the edges' fwd / rev / left / right.
+		bool parseCollBsp(uintptr_t b, uintptr_t at, bool large, CollBsp& out)
+		{
+			out = CollBsp{};
+			uint8_t raw[0x6C];
+			if (!mem::copy(raw, at, sizeof(raw))) return false;
+			auto blk = [&](int h3Index) { const size_t o = h3Index == 0 ? 0 : 12 + (size_t)h3Index * 12; Block k; memcpy(&k.count, raw + o, 4); memcpy(&k.addr, raw + o + 4, 4); return k; };
+			const Block pl = blk(1), sf = blk(5), ed = blk(6), vt = blk(7);
+			if (!pl.count || !sf.count || !ed.count || !vt.count || pl.count > 3000000 || sf.count > 3000000 || ed.count > 6000000 || vt.count > 3000000) return false;
+			const size_t sStride = large ? 16 : 12, eStride = large ? 24 : 12, vStride = large ? 20 : 16;
+			std::vector<uint8_t> rs((size_t)sf.count * sStride), re((size_t)ed.count * eStride), rv((size_t)vt.count * vStride);
+			out.planes.resize((size_t)pl.count * 4);
+			if (!mem::copy(out.planes.data(), tagAddr(b, pl.addr), (size_t)pl.count * 16) || !mem::copy(rs.data(), tagAddr(b, sf.addr), rs.size())
+				|| !mem::copy(re.data(), tagAddr(b, ed.addr), re.size()) || !mem::copy(rv.data(), tagAddr(b, vt.addr), rv.size()))
+			{
+				out = CollBsp{};
+				return false;
+			}
+			out.surfaces.resize(sf.count); out.edges.resize(ed.count); out.verts.resize(vt.count);
+			for (uint32_t i = 0; i < sf.count; ++i)
+			{
+				const uint8_t* r = &rs[(size_t)i * sStride];
+				CollBsp::Surface& s = out.surfaces[i];
+				if (!large)
+				{
+					uint16_t pn, fe, mat, bb, bg; memcpy(&pn, r, 2); memcpy(&fe, r + 2, 2); memcpy(&mat, r + 4, 2); memcpy(&bb, r + 6, 2); memcpy(&bg, r + 8, 2);
+					s.plane = pn & 0x7FFF; s.flip = (pn & 0x8000) != 0; s.firstEdge = fe; s.material = mat; s.breakBit = bb; s.breakGroup = bg; s.flags = r[10];
+				}
+				else
+				{
+					uint32_t pn, fe; uint16_t mat, bb, bg; memcpy(&pn, r, 4); memcpy(&fe, r + 4, 4); memcpy(&mat, r + 8, 2); memcpy(&bb, r + 10, 2); memcpy(&bg, r + 12, 2);
+					s.plane = pn & 0x7FFFFFFFu; s.flip = (pn & 0x80000000u) != 0; s.firstEdge = fe; s.material = mat; s.breakBit = bb; s.breakGroup = bg; s.flags = r[14];
+				}
+				s.breakable = (int8_t)(uint8_t)s.breakBit;
+			}
+			for (uint32_t i = 0; i < ed.count; ++i)
+			{
+				const uint8_t* r = &re[(size_t)i * eStride];
+				CollBsp::Edge& e = out.edges[i];
+				if (!large)
+				{
+					uint16_t u[6]; memcpy(u, r, 12);
+					auto ref = [](uint16_t v) -> uint32_t { return v == 0xFFFF ? CollBsp::kNone : v; };
+					e = { u[0], u[1], ref(u[2]), ref(u[3]), ref(u[4]), ref(u[5]) };
+				}
+				else
+				{
+					uint32_t u[6]; memcpy(u, r, 24);
+					e = { u[0], u[1], u[2], u[3], u[4], u[5] };   // 0xFFFFFFFF = CollBsp::kNone already
+				}
+			}
+			for (uint32_t i = 0; i < vt.count; ++i)
+			{
+				float f[3]; memcpy(f, &rv[(size_t)i * vStride], 12);
+				out.verts[i] = { f[0], f[1], f[2] };
+			}
+			return true;
+		}
+
+		// The seam faces between LOADED bsps (what h3sb leaves out: "N seam surfaces (borders with other loaded BSPs) left out"). The
+		// Halo 3 rule (CollisionWorld::rebuildStatic3) = a face whose material has a seam index, left out when another loaded bsp has a
+		// seam face lying on it. Reach's materials block has no seam field read yet, so this is that rule's GEOMETRIC half alone: a
+		// face with a coplanar (within 0.01 wu - the Halo 3 rule's tolerance), opposite-facing face of ANOTHER loaded bsp that holds
+		// its centre (or whose centre it holds) - two bsps' closing faces of their shared border. Same onFace test as the Halo 3 rule.
+		// Returns the number of faces marked; perBsp[i] = those of set[i].
+		size_t markSeamFaces(std::vector<CollisionWorld::Bsp3>& set, std::vector<size_t>& perBsp)
+		{
+			using h2cv::Vec3;
+			struct Face { size_t bsp; uint32_t s; Vec3 c, n, lo, hi; std::vector<Vec3> poly; };
+			perBsp.assign(set.size(), 0);
+			if (set.size() < 2) return 0;
+			std::vector<Face> faces;
+			std::vector<Vec3> poly;
+			for (size_t i = 0; i < set.size(); ++i)
+			{
+				const CollBsp& w = set[i].world;
+				for (uint32_t s = 0; s < (uint32_t)w.surfaces.size(); ++s)
+				{
+					if (w.surfaces[s].flags & kFlagInvalid) continue;
+					Face f; f.bsp = i; f.s = s;
+					if (!w.normal(s, f.n) || !w.polygon(s, poly) || poly.size() < 3) continue;
+					f.c = { 0, 0, 0 }; f.lo = f.hi = poly[0];
+					for (const Vec3& v : poly)
+					{
+						f.c = { f.c.x + v.x, f.c.y + v.y, f.c.z + v.z };
+						f.lo = { (std::min)(f.lo.x, v.x), (std::min)(f.lo.y, v.y), (std::min)(f.lo.z, v.z) };
+						f.hi = { (std::max)(f.hi.x, v.x), (std::max)(f.hi.y, v.y), (std::max)(f.hi.z, v.z) };
+					}
+					const float k = 1.f / (float)poly.size(); f.c = { f.c.x * k, f.c.y * k, f.c.z * k };
+					f.poly = poly;
+					faces.push_back(std::move(f));
+				}
+			}
+			constexpr float e = 0.01f, cell = 16.f;
+			auto onFace = [e](const Face& f, const Vec3& p) {
+				if (p.x < f.lo.x - e || p.x > f.hi.x + e || p.y < f.lo.y - e || p.y > f.hi.y + e || p.z < f.lo.z - e || p.z > f.hi.z + e) return false;
+				const Vec3 a = f.poly[0];
+				if (std::fabs((p.x - a.x) * f.n.x + (p.y - a.y) * f.n.y + (p.z - a.z) * f.n.z) > e) return false;
+				int pos = 0, neg = 0;
+				const size_t kk = f.poly.size();
+				for (size_t i = 0; i < kk; ++i)
+				{
+					const Vec3 q0 = f.poly[i], q1 = f.poly[(i + 1) % kk];
+					const Vec3 ed{ q1.x - q0.x, q1.y - q0.y, q1.z - q0.z }, w{ p.x - q0.x, p.y - q0.y, p.z - q0.z };
+					const Vec3 cr{ ed.y * w.z - ed.z * w.y, ed.z * w.x - ed.x * w.z, ed.x * w.y - ed.y * w.x };
+					const float sd = cr.x * f.n.x + cr.y * f.n.y + cr.z * f.n.z;
+					if (sd > 1e-4f) ++pos; else if (sd < -1e-4f) ++neg;
+				}
+				return pos == 0 || neg == 0;
+			};
+			// grid over the faces' boxes (+e): a pair that satisfies the test has overlapping boxes
+			auto cellOf = [cell](float v) { return (int)std::floor(v / cell); };
+			auto key = [](int x, int y, int z) -> uint64_t { return ((uint64_t)(uint32_t)(x + (1 << 20)) << 42) | ((uint64_t)(uint32_t)(y + (1 << 20)) << 21) | (uint64_t)(uint32_t)(z + (1 << 20)); };
+			std::unordered_map<uint64_t, std::vector<uint32_t>> grid;
+			std::vector<uint32_t> huge;                                 // boxes over too many cells: candidates for everything
+			auto span = [&](const Face& f, int& x0, int& x1, int& y0, int& y1, int& z0, int& z1) -> int64_t {
+				x0 = cellOf(f.lo.x - e); x1 = cellOf(f.hi.x + e); y0 = cellOf(f.lo.y - e); y1 = cellOf(f.hi.y + e); z0 = cellOf(f.lo.z - e); z1 = cellOf(f.hi.z + e);
+				return (int64_t)(x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+			};
+			for (uint32_t i = 0; i < (uint32_t)faces.size(); ++i)
+			{
+				int x0, x1, y0, y1, z0, z1;
+				const int64_t n = span(faces[i], x0, x1, y0, y1, z0, z1);
+				if (n > 64) { huge.push_back(i); continue; }
+				for (int x = x0; x <= x1; ++x) for (int y = y0; y <= y1; ++y) for (int z = z0; z <= z1; ++z) grid[key(x, y, z)].push_back(i);
+			}
+			std::vector<uint32_t> stamp(faces.size(), 0xFFFFFFFFu);
+			std::vector<uint8_t> hit(faces.size(), 0);
+			for (uint32_t i = 0; i < (uint32_t)faces.size(); ++i)
+			{
+				const Face& f = faces[i];
+				auto test = [&](uint32_t j) {
+					if (j == i || stamp[j] == i) return;
+					stamp[j] = i;
+					const Face& g = faces[j];
+					if (g.bsp == f.bsp) return;
+					if (f.n.x * g.n.x + f.n.y * g.n.y + f.n.z * g.n.z > -0.999f) return;                // not facing each other
+					if (onFace(g, f.c) || onFace(f, g.c)) hit[i] = hit[j] = 1;
+				};
+				int x0, x1, y0, y1, z0, z1;
+				const int64_t n = span(f, x0, x1, y0, y1, z0, z1);
+				if (n > 64) { for (uint32_t j = 0; j < (uint32_t)faces.size(); ++j) test(j); continue; }
+				for (int x = x0; x <= x1; ++x) for (int y = y0; y <= y1; ++y) for (int z = z0; z <= z1; ++z)
+				{
+					const auto it = grid.find(key(x, y, z));
+					if (it != grid.end()) for (uint32_t j : it->second) test(j);
+				}
+				for (uint32_t j : huge) test(j);
+			}
+			size_t total = 0;
+			for (uint32_t i = 0; i < (uint32_t)faces.size(); ++i)
+				if (hit[i]) { set[faces[i].bsp].world.surfaces[faces[i].s].flags |= kFlagInvalid; ++perBsp[faces[i].bsp]; ++total; }
+			return total;
+		}
+	}
+
+	bool readCollisionBsps(uintptr_t gameTls, uint32_t mask, std::vector<CollisionWorld::Bsp3>& out, std::string& log, BspStats* stats)
+	{
+		out.clear();
+		BspStats st;
+		const uintptr_t b = base();
+		if (!b || !buildOk()) { log = "no haloreach.dll 1.3528"; return false; }
+		char line[600];
+		const uintptr_t scenario = mem::q(b + kScenarioPtr), tags = mem::q(b + kTagTablePtr);
+		const Block bsps = block(scenario + kScenarioBsps);
+		snprintf(line, sizeof(line), "scenario %llX tags %llX: %u structure bsps, mask %08X, game TLS %llX\n", (unsigned long long)scenario,
+			(unsigned long long)tags, bsps.count, mask, (unsigned long long)gameTls);
+		log = line;
+		if (!mem::okp(scenario) || !mem::okp(tags) || bsps.count == 0 || bsps.count > 32) return false;
+		const uintptr_t bspArr = tagAddr(b, bsps.addr);
+		for (uint32_t i = 0; i < bsps.count; ++i)
+		{
+			if (mask && !(mask & (1u << i))) continue;
+			const uint16_t tagIndex = mem::u16(bspArr + (uintptr_t)i * kScenarioBspStride + kScenarioBspTag, 0xFFFF);
+			if (tagIndex == 0xFFFF) continue;
+			const uintptr_t sbsp = tagAddr(b, mem::u32(tags + 8 * (uintptr_t)tagIndex + 4, 0));
+			if (!mem::okp(sbsp)) continue;
+			const uintptr_t res = resource(b, gameTls, sbsp + kSbspResource);
+			if (!mem::okp(res)) { log += "bsp " + std::to_string(i) + ": resource did not resolve\n"; continue; }
+			const Block smallBsp = block(res + kResSmall), largeBsp = block(res + kResLarge), defs = block(res + kResDefs);
+			CollisionWorld::Bsp3 b3;
+			b3.index = (int)i; b3.sbsp = sbsp;
+			if (smallBsp.count == 1 && parseCollBsp(b, tagAddr(b, smallBsp.addr), false, b3.world)) b3.how = "small (16-bit) collision bsp";
+			else if (largeBsp.count == 1 && parseCollBsp(b, tagAddr(b, largeBsp.addr), true, b3.world)) b3.how = "large (32-bit) collision bsp";
+			else
+			{
+				snprintf(line, sizeof(line), "bsp %u: tag %u sbsp %llX res %llX (small %u large %u): the collision bsp did not parse\n", i, tagIndex, (unsigned long long)sbsp, (unsigned long long)res, smallBsp.count, largeBsp.count);
+				log += line;
+				continue;
+			}
+			// surfaces whose collision material is not collidable (sbsp +0x58, stride 24, i16 @+20 < 0): the game never collides with
+			// them (h3sb leaves them out). Guarded: if that would drop a large share of the bsp the field is not what it was read as, so
+			// the fix-up is skipped (the h3sb.log of m50 left out 1 surface of 19035 in its worst bsp)
+			size_t dropped = 0; const char* matNote = "";
+			{
+				const Block mats = block(sbsp + 0x58);
+				std::vector<uint8_t> mraw;
+				if (mats.count && mats.count <= 65535) { mraw.resize((size_t)mats.count * 24); if (!mem::copy(mraw.data(), tagAddr(b, mats.addr), mraw.size())) mraw.clear(); }
+				if (!mraw.empty())
+				{
+					std::vector<uint8_t> badRow(mats.count, 0);
+					size_t badRows = 0;
+					for (uint32_t m = 0; m < mats.count; ++m) { int16_t g; memcpy(&g, &mraw[(size_t)m * 24 + 20], 2); if (g < 0) { badRow[m] = 1; ++badRows; } }
+					size_t would = 0;
+					for (const auto& s : b3.world.surfaces) if (s.material < mats.count && badRow[s.material] && !(s.flags & kFlagInvalid)) ++would;
+					if (would * 4 > b3.world.surfaces.size() || badRows * 2 > mats.count) matNote = " (non-collidable fix-up SKIPPED: implausibly many)";
+					else
+						for (auto& s : b3.world.surfaces) if (s.material < mats.count && badRow[s.material] && !(s.flags & kFlagInvalid)) { s.flags |= kFlagInvalid; ++dropped; }
+				}
+				else matNote = " (materials unreadable: nothing left out)";
+			}
+			// instance placements (a separate resource): ALL of them in table order; def = -1 where the game has no collision for it
+			size_t placed = 0, renderOnly = 0, noPhysics = 0, unusable = 0, live = 0;
+			const uint16_t placeRes = mem::u16(sbsp + kSbspPlacementsRes, 0xFFFF);
+			if (placeRes != 0xFFFF && defs.count && defs.count <= 20000)
+			{
+				alignas(8) uint8_t handle[0x20] = {};
+				memcpy(handle + 0xC, &placeRes, 2);
+				const uint32_t one = 1; memcpy(handle + 0x1C, &one, 4);
+				const uintptr_t res2 = resource(b, gameTls, (uintptr_t)handle);
+				const Block pl = block(res2 + kPlacementsBlock);
+				const uintptr_t plArr = tagAddr(b, pl.addr), defArr = tagAddr(b, defs.addr);
+				if (mem::okp(res2) && pl.count <= 20000 && mem::okp(plArr) && mem::okp(defArr))
+				{
+					b3.igInst.assign(pl.count, IgInstance{});
+					b3.igDefs.resize(defs.count); b3.igOk.assign(defs.count, 0);
+					std::vector<uint8_t> tried(defs.count, 0);
+					for (uint32_t k = 0; k < pl.count; ++k)
+					{
+						IgInstance& in = b3.igInst[k];
+						in.def = -1;
+						uint8_t r[kPlacementStride];
+						if (!mem::copy(r, plArr + (uintptr_t)k * kPlacementStride, sizeof(r))) { ++unusable; continue; }
+						++placed;
+						// m: [0] scale, [1..9] the rotation r[0..8] exactly as stored (record +4), [10..12] the position (record +0x28).
+						// h2cv::igTransform(m, v) = ((v.x s) m1 + (v.y s) m4 + (v.z s) m7 + m10, ... m2 m5 m8 m11, ... m3 m6 m9 m12)
+						//   = ((x r0 + y r3 + z r6) s + px, (x r1 + y r4 + z r7) s + py, (x r2 + y r5 + z r8) s + pz) = the game's formula
+						// (REPORT_REACH_DIRECT_READ.md "Instance placements"); i.e. forward = (r0 r1 r2), left = (r3 r4 r5), up = (r6 r7 r8).
+						memcpy(&in.m[0], r + 0x00, 4); memcpy(&in.m[1], r + 0x04, 36); memcpy(&in.m[10], r + 0x28, 12);
+						int16_t def; memcpy(&def, r + 0x34, 2);
+						const uint8_t flags = r[0x36];
+						uint32_t physics; memcpy(&physics, r + 0x88, 4);
+						if (def < 0 || (uint32_t)def >= defs.count) { ++unusable; continue; }
+						if (flags & 2) { ++renderOnly; continue; }               // render only: no collision in the game
+						if (!physics) { ++noPhysics; continue; }                  // no physics block: not collidable
+						bool finite = true;
+						for (int q = 0; q < 13; ++q) if (!std::isfinite(in.m[q])) finite = false;
+						if (!finite || in.m[0] <= 0.f || in.m[0] > 1000.f) { ++unusable; continue; }
+						bool sane = true;                                            // as Halo 3's sanePlacement: unit rotation rows, a position on the map
+						for (int a = 1; a <= 7; a += 3)
+						{
+							const float l2 = in.m[a] * in.m[a] + in.m[a + 1] * in.m[a + 1] + in.m[a + 2] * in.m[a + 2];
+							if (l2 < 0.8f || l2 > 1.25f) sane = false;
+						}
+						if (!(std::fabs(in.m[10]) < 1e5f && std::fabs(in.m[11]) < 1e5f && std::fabs(in.m[12]) < 1e5f)) sane = false;
+						if (!sane) { ++unusable; continue; }
+						if (!tried[def])
+						{
+							tried[def] = 1;
+							b3.igOk[def] = parseCollBsp(b, defArr + (uintptr_t)def * kDefStride + kDefCollision, false, b3.igDefs[def]) ? 1 : 0;   // an instance's collision is the small layout
+						}
+						if (!b3.igOk[def]) { ++unusable; continue; }
+						in.def = def; ++live;
+					}
+				}
+			}
+			st.bsps++; st.surfaces += b3.world.surfaces.size(); st.instances += b3.igInst.size(); st.instancesLive += live; st.nonCollidable += dropped;
+			snprintf(line, sizeof(line), "bsp %u: tag %u sbsp %llX res %llX, %s: %zu surfaces %zu edges %zu verts; %zu non-collidable material surfaces left out%s; instances %zu placements, %zu with collision (%zu render only, %zu no physics, %zu unusable)\n",
+				i, tagIndex, (unsigned long long)sbsp, (unsigned long long)res, b3.how.c_str(), b3.world.surfaces.size(), b3.world.edges.size(), b3.world.verts.size(),
+				dropped, matNote, placed, live, renderOnly, noPhysics, unusable);
+			log += line;
+			out.push_back(std::move(b3));
+		}
+		std::vector<size_t> seams;
+		st.seamLeftOut = markSeamFaces(out, seams);
+		for (size_t i = 0; i < out.size(); ++i)
+		{
+			snprintf(line, sizeof(line), "bsp %d: %zu seam faces (borders with other loaded BSPs) left out\n", out[i].index, seams[i]);
+			log += line;
+		}
+		if (stats) *stats = st;
+		return !out.empty();
 	}
 }

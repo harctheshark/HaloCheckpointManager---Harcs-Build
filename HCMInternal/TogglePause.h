@@ -17,6 +17,7 @@ private:
 
 	// event callbacks
 	ScopedCallback <ToggleEvent>mTogglePauseCallbackHandle;
+	ScopedCallback <ToggleEvent>mFreezeEffectsCallbackHandle;
 
 	// injected services
 	std::shared_ptr<RuntimeExceptionHandler> runtimeExceptions;
@@ -33,12 +34,21 @@ public:
 	TogglePause(GameState gameImpl, IDIContainer& dicon)
 		: mGame(gameImpl),
 		mTogglePauseCallbackHandle(dicon.Resolve<SettingsStateAndEvents>().lock()->togglePause->valueChangedEvent, [this](bool& newValue) { onTogglePauseChanged(newValue); }),
+		mFreezeEffectsCallbackHandle(dicon.Resolve<SettingsStateAndEvents>().lock()->pauseAlsoFreezesEffects->valueChangedEvent, [this](bool& newValue) { onFreezeEffectsChanged(newValue); }),
 		runtimeExceptions(dicon.Resolve<RuntimeExceptionHandler>())
 	{
 		auto control = dicon.Resolve<ControlServiceContainer>().lock();
 		if (control->pauseGameServiceFailure.has_value()) throw control->pauseGameServiceFailure.value();
 		if (control->pauseGameService.value()->getServiceFailures().contains(gameImpl)) throw control->pauseGameService.value()->getServiceFailures().at(gameImpl);
 		pauseGameServiceWeak = control->pauseGameService.value();
+		bool freeze = dicon.Resolve<SettingsStateAndEvents>().lock()->pauseAlsoFreezesEffects->GetValue();
+		onFreezeEffectsChanged(freeze);
+	}
+
+	// Halo 3 / ODST: whether the pause also holds the game speed at 0 (particles / decorators freeze, as MCC's own pause)
+	void onFreezeEffectsChanged(bool& newValue)
+	{
+		if (auto svc = pauseGameServiceWeak.lock()) svc->setFreezeEffects(newValue);
 	}
 
 	~TogglePause()

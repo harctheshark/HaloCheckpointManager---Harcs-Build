@@ -13,7 +13,7 @@
         ShowInTaskbar="False"
         
         WindowStyle="None"
-        Background="Transparent"
+        Background="Transparent" Foreground="{DynamicResource ThemeTextBrush}"
                 AllowsTransparency="True"
         WindowStartupLocation="CenterOwner" 
         >

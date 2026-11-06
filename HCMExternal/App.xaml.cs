@@ -48,8 +48,52 @@ namespace HCMExternal
 
 
 
+        /// <summary>
+        /// Swaps the colour theme (Themes/Dark.xaml or Themes/Light.xaml, always MergedDictionaries[0]) at runtime.
+        /// All control styles live in Themes/Controls.xaml and reference theme colours with DynamicResource, so every
+        /// open window re-themes immediately. Does not persist the choice; callers save Settings.DarkMode themselves.
+        /// </summary>
+        // Windows 10 20H1+ / 11: the window's own title bar in the dark style (DWMWA_USE_IMMERSIVE_DARK_MODE = 20; 19 on older builds)
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+        private static bool s_darkTheme = true;
+        private static bool s_titleBarHookInstalled = false;
+        public static void ApplyTitleBar(Window w)
+        {
+            try
+            {
+                var h = new System.Windows.Interop.WindowInteropHelper(w).Handle;
+                if (h == IntPtr.Zero) return;
+                int v = s_darkTheme ? 1 : 0;
+                if (DwmSetWindowAttribute(h, 20, ref v, sizeof(int)) != 0) DwmSetWindowAttribute(h, 19, ref v, sizeof(int));
+            }
+            catch (Exception ex) { Log.Warning(ex, "Could not set the title bar colour"); }
+        }
+
+        public static void ApplyTheme(bool dark)
+        {
+            var app = Application.Current;
+            if (app == null) return;
+            s_darkTheme = dark;
+            if (!s_titleBarHookInstalled)
+            {
+                // every window (main, dialogs) gets the title bar of the theme as it appears
+                s_titleBarHookInstalled = true;
+                EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent, new RoutedEventHandler((s, e) => { if (s is Window w) ApplyTitleBar(w); }));
+            }
+            foreach (Window w in app.Windows) ApplyTitleBar(w);
+            var uri = new Uri($"/Themes/{(dark ? "Dark" : "Light")}.xaml", UriKind.Relative);
+            var dicts = app.Resources.MergedDictionaries;
+            if (dicts.Count > 0 && dicts[0].Source == uri) return;
+            var themeDict = new ResourceDictionary { Source = uri };
+            if (dicts.Count > 0) dicts[0] = themeDict; else dicts.Add(themeDict);
+        }
+
         private void Application_Startup(object sender, StartupEventArgs e)
         {
+            // Theme first, so nothing (including early error dialogs) is ever shown in the wrong colours.
+            try { ApplyTheme(HCMExternal.Properties.Settings.Default.DarkMode); }
+            catch (Exception ex) { Log.Error(ex, "Failed to apply theme"); }
 
             AppDomain.CurrentDomain.UnhandledException += (sender, args) =>
                     ShowErrorAndShutdown("An unhandled exception occured!\n" + (args.ExceptionObject as Exception).Message + "\n\nStackTrace:\n" + (args.ExceptionObject as Exception).StackTrace);
@@ -103,11 +147,6 @@ namespace HCMExternal
             MainViewModel mainViewModel = new MainViewModel(checkpointIO, external, interproc, hotkey);
             mainWindow.DataContext = mainViewModel;
 
-
-
-            // Setup theming
-            string appTheme = HCMExternal.Properties.Settings.Default.DarkMode ? "Dark" : "Light";
-            Resources.MergedDictionaries[0].Source = new Uri($"/Themes/{appTheme}.xaml", UriKind.Relative);
 
 
             mainWindow.Title = "HaloCheckpointManager " + (CurrentHCMVersion.Length > 4 ? CurrentHCMVersion.Substring(0, 5) : CurrentHCMVersion);

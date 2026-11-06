@@ -26,6 +26,9 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{GUIElementEnum::pauseAlsoFreesCursorGUI,
 			{OptionalCheatEnum::TogglePause, OptionalCheatEnum::ToggleFreeCursor}
 	},
+	{GUIElementEnum::pauseAlsoFreezesEffectsGUI,
+			{OptionalCheatEnum::TogglePause}
+	},
 	{GUIElementEnum::pauseAlsoBlocksInputGUI,
 			{OptionalCheatEnum::TogglePause, OptionalCheatEnum::ToggleBlockInput}
 	},
@@ -335,6 +338,9 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	},
 	{GUIElementEnum::forceRevertGUI,
 			{OptionalCheatEnum::ForceRevert}
+	},
+	{GUIElementEnum::mpRevertRepairGUI,
+			{OptionalCheatEnum::MPRevertRepair, OptionalCheatEnum::GameTickEventHook}
 	},
 	{GUIElementEnum::forceDoubleRevertGUI,
 			{OptionalCheatEnum::ForceDoubleRevert} 
@@ -744,6 +750,12 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{ GUIElementEnum::collisionViewerSuperbounceDebounceGUI,
 		{OptionalCheatEnum::CollisionViewer}
 	},
+	{ GUIElementEnum::collisionViewerSuperbounceObjectsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbounceSeamsGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
 	{ GUIElementEnum::collisionViewerSuperbounceSpotsGUI,
 		{OptionalCheatEnum::CollisionViewer}
 	},
@@ -751,6 +763,9 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::CollisionViewer}
 	},
 	{ GUIElementEnum::collisionViewerSuperbouncePredictedRangeGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbouncePredictedMaxApproachGUI,
 		{OptionalCheatEnum::CollisionViewer}
 	},
 	{ GUIElementEnum::collisionViewerSuperbouncePredictedMonstersGUI,
@@ -775,6 +790,12 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::CollisionViewer}
 	},
 	{ GUIElementEnum::collisionViewerSpotScanButtonGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerRecipeButtonGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerRecipeRedoButtonGUI,
 		{OptionalCheatEnum::CollisionViewer}
 	},
 
