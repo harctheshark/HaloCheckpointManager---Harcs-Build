@@ -194,6 +194,12 @@ namespace
 		constexpr uintptr_t kRvaObjGet  = 0x8D7000;   // object_header_get_object(header)        (mov edx,[rcx+8]; mov rcx,[pool]; jmp)
 		constexpr uintptr_t kRvaFrameHook = 0x67A3B0; // main loop, right after the revert handler: call sub_1806BF920
 		constexpr uint8_t kProFrameHook[10] = { 0xE8,0x6B,0x55,0x04,0x00,0x84,0xC0,0x74,0x0A,0xE8 };
+		// game_state_call_after_load_procs(flags) (2026-11-06; Cartographer hooks the same function in Vista, 0x8C269, to reset
+		// the entity database after a multiplayer checkpoint load). Called by the revert (sub_1806AFFD0), the core load
+		// (sub_1806AFA20) and sub_1806B03C0, right after the game state is copied in - the earliest point after ANY load.
+		// The Colossus crash (2026-11-06) happened with the main-loop hook attached but never firing; this runs inside the load.
+		constexpr uintptr_t kRvaAfterLoad = 0x7320F0;
+		constexpr uint8_t kProAfterLoad[16] = { 0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xEC,0x20,0x8B };
 		// the leading bytes of each (1.3528): the repair refuses to run on any other build
 		constexpr uint8_t kProDelete[16]  = { 0x40,0x56,0x48,0x83,0xEC,0x20,0x8B,0xF1,0xE8,0xA3,0x04,0xFE,0xFF,0x8B,0x50,0x10 };
 		constexpr uint8_t kProGsFree[16]  = { 0x8B,0xD1,0x48,0x8B,0x0D,0x17,0x29,0x02,0x01,0xE9,0x62,0x4F,0xDF,0xFF,0xCC,0xCC };
@@ -203,15 +209,32 @@ namespace
 		constexpr uint8_t kProSession[16] = { 0x48,0x8B,0x05,0x91,0xA6,0x7D,0x00,0x66,0x83,0xB8,0xC2,0x02,0x00,0x00,0x00,0x0F };
 		constexpr uint8_t kProObjGet[15]  = { 0x8B,0x51,0x08,0x48,0x8B,0x0D,0x56,0x03,0xFE,0x00,0xE9,0x11,0x43,0xE9,0xFF };
 
+		// FULL RESET after a load (2026-11-06, Cartographer's fix ported): the targeted scan cannot see every bad state - Relic
+		// crashed 13 ms after a load where it found NOTHING, because entity ids carry only a 4-bit salt and the restored entry
+		// salts repeat, so a stale entry can match a newer slot exactly while its owner object is gone. Cartographer resets the
+		// entity database after every MP load (c_simulation_entity_database::reset = MCC sub_1808A6CC0, unnamed). In MCC that
+		// function alone would leave the entity MANAGER's flags/views saying the slots are live, so this calls the game's own
+		// simulation world reset sub_18088D0E0(sim) (what its mid-game reset sub_180866AE0 runs): manager sub_1808A5C80,
+		// event handler sub_1808A3FE0, entity database sub_1808A6CC0, every entry's id -1 sub_180886410. Then every live object
+		// that was linked gets fresh entities through the game's own path (entry free, unlink, create), so it keeps replicating.
+		// ⚠ 2026-11-06: calling sub_18088D0E0 FROZE the game world - it also clears the simulation world's own state (+49, +56,
+		// +59), which the game's mid-game reset re-establishes through a network handshake. So the reset is done at ENTITY level:
+		// every alive entity deleted through the game's own per-entity delete (sub_180885EB0 - keeps the manager consistent),
+		// every entry's id cleared (sub_180886410, the same call the world reset makes), then the objects relinked.
+		constexpr uintptr_t kRvaClearIds = 0x886410;
+		constexpr uint8_t kProClearIds[11] = { 0x48,0x83,0xEC,0x48,0x48,0x8B,0x15,0x35,0x2A,0x02,0x01 };
+
 		typedef char(__fastcall* DeleteFn)(unsigned int id);
 		typedef __int64(__fastcall* GsFreeFn)(unsigned int datum);
 		typedef __int64(__fastcall* UnlinkFn)(unsigned int object);
 		typedef __int64(__fastcall* CreateFn)(unsigned int object);
+		typedef __int64(__fastcall* ClearIdsFn)();
 
 		struct Bound
 		{
 			uintptr_t simGlobal = 0, gsGlobal = 0, sessionGlobal = 0, objPoolGlobal = 0, objHeaderGlobal = 0;
 			DeleteFn del = nullptr; GsFreeFn gsFree = nullptr; UnlinkFn unlink = nullptr; CreateFn create = nullptr;
+			ClearIdsFn clearIds = nullptr;
 		};
 
 		bool bind(uintptr_t b, Bound& o)
@@ -219,7 +242,9 @@ namespace
 			if (!bytesMatch(b + kRvaDelete, kProDelete, sizeof kProDelete) || !bytesMatch(b + kRvaGsFree, kProGsFree, sizeof kProGsFree)
 				|| !bytesMatch(b + kRvaUnlink, kProUnlink, sizeof kProUnlink) || !bytesMatch(b + kRvaCreate, kProCreate, sizeof kProCreate)
 				|| !bytesMatch(b + kRvaSimGet, kProSimGet, sizeof kProSimGet) || !bytesMatch(b + kRvaSession, kProSession, sizeof kProSession)
-				|| !bytesMatch(b + kRvaObjGet, kProObjGet, sizeof kProObjGet) || !bytesMatch(b + kRvaFrameHook, kProFrameHook, sizeof kProFrameHook))
+				|| !bytesMatch(b + kRvaObjGet, kProObjGet, sizeof kProObjGet) || !bytesMatch(b + kRvaClearIds, kProClearIds, sizeof kProClearIds))
+				// NOT the frame hook site: once our own midhook is attached those bytes are a jmp, and checking them here made
+				// the repair refuse to run on every Halo 2 revert (2026-11-06). The hook sites are checked in onToggle instead.
 				return false;
 			// every global is named by the game's own rip-relative loads in the functions checked above
 			o.simGlobal       = ripTarget(b + kRvaSimGet + 3,  b + kRvaSimGet + 7);        // mov rax, [sim]
@@ -229,11 +254,85 @@ namespace
 			o.objHeaderGlobal = ripTarget(b + kRvaUnlink + 13, b + kRvaUnlink + 17);       // mov rax, [object header array]
 			o.del = (DeleteFn)(b + kRvaDelete); o.gsFree = (GsFreeFn)(b + kRvaGsFree);
 			o.unlink = (UnlinkFn)(b + kRvaUnlink); o.create = (CreateFn)(b + kRvaCreate);
+			o.clearIds = (ClearIdsFn)(b + kRvaClearIds);
 			return true;
 		}
 
 		// H2 data arrays keep +72 data / +80 bitmap as offsets from the array header (0 = none)
 		uintptr_t arrayData(uintptr_t a) { const int64_t off = *(const int64_t*)(a + 72); return off ? a + off : 0; }
+
+		// POD-only, SEH-guarded: every live object whose +212 holds an entry datum -> (object datum, entry datum)
+		int collectLinkedObjects(const Bound& B, uint32_t* objs, uint32_t* entries, int max)
+		{
+			__try
+			{
+				const uintptr_t oh = *(const uintptr_t*)B.objHeaderGlobal;
+				if (!oh || *(const int32_t*)(oh + 36) != 12) return 0;
+				const uintptr_t ohData = arrayData(oh);
+				const int32_t ohHigh = *(const int32_t*)(oh + 60);
+				if (!ohData || ohHigh < 0 || ohHigh > 65535) return 0;
+				const uintptr_t pool = *(const uintptr_t*)B.objPoolGlobal;
+				const uintptr_t poolBase = (pool + 87) & ~(uintptr_t)15;
+				int n = 0;
+				for (int32_t i = 0; i < ohHigh && n < max; ++i)
+				{
+					const uintptr_t h = ohData + 12ull * (uint32_t)i;
+					const uint16_t salt = *(const uint16_t*)h;
+					const int32_t off = *(const int32_t*)(h + 8);
+					if (!salt || off == -1) continue;
+					const uint32_t entry = *(const uint32_t*)(poolBase + (intptr_t)off + 212);
+					if (entry == 0xFFFFFFFFu) continue;
+					objs[n] = ((uint32_t)salt << 16) | (uint32_t)i; entries[n] = entry; ++n;
+				}
+				return n;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+		}
+
+		// reset the simulation world (entity database and its manager) and give every linked object fresh entities.
+		// Call only when scan() just passed its networked-host gate.
+		// POD-only, SEH-guarded: ids of every alive (in use + alive) entity slot
+		int collectAliveEntities(const Bound& B, uint32_t* ids, int max)
+		{
+			__try
+			{
+				const uintptr_t sim = *(const uintptr_t*)B.simGlobal;
+				if (!sim) return -1;
+				const uintptr_t simData = *(const uintptr_t*)(sim + 8);
+				if (!simData) return -1;
+				const uintptr_t db = simData + 0x1138;
+				const uintptr_t mgr = *(const uintptr_t*)(db + 24);
+				if (!mgr) return -1;
+				int n = 0;
+				for (uint32_t k = 0; k < 1024 && n < max; ++k)
+				{
+					if ((*(const uint8_t*)(mgr + 140 + 4ull * k) & 5) != 5) continue;
+					const int32_t id = *(const int32_t*)(db + 40 + 56ull * k);
+					if (((uint32_t)id & 0x3FF) == k) ids[n++] = (uint32_t)id;
+				}
+				return n;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+		}
+
+		int fullReset(const Bound& B, int& deleted)
+		{
+			static uint32_t objs[4096], entries[4096], ids[1024];
+			deleted = collectAliveEntities(B, ids, 1024);
+			if (deleted < 0) return -1;
+			for (int i = 0; i < deleted; ++i) B.del(ids[i]);   // the game's own delete (slot +12 = -1, manager marks it deleted)
+			B.clearIds();                        // every entry's entity id -1
+			const int n = collectLinkedObjects(B, objs, entries, 4096);
+			if (n < 0) return -1;
+			for (int i = 0; i < n; ++i)
+			{
+				B.gsFree(entries[i]);            // its entry (id already -1)
+				B.unlink(objs[i]);               // +212 = -1, type callbacks
+			}
+			for (int i = 0; i < n; ++i)
+				B.create(objs[i]);               // fresh entry + entity (+ children with +212 == -1)
+			return n;
+		}
 
 		// POD-only, SEH-guarded: reads both tables and lists what to repair (writes nothing)
 		bool scan(const Bound& B, ScanResult& r)
@@ -363,7 +462,41 @@ private:
 		catch (HCMRuntimeException ex) { PLOG_ERROR << "MP revert repair (revert hook): " << ex.what(); }
 		catch (const std::exception& ex) { PLOG_ERROR << "MP revert repair (revert hook): " << ex.what(); }
 	}
-	static void h2FrameHookFunction(SafetyHookContext& ctx) { runFrame(sH2Instance); }
+	static void h2FrameHookFunction(SafetyHookContext& ctx)
+	{
+		static bool logged = false;
+		if (!logged) { logged = true; PLOG_INFO << "MP revert repair (Halo2): main-loop hook running"; }
+		runFrame(sH2Instance);
+	}
+	// Halo 2: after game_state_call_after_load_procs (see h2::kRvaAfterLoad)
+	std::unique_ptr<ModuleInlineHook> mAfterLoadHook;
+	static inline ModuleInlineHook* sH2AfterLoadHook = nullptr;
+	static void __fastcall h2AfterLoadDetour(unsigned int flags)
+	{
+		auto* hook = sH2AfterLoadHook;
+		if (hook) hook->getInlineHook().call<void, unsigned int>(flags);
+		if (GlobalKill::isKillSet()) return;
+		auto* self = sH2Instance;
+		if (!self) return;
+		ScopedAtomicBool lock(sFrameRunning);
+		try { self->onLoadFullReset(flags); }
+		catch (HCMRuntimeException ex) { PLOG_ERROR << "MP revert repair (after-load): " << ex.what(); }
+		catch (const std::exception& ex) { PLOG_ERROR << "MP revert repair (after-load): " << ex.what(); }
+	}
+	// Halo 2, game thread, right after any game-state load: the full reset (see h2::kRvaWorldReset)
+	void onLoadFullReset(unsigned int flags)
+	{
+		if (!resolve()) return;
+		if (!h2::scan(mH2, mScan))   // the networked-host gate (and table sanity); nothing to reset otherwise
+		{
+			PLOG_INFO << "MP revert repair (Halo2): game state loaded (flags 0x" << std::hex << flags << std::dec << "), idle, gate " << mScan.gate;
+			return;
+		}
+		int deleted = 0;
+		const int n = h2::fullReset(mH2, deleted);
+		PLOG_INFO << "MP revert repair (Halo2): game state loaded (flags 0x" << std::hex << flags << std::dec << ") - " << deleted << " entities reset, "
+			<< (n < 0 ? std::string("object relink FAILED") : std::to_string(n) + " objects relinked");
+	}
 	static void h3FrameHookFunction(SafetyHookContext& ctx) { runFrame(sH3Instance); }
 
 	bool isHalo2() const { return mGame.operator GameState::Value() == GameState::Value::Halo2; }
@@ -428,6 +561,18 @@ private:
 					}
 				}
 				mFrameHook->setWantsToBeAttached(attach);
+				if (mAfterLoadHook)
+				{
+					bool a2 = on;
+					const HMODULE m2 = GetModuleHandleW(L"halo2.dll");
+					if (on && m2 && !bytesMatch((uintptr_t)m2 + h2::kRvaAfterLoad, h2::kProAfterLoad, sizeof h2::kProAfterLoad))
+					{
+						PLOG_ERROR << "MP revert repair: halo2.dll after-load procs do not match (1.3528) - not hooked";
+						a2 = false;
+					}
+					mAfterLoadHook->setWantsToBeAttached(a2);
+					PLOG_INFO << "MP revert repair (Halo2): after-load hook " << (a2 ? "attached" : "detached");
+				}
 				PLOG_INFO << "MP revert repair (" << mGame.toString() << "): revert hook " << (attach ? "attached" : "detached");
 			}
 			if (isHalo2()) return;                 // Halo 2 runs from the revert hook only
@@ -459,6 +604,12 @@ public:
 			else    { sH3Instance = this; mFrameHookRva = h3::kRvaRevertHook; mFrameHookBytes = h3::kProRevertHook; mFrameHookLen = sizeof h3::kProRevertHook; }
 			auto ptr = std::make_shared<MultilevelPointerSpecialisation::ModuleOffset>(modName, std::vector<int64_t>{ (int64_t)mFrameHookRva });
 			mFrameHook = ModuleMidHook::make(modName, ptr, h2 ? h2FrameHookFunction : h3FrameHookFunction, false);
+			if (h2)
+			{
+				auto p2 = std::make_shared<MultilevelPointerSpecialisation::ModuleOffset>(modName, std::vector<int64_t>{ (int64_t)h2::kRvaAfterLoad });
+				mAfterLoadHook = ModuleInlineHook::make(modName, p2, reinterpret_cast<void*>(&h2AfterLoadDetour), false);
+				sH2AfterLoadHook = mAfterLoadHook.get();
+			}
 		}
 		bool on = dicon.Resolve<SettingsStateAndEvents>().lock()->mpRevertRepairToggle->GetValue();
 		if (on) onToggle(on);
@@ -467,9 +618,12 @@ public:
 	{
 		tickCallback.reset();
 		if (mFrameHook) { mFrameHook->setWantsToBeAttached(false); }
+		if (mAfterLoadHook) { mAfterLoadHook->setWantsToBeAttached(false); }
 		if (sH2Instance == this) sH2Instance = nullptr;
 		if (sH3Instance == this) sH3Instance = nullptr;
 		while (sFrameRunning) Sleep(1);
+		if (sH2AfterLoadHook == mAfterLoadHook.get()) sH2AfterLoadHook = nullptr;
+		mAfterLoadHook.reset();
 		mFrameHook.reset();
 	}
 };

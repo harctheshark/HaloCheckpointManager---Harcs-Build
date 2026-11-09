@@ -333,6 +333,8 @@ private:
 	ScopedCallback<eventpp::CallbackList<void(bool&)>> mEnableChangedCallback;
 	// re-apply the custom rate on level load (the game resets the timing struct each load)
 	ScopedCallback<eventpp::CallbackList<void(const MCCState&)>> mMCCStateChangedCallback;
+	// Season 7 Physics toggled while a custom rate owns the collision scalar (Halo 2): re-pick the scalar (2026-11-06)
+	ScopedCallback<eventpp::CallbackList<void(bool&)>> mSeason7ChangedCallback;
 	// runs each game tick on the GAME thread; performs the deferred collision rebuild at a safe point
 	std::unique_ptr<ScopedCallback<GameTickEvent>> mGameTickCallback;
 
@@ -452,7 +454,7 @@ private:
 		if (auto settings = settingsWeak.lock())
 			settings->customTickrateScalarActive = true; // custom scalar owns 0x70DBFA now; Season7Physics stands down
 		if (!mScalar.apply()) return false; // module not loaded yet
-		float newScalar = (float)rate;
+		float newScalar = scalarFor(rate);
 		bool changed = (newScalar != mLastAppliedScalar);
 		mScalar.setScalar(newScalar);
 		mLastAppliedScalar = newScalar;
@@ -482,6 +484,36 @@ private:
 				writeRate((int16_t)60); // stock sim rate for every wired game (Halo 1 CE, the only 30-tick title, is not wired)
 		}
 		catch (HCMRuntimeException& ex) { PLOG_DEBUG << "MasterTickrate disarm skipped: " << ex.what(); }
+	}
+
+	// The collision scalar for a custom rate. Stock MCC multiplies by a constant 30.0 whatever the rate (the 30 Hz Xbox value,
+	// wrong at 60 Hz); Season 7 Physics is the scalar matching the tickrate (60.0 at 60 Hz). A custom rate used to ALWAYS take
+	// the matching value, so once a rate was picked the Season 7 toggle did nothing for the rest of the session (user,
+	// 2026-11-06: "can't get Season 7 Physics to work at all"). Now the toggle decides: on = the rate, off = stock 30.
+	float scalarFor(int rate)
+	{
+		auto settings = settingsWeak.lock();
+		const bool season7 = settings && settings->season7PhysicsToggle->GetValue();
+		return season7 ? (float)rate : 30.0f;
+	}
+
+	void onSeason7Changed(bool& on)
+	{
+		if constexpr (gameT != GameState::Value::Halo2) return;
+		else {
+		if (mUserRate <= 0 || !mScalar.isApplied() || !mScalar.stillLoaded()) return;   // no custom rate owns the scalar: Season7Physics handles it
+		const float s = scalarFor(mUserRate);
+		if (s == mLastAppliedScalar) return;
+		mScalar.setScalar(s);
+		mLastAppliedScalar = s;
+		mPendingRebuild.store(true);   // rebuild the existing collision on the next in-play tick
+		try
+		{
+			lockOrThrow(messagesGUIWeak, messagesGUI);
+			messagesGUI->addMessage(std::format("Season 7 Physics {} at {} Hz (rebuilding collision).", on ? "on" : "off", mUserRate));
+		}
+		catch (HCMRuntimeException&) {}
+		}
 	}
 
 	// user typed an arbitrary rate: set tickrate+dt, match the collision scalar, and queue a live rebuild.
@@ -682,6 +714,7 @@ public:
 		mCustomRateChangedCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->customTickrate->valueChangedEvent, [this](int& n) { onSetCustomRate(n); }),
 		mEnableChangedCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->masterTickrateEnabled->valueChangedEvent, [this](bool& e) { onEnableChanged(e); }),
 		mMCCStateChangedCallback(dicon.Resolve<IMCCStateHook>().lock()->getMCCStateChangedEvent(), [this](const MCCState& s) { onMCCStateChanged(s); }),
+		mSeason7ChangedCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->season7PhysicsToggle->valueChangedEvent, [this](bool& on) { onSeason7Changed(on); }),
 		mccStateHookWeak(dicon.Resolve<IMCCStateHook>()),
 		messagesGUIWeak(dicon.Resolve<IMessagesGUI>()),
 		settingsWeak(dicon.Resolve<SettingsStateAndEvents>()),

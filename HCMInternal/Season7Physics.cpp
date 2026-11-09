@@ -59,8 +59,8 @@ private:
 		// Physics (a fixed 60.0 scalar) would only clobber it, so it's overridden while custom is active.
 		if (auto settings = settingsWeak.lock(); settings && settings->customTickrateScalarActive)
 		{
-			try { lockOrThrow(messagesGUIWeak, messagesGUI); messagesGUI->addMessage("Custom Tickrate is active and overrides Season 7 Physics."); }
-			catch (HCMRuntimeException&) {}
+			// MasterTickrate owns the scalar and follows this toggle itself (scalar = rate when on, stock 30 when off) and
+			// prints the message (2026-11-06: this used to say "Custom Tickrate overrides Season 7", twice, and do nothing)
 			return;
 		}
 
