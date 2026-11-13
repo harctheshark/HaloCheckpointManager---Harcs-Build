@@ -5,6 +5,7 @@
 #include "SettingsStateAndEvents.h"
 #include "RuntimeExceptionHandler.h"
 #include "ScopedThreadSuspender.h"
+#include "H2QuietWindow.h"
 #include <Windows.h>
 #include <vector>
 #include <cstring>
@@ -120,7 +121,11 @@ namespace
 		// Same crash-safe deferral UncapVisibilityLimits / UncapClusterLimit use.
 		std::vector<void*> pendingFree;
 
-		struct Save { uintptr_t addr; std::vector<uint8_t> orig; };
+		// Every code write of an apply: planned first (threads live - this allocates), then written together inside one
+		// QUIET WINDOW (2026-11-11). They used to be written one by one with the game running: a frame could run with some
+		// of the ~60 sites patched and the rest not (buffer already relocated, counts / strides / caps still stock), or
+		// execute an instruction while it was being overwritten.
+		struct Save { uintptr_t addr; std::vector<uint8_t> orig, patch; };
 		std::vector<Save> saves;
 
 		static void* allocNear(uintptr_t target, size_t size)
@@ -137,16 +142,28 @@ namespace
 			return nullptr;
 		}
 
-		// write `len` bytes at absolute addr, recording the originals for revert
+		// plan `len` bytes at absolute addr (nothing is written yet), recording the originals for revert
 		void writeSaved(uintptr_t addr, const uint8_t* data, size_t len)
 		{
-			Save s; s.addr = addr; s.orig.resize(len);
-			memcpy(s.orig.data(), (void*)addr, len);
+			Save s; s.addr = addr;
+			s.orig.assign((const uint8_t*)addr, (const uint8_t*)addr + len);
+			s.patch.assign(data, data + len);
 			saves.push_back(std::move(s));
-			DWORD o; VirtualProtect((void*)addr, len, PAGE_EXECUTE_READWRITE, &o);
-			memcpy((void*)addr, data, len);
-			VirtualProtect((void*)addr, len, o, &o);
-			FlushInstructionCache(GetCurrentProcess(), (void*)addr, len);
+		}
+		// INSIDE a window: memory + system calls only (no container growth). restore = put the originals back, last first.
+		void writeAll(bool restore)
+		{
+			Save* const v = saves.data(); const size_t n = saves.size();
+			for (size_t k = 0; k < n; ++k)
+			{
+				const Save& sv = v[restore ? n - 1 - k : k];
+				const uint8_t* const src = restore ? sv.orig.data() : sv.patch.data();
+				const size_t len = restore ? sv.orig.size() : sv.patch.size();
+				DWORD o; VirtualProtect((void*)sv.addr, len, PAGE_EXECUTE_READWRITE, &o);
+				memcpy((void*)sv.addr, src, len);
+				VirtualProtect((void*)sv.addr, len, o, &o);
+				FlushInstructionCache(GetCurrentProcess(), (void*)sv.addr, len);
+			}
 		}
 
 		uintptr_t bufAddr(BufSel s) const
@@ -296,7 +313,7 @@ namespace
 				}
 				if (found < 0)
 				{
-					revert(); // restore whatever we've done so far
+					saves.clear(); freeAll();   // nothing has been written yet (the writes are only planned)
 					throw HCMRuntimeException(std::format("UncapDropShadows: expected 0x{:X} not found at rva 0x{:X}.", dp.oldVal, dp.rva));
 				}
 				uint8_t nb[4]; memcpy(nb, &dp.newVal, 4);
@@ -313,6 +330,22 @@ namespace
 				uint8_t nb = kEnforcedCap;
 				writeSaved(base + cp.rva + cp.off, &nb, 1);
 			}
+
+			// ---- every write above was only PLANNED: make them all in one window where no thread is inside the renderer
+			//      (H2QuietWindow.h), so no frame ever runs a mix of patched and stock sites ----
+			int tries = 0;
+			{
+				std::unique_ptr<ScopedThreadSuspender> window = H2Quiet::open(base, 800, tries);
+				if (window) writeAll(false);
+				else tries = -tries;
+			}   // the window closes here
+			if (tries < 0)
+			{
+				saves.clear(); freeAll();
+				PLOG_ERROR << "UncapDropShadows: no quiet window in " << -tries << " tries - nothing patched";
+				throw HCMRuntimeException("Uncap Drop Shadows: could not find a safe moment to patch (the game never left its renderer). Nothing was changed - toggle it off and on again.");
+			}
+			PLOG_INFO << "UncapDropShadows: applied (" << saves.size() << " sites, quiet window after " << tries << " tries)";
 
 			applied = true;
 			return true;
@@ -339,24 +372,27 @@ namespace
 		void revert()
 		{
 			// halo2 still mapped where we patched? (the dtor path can run mid-unload)
+			if (!applied && saves.empty()) return;   // nothing of ours is installed (this is called on every menu / load)
 			bool live = base && (HMODULE)base == GetModuleHandleA("halo2.dll");
 			// restore patched bytes in reverse order, with other threads suspended so the render
 			// thread can't execute a half-restored instruction (that races the revert and can crash
 			// the game). Only the memory writes are inside the suspend window; heap ops (saves.clear,
 			// buffer queueing) stay OUTSIDE it. (See ScopedThreadSuspender.)
+			// 2026-11-11: in a window where no thread is inside the renderer or our cave when one comes up (H2QuietWindow.h);
+			// otherwise a plain window as before - the zeroed counts below are what protect that case.
+			int tries = 0; bool quiet = false;
+			if (live)
 			{
-				ScopedThreadSuspender suspend;
+				const uintptr_t caveLo = (uintptr_t)cavePage, caveHi = cavePage ? caveLo + 0x1000 : 0;
+				std::unique_ptr<ScopedThreadSuspender> window = H2Quiet::open(base, 400, tries, caveLo, caveHi);
+				quiet = window != nullptr;
+				if (!quiet) window = std::make_unique<ScopedThreadSuspender>();
 				// zero the stale inline-manager counts BEFORE restoring the lea sites, so the first post-revert
 				// frame walks an empty (safe) manager instead of dangling entries. (Under the suspend window.)
-				if (live) zeroInlineMgrCountsSEH(base);
-				for (auto it = saves.rbegin(); it != saves.rend(); ++it)
-				{
-					DWORD o; VirtualProtect((void*)it->addr, it->orig.size(), PAGE_EXECUTE_READWRITE, &o);
-					memcpy((void*)it->addr, it->orig.data(), it->orig.size());
-					VirtualProtect((void*)it->addr, it->orig.size(), o, &o);
-					FlushInstructionCache(GetCurrentProcess(), (void*)it->addr, it->orig.size());
-				}
-			}
+				zeroInlineMgrCountsSEH(base);
+				writeAll(true);
+			}   // the window closes here
+			if (live) PLOG_INFO << "UncapDropShadows: reverted (" << (quiet ? "quiet window after " : "NO quiet window in ") << tries << " tries)";
 			saves.clear();
 			queueBuffersForDeferredFree(); // NOT freeAll() - avoid use-after-free on an in-flight frame
 			applied = false;

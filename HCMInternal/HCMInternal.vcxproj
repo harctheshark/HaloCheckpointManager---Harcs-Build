@@ -438,9 +438,12 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="UncapVisibilityLimits.h" />
     <ClInclude Include="UncapClusterLimit.h" />
     <ClInclude Include="UncapRenderSections.h" />
+    <ClInclude Include="H2AShaderPrewarm.h" />
     <ClInclude Include="CollisionViewer.h" />
     <ClInclude Include="LaunchTrajectory.h" />
     <ClInclude Include="MPRevertRepair.h" />
+    <ClInclude Include="OneShotKill.h" />
+    <ClInclude Include="H2QuietWindow.h" />
     <ClInclude Include="ReachCollision.h" />
     <ClInclude Include="ChaseCamera.h" />
     <ClInclude Include="Halo2Physics.h" />
@@ -455,6 +458,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="H2CV_Viewer.h" />
     <ClInclude Include="H2CV_Superbounce.h" />
     <ClInclude Include="H2CV_SbScan.h" />
+    <ClInclude Include="h2sb_gsk.h" />
     <ClInclude Include="H2CV_Engine.h" />
     <ClInclude Include="H2CV_Halo3.h" />
     <ClInclude Include="H2CV_Reach.h" />
@@ -516,6 +520,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="ForceTeleport.h" />
     <ClInclude Include="FreeCamera.h" />
     <ClInclude Include="FreeCameraData.h" />
+    <ClInclude Include="H2FreeCameraCollision.h" />
     <ClInclude Include="FreeMCCCursor.h" />
     <ClInclude Include="GameTickEventHook.h" />
     <ClInclude Include="GetAggroData.h" />
@@ -694,6 +699,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="GUISpeedhack.h" />
     <ClInclude Include="HCMExternalCommand.h" />
     <ClInclude Include="HCMInternalGUI.h" />
+    <ClInclude Include="HCMPaletteGUI.h" />
     <ClInclude Include="Datum.h" />
     <ClInclude Include="HeartbeatTimer.h" />
     <ClInclude Include="RebindableHotkey.h" />
@@ -870,9 +876,11 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="UncapVisibilityLimits.cpp" />
     <ClCompile Include="UncapClusterLimit.cpp" />
     <ClCompile Include="UncapRenderSections.cpp" />
+    <ClCompile Include="H2AShaderPrewarm.cpp" />
     <ClCompile Include="CollisionViewer.cpp" />
     <ClCompile Include="LaunchTrajectory.cpp" />
     <ClCompile Include="MPRevertRepair.cpp" />
+    <ClCompile Include="OneShotKill.cpp" />
     <ClCompile Include="ReachCollision.cpp" />
     <ClCompile Include="ChaseCamera.cpp" />
     <ClCompile Include="Halo2Physics.cpp" />
@@ -969,6 +977,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClCompile Include="GUIElementConstructor.cpp" />
     <ClCompile Include="GUIRequiredServices.cpp" />
     <ClCompile Include="HCMInternalGUI.cpp" />
+    <ClCompile Include="HCMPaletteGUI.cpp" />
     <ClCompile Include="HeartbeatTimer.cpp" />
     <ClCompile Include="HotkeyManager.cpp" />
     <ClCompile Include="HotkeyRendererImpl.cpp" />

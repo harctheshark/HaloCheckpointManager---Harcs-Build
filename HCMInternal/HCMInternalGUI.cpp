@@ -4,6 +4,7 @@
 #include "GUISimpleButton.h"
 #include "MCCStateHook.h"
 #include "imgui.h"
+#include "imgui_internal.h" // ErrorRecoveryStoreState / TryToRecoverState: unwind ImGui stacks if the new layout throws mid-frame
 #include "ImGuiManager.h"   // setSwallowGameInput fallback for games with no blockGameInputService
 #include "Lapua.h"
 #define addTooltip(x) if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(x)
@@ -189,6 +190,7 @@ void HCMInternalGUI::onGameStateChange(const MCCState& newState)
 	std::unique_lock<std::mutex> lock(currentGameGUIElementsMutex);
 
 	p_currentGameGUIElements = &mGUIStore->getTopLevelGUIElements(newState.currentGameState);
+	mCurrentGame = newState.currentGameState; // the new layout indexes the element tree of this game
 	LOG_ONCE(PLOG_VERBOSE << "unlocking currentGameGUIElementsMutex");
 }
 
@@ -196,7 +198,107 @@ void HCMInternalGUI::onGameStateChange(const MCCState& newState)
 
 
 
+void HCMInternalGUI::setClassicLayout(bool classic)
+{
+	mSettings->classicLayout->GetValueDisplay() = classic;
+	mSettings->classicLayout->UpdateValueWithInput(); // persisted (it is in allSerialisableOptions)
+}
+
+// Picks the layout. The new one is the default; the classic one is the fallback for every failure mode:
+// the user asked for it (persisted "Classic layout" setting), the new one could not be constructed, or its
+// render threw. A throw is contained HERE because this is the Present/render thread, where an escaping
+// exception takes the game down.
 void HCMInternalGUI::primaryRender()
+{
+	if (mPalette && !mPaletteFailed && !mSettings->classicLayout->GetValue())
+	{
+		ImGuiErrorRecoveryState recovery;
+		ImGui::ErrorRecoveryStoreState(&recovery);
+		try
+		{
+			primaryRenderPalette();
+			return;
+		}
+		catch (const std::exception& ex)
+		{
+			PLOG_ERROR << "The new HCM layout threw while rendering (" << typeid(ex).name() << "): " << ex.what()
+				<< " - switching to the classic layout for the rest of this session";
+		}
+		catch (...)
+		{
+			PLOG_ERROR << "The new HCM layout threw an unknown exception while rendering - switching to the classic layout for the rest of this session";
+		}
+		// It may have thrown between a Begin and its End, or with style / ID pushes outstanding. Put ImGui's
+		// stacks back the way they were before this frame's attempt, then draw nothing more this frame; the
+		// classic layout takes over from the next one.
+		ImGui::ErrorRecoveryTryToRecoverState(&recovery);
+		mPaletteFailed = true;
+		mPalette->onWindowHidden(); // hand back the keyboard if the search box held it
+		return;
+	}
+	primaryRenderClassic();
+}
+
+void HCMInternalGUI::primaryRenderPalette()
+{
+	std::unique_lock<std::mutex> lock(currentGameGUIElementsMutex);
+
+	// Height follows content, up to the same cap the classic layout uses (2/3 of the screen).
+	mWindowSize.y = std::clamp(mPaletteDesiredHeight, 60.f, std::max(60.f, minimumWindowSize.y));
+
+	if (!m_WindowOpen && mSettings->hideWatermark->GetValue() && Lapua::lapuaGood && Lapua::lapuaGood2)
+	{
+		// collapsed and the watermark is hidden: draw nothing (same rule as the classic layout)
+	}
+	else
+	{
+		ImGui::SetNextWindowSize(mWindowSize);
+		ImGui::SetNextWindowPos(mWindowPos);
+
+		if (m_WindowOpen)
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.80f, 0.40f, 1.00f));
+		else
+			ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.60f, 0.25f, 1.00f));
+
+		ImGuiWindowFlags blockInputsIfNoCursor = *mIsCursorShowing == true ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoInputs & ImGuiWindowFlags_NoMouseInputs;
+
+		ImGui::SetNextWindowCollapsed(!m_WindowOpen);
+		// Same window name / ID as the classic layout, so collapse state and the toggle hotkey behave identically.
+		// The body scrolls on its own, so the window itself never needs a scrollbar.
+		m_WindowOpen = ImGui::Begin(m_WindowOpen ? "Halo Checkpoint Manager###HCM" : "HCM###HCM", nullptr,
+			windowFlags | blockInputsIfNoCursor | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+		ImGuiManager::setMenuWantsCursor(m_WindowOpen);
+
+		ImGui::PopStyleColor();
+
+		if (m_WindowOpen)
+		{
+			const auto result = mPalette->render(mCurrentGame, [this]() { mGUIMCCState.render(); }, minimumWindowSize.y, *mIsCursorShowing == true);
+			mPaletteDesiredHeight = result.desiredWindowHeight;
+			if (result.switchToClassic) setClassicLayout(true);
+		}
+
+		ImGui::End(); // end main window
+	}
+
+	if (!m_WindowOpen) mPalette->onWindowHidden();
+
+	// do stuff if window just opened
+	if (m_WindowOpen && !m_windowOpenLastFrame)
+	{
+		onWindowJustOpened();
+	}
+	// do stuff if window just closed
+	else if (!m_WindowOpen && m_windowOpenLastFrame)
+	{
+		onWindowJustClosed();
+	}
+
+	m_windowOpenLastFrame = m_WindowOpen;
+}
+
+void HCMInternalGUI::primaryRenderClassic()
 {
 	LOG_ONCE_CAPTURE(PLOG_VERBOSE << "onGameStateChange locking currentGameGUIElementsMutex @ 0x" << std::hex << pMutex, pMutex = &currentGameGUIElementsMutex);
 	std::unique_lock<std::mutex> lock(currentGameGUIElementsMutex);
@@ -247,6 +349,15 @@ void HCMInternalGUI::primaryRender()
 		if (m_WindowOpen)  //only bother rendering children if it's not collapsed
 		{	
 			mGUIMCCState.render(); // render header
+
+			// Way back to the new layout. A SmallButton on the header line itself: it is no taller than the text,
+			// so the height bookkeeping above is unaffected.
+			if (mPalette && !mPaletteFailed)
+			{
+				ImGui::SameLine(GUIWindowWidth - 100.f);
+				if (ImGui::SmallButton("New layout")) setClassicLayout(false);
+				addTooltip("Switch to the new window: search bar, favourites and tabs. The Classic layout button there switches back.");
+			}
 
 			// Tell all the current-games GUI elements to render themselves
 			for (auto& element : *p_currentGameGUIElements)

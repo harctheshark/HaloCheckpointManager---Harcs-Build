@@ -9,8 +9,9 @@
 //   STOCK map +0x10 = +0x14 = MCC's map index (halo2.dll's map table, e.g. Lockout 44), +0x18 = 0x88880000, then zeros
 // The block is rewritten in halo2.dll's game_start (its engine vtable slot 2, RVA 0x545C0) before the original runs.
 // ⚠ For a MOD map that alone HANGS the load: MCC prepares the map (its files, textures) from the LOBBY's selection record, not
-// from the launch block - so Play also writes that record (MCC exe: [exe+0x3F66910] + 0x218 = i32 -1 for a mod map, +0x220 map
-// id, +0x230 the mod's GUID; +0x240 holds exe+0x3F9D600). Only one of the two = hang (block) or corrupt textures + crash (record).
+// from the launch block - so Play also writes that record (MCC exe: [exe+0x3F66910] = MCC's mod manager; +0x220 map id, +0x230
+// the mod's GUID - see writeLobbyRecord in the .cpp for how it is recognised). Only one of the two = hang (block) or corrupt
+// textures + crash (record).
 // Play also STARTS the match (2026-11-02, from the MCC exe's code, offline): MCC's custom game lobby screen ("MultiplayerCustomGame",
 // vtable exe+0x32BE1C0) has StartCountdown at vtable slot 55 (exe+0x4DC994) - the lobby's own Start (its checks, the countdown,
 // the preload, the launch). It runs on MCC's game thread from a hook on the screen's per-frame tick (slot 11, exe+0x4DECDC).

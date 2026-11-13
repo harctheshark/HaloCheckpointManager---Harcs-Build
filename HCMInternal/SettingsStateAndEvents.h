@@ -132,7 +132,8 @@ public:
 		std::vector<SerialisableSetting*> out;
 		out.reserve(allPresetOptions.size());
 		for (auto* s : allPresetOptions)
-			if (s != masterTickrateEnabled.get() && s != customTickrate.get() && s != season7PhysicsToggle.get())
+			if (s != masterTickrateEnabled.get() && s != customTickrate.get() && s != season7PhysicsToggle.get()
+				&& s != classicLayout.get() && s != uiFavourites.get() && s != uiRecents.get()) // window layout + favourites are not profile data
 				out.push_back(s);
 		return out;
 	}
@@ -153,6 +154,7 @@ public:
 
 	//	hotkeys - see HotkeyEventsLambdas for how they connect to respective toggle (they just flip the value)
 	std::shared_ptr<ActionEvent> toggleGUIHotkeyEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<ActionEvent> focusSearchHotkeyEvent = std::make_shared<ActionEvent>(); // new layout: focus the search box
 	std::shared_ptr<ActionEvent> togglePauseHotkeyEvent = std::make_shared<ActionEvent>();
 
 	// replay (input record/playback) action events - fired by both the GUI buttons and the rebindable hotkeys.
@@ -414,6 +416,33 @@ public:
 			false,
 			[](bool in) { return true; },
 			nameof(GUIWindowOpen)
+		);
+
+	// ---- New window layout (HCMPaletteGUI): search bar, Home / Favourites / Browse all tabs ----
+	// false = new layout (the default), true = the original one-long-list window. Persisted. Excluded from presets
+	// (see presetOptionsExcludingGated) along with the two lists below: a loaded profile should change what the
+	// cheats do, not rearrange the window or wipe the user's favourites.
+	std::shared_ptr<BinarySetting<bool>> classicLayout = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(classicLayout)
+		);
+
+	// Favourites and recently-used options: GUIElementEnum NAMES separated by ';'. Names, not numbers, so they
+	// survive enum reordering, and one list serves every game (an option the current game lacks is skipped).
+	std::shared_ptr<BinarySetting<std::string>> uiFavourites = std::make_shared<BinarySetting<std::string>>
+		(
+			"" /* none by default: a first-time user starts on Browse all (user, 2026-11-12) */,
+			[](std::string in) { return true; },
+			nameof(uiFavourites)
+		);
+
+	std::shared_ptr<BinarySetting<std::string>> uiRecents = std::make_shared<BinarySetting<std::string>>
+		(
+			"",
+			[](std::string in) { return true; },
+			nameof(uiRecents)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> GUIShowingFreesCursor = std::make_shared<BinarySetting<bool>>
@@ -874,6 +903,15 @@ public:
 			nameof(infiniteAmmoToggle)
 		);
 
+	// One Shot Kill for the MCC games (2026-11-11): the engine's cheat_omnipotent (OneShotKill.cpp). Not saved, like the
+	// other cheats here.
+	std::shared_ptr<BinarySetting<bool>> oneShotKillToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(oneShotKillToggle)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> bottomlessClipToggle = std::make_shared<BinarySetting<bool>>
 		(
 			false,
@@ -969,6 +1007,15 @@ public:
 			nameof(uncapRenderSectionsToggle)
 		);
 
+	// Halo 2 Anniversary graphics: re-create a level's recorded shader variants at level start (H2AShaderPrewarm).
+	// A cheat toggle while it is a prototype: NOT in allSerialisableOptions, always starts off.
+	std::shared_ptr<BinarySetting<bool>> h2aShaderPrewarmToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h2aShaderPrewarmToggle)
+		);
+
 	// Halo 2 collision viewer (PRIVATE, collision-viewer-private branch). Not persisted, like the other cheat toggles.
 	std::shared_ptr<BinarySetting<bool>> collisionViewerToggle = std::make_shared<BinarySetting<bool>>
 		(
@@ -985,11 +1032,20 @@ public:
 			nameof(chaseCameraToggle)
 		);
 
+	// Camera no-clip, shared by the chase camera (all five games) and the Halo 2 free camera. Default OFF = both collide.
 	std::shared_ptr<BinarySetting<bool>> chaseCameraNoClip = std::make_shared<BinarySetting<bool>>
 		(
-			true,
+			false,
 			[](bool in) { return true; },
 			nameof(chaseCameraNoClip)
+		);
+
+	// Halo 2 free camera collision: how far (world units) the camera stays from walls and objects.
+	std::shared_ptr<BinarySetting<float>> freeCameraCollisionRadius = std::make_shared<BinarySetting<float>>
+		(
+			0.25f,
+			[](float in) { return in >= 0.05f && in <= 2.f; },
+			nameof(freeCameraCollisionRadius)
 		);
 
 	std::shared_ptr<BinarySetting<float>> chaseCameraFov = std::make_shared<BinarySetting<float>>
@@ -5024,6 +5080,10 @@ public:
 		invulnerabilityNPCToggle, 
 		speedhackSetting, 
 		GUIShowingFreesCursor, 
+		classicLayout,
+		uiFavourites,
+		uiRecents,
+		freeCameraCollisionRadius,
 		GUIShowingBlocksInput, 
 		GUIShowingPausesGame, 
 		pauseAlsoBlocksInput,

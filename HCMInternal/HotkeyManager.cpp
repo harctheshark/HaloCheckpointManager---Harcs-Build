@@ -110,7 +110,11 @@ HotkeyManager::~HotkeyManager()
 
 void HotkeyManager::pollInput()// we poll every frame. Really we could've chosen any time interval but this is convienent
 {
-	bool hotkeysShouldBeDisabled = mHotkeyDisabler->serviceIsRequested();
+	// Typing in ANY HCM text box counts as "hotkeys disabled" (io.WantTextInput = an InputText had the keyboard last frame),
+	// not only the boxes that take a hotkeyDisabler request. 2026-11-11: the Map Launcher's search box took none, the Pause
+	// hotkey was P, and a "p" typed there switched Pause on at the main menu - the next Halo 2 launch then sat on MCC's
+	// "Starting game..." for ever, because the game started paused.
+	bool hotkeysShouldBeDisabled = mHotkeyDisabler->serviceIsRequested() || ImGui::GetIO().WantTextInput;
 	const auto& settings = mHotkeyDefinitions->settings();
 	const bool flyHold = settings && settings->h2pFlyHoldToggle->GetValue();
 	pollFlyHold(hotkeysShouldBeDisabled);

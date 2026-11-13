@@ -191,6 +191,8 @@ namespace MapLauncher
 			{
 				if (gd[0x304] == 0) return 0;
 				lobbyMap = *(int32_t*)(gd + 0x10);
+				// a stock map from a lobby whose map is a mod's (-3): MCC has prepared that mod's files - not swapped (2)
+				if (stock && lobbyMap == -3) return 2;
 				if (stock)
 				{
 					const uint32_t tail[4] = { (uint32_t)stockIndex, 0x88880000u, 0u, 0u };
@@ -207,36 +209,32 @@ namespace MapLauncher
 			__except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
 		}
 
-		// MCC's lobby selection record (what MCC prepares the map from; MCC Steam 1.3528, found by a pointer scan 2026-11-02):
-		// [exe + 0x3F66910] + 0x218 = i32 stock map index or -1 (mod map), +0x220 map id, +0x230 the mod's GUID, and a signature
-		// at +0x240 = exe + 0x3F9D600. Mod maps only. 1 written, 0 the record is not there / not recognised, -1 unreadable.
-		// `wasMod` = the record held a mod map before (the lobby's map is a mod's).
-		constexpr uintptr_t kLobbyRecordPtr = 0x3F66910, kLobbyRecordSig = 0x3F9D600;
-		int writeLobbyRecord(const uint8_t* mapGuid, const uint8_t* modGuid, bool& wasMod)
+		// MCC's "lobby record" (what MCC prepares the map from; MCC Steam 1.3528, found by a pointer scan 2026-11-02, decoded
+		// from the exe 2026-11-10): [exe + 0x3F66910] is MCC's MOD MANAGER (built by sub_14208A0CC, 0x240 bytes; i32 state at +0,
+		// 2 = ready - sub_14031E0C0). +0x220 / +0x230 are its map -> mod pair: sub_14208B684(manager, mapGuid) sets them, under
+		// the mutex at +0x1D0, when a mod map is looked up (the lobby's selection), and the launch reads the pair. Play writes
+		// it: +0x220 = the map's MapGuid, +0x230 = its pack's ModGuid.
+		// ⚠ What the first version got wrong (the launcher said "lobby selection was not found" in a session with other packs):
+		//   - its "signature" at +0x240 is PAST THE END of the object - the neighbouring heap block, different every session;
+		//   - its "+0x218 = -1 means mod map" is the mutex's owner thread id (-1 = unlocked): always -1, and never to be written.
+		// Recognised now by what MCC itself puts in the object: state 2 and, at +0x60, the std::function MCC installs when it
+		// sets this global (sub_14031E1A4: its vtable off_1432951B0, .rdata).
+		// 1 written, 0 the manager is not there / not ready / not recognised, -1 unreadable. state / cb = what was seen (logged).
+		constexpr uintptr_t kLobbyRecordPtr = 0x3F66910, kModManagerCallbackVt = 0x32951B0;
+		int writeLobbyRecord(const uint8_t* mapGuid, const uint8_t* modGuid, int32_t& state, uintptr_t& cb)
 		{
 			const uintptr_t exe = (uintptr_t)GetModuleHandleW(nullptr);
+			state = -1; cb = 0;
 			__try
 			{
 				const uintptr_t obj = *(uintptr_t*)(exe + kLobbyRecordPtr);
 				if (obj < 0x10000) return 0;
-				if (*(uintptr_t*)(obj + 0x240) != exe + kLobbyRecordSig) return 0;
-				wasMod = *(int32_t*)(obj + 0x218) == -1;
-				*(int32_t*)(obj + 0x218) = -1;
+				state = *(int32_t*)obj;
+				cb = *(uintptr_t*)(obj + 0x60) - exe;
+				if (state != 2 || cb != kModManagerCallbackVt) return 0;
 				memcpy((void*)(obj + 0x220), mapGuid, 16);
 				memcpy((void*)(obj + 0x230), modGuid, 16);
 				return 1;
-			}
-			__except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
-		}
-		// the record's current kind: 1 mod map, 0 stock map, -1 not found
-		int lobbyRecordKind()
-		{
-			const uintptr_t exe = (uintptr_t)GetModuleHandleW(nullptr);
-			__try
-			{
-				const uintptr_t obj = *(uintptr_t*)(exe + kLobbyRecordPtr);
-				if (obj < 0x10000 || *(uintptr_t*)(obj + 0x240) != exe + kLobbyRecordSig) return -1;
-				return *(int32_t*)(obj + 0x218) == -1 ? 1 : 0;
 			}
 			__except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
 		}
@@ -269,6 +267,169 @@ namespace MapLauncher
 			__except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
 		}
 
+		// ---- Selecting the map IN THE LOBBY (2026-11-10: so the choice reaches the other players of a LAN / online lobby) ----
+		// The first launcher swapped the map only on this machine (the launch block + the mod manager's pair): another player
+		// in the lobby was still sent the lobby's own map. What MCC does when the host picks a map and presses Start (exe
+		// 1.3528, offline RE in MCC Map Launcher\db):
+		//   - the screen keeps the selection as ids into MCC's catalogue [exe+0x4001650]: +5832 game (0..6), +5836 map,
+		//     +5840 map variant, +5844 gametype category, +5848 game variant;
+		//   - the catalogue's map list for a game is a linked list headed at catalogue + 264 + 16*game (next at node+8); a node:
+		//     +16 state (>= 2 usable), +20 kind (1 stock, 5 mod, 3/4 saved variants), +28 id, +1000 its 16-byte map id (a mod
+		//     map's MapGuid; a stock map's {u32 MCC index, u32 0x88880000, 0}), +1016 i32 map index (-3 mod);
+		//   - picking a map in the UI (sub_1404D7160, page 0) is: +5836 = id; sub_1404D6C1C (its variant -> +5840); vtable slot
+		//     66 sub_1404D6D54 (keeps / replaces the gametype so it is one the map supports); sub_1404D4C8C (team settings);
+		//   - StartCountdown (slot 55) then does everything from +5840: checks the map is installed (for a mod map that is the
+		//     mod manager lookup that sets the pair above), preloads it, and calls slot 56 sub_1404DD30C, which writes the map's
+		//     id into the NETWORK SESSION (sub_14034D344 -> HaloNetworkLayer) - what every player's game loads from.
+		// So Play now makes the UI's own selection and calls StartCountdown; nothing is swapped at the launch any more.
+		constexpr uintptr_t kCatalogueRva = 0x4001650, kPickVariantRva = 0x4D6C1C, kLobbyApplyRva = 0x4D4C8C, kFixGametypeRva = 0x4D6D54;
+		constexpr int kFixGametypeSlot = 66;
+		const uint8_t kPickVariantBytes[] = { 0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x6C, 0x24, 0x18, 0x56, 0x57, 0x41, 0x56, 0x48, 0x83 };
+		const uint8_t kLobbyApplyBytes[] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57 };
+		const uint8_t kFixGametypeBytes[] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57 };
+
+		// result: 1 selected, 0 the map is not in the lobby's catalogue, -1 a read faulted, -2 not the MCC build this was made for
+		struct LobbySelect { int result = 0; int32_t game = -1, id = -1, kind = -1, matches = 0, oldMap = -1, oldVariant = -1, newVariant = -1, oldGametype = -1, newGametype = -1; int broadcast = 0; };
+
+		// ---- Telling the OTHER PLAYERS (2026-11-11, first LAN test: "the player doesn't have the map" although he did) ----
+		// StartCountdown's check (sub_140251354) wants, for a mod map, the bit 0x80000 in every player's properties
+		// (HaloNetworkLayer_Ship_59(player) + 4). Each player's own game sets that bit (sub_140256520) when the mod manager
+		// knows the map id in ITS copy of the lobby state block ([exe+0x4001590], 2488 bytes: map title +836, +1092, map id
+		// +1876). The host fills that block and sends it (sub_14024DDE0) when its map tile is refreshed - vtable slot 49
+		// sub_1404D8820, which reads the screen's own map id at +5864 (set when a map is highlighted, slot 47). The first
+		// version did neither, so nobody was ever told. Now: +5864 = the node's map id, slot 49 (the tile shows the map, the
+		// block is sent), and Play WAITS until every player's bit is set before StartCountdown.
+		constexpr uintptr_t kRefreshMapTileRva = 0x4D8820, kLobbyStateRva = 0x4001590, kBroadcastRva = 0x24DDE0;
+		constexpr int kRefreshMapTileSlot = 49;
+		const uint8_t kRefreshMapTileBytes[] = { 0x48, 0x8B, 0xC4, 0x55, 0x57, 0x41, 0x56, 0x48, 0x8D, 0x68, 0xA1, 0x48, 0x81, 0xEC, 0x00, 0x01 };
+		const uint8_t kBroadcastBytes[] = { 0x48, 0x83, 0xEC, 0x28, 0xFF, 0x15, 0x66, 0xC7, 0x61, 0x02, 0x84, 0xC0, 0x74, 0x15, 0xE8, 0x01 };
+		// the check's own calls (their operands name the two HaloNetworkLayer imports): Ship_221 (who is in the session) and
+		// Ship_59 (a player's properties)
+		constexpr uintptr_t kPeerMaskCallRva = 0x2514A6, kPeerInfoCallRva = 0x2514E6;
+		const uint8_t kPeerMaskCallBytes[] = { 0xFF, 0x15, 0x1C, 0x90, 0x61, 0x02 };
+		const uint8_t kPeerInfoCallBytes[] = { 0xFF, 0x15, 0xAC, 0x90, 0x61, 0x02 };
+
+		// how many players have not (yet) reported the selected mod map: >= 0, or -1 when it cannot be told. POD-only (SEH).
+		int playersMissingMap(int& players)
+		{
+			players = 0;
+			const uintptr_t exe = (uintptr_t)GetModuleHandleW(nullptr);
+			if (!bytesMatch(exe + kPeerMaskCallRva, kPeerMaskCallBytes, sizeof(kPeerMaskCallBytes))
+				|| !bytesMatch(exe + kPeerInfoCallRva, kPeerInfoCallBytes, sizeof(kPeerInfoCallBytes))) return -1;
+			__try
+			{
+				const uintptr_t maskFn = *(const uintptr_t*)(exe + kPeerMaskCallRva + 6 + 0x0261901C);
+				const uintptr_t infoFn = *(const uintptr_t*)(exe + kPeerInfoCallRva + 6 + 0x026190AC);
+				if (maskFn < 0x10000 || infoFn < 0x10000) return -1;
+				uint64_t mask[8] = {};
+				typedef char(__fastcall* MaskFn)(int64_t, int64_t, int64_t, int64_t, uint64_t*, int64_t, int64_t, int64_t);
+				typedef uintptr_t(__fastcall* InfoFn)(unsigned int);
+				if (!reinterpret_cast<MaskFn>(maskFn)(0, 0, 0, 0, mask, 0, 0, 0)) return -1;
+				const uint32_t m = (uint32_t)mask[0] & 0x1FFFF;
+				int missing = 0;
+				for (unsigned int i = 0; i < 17; ++i)
+				{
+					if (!((m >> i) & 1)) continue;
+					const uintptr_t info = reinterpret_cast<InfoFn>(infoFn)(i);
+					if (info < 0x10000) continue;
+					++players;
+					if (!(*(const uint32_t*)(info + 4) & 0x80000u)) ++missing;
+				}
+				return missing;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+		}
+
+		// a usable catalogue node that is this map (called inside the SEH guards below)
+		bool nodeIsMap(uintptr_t n, bool stock, int stockIndex, const uint8_t* guid)
+		{
+			if (*(const int32_t*)(n + 16) < 2) return false;
+			if (!stock) return memcmp((const void*)(n + 1000), guid, 16) == 0;
+			return *(const uint32_t*)(n + 1000) == (uint32_t)stockIndex && *(const uint32_t*)(n + 1004) == 0x88880000u;
+		}
+
+		// POD-only (SEH). Runs on MCC's game thread (the lobby's tick).
+		void selectInLobby(uintptr_t screen, bool stock, int stockIndex, const uint8_t* guid, LobbySelect& r)
+		{
+			const uintptr_t exe = (uintptr_t)GetModuleHandleW(nullptr);
+			if (!bytesMatch(exe + kPickVariantRva, kPickVariantBytes, sizeof(kPickVariantBytes))
+				|| !bytesMatch(exe + kLobbyApplyRva, kLobbyApplyBytes, sizeof(kLobbyApplyBytes))
+				|| !bytesMatch(exe + kFixGametypeRva, kFixGametypeBytes, sizeof(kFixGametypeBytes))) { r.result = -2; return; }
+			__try
+			{
+				const uintptr_t vt = *(const uintptr_t*)screen;
+				if (*(const uintptr_t*)(vt + 8 * kFixGametypeSlot) != exe + kFixGametypeRva) { r.result = -2; return; }
+				const uintptr_t cat = *(const uintptr_t*)(exe + kCatalogueRva);
+				const int32_t game = *(const int32_t*)(screen + 5832);
+				r.game = game;
+				if (cat < 0x10000 || game < 0 || game > 6) { r.result = 0; return; }
+				const uintptr_t head = cat + 264 + 16ull * (uint32_t)game;
+				const int32_t wantKind = stock ? 1 : 5;
+				uintptr_t best = 0; int32_t bestKind = -1; int guard = 0;
+				for (uintptr_t n = *(const uintptr_t*)(head + 8); n != head && n > 0x10000 && guard < 200000; n = *(const uintptr_t*)(n + 8), ++guard)
+				{
+					if (!nodeIsMap(n, stock, stockIndex, guid)) continue;
+					++r.matches;
+					const int32_t kind = *(const int32_t*)(n + 20);
+					if (!best || (kind == wantKind && bestKind != wantKind)) { best = n; bestKind = kind; }
+				}
+				if (!best && stock)   // a stock node whose id is not in the {index, 0x88880000} form: by its map index
+				{
+					guard = 0;
+					for (uintptr_t n = *(const uintptr_t*)(head + 8); n != head && n > 0x10000 && guard < 200000; n = *(const uintptr_t*)(n + 8), ++guard)
+						if (*(const int32_t*)(n + 16) >= 2 && *(const int32_t*)(n + 20) == 1 && *(const int32_t*)(n + 1016) == stockIndex) { best = n; bestKind = 1; ++r.matches; break; }
+				}
+				if (!best) { r.result = 0; return; }
+				const int32_t id = *(const int32_t*)(best + 28);
+				r.id = id; r.kind = bestKind;
+				r.oldMap = *(const int32_t*)(screen + 5836); r.oldVariant = *(const int32_t*)(screen + 5840); r.oldGametype = *(const int32_t*)(screen + 5848);
+
+				*(int32_t*)(screen + 5836) = id;
+				memcpy((void*)(screen + 5864), (const void*)(best + 1000), 16);   // the screen's own map id (as highlighting a map does)
+				reinterpret_cast<int64_t(__fastcall*)(uintptr_t)>(exe + kPickVariantRva)(screen);
+				// the variant MCC picked must be one of this map's - else the map's own node
+				const int32_t v = *(const int32_t*)(screen + 5840);
+				bool variantOk = false; guard = 0;
+				for (uintptr_t n = *(const uintptr_t*)(head + 8); n != head && n > 0x10000 && guard < 200000; n = *(const uintptr_t*)(n + 8), ++guard)
+					if (*(const int32_t*)(n + 28) == v) { variantOk = nodeIsMap(n, stock, stockIndex, guid) || n == best; break; }
+				if (!variantOk) *(int32_t*)(screen + 5840) = id;
+				reinterpret_cast<int64_t(__fastcall*)(uintptr_t)>(exe + kFixGametypeRva)(screen);
+				reinterpret_cast<int64_t(__fastcall*)(uintptr_t)>(exe + kLobbyApplyRva)(screen);
+				// the map tile + the lobby state block, sent to the other players (slot 49)
+				if (*(const uintptr_t*)(vt + 8 * kRefreshMapTileSlot) == exe + kRefreshMapTileRva
+					&& memcmp((const void*)(exe + kRefreshMapTileRva), kRefreshMapTileBytes, sizeof(kRefreshMapTileBytes)) == 0)
+				{
+					reinterpret_cast<int64_t(__fastcall*)(uintptr_t)>(exe + kRefreshMapTileRva)(screen);
+					r.broadcast = 1;
+				}
+				// slot 49 skips the block when the tile is not on screen: then the map id is put in the block and sent here
+				const uintptr_t st = *(const uintptr_t*)(exe + kLobbyStateRva);
+				if (st > 0x10000 && memcmp((const void*)(st + 1876), (const void*)(best + 1000), 16) != 0
+					&& memcmp((const void*)(exe + kBroadcastRva), kBroadcastBytes, sizeof(kBroadcastBytes)) == 0)
+				{
+					memcpy((void*)(st + 1876), (const void*)(best + 1000), 16);
+					reinterpret_cast<int64_t(__fastcall*)()>(exe + kBroadcastRva)();
+					r.broadcast = 2;
+				}
+				r.newVariant = *(const int32_t*)(screen + 5840); r.newGametype = *(const int32_t*)(screen + 5848);
+				r.result = 1;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER) { r.result = -1; }
+		}
+
+		// does the launch block already name this map? 1 yes, 0 no, -1 unreadable, -2 not a multiplayer launch
+		int blockHoldsMap(const uint8_t* gd, bool stock, int stockIndex, const uint8_t* guid, int32_t& lobbyMap)
+		{
+			__try
+			{
+				if (gd[0x304] == 0) return -2;
+				lobbyMap = *(const int32_t*)(gd + 0x10);
+				if (stock) return lobbyMap == stockIndex ? 1 : 0;
+				return lobbyMap == -3 && memcmp(gd + 0x14, guid, 16) == 0 ? 1 : 0;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+		}
+
 		int64_t __fastcall h2GameStartDetour(int64_t engine, int64_t gameManager, int64_t gameData)
 		{
 			if (Launcher* self = sInstance.load()) self->onHalo2GameStart(reinterpret_cast<uint8_t*>(gameData));
@@ -289,8 +450,13 @@ namespace MapLauncher
 		mutable std::mutex m;
 		std::vector<MapEntry> maps;
 		bool isArmed = false; MapEntry armedMap;
+		bool lobbySelected = false;   // the armed map was selected in the lobby itself (MCC launches it; nothing to swap)
 		std::string msg;
 		std::atomic<bool> startPending{ false };
+		// the map is selected and sent; StartCountdown waits for every player to report it (onLobbyTick)
+		std::atomic<bool> waitingPlayers{ false };
+		std::atomic<uint64_t> waitSinceMs{ 0 };
+		std::string waitNote;   // appended to the "Started" message (under m)
 		std::atomic<uint64_t> startAskedMs{ 0 };
 		std::atomic<bool> busy{ false };
 		std::thread worker;
@@ -360,58 +526,141 @@ namespace MapLauncher
 	void Launcher::arm(const MapEntry& m)
 	{
 		std::scoped_lock lk(mImpl->m);
-		if (m.stock)
+		mImpl->lobbySelected = false;
+		mImpl->waitingPlayers = false;   // Play again while waiting for the players: start over with this map
+		if (mLobbyTickHook)
 		{
-			// a stock map needs nothing prepared - unless the lobby's map is a mod's (that record's stock form is not decoded)
-			if (lobbyRecordKind() == 1)
+			// the lobby's tick (MCC's game thread) selects the map in the lobby and starts the match (onLobbyTick)
+			mImpl->isArmed = true; mImpl->armedMap = m;
+			mImpl->startAskedMs = GetTickCount64();
+			mImpl->startPending = true;
+			mImpl->msg = "Starting " + m.title + "...";
+			return;
+		}
+		// ---- no lobby tick hook (another MCC build): the old local-only way - the user presses MCC's Start ----
+		// A stock map needs nothing prepared - but only from a lobby whose own map is stock. Whether it is, is known only at
+		// the launch (the launch block's map field), so that case is refused there (onHalo2GameStart), not here.
+		if (!m.stock)
+		{
+			// MCC prepares the map from its mod manager's map -> mod pair: point it at this one now (read when Start is pressed)
+			int32_t state = -1; uintptr_t cb = 0;
+			const int r = writeLobbyRecord(m.guid, m.modGuid, state, cb);
+			if (r != 1)
 			{
 				mImpl->isArmed = false;
-				mImpl->msg = "For a stock map, select any STOCK map in MCC's lobby first, then press Play again";
+				mImpl->msg = r == 0 ? "MCC's mod manager is not ready - open a Halo 2 custom game lobby first, then press Play"
+					: "MCC's mod manager could not be read";
+				PLOG_ERROR << "[MapLauncher] mod manager " << (r == 0 ? "not found / not ready / unrecognised" : "unreadable")
+					<< " (state " << state << ", callback exe+0x" << std::hex << cb << std::dec << "; expected 2, exe+0x32951b0)";
+				return;
+			}
+			PLOG_INFO << "[MapLauncher] mod manager's map set to " << m.title << " (" << m.pack << ")";
+		}
+		mImpl->isArmed = true; mImpl->armedMap = m;
+		mImpl->msg = "Ready: press Start in the Halo 2 custom game lobby (don't change its map) - " + m.title + " loads instead of the lobby's map (this machine only)";
+	}
+
+	void Launcher::onLobbyTick(uintptr_t screen)
+	{
+		if (!mImpl->startPending.load() && !mImpl->waitingPlayers.load()) return;
+		const uintptr_t start = customLobbyStart(screen);
+		if (!start) return;   // another screen class sharing the tick (Firefight's custom game lobby)
+
+		// the map is selected and sent: start once every player has reported it (a mod map's check in StartCountdown)
+		if (mImpl->waitingPlayers.load())
+		{
+			const uint64_t waited = GetTickCount64() - mImpl->waitSinceMs.load();
+			int players = 0;
+			const int missing = playersMissingMap(players);
+			// - everyone has it: start (with other players, not before their answers to THIS map can have arrived)
+			// - cannot be told: a short fixed wait
+			// - still missing after 6 s: start anyway - MCC's own dialog then names who does not have the map
+			const bool go = missing == 0 ? (players <= 1 || waited >= 1000) : missing < 0 ? waited >= 1500 : waited >= 6000;
+			if (!go)
+			{
+				std::scoped_lock lk(mImpl->m);
+				if (mImpl->isArmed)
+					mImpl->msg = missing > 0
+						? "Waiting for the other players to confirm " + mImpl->armedMap.title + " (" + std::to_string(players - missing) + " of " + std::to_string(players) + ")..."
+						: "Sending " + mImpl->armedMap.title + " to the other players...";
+				return;
+			}
+			if (!mImpl->waitingPlayers.exchange(false)) return;
+			std::string title, note; bool armedNow = false;
+			{ std::scoped_lock lk(mImpl->m); armedNow = mImpl->isArmed; title = mImpl->armedMap.title; note = mImpl->waitNote; }
+			if (!armedNow) return;
+			PLOG_INFO << "[MapLauncher] starting the custom game lobby's match after " << waited << " ms (" << players << " players, "
+				<< (missing < 0 ? std::string("their map status unknown") : std::to_string(missing) + " without the map") << ")";
+			reinterpret_cast<int64_t(__fastcall*)(uintptr_t)>(start)(screen);
+			std::scoped_lock lk(mImpl->m);
+			if (mImpl->isArmed)
+				mImpl->msg = missing > 0 ? "Not everyone confirmed " + title + " - see MCC's message" : "Started - " + title + " is loading" + note;
+			return;
+		}
+
+		if (!mImpl->startPending.exchange(false)) return;
+		MapEntry m; bool armedNow = false;
+		{ std::scoped_lock lk(mImpl->m); armedNow = mImpl->isArmed; m = mImpl->armedMap; }
+		if (!armedNow) return;
+
+		// 1. select the map in the lobby, as the UI does: MCC then prepares it, puts it in the network session (every
+		//    player loads it) and launches it itself
+		LobbySelect sel;
+		selectInLobby(screen, m.stock, m.stockIndex, m.guid, sel);
+		bool selected = sel.result == 1;
+		std::string note;
+		if (selected)
+		{
+			PLOG_INFO << "[MapLauncher] selected in the lobby: " << m.title << " (" << m.pack << ") - game " << sel.game << ", catalogue id " << sel.id
+				<< " kind " << sel.kind << " (" << sel.matches << " nodes), map " << sel.oldMap << " -> " << sel.id << ", variant " << sel.oldVariant
+				<< " -> " << sel.newVariant << ", gametype " << sel.oldGametype << " -> " << sel.newGametype
+				<< ", sent to players: " << (sel.broadcast == 1 ? "map tile refresh" : sel.broadcast == 2 ? "lobby state block" : "NO");
+			if (sel.newGametype != sel.oldGametype) note = " (MCC changed the gametype: the lobby's one does not support this map)";
+			if (!m.stock)
+			{
+				// a mod map: every player's game must report it before StartCountdown's check passes - wait for that
+				std::scoped_lock lk(mImpl->m);
+				mImpl->lobbySelected = true;
+				mImpl->waitNote = note;
+				mImpl->waitSinceMs = GetTickCount64();
+				mImpl->waitingPlayers = true;
+				mImpl->msg = "Sending " + m.title + " to the other players...";
 				return;
 			}
 		}
 		else
 		{
-			// MCC prepares the map from its lobby record: point it at this one now (it is read when Start is pressed)
-			bool wasMod = false;
-			const int r = writeLobbyRecord(m.guid, m.modGuid, wasMod);
-			if (r != 1)
+			// 2. fallback, this machine only: the mod manager's pair now, the launch block at the game's start
+			PLOG_ERROR << "[MapLauncher] could not select " << m.title << " in the lobby (result " << sel.result << ": "
+				<< (sel.result == 0 ? "not in the lobby's map list" : sel.result == -2 ? "another MCC build" : "read fault")
+				<< ", lobby game " << sel.game << ") - falling back to the local swap (NOT sent to other players)";
+			note = " (local only - not sent to other players)";
+			if (!m.stock)
 			{
-				mImpl->isArmed = false;
-				mImpl->msg = r == 0 ? "MCC's lobby selection was not found - open a Halo 2 custom game lobby first, then press Play"
-					: "MCC's lobby selection could not be read";
-				PLOG_ERROR << "[MapLauncher] lobby record " << (r == 0 ? "not found / unrecognised" : "unreadable");
-				return;
+				int32_t state = -1; uintptr_t cb = 0;
+				const int r = writeLobbyRecord(m.guid, m.modGuid, state, cb);
+				if (r != 1)
+				{
+					PLOG_ERROR << "[MapLauncher] mod manager " << (r == 0 ? "not found / not ready / unrecognised" : "unreadable")
+						<< " (state " << state << ", callback exe+0x" << std::hex << cb << std::dec << "; expected 2, exe+0x32951b0)";
+					std::scoped_lock lk(mImpl->m);
+					mImpl->isArmed = false;
+					mImpl->msg = "Couldn't launch " + m.title + ": it is not in this lobby's map list and MCC's mod manager is not ready";
+					return;
+				}
 			}
-			PLOG_INFO << "[MapLauncher] lobby record set to " << m.title << " (" << m.pack << "), lobby had a " << (wasMod ? "mod" : "stock") << " map";
 		}
-		mImpl->isArmed = true; mImpl->armedMap = m;
-		if (mLobbyTickHook)
-		{
-			// the lobby's tick starts the match on MCC's game thread (onLobbyTick)
-			mImpl->startAskedMs = GetTickCount64();
-			mImpl->startPending = true;
-			mImpl->msg = "Starting " + m.title + "...";
-		}
-		else mImpl->msg = "Ready: press Start in the Halo 2 custom game lobby (don't change its map) - " + m.title + " loads instead of the lobby's map";
-	}
-
-	void Launcher::onLobbyTick(uintptr_t screen)
-	{
-		if (!mImpl->startPending.load()) return;
-		const uintptr_t start = customLobbyStart(screen);
-		if (!start) return;   // another screen class sharing the tick (Firefight's custom game lobby)
-		if (!mImpl->startPending.exchange(false)) return;
-		const int32_t lobbyGame = readI32(screen + 5832, -2);
-		PLOG_INFO << "[MapLauncher] starting the custom game lobby's match (lobby game field " << lobbyGame << ")";
+		{ std::scoped_lock lk(mImpl->m); mImpl->lobbySelected = selected; }
+		PLOG_INFO << "[MapLauncher] starting the custom game lobby's match";
 		reinterpret_cast<int64_t(__fastcall*)(uintptr_t)>(start)(screen);
 		std::scoped_lock lk(mImpl->m);
-		if (mImpl->isArmed) mImpl->msg = "Started - " + mImpl->armedMap.title + " is loading";
+		if (mImpl->isArmed) mImpl->msg = "Started - " + m.title + " is loading" + note;
 	}
 
 	void Launcher::disarm()
 	{
 		mImpl->startPending = false;
+		mImpl->waitingPlayers = false;
 		std::scoped_lock lk(mImpl->m);
 		mImpl->isArmed = false; mImpl->msg.clear();
 	}
@@ -425,11 +674,19 @@ namespace MapLauncher
 
 	std::string Launcher::message() const
 	{
-		// no custom game lobby ticked within the timeout: the start is dropped (the map stays armed for MCC's own Start)
+		// no custom game lobby ticked within the timeout: the start is dropped, and so is the map (nothing was prepared for it)
 		if (mImpl->startPending.load() && GetTickCount64() - mImpl->startAskedMs.load() > kStartTimeoutMs && mImpl->startPending.exchange(false))
 		{
 			std::scoped_lock lk(mImpl->m);
-			mImpl->msg = "Couldn't start: open MCC's Halo 2 custom game lobby, then press Play (or press MCC's Start - the map is still armed)";
+			mImpl->isArmed = false;
+			mImpl->msg = "Couldn't start: open MCC's Halo 2 custom game lobby, then press Play";
+		}
+		// the lobby stopped ticking while Play waited for the players (the lobby was left): dropped
+		if (mImpl->waitingPlayers.load() && GetTickCount64() - mImpl->waitSinceMs.load() > 10000 && mImpl->waitingPlayers.exchange(false))
+		{
+			std::scoped_lock lk(mImpl->m);
+			mImpl->isArmed = false;
+			mImpl->msg = "Not started: the custom game lobby was left";
 		}
 		std::scoped_lock lk(mImpl->m);
 		return mImpl->msg;
@@ -442,9 +699,36 @@ namespace MapLauncher
 		const MapEntry& m = mImpl->armedMap;
 		if (m.game != Game::Halo2) return;
 		int32_t lobbyMap = 0;
+		if (mImpl->lobbySelected)
+		{
+			// the map was selected in the lobby: MCC built this launch itself. Nothing is swapped - a block naming another map
+			// means the selection did not take, and swapping it here (with nothing prepared, and only on this machine) would
+			// hang the load or split the players.
+			const int same = blockHoldsMap(gd, m.stock, m.stockIndex, m.guid, lobbyMap);
+			if (same == -2) return;   // not a multiplayer launch: stays armed
+			mImpl->isArmed = false; mImpl->lobbySelected = false;
+			if (same == 1)
+			{
+				PLOG_INFO << "[MapLauncher] Halo 2 launch: MCC launched " << m.title << " (" << m.pack << ") from the lobby selection";
+				mImpl->msg = "Launched " + m.title + " (" + m.pack + ")";
+			}
+			else
+			{
+				PLOG_ERROR << "[MapLauncher] Halo 2 launch: the launch names map " << lobbyMap << ", not " << m.title << " - the lobby selection did not take (nothing swapped)";
+				mImpl->msg = "MCC launched the lobby's own map - selecting " + m.title + " did not take";
+			}
+			return;
+		}
 		const int r = writeHalo2Map(gd, m.stock, m.stockIndex, m.guid, lobbyMap);
 		if (r < 0) { PLOG_ERROR << "[MapLauncher] launch block unreadable"; return; }
 		if (r == 0) return;   // not a multiplayer launch: stays armed
+		if (r == 2)
+		{
+			PLOG_INFO << "[MapLauncher] Halo 2 launch: the lobby's map is a mod's - stock map " << m.title << " not swapped in";
+			mImpl->msg = "Not launched: for a stock map, select any STOCK map in MCC's lobby first, then press Play again";
+			mImpl->isArmed = false;
+			return;
+		}
 		PLOG_INFO << "[MapLauncher] Halo 2 launch: lobby map " << lobbyMap << " -> " << m.title << " (" << m.pack << ")";
 		mImpl->msg = "Launched " + m.title + " (" + m.pack + ")";
 		mImpl->isArmed = false;   // one launch per Play

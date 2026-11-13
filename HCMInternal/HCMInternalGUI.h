@@ -8,6 +8,7 @@
 #include "GUIMCCState.h"
 #include "ControlServiceContainer.h"
 #include "SettingsStateAndEvents.h"
+#include "HCMPaletteGUI.h"
 
 class HCMInternalGUI : public IAnchorPoint, public std::enable_shared_from_this<HCMInternalGUI>
 {
@@ -52,7 +53,18 @@ private:
 	bool m_HCMInternalGUIinitialized = false;
 
 
-	void primaryRender(); // Primary render function
+	void primaryRender(); // Primary render function: picks the layout, then one of the two below
+	void primaryRenderClassic(); // the original window: one long list of collapsing headings (unchanged)
+	void primaryRenderPalette(); // the new window: search, Home / Favourites / Browse all (HCMPaletteGUI)
+
+	// New layout. Null if it failed to construct; mPaletteFailed latches if its render ever throws. Either way
+	// the classic layout is used for the rest of the session, so a bug in the new window can never leave the
+	// user without a working one.
+	std::unique_ptr<HCMPaletteGUI> mPalette;
+	bool mPaletteFailed = false;
+	float mPaletteDesiredHeight = 300.f;
+	GameState mCurrentGame{ GameState::Value::NoGame };
+	void setClassicLayout(bool classic);
 
 	// sub-render functions to help my sanity
 	std::vector<HCMExceptionBase> errorsToDisplay;
@@ -97,6 +109,20 @@ public:
 		if (IsBadReadPtr((void*)mIsCursorShowing, 1))
 		{
 			throw HCMInitException(std::format("Bad isCursorShowing pointer! 0x{:x}", (uintptr_t)mIsCursorShowing));
+		}
+
+		// The new layout is optional by construction: if it cannot be built, the classic window is simply used.
+		try
+		{
+			mPalette = std::make_unique<HCMPaletteGUI>(guistore, hotkeyRenderer, settings, control);
+		}
+		catch (const std::exception& ex)
+		{
+			PLOG_ERROR << "HCMPaletteGUI failed to construct, using the classic layout: " << ex.what();
+		}
+		catch (...)
+		{
+			PLOG_ERROR << "HCMPaletteGUI failed to construct (unknown exception), using the classic layout";
 		}
 
 		PLOG_VERBOSE << "HCMInternalGUI finished construction";

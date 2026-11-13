@@ -64,10 +64,38 @@ private:
 
 	std::optional<std::shared_ptr<IGUIElement>> createGUIElementAndStoreResult(GUIElementEnum guielementenum, GameState game, std::shared_ptr<IGUIRequiredServices> guireq, std::shared_ptr<OptionalCheatInfo> fail, std::shared_ptr<GUIServiceInfo> info, std::shared_ptr<SettingsStateAndEvents> settings, std::shared_ptr<RuntimeExceptionHandler> exp)
 	{
-		auto res = createGUIElement(guielementenum, game, guireq, fail, info, settings, exp);
-		if (res.has_value()) mStore->mapOfSuccessfullyConstructedGUIElements.at(game).insert(guielementenum);
+		// Element tree for the new layout (search / favourites / browse). Nested elements are created while their
+		// parent's constructor arguments are being evaluated - i.e. INSIDE the createGUIElement call below - so a
+		// stack of "children built so far" turns this one choke point into a full tree, with no per-widget code.
+		// The frame is pushed before and popped after, on every path, so a throw cannot leave the stack skewed.
+		mTreeBuildStack.emplace_back();
+		std::optional<std::shared_ptr<IGUIElement>> res;
+		try
+		{
+			res = createGUIElement(guielementenum, game, guireq, fail, info, settings, exp);
+		}
+		catch (...)
+		{
+			mTreeBuildStack.pop_back();
+			throw;
+		}
+		std::vector<GUIElementNode> builtChildren = std::move(mTreeBuildStack.back());
+		mTreeBuildStack.pop_back();
+
+		if (res.has_value())
+		{
+			mStore->mapOfSuccessfullyConstructedGUIElements.at(game).insert(guielementenum);
+			GUIElementNode node{ guielementenum, res.value(), std::move(builtChildren) };
+			if (!mTreeBuildStack.empty())
+				mTreeBuildStack.back().push_back(std::move(node));          // nested: belongs to whoever is being built
+			else
+				mStore->getElementTreesMutable()[game].push_back(std::move(node)); // top level
+		}
+		// (an element that failed to construct drops its children too: nothing would have drawn them either)
 		return res;
 	}
+
+	std::vector<std::vector<GUIElementNode>> mTreeBuildStack;
 
 	std::optional<std::shared_ptr<IGUIElement>> createGUIElement(GUIElementEnum guielementenum, GameState game, std::shared_ptr<IGUIRequiredServices> guireq, std::shared_ptr<OptionalCheatInfo> fail, std::shared_ptr<GUIServiceInfo> info, std::shared_ptr<SettingsStateAndEvents> settings, std::shared_ptr<RuntimeExceptionHandler> exp)
 	{
@@ -163,6 +191,8 @@ private:
 					(game, ToolTipCollection("General HCM options"), "Control", headerChildElements
 						{
 						createNestedElement(GUIElementEnum::toggleGUIHotkeyGUI),
+						createNestedElement(GUIElementEnum::classicLayoutToggleGUI),
+						createNestedElement(GUIElementEnum::focusSearchHotkeyGUI),
 						createNestedElement(GUIElementEnum::messagesFontSize),
 						createNestedElement(GUIElementEnum::messagesFontColor),
 						createNestedElement(GUIElementEnum::GUISettingsSubheading),
@@ -176,6 +206,16 @@ private:
 				case GUIElementEnum::toggleGUIHotkeyGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<63>>
 						(game, ToolTipCollection("Brings up or collapses this main GUI window"), RebindableHotkeyEnum::toggleGUI, "Toggle this GUI"));
+
+				// The two rows that belong to the new (search / favourites) window layout. They sit in Control in BOTH
+				// layouts, so the layout can always be switched back from wherever the user is.
+				case GUIElementEnum::classicLayoutToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Use the original HCM window: one long list of collapsing headings. Untick for the new window with search, favourites and tabs. Saved between sessions."), std::nullopt, "Classic layout", settings->classicLayout));
+
+				case GUIElementEnum::focusSearchHotkeyGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<63>>
+						(game, ToolTipCollection("New layout only: puts the keyboard in the search box. Only acts while this window is open and the mouse cursor is free. While you type, the game does not get the keys and HCM hotkeys do not fire; Esc hands the keyboard back."), RebindableHotkeyEnum::focusSearchHotkey, "Focus search box"));
 
 				case GUIElementEnum::messagesFontSize:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(6.f, 120.f)>>
@@ -264,7 +304,7 @@ private:
 
 				case GUIElementEnum::mapLauncherGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIMapLauncher>
-						(game, ToolTipCollection("Launch a map from MCC's mod map packs (or Halo 2 stock maps) with the lobby's gametype. Pick a map, press Play, then Start in a Halo 2 custom game lobby. Halo 2 only for now.")));
+						(game, ToolTipCollection("Launch a map from MCC's mod map packs (or Halo 2 stock maps) with the lobby's gametype. Pick a map, press Play, then Start in a Halo 2 custom game lobby. Halo 2 only for now."), settings->togglePause));
 
 				case GUIElementEnum::presetsHeadingGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
@@ -982,6 +1022,7 @@ private:
 							createNestedElement(GUIElementEnum::invulnerabilitySettingsSubheading),
 							createNestedElement(GUIElementEnum::infiniteAmmoGUI),
 							createNestedElement(GUIElementEnum::bottomlessClipGUI),
+							createNestedElement(GUIElementEnum::oneShotKillGUI),
 							createNestedElement(GUIElementEnum::halo3TheaterInterpToggleGUI),
 							createNestedElement(GUIElementEnum::halo3TheaterInterpCrouchGUI),
 							createNestedElement(GUIElementEnum::season7PhysicsToggle),
@@ -1028,6 +1069,7 @@ private:
 							createNestedElement(GUIElementEnum::uncapVisibilityLimitsToggle),
 							createNestedElement(GUIElementEnum::uncapClusterLimitToggle),
 							createNestedElement(GUIElementEnum::uncapRenderSectionsToggle),
+							createNestedElement(GUIElementEnum::h2aShaderPrewarmToggle),
 							createNestedElement(GUIElementEnum::h2ShadowResolutionCombo),
 							createNestedElement(GUIElementEnum::h2ArmorColourToggle),
 							createNestedElement(GUIElementEnum::h2ArmorColourPrimaryPicker),
@@ -1069,6 +1111,10 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("The player no longer has to reload"), RebindableHotkeyEnum::bottomlessClip, "Bottomless Clip", settings->bottomlessClipToggle
 						));
+
+				case GUIElementEnum::oneShotKillGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Anything a player damages dies in one hit. Never a player, the shooter, or what the shooter is riding - your own grenade will not kill you. Allies and empty vehicles do die."), std::nullopt, "One Shot Kill", settings->oneShotKillToggle));
 
 				case GUIElementEnum::season7PhysicsToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -1637,6 +1683,11 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Leave on. Static RE says Halo 2 MCC stores depth reversed (1 - z/w). If in-frame lines are ALL hidden or NEVER hidden, flip this and report which looked right."), std::nullopt, "Game depth is reversed-Z (diagnostic)", settings->collisionViewerReversedZ));
 
+				case GUIElementEnum::h2aShaderPrewarmToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2, Anniversary graphics: removes most of the stutter while moving through a level. The game loads each shader the first time something that needs it is drawn, and the frame waits while the graphics driver compiles it. With this on, HCM remembers which shaders each level used and has the game load them all when the level starts instead. The first run of a level still stutters while HCM learns it; level starts take a few seconds longer afterwards. Switch it on before loading a level. Build 1.3528 only."), std::nullopt, "H2A Shader Pre-warm", settings->h2aShaderPrewarmToggle
+						));
+
 				case GUIElementEnum::uncapRenderSectionsToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Halo 2: fixes the player model and far scenery flickering when moving fast on big maps (e.g. Metropolis) by raising the 850 render-section limit to 4096. Applies live, offline only. Build 1.3528 only."), std::nullopt, "Uncap Render Sections", settings->uncapRenderSectionsToggle
@@ -1650,9 +1701,13 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(-5.f, 10.f)>>
 						(game, ToolTipCollection("Raises (or lowers) the point the chase camera orbits around, in world units - the camera and what it looks at move up together."), "  Chase vertical offset (wu)", settings->chaseCameraHeight));
 
+				case GUIElementEnum::freeCameraCollisionRadiusGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.05f, 1.f)>>
+						(game, ToolTipCollection("Halo 2 Free Camera collision: how far (world units) the camera stays away from walls and objects while No-clip camera is off. Raise it if you can still see through a wall when pressed against it."), "Collision radius (wu)", settings->freeCameraCollisionRadius));
+
 				case GUIElementEnum::chaseCameraNoClipGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Chase Camera: don't pull the camera in when walls/objects are between it and you (sets the observer's own 'no camera collision' command flag). Only affects the chase camera while Chase Camera is on."), std::nullopt, "  No-clip camera", settings->chaseCameraNoClip));
+						(game, ToolTipCollection("Camera no-clip. Off (default): the Chase Camera is pulled in by walls/objects between it and you, and (Halo 2) the Free Camera collides with the level and objects instead of flying through them. On: neither camera collides (for the Chase Camera this sets the observer's own 'no camera collision' command flag). Halo 2's Free Camera collision is MCC build 1.3528 only."), std::nullopt, "  No-clip camera", settings->chaseCameraNoClip));
 
 			// ---- Poorboy's Mods (ported from Poorboys Checkpoint Manager by Poorboy, MIT): Halo2Physics.cpp, GUIH2Physics.h, BottomlessClip.cpp ----
 			case GUIElementEnum::halo2PhysicsHeadingGUI:
@@ -4515,6 +4570,9 @@ private:
 						(game, ToolTipCollection("Simple settings for Free Camera"), "Free Camera Simple Settings", headerChildElements
 							{
 								createNestedElement(GUIElementEnum::freeCameraTeleportToCamera),
+								// Halo 2 only: the shared camera no-clip setting also controls Free Camera collision there
+								(game.operator GameState::Value() == GameState::Value::Halo2 ? createNestedElement(GUIElementEnum::chaseCameraNoClipGUI) : std::optional<std::shared_ptr<IGUIElement>>{}),
+								(game.operator GameState::Value() == GameState::Value::Halo2 ? createNestedElement(GUIElementEnum::freeCameraCollisionRadiusGUI) : std::optional<std::shared_ptr<IGUIElement>>{}),
 								createNestedElement(GUIElementEnum::freeCameraGameInputDisable),
 								createNestedElement(GUIElementEnum::freeCameraCameraInputDisable),
 								createNestedElement(GUIElementEnum::freeCameraUserInputCameraBindingsSubheading),
@@ -4533,6 +4591,8 @@ private:
 							{
 								createNestedElement(GUIElementEnum::freeCameraTeleportToCamera),
 								createNestedElement(GUIElementEnum::freeCameraTeleportToCameraSlightlyBehind),
+								(game.operator GameState::Value() == GameState::Value::Halo2 ? createNestedElement(GUIElementEnum::chaseCameraNoClipGUI) : std::optional<std::shared_ptr<IGUIElement>>{}),
+								(game.operator GameState::Value() == GameState::Value::Halo2 ? createNestedElement(GUIElementEnum::freeCameraCollisionRadiusGUI) : std::optional<std::shared_ptr<IGUIElement>>{}),
 								createNestedElement(GUIElementEnum::freeCameraThirdPersonRendering),
 								createNestedElement(GUIElementEnum::freeCameraDisableScreenEffects),
 								createNestedElement(GUIElementEnum::freeCameraGameInputDisable),

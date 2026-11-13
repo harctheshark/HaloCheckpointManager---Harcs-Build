@@ -5,6 +5,7 @@
 #include "SettingsStateAndEvents.h"
 #include "RuntimeExceptionHandler.h"
 #include "ScopedThreadSuspender.h"
+#include "H2QuietWindow.h"
 #include "GlobalKill.h"
 #include <Windows.h>
 #include <vector>
@@ -124,62 +125,131 @@ namespace
 			visOld.clear();
 		}
 
-		// Grow one visibility sub-collection: allocate the 4 bigger arrays from the GAME heap
-		// (sub_1800769E0) so the engine frees them normally on per-map teardown. Idempotent.
-		// The original (smaller) arrays become orphaned; the engine no longer references them.
-		void resizeSub(uintptr_t coll, uint32_t subOff, const char* which)
+		// ---- 2026-11-11: plan (allocate, threads live) -> commit (copy + repoint, inside a QUIET WINDOW) ----
+		// These arrays and the render-state pool are read and written all through a frame's render work. The first version
+		// copied and repointed them with the game running (no suspension at all): an entry added between the copy and the
+		// repoint was lost, and a thread already holding the old array kept writing there while everything else read the
+		// new one. Now the bigger blocks are allocated first (the game heap / VirtualAlloc take locks, so never inside a
+		// window), and the copy + repoint happen in a window where no thread is inside the renderer (H2QuietWindow.h) - the
+		// counts are read THERE, so nothing can be added in between. Logging happens after the window.
+		struct SubPlan
+		{
+			const char* which = ""; uintptr_t subp = 0; uint32_t oldCap = 0; uint16_t cnt = 0;
+			void* n[4] = {}; uintptr_t o[4] = {};
+			int result = 0;   // 0 nothing to do, 1 planned, 2 committed, 3 the sub-collection changed under us (not touched)
+		};
+		struct RsPlan
+		{
+			uintptr_t d0 = 0; uint32_t maxOld = 0, elem = 0, dataOff = 0, bvOffOld = 0, newBvOff = 0, bvNew = 0, bvOld = 0, size = 0;
+			void* block = nullptr;
+			int result = 0;   // as SubPlan
+		};
+
+		// Threads LIVE. Allocate the 4 bigger arrays from the GAME heap (sub_1800769E0) so the engine frees them normally on
+		// per-map teardown, zeroed so a read up to the raised cap never sees heap garbage.
+		void planSub(uintptr_t coll, uint32_t subOff, const char* which, SubPlan& p)
 		{
 			UncapDbg& d = UncapDbg::get();
-			uintptr_t subp = *(uintptr_t*)(base + coll + subOff);
-			if (!subp) { d.logf("  resizeSub %s: subp NULL, skip", which); return; }
-			uint32_t oldCap = *(uint32_t*)subp; uint16_t cnt = *(uint16_t*)(subp + 4);
-			d.logf("  resizeSub %s subp=%p cap=%u cnt=%u", which, (void*)subp, oldCap, cnt);
-			if (oldCap == 0 || oldCap >= (uint32_t)VIS_NEWCAP) { d.logf("    skip (cap)"); return; }
-			if (cnt > oldCap) { d.logf("    skip (cnt>cap)"); return; }
-			uintptr_t oA = *(uintptr_t*)(subp + 8), oB = *(uintptr_t*)(subp + 0x10), oC = *(uintptr_t*)(subp + 0x18), oD = *(uintptr_t*)(subp + 0x20);
-			void* nA = gameAlloc(2 * VIS_NEWCAP); void* nB = gameAlloc(4 * VIS_NEWCAP); void* nC = gameAlloc(8 * VIS_NEWCAP); void* nD = gameAlloc(2 * VIS_NEWCAP);
-			if (!(nA && nB && nC && nD)) { d.logf("    gameAlloc fail"); return; }
-			d.track((uintptr_t)nA, 2 * VIS_NEWCAP, "vis A"); d.track((uintptr_t)nB, 4 * VIS_NEWCAP, "vis B");
-			d.track((uintptr_t)nC, 8 * VIS_NEWCAP, "vis C"); d.track((uintptr_t)nD, 2 * VIS_NEWCAP, "vis D");
-			memcpy(nA, (void*)oA, (size_t)cnt * 2); memcpy(nB, (void*)oB, (size_t)cnt * 4); memcpy(nC, (void*)oC, (size_t)cnt * 8); memcpy(nD, (void*)oD, (size_t)cnt * 2);
-			*(uintptr_t*)(subp + 8) = (uintptr_t)nA; *(uintptr_t*)(subp + 0x10) = (uintptr_t)nB; *(uintptr_t*)(subp + 0x18) = (uintptr_t)nC; *(uintptr_t*)(subp + 0x20) = (uintptr_t)nD;
-			*(uint32_t*)subp = VIS_NEWCAP;
-			// the original (smaller) arrays are now orphaned - free them with the engine's own deallocator,
-			// deferred one cycle (they're safe to free once nothing references them; bounded, never accumulates).
-			visOld.push_back((void*)oA); visOld.push_back((void*)oB); visOld.push_back((void*)oC); visOld.push_back((void*)oD);
-			d.logf("    resized -> cap %d, game-heap arrays %p/%p/%p/%p (4 originals queued for free)", VIS_NEWCAP, nA, nB, nC, nD);
+			p.which = which;
+			p.subp = *(uintptr_t*)(base + coll + subOff);
+			if (!p.subp) { d.logf("  resizeSub %s: subp NULL, skip", which); return; }
+			p.oldCap = *(uint32_t*)p.subp; p.cnt = *(uint16_t*)(p.subp + 4);
+			d.logf("  resizeSub %s subp=%p cap=%u cnt=%u", which, (void*)p.subp, p.oldCap, p.cnt);
+			if (p.oldCap == 0 || p.oldCap >= (uint32_t)VIS_NEWCAP) { d.logf("    skip (cap)"); return; }
+			if (p.cnt > p.oldCap) { d.logf("    skip (cnt>cap)"); return; }
+			const size_t sz[4] = { 2 * (size_t)VIS_NEWCAP, 4 * (size_t)VIS_NEWCAP, 8 * (size_t)VIS_NEWCAP, 2 * (size_t)VIS_NEWCAP };
+			for (int i = 0; i < 4; ++i) p.n[i] = gameAlloc(sz[i]);
+			if (!(p.n[0] && p.n[1] && p.n[2] && p.n[3]))
+			{
+				for (int i = 0; i < 4; ++i) { gameFree(p.n[i]); p.n[i] = nullptr; }
+				d.logf("    gameAlloc fail"); return;
+			}
+			for (int i = 0; i < 4; ++i) memset(p.n[i], 0, sz[i]);
+			p.result = 1;
+		}
+		// INSIDE the quiet window: memory only.
+		static void commitSub(SubPlan& p)
+		{
+			if (p.result != 1) return;
+			const uint32_t cap = *(uint32_t*)p.subp; const uint16_t cnt = *(uint16_t*)(p.subp + 4);
+			if (cap != p.oldCap || cnt > cap) { p.result = 3; return; }
+			p.cnt = cnt;
+			for (int i = 0; i < 4; ++i) p.o[i] = *(uintptr_t*)(p.subp + 8 + 8 * i);
+			memcpy(p.n[0], (void*)p.o[0], (size_t)cnt * 2); memcpy(p.n[1], (void*)p.o[1], (size_t)cnt * 4);
+			memcpy(p.n[2], (void*)p.o[2], (size_t)cnt * 8); memcpy(p.n[3], (void*)p.o[3], (size_t)cnt * 2);
+			for (int i = 0; i < 4; ++i) *(uintptr_t*)(p.subp + 8 + 8 * i) = (uintptr_t)p.n[i];
+			*(uint32_t*)p.subp = VIS_NEWCAP;
+			p.result = 2;
+		}
+		// Threads LIVE again: bookkeeping, frees, log.
+		void finishSub(SubPlan& p)
+		{
+			UncapDbg& d = UncapDbg::get();
+			if (p.result == 2)
+			{
+				d.track((uintptr_t)p.n[0], 2 * VIS_NEWCAP, "vis A"); d.track((uintptr_t)p.n[1], 4 * VIS_NEWCAP, "vis B");
+				d.track((uintptr_t)p.n[2], 8 * VIS_NEWCAP, "vis C"); d.track((uintptr_t)p.n[3], 2 * VIS_NEWCAP, "vis D");
+				// the original (smaller) arrays are now orphaned - freed with the engine's own deallocator, deferred one cycle
+				for (int i = 0; i < 4; ++i) visOld.push_back((void*)p.o[i]);
+				d.logf("    %s resized -> cap %d (cnt %u), game-heap arrays %p/%p/%p/%p (4 originals queued for free)", p.which, VIS_NEWCAP, p.cnt, p.n[0], p.n[1], p.n[2], p.n[3]);
+			}
+			else if (p.result == 1 || p.result == 3)
+			{
+				for (int i = 0; i < 4; ++i) { gameFree(p.n[i]); p.n[i] = nullptr; }   // never installed
+				d.logf("    %s NOT resized (%s)", p.which, p.result == 3 ? "it changed before the window" : "no window");
+			}
 		}
 
 		// Render-state: fully-committed VirtualAlloc (the arena can't grow), repoint. Never freed by engine.
-		void resizeRenderStateLive()
+		void planRenderState(RsPlan& r)
 		{
 			UncapDbg& d = UncapDbg::get();
-			uintptr_t d0 = *(uintptr_t*)(base + RS_PTR);
-			if (!d0) { d.logf("  rs-live: no datum (not in a map yet)"); return; }
-			uint32_t maxOld = *(uint32_t*)(d0 + 32), elem = *(uint32_t*)(d0 + 36), dataOff = *(uint32_t*)(d0 + 72), bvOffOld = *(uint32_t*)(d0 + 80);
-			d.rsDatum = d0; d.rsMax = maxOld; d.rsElem = elem;
-			d.logf("  rs-live: datum=%p max=%u elem=%u dataOff=%u bvOff=%u", (void*)d0, maxOld, elem, dataOff, bvOffOld);
-			if (maxOld >= (uint32_t)RS_NEWMAX) { d.logf("    skip (already big - our block)"); return; }
-			if (elem == 0 || elem > 4096 || dataOff < 32 || dataOff > 256 || bvOffOld != dataOff + maxOld * elem) { d.logf("    SANITY FAIL, skip"); return; }
-			uint32_t newBvOff = dataOff + (uint32_t)RS_NEWMAX * elem;
-			uint32_t bvNew = 4 * ((RS_NEWMAX + 31) >> 5), bvOld = 4 * ((maxOld + 31) >> 5);
-			uint32_t size = newBvOff + bvNew;
-			void* block = VirtualAlloc(0, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-			if (!block) { d.logf("    VirtualAlloc FAILED, skip"); return; }
-			d.track((uintptr_t)block, size, "rs datum");
-			memcpy(block, (void*)d0, dataOff);
-			*(uint32_t*)((uintptr_t)block + 32) = RS_NEWMAX;
-			*(uint32_t*)((uintptr_t)block + 72) = dataOff;
-			*(uint32_t*)((uintptr_t)block + 80) = newBvOff;
-			memcpy((uint8_t*)block + dataOff, (void*)(d0 + dataOff), (size_t)maxOld * elem);
-			memset((uint8_t*)block + dataOff + (size_t)maxOld * elem, 0, (size_t)(RS_NEWMAX - maxOld) * elem);
-			memcpy((uint8_t*)block + newBvOff, (void*)(d0 + bvOffOld), bvOld);
-			memset((uint8_t*)block + newBvOff + bvOld, 0, bvNew - bvOld);
-			if (rsActive) rsOld.push_back(rsActive);
-			rsOriginal = d0; rsActive = block;
+			r.d0 = *(uintptr_t*)(base + RS_PTR);
+			if (!r.d0) { d.logf("  rs-live: no datum (not in a map yet)"); return; }
+			r.maxOld = *(uint32_t*)(r.d0 + 32); r.elem = *(uint32_t*)(r.d0 + 36); r.dataOff = *(uint32_t*)(r.d0 + 72); r.bvOffOld = *(uint32_t*)(r.d0 + 80);
+			d.rsDatum = r.d0; d.rsMax = r.maxOld; d.rsElem = r.elem;
+			d.logf("  rs-live: datum=%p max=%u elem=%u dataOff=%u bvOff=%u", (void*)r.d0, r.maxOld, r.elem, r.dataOff, r.bvOffOld);
+			if (r.maxOld >= (uint32_t)RS_NEWMAX) { d.logf("    skip (already big - our block)"); return; }
+			if (r.elem == 0 || r.elem > 4096 || r.dataOff < 32 || r.dataOff > 256 || r.bvOffOld != r.dataOff + r.maxOld * r.elem) { d.logf("    SANITY FAIL, skip"); return; }
+			r.newBvOff = r.dataOff + (uint32_t)RS_NEWMAX * r.elem;
+			r.bvNew = 4 * ((RS_NEWMAX + 31) >> 5); r.bvOld = 4 * ((r.maxOld + 31) >> 5);
+			r.size = r.newBvOff + r.bvNew;
+			r.block = VirtualAlloc(0, r.size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);   // zero-filled
+			if (!r.block) { d.logf("    VirtualAlloc FAILED, skip"); return; }
+			r.result = 1;
+		}
+		// INSIDE the quiet window: memory only. The pool is copied as it is NOW and the pointer swapped.
+		static void commitRenderState(RsPlan& r, uintptr_t base)
+		{
+			if (r.result != 1) return;
+			if (*(uintptr_t*)(base + RS_PTR) != r.d0 || *(uint32_t*)(r.d0 + 32) != r.maxOld || *(uint32_t*)(r.d0 + 36) != r.elem
+				|| *(uint32_t*)(r.d0 + 72) != r.dataOff || *(uint32_t*)(r.d0 + 80) != r.bvOffOld) { r.result = 3; return; }
+			uint8_t* const block = (uint8_t*)r.block;
+			memcpy(block, (void*)r.d0, r.dataOff);
+			*(uint32_t*)(block + 32) = RS_NEWMAX;
+			*(uint32_t*)(block + 72) = r.dataOff;
+			*(uint32_t*)(block + 80) = r.newBvOff;
+			memcpy(block + r.dataOff, (void*)(r.d0 + r.dataOff), (size_t)r.maxOld * r.elem);     // the rest is already zero
+			memcpy(block + r.newBvOff, (void*)(r.d0 + r.bvOffOld), r.bvOld);
 			*(uintptr_t*)(base + RS_PTR) = (uintptr_t)block;
-			d.rsDatum = (uintptr_t)block; d.rsMax = RS_NEWMAX;
-			d.logf("    repointed render-state -> %p (max 2048, VirtualAlloc, committed %u)", block, size);
+			r.result = 2;
+		}
+		void finishRenderState(RsPlan& r)
+		{
+			UncapDbg& d = UncapDbg::get();
+			if (r.result == 2)
+			{
+				d.track((uintptr_t)r.block, r.size, "rs datum");
+				if (rsActive) rsOld.push_back(rsActive);
+				rsOriginal = r.d0; rsActive = r.block;
+				d.rsDatum = (uintptr_t)r.block; d.rsMax = RS_NEWMAX;
+				d.logf("    repointed render-state -> %p (max 2048, VirtualAlloc, committed %u)", r.block, r.size);
+			}
+			else if (r.result == 1 || r.result == 3)
+			{
+				VirtualFree(r.block, 0, MEM_RELEASE); r.block = nullptr;   // never installed
+				d.logf("    render-state NOT repointed (%s)", r.result == 3 ? "it changed before the window" : "no window");
+			}
 		}
 
 	public:
@@ -197,55 +267,62 @@ namespace
 			drainVisOld();   // free last cycle's orphaned visibility arrays via the engine's deallocator
 			d.clearRanges();
 			d.inCriticalOp.store(true);
+
+			// 1. plan: every allocation, with the game running
 			static const char* names[] = { "extra5486","idx(objects)","extra5488" };
-			for (uint32_t c : COLLS) { int k = 0; for (uint32_t s : SUBS) resizeSub(c, s, names[k++]); }
-			resizeRenderStateLive();
+			SubPlan subs[6]; int nSubs = 0;
+			for (uint32_t c : COLLS) { int k = 0; for (uint32_t s : SUBS) planSub(c, s, names[k++], subs[nSubs++]); }
+			RsPlan rs; planRenderState(rs);
+			bool anything = rs.result == 1;
+			for (int i = 0; i < nSubs; ++i) anything = anything || subs[i].result == 1;
+
+			// 2. commit: copy + repoint in a window where no thread is inside the renderer
+			int tries = 0; bool quiet = true;
+			if (anything)
+			{
+				std::unique_ptr<ScopedThreadSuspender> window = H2Quiet::open(base, 800, tries);
+				quiet = window != nullptr;
+				if (quiet)
+				{
+					for (int i = 0; i < nSubs; ++i) commitSub(subs[i]);
+					commitRenderState(rs, base);
+				}
+			}   // the window closes here: everything runs again
+
+			// 3. bookkeeping, frees and the log
+			for (int i = 0; i < nSubs; ++i) finishSub(subs[i]);
+			finishRenderState(rs);
 			d.inCriticalOp.store(false);
-			d.logf("===== APPLY done =====");
+			if (!quiet)
+			{
+				d.logf("===== APPLY: no quiet window in %d tries - nothing changed =====", tries);
+				throw HCMRuntimeException("Uncap Visibility Limits: could not find a safe moment to change the limits (the game never left its renderer). Nothing was changed - toggle it off and on again.");
+			}
+			if (anything) d.logf("===== APPLY done (quiet window after %d tries) =====", tries);
+			else d.logf("===== APPLY done (nothing to do) =====");
 			return true;
 		}
 
-		// toggle-off: put the render-state pointer back to the arena datum (same map). Visibility arrays
-		// stay enlarged - harmless and the engine frees them correctly on teardown.
+		// toggle-off. NOTHING is swapped back while a map is running (2026-11-11): the enlarged arrays and render-state pool
+		// are valid for the rest of the map, and the old pool cannot take back entries made beyond its 256 slots - the old
+		// revert repointed to it anyway, with whatever was in it when the limits were raised. The stock limits return when the
+		// next map builds its own structures (onMCCStateChanged applies only while the toggle is on).
 		void revert()
 		{
 			UncapDbg& d = UncapDbg::get();
 			d.logf("===== REVERT =====");
-			d.inCriticalOp.store(true);
-
-			// SHUTDOWN path: the game's render thread is live and dereferences the render-state pointer
-			// every frame. Repointing it back to the original arena datum races that thread, AND the
-			// original may have been freed/reused by the game since we captured it (observed: render
-			// thread read 0xFFFF... mid-revert -> game crash). During teardown we therefore touch NOTHING
-			// live - leave our still-valid VirtualAlloc block installed and LEAK it (and any deferred
-			// blocks). The game keeps a consistent render-state; the block persists fine after HCM unloads.
 			if (GlobalKill::isKillSet())
 			{
+				// SHUTDOWN: touch nothing live; leave our still-valid block installed and LEAK it (and any deferred blocks).
 				rsActive = nullptr; rsOriginal = 0;   // drop our handles WITHOUT freeing (leak)
 				rsOld.clear();                         // ditto for deferred blocks - do not VirtualFree them
-				d.inCriticalOp.store(false); d.clearRanges();
+				d.clearRanges();
 				d.logf("===== REVERT skipped (shutdown - left installed, leaked) =====");
 				return;
 			}
-
-			if (base && GetModuleHandleA("halo2.dll"))
-			{
-				// Repoint the render-state pointer back to the arena datum with other threads
-				// suspended: the render thread reads this pointer every frame, so swapping it
-				// underneath a running thread can crash the game. ONLY the pointer write goes inside
-				// the suspend window - the game-heap frees (drainVisOld -> game deallocator) must stay
-				// OUTSIDE it, since a suspended thread could hold the game heap lock. (ScopedThreadSuspender.)
-				{
-					ScopedThreadSuspender suspend;
-					if (rsActive && rsOriginal && *(uintptr_t*)(base + RS_PTR) == (uintptr_t)rsActive)
-						*(uintptr_t*)(base + RS_PTR) = rsOriginal;
-				}
-				drainVisOld();   // free orphaned originals now (collection no longer references them)
-			}
-			if (rsActive) rsOld.push_back(rsActive);
-			rsActive = nullptr; rsOriginal = 0;
-			d.inCriticalOp.store(false); d.clearRanges();
-			d.logf("===== REVERT done =====");
+			// the orphaned originals were replaced in a quiet window, so nothing references them: free them now
+			if (base && GetModuleHandleA("halo2.dll")) drainVisOld();
+			d.logf("===== REVERT done (enlarged structures stay until the next map) =====");
 		}
 
 		// A map (re)loaded / we left the game: the game already freed last map's orphaned (game-heap) arrays as part
@@ -273,7 +350,10 @@ namespace
 
 			if (base && GetModuleHandleA("halo2.dll")) drainVisOld();   // free orphaned originals via game heap
 			for (void* p : rsOld) VirtualFree(p, 0, MEM_RELEASE);
-			if (rsActive) VirtualFree(rsActive, 0, MEM_RELEASE);
+			// our render-state block may still be the one the game is using (toggle-off no longer swaps it back): then it
+			// must outlive us - leak it
+			const bool inUse = rsActive && base && GetModuleHandleA("halo2.dll") && *(uintptr_t*)(base + RS_PTR) == (uintptr_t)rsActive;
+			if (rsActive && !inUse) VirtualFree(rsActive, 0, MEM_RELEASE);
 		}
 	};
 } // namespace
@@ -298,7 +378,7 @@ private:
 			else mPatcher.revert();
 		}
 		catch (HCMRuntimeException& ex) { PLOG_ERROR << ex.what(); try { lockOrThrow(messagesGUIWeak, m); m->addMessage(ex.what()); } catch (...) {} return; }
-		try { lockOrThrow(messagesGUIWeak, m); m->addMessage(newValue ? "Visibility + render-state raised (live; reapplies each map)" : "Visibility limits restored"); }
+		try { lockOrThrow(messagesGUIWeak, m); m->addMessage(newValue ? "Visibility + render-state raised (live; reapplies each map)" : "Visibility limits off - the stock limits return on the next map load"); }
 		catch (HCMRuntimeException&) {}
 	}
 

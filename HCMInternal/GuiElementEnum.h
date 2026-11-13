@@ -238,6 +238,7 @@
 	((invulnNPCGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER)))\
 	((infiniteAmmoGUI, (Halo1, Halo2)))\
 	((bottomlessClipGUI, (Halo1, Halo2)))\
+	((oneShotKillGUI, (Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	((season7PhysicsToggle, (Halo2)))\
 	((dropShadowsOnObjectsToggle, (Halo2)))\
 	((sphereSpecularForceToggle, (Halo2)))\
@@ -771,6 +772,7 @@
 #define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES4 \
 	((chaseCameraToggleGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	((chaseCameraNoClipGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+	((freeCameraCollisionRadiusGUI, (Halo2)))\
 	((chaseCameraFovGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	((chaseCameraHeightGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	/* Poorboy's Mods (Halo2Physics.cpp, GUIH2Physics.h): the last top-level section of the overlay */\
@@ -802,6 +804,7 @@
 			((display2DInfoShowZoneSet, (Halo3, Halo3ODST, HaloReach, Halo4, Halo2MP)))\
 	((havokBroadphaseBypassGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4, Halo2MP, HaloCER)))\
 	((uncapRenderSectionsToggle, (Halo2)))\
+	((h2aShaderPrewarmToggle, (Halo2)))\
 	((collisionViewerToggleGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
 			((collisionViewerOcclusionGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
 			((collisionViewerShowBspGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
@@ -973,7 +976,9 @@
 #define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES6 \
 	((havokSleepCountdownToggleGUI, (Halo2)))\
 	((havokSleepCountdownSimpleGUI, (Halo2)))\
-	((havokSleepAutoJumpGUI, (Halo2)))
+	((havokSleepAutoJumpGUI, (Halo2)))\
+	((classicLayoutToggleGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
+	((focusSearchHotkeyGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))
 
 #define DEBUGGUIELEMENTS_ANDSUPPORTEDGAMES \
 ((HCMDebugHeadingGUI, (ALL_SUPPORTED_GAMES)))\

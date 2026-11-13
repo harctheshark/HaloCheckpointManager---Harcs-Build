@@ -7,6 +7,7 @@
 #include <Windows.h>
 #include <tlhelp32.h>
 #include "ScopedThreadSuspender.h"   // hcmThreadSuspensionMutex(): suspendOthers/resumeOthers take the shared lock
+#include "H2QuietWindow.h"           // the quiescence gate shared by the Halo 2 uncap features
 #include <vector>
 #include <array>
 #include <atomic>
@@ -77,6 +78,15 @@ namespace
 		void logf(const char* fmt, ...) { char b[512]; va_list ap; va_start(ap, fmt); wvsprintfA(b, fmt, ap); va_end(ap); PLOG_DEBUG << "[UncapClusterLimit] " << b; }
 	};
 
+	// ---- QUIESCENCE GATE (2026-11-11, crash halo2+0x7093D7 one millisecond after "APPLY done") ----
+	// Suspending the other threads is not enough: stage 1 MOVES the projection buffers' index / volume arrays (+0x1770 ->
+	// +0x2460 ...) by patching the code that reads and writes them, and one frame's visibility pass (sub_1807EA5A0) first
+	// writes them and then reads them. Patched in between, the reader (sub_180709340, from sub_180707F50) looked in the new
+	// place for data the unpatched writer had put in the old one: a garbage index, an AV. The same goes for the subpart
+	// pool / item bit-vector moves (a thread already holding the old inline address in a register would write over the
+	// new pointer slot). So the patch is only made in a window where NO thread is executing, or will return into, the
+	// renderer: the shared check in H2QuietWindow.h (H2Quiet::threadInHazard - Rip and the whole live stack).
+
 	// pack helpers
 	static void put32(std::vector<uint8_t>& v, uint32_t x) { v.push_back((uint8_t)x); v.push_back((uint8_t)(x >> 8)); v.push_back((uint8_t)(x >> 16)); v.push_back((uint8_t)(x >> 24)); }
 	static void put64(std::vector<uint8_t>& v, uint64_t x) { for (int i = 0; i < 8; i++) v.push_back((uint8_t)(x >> (8 * i))); }
@@ -139,9 +149,16 @@ namespace
 			// cap. This is the fix for the toggle-on/level-load crash: previously these writes ran with the render
 			// thread live, so it could read a torn pointer set (or the raised cap against the old smaller arrays)
 			// and AV. Memory-only work under the suspend window - no heap lock is taken here (allocs already done).
-			suspendOthers();
+			// In a window outside the renderer when one comes up (2026-11-11): then no thread can still hold the old
+			// arrays, or have added an entry between the count read above and this copy. Without one, the plain window
+			// as before (the count is re-read inside it either way).
+			int tries = 0;
+			const bool quiet = enterQuietWindow(300, tries);
+			if (!quiet) suspendOthers();
 			for (auto& s : swaps)
 			{
+				const uint16_t liveCnt = *(uint16_t*)(s.subp + 4);
+				if (liveCnt <= *(uint32_t*)s.subp) s.cnt = liveCnt;   // what is there NOW, not when the arrays were allocated
 				memcpy(s.nA, (void*)s.oA, (size_t)s.cnt * 2); memcpy(s.nB, (void*)s.oB, (size_t)s.cnt * 4);
 				memcpy(s.nC, (void*)s.oC, (size_t)s.cnt * 8); memcpy(s.nD, (void*)s.oD, (size_t)s.cnt * 2);
 				*(uintptr_t*)(s.subp + 8) = (uintptr_t)s.nA; *(uintptr_t*)(s.subp + 0x10) = (uintptr_t)s.nB;
@@ -153,7 +170,7 @@ namespace
 			for (auto& s : swaps)
 			{
 				visOld.push_back((void*)s.oA); visOld.push_back((void*)s.oB); visOld.push_back((void*)s.oC); visOld.push_back((void*)s.oD);
-				d.logf("  clusters sub-coll: -> %d (cnt %u)", SUBCOLL_NEWCAP, s.cnt);
+				d.logf("  clusters sub-coll: -> %d (cnt %u, %s after %d tries)", SUBCOLL_NEWCAP, s.cnt, quiet ? "quiet window" : "NO quiet window", tries);
 			}
 		}
 		// byte-field undo: (addr, original bytes)
@@ -256,7 +273,7 @@ namespace
 				do {
 					if (te.th32OwnerProcessID == pid && te.th32ThreadID != me)
 					{
-						HANDLE h = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+						HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
 						if (h) { if (SuspendThread(h) != (DWORD)-1) suspended.push_back(h); else CloseHandle(h); }
 					}
 				} while (Thread32Next(snap, &te));
@@ -267,6 +284,42 @@ namespace
 			for (HANDLE h : suspended) { ResumeThread(h); CloseHandle(h); }
 			suspended.clear();
 			hcmThreadSuspensionMutex().unlock();   // only after every thread is running again
+		}
+
+		// Suspends the other threads in a window where none of them is in (or will return into) the visibility code - see
+		// the QUIESCENCE GATE above. True = such a window is open (the caller patches, then resumeOthers()); false = none
+		// came up (nothing is suspended). `tries` receives how many windows it took.
+		bool enterQuietWindow(int maxTries, int& tries)
+		{
+			const uintptr_t caveLo = (uintptr_t)cavePage, caveHi = cavePage ? caveLo + 0x1000 : 0;
+			for (tries = 1; tries <= maxTries; ++tries)
+			{
+				suspendOthers();
+				bool hazard = false;
+				const HANDLE* hs = suspended.data(); const size_t n = suspended.size();   // raw: no container calls in the window
+				for (size_t i = 0; i < n && !hazard; ++i) hazard = H2Quiet::threadInHazard(hs[i], base, caveLo, caveHi);
+				if (!hazard) return true;
+				resumeOthers();
+				Sleep(tries < 40 ? 1 : 3);   // a different point of the frame next time
+			}
+			return false;
+		}
+
+		// With the code now using the new layout, make everything it could still read from the OLD layout empty (the same
+		// drain the revert does): the collections' cursors and the projection buffers' cluster / volume counts. The next
+		// frame's pass rebuilds them. Inside the window; memory writes only.
+		void drainLiveCounts(bool newLayout)
+		{
+			const uint32_t volCount = newLayout ? 0x2860 : 0x1970;
+			auto drainProj = [&](uintptr_t proj) { if (proj) { *(uint16_t*)(proj + 0xA6C) = 0; *(uint32_t*)(proj + volCount) = 0; } };
+			for (uint32_t c : COLLS)
+			{
+				const uintptr_t coll = base + c;
+				*(uint16_t*)(coll + 0xA70) = 0;   // subpart pool cursor
+				*(uint16_t*)(coll + 0xA72) = 0;   // item count
+				drainProj(*(uintptr_t*)coll);     // coll[0] = its projection buffer
+			}
+			drainProj(base + 0x1603640); drainProj(base + 0x1625FC0);   // the two projection buffers in .data
 		}
 
 	public:
@@ -314,8 +367,19 @@ namespace
 			}
 
 			// suspend every other thread for the memory-only patch window (avoids the render thread
-			// executing a half-written detour / getter rewrite).
-			suspendOthers();
+			// executing a half-written detour / getter rewrite) - and only in a window where none of them is inside the
+			// frame's visibility pass (QUIESCENCE GATE above): the patch changes where that pass keeps its data.
+			int tries = 0;
+			if (!enterQuietWindow(600, tries))
+			{
+				for (void* p : bufs) VirtualFree(p, 0, MEM_RELEASE);
+				bufs.clear();
+				VirtualFree(cavePage, 0, MEM_RELEASE); cavePage = nullptr;
+				d.critical.store(false);
+				d.logf("  no quiet window in %d tries - nothing patched", tries - 1);
+				throw HCMRuntimeException("Uncap Cluster Limit: could not find a safe moment to patch (the game never left its visibility pass). Nothing was changed - toggle it off and on again.");
+			}
+			d.logf("  quiet window after %d tries", tries);
 
 			// ---------- STAGE 1: in-slack index/volume relocation ----------
 			applyStage1();
@@ -412,6 +476,9 @@ namespace
 			// ---------- cluster cap LAST (128 -> 255) ----------
 			patchBytes(base + CLUSTERCAP_IMM_RVA, { 0xFF });
 
+			// nothing left over from the old layout may be read through the new code
+			drainLiveCounts(true);
+
 			resumeOthers();
 			for (auto& e : cb) d.logf("  coll 0x%X: subpart=%p itembv=%p", (unsigned)(e.coll - base), e.sub, e.itm);
 
@@ -430,7 +497,14 @@ namespace
 			Dbg& d = Dbg::get(); d.logf("===== REVERT (ordered drain) =====");
 			bool live = base && GetModuleHandleA("halo2.dll");
 			d.critical.store(true);
-			if (live) suspendOthers();   // same race protection for the drain
+			// same race protection for the drain - in a window outside the visibility pass when one comes up (the ordered
+			// drain below is what protects a revert that had to go ahead without one)
+			if (live)
+			{
+				int tries = 0;
+				if (enterQuietWindow(300, tries)) d.logf("  quiet window after %d tries", tries);
+				else { d.logf("  no quiet window in %d tries - reverting with the ordered drain only", tries - 1); suspendOthers(); }
+			}
 
 			// 1) cluster cap -> 128 FIRST, so no new region can exceed the stock arrays.
 			const uint8_t stockCap = 0x80;
@@ -452,6 +526,7 @@ namespace
 				for (auto it = undo.rbegin(); it != undo.rend(); ++it)
 					writeRaw(it->first, it->second.data(), it->second.size());
 			undo.clear();
+			if (live) drainLiveCounts(false);   // the stock code is back: its (old-layout) volume counts are stale too
 
 			// 4) restore the pointer slots' original inline bytes.
 			if (live)

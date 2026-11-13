@@ -153,6 +153,13 @@ private:
 		mSettings->spotBackEvent,
 		vsk{}),
 
+		// New window layout: put the keyboard in the search box. HCMInternalGUI only honours it while the window is
+		// open and the cursor is free, so Ctrl+F pressed in play (crouch + melee on default binds) does nothing.
+		// Lives at the END of H2P_HOTKEYS, the last list in ALL_REBINDABLE_HOTKEYS, so no existing value moves.
+		initEventOnPressHotkey(focusSearchHotkey,
+		mSettings->focusSearchHotkeyEvent,
+		(vsk{{ ImGuiKey_LeftCtrl, ImGuiKey_F }})),
+
 		// Halo 2 offset save state (Collision Viewer). Unbound by default.
 		initEventOnPressHotkey(offsetSave,
 		mSettings->offsetSaveEvent,

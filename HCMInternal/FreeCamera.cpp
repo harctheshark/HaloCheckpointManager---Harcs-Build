@@ -30,6 +30,7 @@
 #include "GlobalKill.h"
 #include "ForceTeleport.h"
 #include "FreeCameraFOVOverride.h"
+#include "H2FreeCameraCollision.h"
 
 template <GameState::Value gameT>  // templated so that each game gets a seperate instance of the static members
 class FreeCameraImpl : public FreeCameraImplUntemplated
@@ -97,7 +98,13 @@ private:
 	// data
 	bool needToResetCamera = true;
 	std::shared_ptr<MultilevelPointer> gameFrameDeltaPointer;
-	
+
+	// Halo 2 only: free camera collision (see H2FreeCameraCollision.h). The camera position of the previous frame is the start
+	// of this frame's swept test. collisionHaveLast is cleared (any thread) whenever the camera is placed somewhere new
+	// (reset, set-position) so that jump is never swept through walls.
+	SimpleMath::Vector3 collisionLastPos = SimpleMath::Vector3::Zero;
+	std::atomic_bool collisionHaveLast = false;
+
 	// event to fire on mcc state change (just set needToSetupCamera to true). also disable freecam.
 	void onGameStateChange(const MCCState&)
 	{
@@ -149,6 +156,7 @@ private:
 		LOG_ONCE(PLOG_VERBOSE << "resetting camera data");
 		// position
 		userControlledPosition.setPositionTransformation(*gameCameraData.position);
+		collisionHaveLast = false;
 
 
 		// rotation
@@ -167,6 +175,33 @@ private:
 
 	}
 
+
+	// Halo 2: keep the free camera out of the level (and the objects the engine's own camera collides with) unless the
+	// shared "No-clip camera" setting is on. Game thread, inside the observer update. Any failure = no collision.
+	void applyHalo2Collision(FreeCameraData& freeCameraData, bool noClip, float collisionRadius)
+	{
+		const bool finiteNow = std::isfinite(freeCameraData.currentPosition.x) && std::isfinite(freeCameraData.currentPosition.y) && std::isfinite(freeCameraData.currentPosition.z);
+		if (!finiteNow) { collisionHaveLast = false; return; }
+
+		if (!noClip && collisionHaveLast.load() && h2fcc::available())
+		{
+			const float from[3] = { collisionLastPos.x, collisionLastPos.y, collisionLastPos.z };
+			float to[3] = { freeCameraData.currentPosition.x, freeCameraData.currentPosition.y, freeCameraData.currentPosition.z };
+			if (h2fcc::sweep(from, to, collisionRadius))
+			{
+				const SimpleMath::Vector3 allowed(to[0], to[1], to[2]);
+				if (allowed != freeCameraData.currentPosition)
+				{
+					freeCameraData.currentPosition = allowed;
+					// pull the stored position back too, so holding "forward" into a wall doesn't wind up a position behind it
+					userControlledPosition.setPositionTransformation(allowed);
+				}
+			}
+		}
+
+		collisionLastPos = freeCameraData.currentPosition;
+		collisionHaveLast = true;
+	}
 
 	void setCameraData()
 	{
@@ -234,6 +269,9 @@ private:
 
 				userControlledPosition.transformPosition(freeCameraData, frameDelta);
 				LOG_ONCE(PLOG_DEBUG << "userControlledPosition.transformPosition DONE");
+
+				if constexpr (gameT == GameState::Value::Halo2)
+					applyHalo2Collision(freeCameraData, settings->chaseCameraNoClip->GetValue(), settings->freeCameraCollisionRadius->GetValue());
 
 
 			}
@@ -445,6 +483,7 @@ private:
 			}
 
 			userControlledPosition.setPositionTransformation(settings->freeCameraUserInputCameraSetPositionVec3->GetValue());
+			collisionHaveLast = false; // an explicit placement is never swept through walls
 		}
 		catch (HCMRuntimeException ex)
 		{

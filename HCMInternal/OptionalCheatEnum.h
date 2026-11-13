@@ -187,7 +187,8 @@ HCESwitchZoneSet,\
 CompetitionMode,\
 UncapRenderSections,\
 ChaseCamera,\
-Halo2Physics
+Halo2Physics,\
+H2AShaderPrewarm
 
 
 // Halo 5: Forge. Its own list rather than an extension of ALLOPTIONALCHEATS3, for two reasons: the 64-entry
@@ -219,7 +220,8 @@ H5LuaConsole,\
 H5DisplayInfo,\
 CollisionViewer,\
 LaunchTrajectory,\
-MPRevertRepair
+MPRevertRepair,\
+OneShotKill
 
 
 enum class OptionalCheatEnum {

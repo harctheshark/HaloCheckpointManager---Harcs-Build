@@ -609,6 +609,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::BottomlessClip}
 	},
 
+	{ GUIElementEnum::oneShotKillGUI,
+		{OptionalCheatEnum::OneShotKill}
+	},
+
 	{ GUIElementEnum::season7PhysicsToggle,
 		{OptionalCheatEnum::Season7Physics}
 	},
@@ -1003,6 +1007,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::UncapRenderSections}
 	},
 
+	{ GUIElementEnum::h2aShaderPrewarmToggle,
+		{OptionalCheatEnum::H2AShaderPrewarm}
+	},
+
 	{ GUIElementEnum::h2ShadowResolutionCombo,
 		{OptionalCheatEnum::H2ShadowResolution}
 	},
@@ -1013,6 +1021,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 
 	{ GUIElementEnum::chaseCameraNoClipGUI,
 		{OptionalCheatEnum::ChaseCamera}
+	},
+
+	{ GUIElementEnum::freeCameraCollisionRadiusGUI,
+		{OptionalCheatEnum::FreeCamera}
 	},
 
 	{ GUIElementEnum::chaseCameraFovGUI,

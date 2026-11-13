@@ -17,12 +17,14 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include "h2sb_gsk.h"   // the game's own convex search up to the hull: when a small face answers with its own plane (2026-11-11)
 
 namespace h2cv::sbscan
 {
 	namespace
 	{
 		struct V3 { double x = 0, y = 0, z = 0; };
+		static_assert(sizeof(V3) == 3 * sizeof(double), "h2sb_gsk.h reads V3 arrays as packed triples");
 		inline V3 operator+(V3 a, V3 b) { return { a.x + b.x, a.y + b.y, a.z + b.z }; }
 		inline V3 operator-(V3 a, V3 b) { return { a.x - b.x, a.y - b.y, a.z - b.z }; }
 		inline V3 operator*(V3 a, double s) { return { a.x * s, a.y * s, a.z * s }; }
@@ -91,7 +93,20 @@ namespace h2cv::sbscan
 					for (int k = 0; k < nc; ++k) mc = (std::min)(mc, dot(n, core[k]));
 					if (mp - mc < best) { best = mp - mc; bn = n; }
 				}
-			if (best > 0) { n_out = bn; d_out = -(best + CAP_R + R_TRI); return true; }
+			if (best > 0)
+			{
+				// 2026-11-11: the game's penetration query tests its starting simplex for flatness with an UNNORMALISED normal, so on a small
+				// face it never expands a hull - it answers with the face's own plane and the full depth of the pill's leading end (h2sb_gsk.h,
+				// the same rule as the offline scanner's contact()). Swept core only.
+				if (nc == 4 && s.poly.size() >= 3)
+				{
+					const V3 sw = core[2] - core[0];
+					double fn[3], fw;
+					if (h2gsk::face_rule<double>(&core[0].x, &core[1].x, &sw.x, &s.poly[0].x, (int)s.poly.size(), fn, fw) && fw - CAP_R - R_TRI < TOL)
+					{ n_out = { fn[0], fn[1], fn[2] }; d_out = fw - CAP_R - R_TRI; return true; }
+				}
+				n_out = bn; d_out = -(best + CAP_R + R_TRI); return true;
+			}
 			double bd = 1e30; V3 ba{}, bb{};
 			auto consider = [&](V3 pa, V3 pb) { const V3 d = pa - pb; const double dd = dot(d, d); if (dd < bd) { bd = dd; ba = pa; bb = pb; } };
 			const double pd = dot(s.n, s.poly[0]);

@@ -28,6 +28,7 @@ private:
 
 public:
 	virtual void renderHotkey(std::optional<RebindableHotkeyEnum>, int pixelWidth) override;
+	virtual std::string getBindingTextShort(RebindableHotkeyEnum) override;
 
 	HotkeyRendererImpl(std::shared_ptr<RenderEvent> renderEvent, std::shared_ptr<MessagesGUI> mes, std::shared_ptr<HotkeyManager> hkm, std::shared_ptr<HotkeyDefinitions> hkd, std::shared_ptr<TokenSharedRequestProvider> hkDisabler)
 		: messagesGUI(mes),

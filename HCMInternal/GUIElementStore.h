@@ -1,6 +1,19 @@
 #pragma once
 #include "IGUIElement.h"
 #include "GuiElementEnum.h"
+
+// One node of the per-game element tree: which GUIElementEnum built this element, the element itself, and the
+// elements that were constructed while it was being constructed (its nested children, in construction order).
+// Filled by GUIElementConstructor at the single point every element passes through, so it needs no per-widget
+// code and no hand-maintained table. Read-only after construction. Used by the new layout (HCMPaletteGUI) for
+// search, favourites and browse; the classic layout does not look at it.
+struct GUIElementNode
+{
+	GUIElementEnum id;
+	std::shared_ptr<IGUIElement> element;
+	std::vector<GUIElementNode> children;
+};
+
 // only TOPLEVEL gui elements go in here. elements nested inside another element do not.
 class GUIElementStore {
 private:
@@ -23,9 +36,15 @@ private:
 	{GameState::Value::NoGame, {}},
 	};
 
+	// per game: the same top level elements as above, in the same order, but as trees that also name every nested
+	// element. operator[] on purpose: a game missing here just gets an empty tree.
+	std::map<GameState, std::vector<GUIElementNode>> allElementTrees;
+	const std::vector<GUIElementNode> emptyElementTree;
+
 	friend class GUIElementConstructor;
 	std::map<GameState, std::vector<std::shared_ptr<IGUIElement>>>& getTopLevelGUIElementsMutable() { return allTopLevelGUIElements; };
-	
+	std::map<GameState, std::vector<GUIElementNode>>& getElementTreesMutable() { return allElementTrees; };
+
 public:
 	// ⚠ Called from HCMInternalGUI::onGameStateChange on the RENDER thread, where a throw is unhandled and takes the
 	// game down (it did, for every Halo 2 Anniversary MP session, until Halo2MP was added above). A game missing from
@@ -34,6 +53,13 @@ public:
 	{
 		auto found = allTopLevelGUIElements.find(game);
 		return found != allTopLevelGUIElements.end() ? found->second : allTopLevelGUIElements.at(GameState::Value::NoGame);
+	}
+
+	// Never throws: a game with no tree gets an empty one (the new layout then shows an empty menu).
+	const std::vector<GUIElementNode>& getElementTree(GameState game)
+	{
+		auto found = allElementTrees.find(game);
+		return found != allElementTrees.end() ? found->second : emptyElementTree;
 	}
 
 	std::map<GameState, std::set<GUIElementEnum>> mapOfSuccessfullyConstructedGUIElements // used in unit testing

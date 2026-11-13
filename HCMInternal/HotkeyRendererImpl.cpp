@@ -51,6 +51,14 @@ void HotkeyRendererImpl::renderHotkey(std::optional<RebindableHotkeyEnum> hotkey
 	}
 }
 
+std::string HotkeyRendererImpl::getBindingTextShort(RebindableHotkeyEnum hotkeyEnum)
+{
+	const auto& all = hotkeyDefinitions->getAllRebindableHotkeys();
+	const auto found = all.find(hotkeyEnum);
+	if (found == all.end() || !found->second) return {};
+	return std::string(found->second->getBindingTextShort());
+}
+
 void HotkeyRendererImpl::renderHotkeyRebindDialog(SimpleMath::Vector2 screenSize)
 {
 	if (hotkeyRebindDialog)

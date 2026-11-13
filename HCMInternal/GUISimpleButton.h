@@ -65,4 +65,14 @@ public:
 
 	std::string_view getName() override { return mButtonText; }
 
+	// new layout: fire from a search result / favourite tile. Same path as clicking the button above.
+	QuickKind quickKind() override { return QuickKind::Button; }
+	void quickActivate() override
+	{
+		auto ev = mEventToFireWeak.lock();
+		if (!ev) return;
+		auto& newThread = mFireEventThreads.emplace_back(std::thread([mEvent = ev]() {mEvent->operator()(); }));
+		newThread.detach();
+	}
+
 };

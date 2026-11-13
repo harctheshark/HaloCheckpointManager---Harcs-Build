@@ -300,7 +300,8 @@ h2pFlyHotkey, \
 h2pDisableAIHotkey, \
 h2pForgeBounceHotkey, \
 spotSaveHotkey, \
-spotBackHotkey
+spotBackHotkey, \
+focusSearchHotkey
 
 #define ALL_REBINDABLE_HOTKEYS ALL_EVENTONPRESS_HOTKEYS, NOEVENT_HOTKEYS, SKULL_HOTKEYS, REPLAY_HOTKEYS, HCE_SKULL_HOTKEYS, HCE_HOTKEYS, H2P_HOTKEYS
 

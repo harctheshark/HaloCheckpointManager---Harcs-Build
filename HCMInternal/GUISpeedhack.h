@@ -67,4 +67,15 @@ public:
 
 	std::string_view getName() override { return nameof(GUISpeedhack); }
 
+	// new layout: toggle from a search result / favourite tile. Same path as ticking the checkbox above.
+	QuickKind quickKind() override { return QuickKind::Toggle; }
+	bool quickIsOn() override { auto s = mSettingsWeak.lock(); return s && s->speedhackToggle->GetValue(); }
+	void quickActivate() override
+	{
+		auto s = mSettingsWeak.lock();
+		if (!s) return;
+		s->speedhackToggle->GetValueDisplay() = !s->speedhackToggle->GetValueDisplay();
+		s->speedhackToggle->UpdateValueWithInput();
+	}
+
 };

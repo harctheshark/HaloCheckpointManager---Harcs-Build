@@ -64,4 +64,16 @@ public:
 
 	std::string_view getName() override { return mToggleText; }
 
+	// new layout: toggle from a search result / favourite tile. Same path as ticking the checkbox above.
+	QuickKind quickKind() override { return QuickKind::Toggle; }
+	bool quickIsOn() override { auto o = mOptionToggleWeak.lock(); return o && o->GetValue(); }
+	void quickActivate() override
+	{
+		auto o = mOptionToggleWeak.lock();
+		if (!o) return;
+		o->GetValueDisplay() = !o->GetValueDisplay();
+		auto& newThread = mUpdateSettingThreads.emplace_back(std::thread([optionToggle = o]() { optionToggle->UpdateValueWithInput(); }));
+		newThread.detach();
+	}
+
 };
