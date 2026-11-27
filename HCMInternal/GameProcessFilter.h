@@ -27,10 +27,11 @@ inline bool gameBelongsToProcess(GameState::Value game, MCCProcessType proc)
 	{
 	case MCCProcessType::CampaignEvolved: return game == GameState::Value::HaloCER;
 	case MCCProcessType::Halo5Forge:      return game == GameState::Value::Halo5Forge;
+	case MCCProcessType::MetroRedux:      return game == GameState::Value::MetroRedux;
 	case MCCProcessType::Steam:
 	case MCCProcessType::WinStore:
 	default:
 		// Everything that is not one of the standalone titles is an MCC game.
-		return game != GameState::Value::HaloCER && game != GameState::Value::Halo5Forge;
+		return game != GameState::Value::HaloCER && game != GameState::Value::Halo5Forge && game != GameState::Value::MetroRedux;
 	}
 }

@@ -142,6 +142,55 @@ void setOBSDiscoveryMessageSink(std::weak_ptr<IMessagesGUI> sink)
 }
 
 
+namespace
+{
+	// -1 unknown (no OBS hook info in this process / unrecognised), 0 off, 1 on
+	int readOBSCaptureOverlay()
+	{
+		char name[64];
+		snprintf(name, sizeof(name), "CaptureHook_HookInfo%lu", (unsigned long)GetCurrentProcessId());
+		HANDLE map = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
+		if (!map) return -1;
+		int result = -1;
+		if (const uint8_t* view = (const uint8_t*)MapViewOfFile(map, FILE_MAP_READ, 0, 0, 0))
+		{
+			MEMORY_BASIC_INFORMATION mbi{};
+			if (VirtualQuery(view, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.RegionSize >= 72)
+			{
+				uint32_t major = 0;
+				memcpy(&major, view, sizeof(major));
+				const uint8_t flag = view[66];
+				if (major == 1 && flag <= 1) result = flag;   // hook_info layout known for hook version 1.x
+			}
+			UnmapViewOfFile(view);
+		}
+		CloseHandle(map);
+		return result;
+	}
+	std::atomic<uint64_t> gOverlayCheckNextMs{ 0 };
+	std::atomic<int> gOverlayLastState{ -1 };
+}
+
+void checkOBSCaptureOverlaysWhileBypassed()
+{
+	const uint64_t now = GetTickCount64();
+	uint64_t next = gOverlayCheckNextMs.load(std::memory_order_relaxed);
+	if (now < next || !gOverlayCheckNextMs.compare_exchange_strong(next, now + 2000)) return;
+	const int state = readOBSCaptureOverlay();
+	const int last = gOverlayLastState.exchange(state);
+	if (state == last) return;
+	if (state == 1)
+	{
+		PLOG_WARNING << "OBS bypass: OBS Game Capture has \"Capture third-party overlays\" on (hook_info.capture_overlay) - OBS copies the frame after Present, so HCM will be recorded";
+		if (auto messages = gMessageSink.lock())
+			messages->addMessage("Bypass OBS Capture can't hide HCM right now: OBS's Game Capture source has \"Capture third-party overlays (such as Steam)\" ticked, "
+				"which makes OBS record the finished frame (HCM included). Untick it in the Game Capture source's properties.");
+	}
+	else if (state == 0 && last == 1)
+		PLOG_INFO << "OBS bypass: \"Capture third-party overlays\" is off again - the bypass works";
+}
+
+
 bool looksInlineHooked(uintptr_t functionEntry)
 {
 	if (!isReadableRange(functionEntry, 1)) return false;

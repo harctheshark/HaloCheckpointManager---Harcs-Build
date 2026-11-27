@@ -23,6 +23,9 @@ public:
 		// the exe, so every offset is an RVA into halo5forge.exe. 9 is past MCC's gameIndicator range
 		// and past HaloCER, so it can never collide.
 		Halo5Forge = 9,
+		// Metro 2033 Redux / Metro Last Light Redux (metro.exe, 4A Engine) - not Halo, not MCC. One value for both games:
+		// they are the same engine build. Offsets are RVAs into metro.exe.
+		MetroRedux = 10,
 		NoGame = 255,
 	};
 	GameState() = delete; // no default construction
@@ -69,6 +72,7 @@ private:
 		(Value::HaloReach, "HaloReach")
 		(Value::HaloCER, "HaloCER")
 		(Value::Halo5Forge, "Halo5Forge")
+		(Value::MetroRedux, "MetroRedux")
 		(Value::NoGame, "NoGame");
 
 	static inline const std::map<Value, std::wstring> GameStateModuleNameMap =  // used in toModuleName
@@ -82,7 +86,8 @@ private:
 		(Value::HaloReach, L"haloreach.dll")
 		(Value::HaloCER, L"HaloSimulation_tag_release.dll")
 		// Halo 5: Forge has no separate simulation module - the engine is the exe.
-		(Value::Halo5Forge, L"halo5forge.exe");
+		(Value::Halo5Forge, L"halo5forge.exe")
+		(Value::MetroRedux, L"metro.exe");
 };
 
 static inline const std::vector<GameState> AllGameStateValues
@@ -96,6 +101,7 @@ static inline const std::vector<GameState> AllGameStateValues
 		GameState::Value::HaloReach,
 		GameState::Value::HaloCER,
 		GameState::Value::Halo5Forge,
+		GameState::Value::MetroRedux,
 		GameState::Value::NoGame
 };
 
@@ -110,6 +116,7 @@ static inline const std::vector<GameState> AllSupportedGames
 		GameState::Value::HaloReach,
 		GameState::Value::HaloCER,
 		GameState::Value::Halo5Forge,
+		GameState::Value::MetroRedux,
 };
 
 static inline const std::vector<GameState> DoubleCheckpointGames // all except halo 1 (and HaloCER)

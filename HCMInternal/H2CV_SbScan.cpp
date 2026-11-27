@@ -4,7 +4,7 @@
 //  * the landing tick collides BEFORE integrating: the pill at its start-of-tick origin as a convex sweep shape = the
 //    capsule (axis feet+0.175 .. feet+0.55, r 0.175) extended by sweep = pre-solve velocity * dt (only when |v| > 5.4465)
 //  * contacts against the flat surface polygons: least overlap (SAT) when the cores overlap -> depth -(overlap + r + 0.01);
-//    else closest points -> depth (distance - r - 0.01), kept when < 0.0333; one contact per surface
+//    else closest points -> depth (distance - r - 0.01), kept when < 0.0328; one contact per surface
 //  * which contacts are solved as coupled pairs depends on their history (a lottery): every pairing is evaluated
 //  * solver: rhs = min(0.05|d|, dt) * 8/dt; 8 passes, tau 0.6, damp 1, coupled 2x2 with 0.99 n0.n1, pushes only,
 //    rhs -= n.v after each pass; the body leaves with the AVERAGE of the 8 pass velocities
@@ -33,24 +33,46 @@ namespace h2cv::sbscan
 		inline double len(V3 a) { return std::sqrt(dot(a, a)); }
 		inline bool norm(V3 a, V3& out) { const double l = len(a); if (l < 1e-12) return false; out = a * (1.0 / l); return true; }
 
-		constexpr double G = 4.1712, SWEEP_MIN = 5.4465, R_TRI = 0.01, TOL = 0.0333, TAU = 0.6, DAMP = 1.0, COUPLE = 0.99;
+		constexpr double G = 4.1712, SWEEP_MIN = 5.4465, R_TRI = 0.01, TOL = 0.0328, TAU = 0.6, DAMP = 1.0, COUPLE = 0.99;
 		constexpr int PASSES = 8, MAX_ROWS = 6, PHASES = 8;
 		constexpr double CAP_LO = 0.175, CAP_HI = 0.55, CAP_R = 0.175;
-		double DT = 1.0 / 30.0;   // the loaded job's tick rate (one job at a time)
+		double g_job_dt = 1.0 / 30.0;   // the loaded job's tick rate (one job at a time): the tick its PREDICTION FILE is for
+		// 2026-11-16: the live viewer's landings (landingLaunch) run at the GAME's tick rate, whatever the job's is - the job's is 30
+		// unless "scan at the current tick" is on, so at 60 tick the seams' physics used 30-tick rules. A caller's tick length, per
+		// thread, for the length of its call; 0 = the job's (the scan / recipe threads).
+		thread_local double t_call_dt = 0.0;
+		inline double dt_now() { return t_call_dt > 0.0 ? t_call_dt : g_job_dt; }
+		#define DT (dt_now())
 		// the sweep threshold is a distance per tick (the swept shape's +52: 5.44650 at 30 tick, 10.89300 at 60 - read live 2026-11-01)
-		inline double sweep_min() { return SWEEP_MIN * ((1.0 / 30.0) / DT); }
+		// 2026-11-16: the threshold is NOT tied to the tick rate. It is 0.18155 x the collision "tickrate scalar" (halo2+0x70DBFA, the
+		// pill's swept-shape builder): stock MCC (Season 8+) uses 30.0 at ANY tick rate -> 5.4465 u/s even at 60 tick; Season 7
+		// physics uses the tick rate -> 10.893 at 60. A live caller passes the value it read from the pill's own shape (+52);
+		// 0 = the old tick-matched value (the scan / recipe threads, Halo 3 / ODST / Reach's h3sb body).
+		thread_local double t_call_sweep = 0.0;
+		inline double sweep_min() { return t_call_sweep > 0.0 ? t_call_sweep : SWEEP_MIN * ((1.0 / 30.0) / DT); }
 
-		struct Surf { uint32_t key; V3 n; std::vector<V3> poly, edges; V3 lo, hi; bool soft = false; };   // soft: two-sided / invisible
-		struct Row { V3 n; double d; bool pair; bool soft; };
+		struct Surf
+		{
+			uint32_t key; V3 n; std::vector<V3> poly, edges; V3 lo, hi; bool soft = false;   // soft: two-sided / invisible
+			bool scen = false;   // a baked scenery object's triangle (Surface::flags 0x80): found late - see launch_contacts
+			// contact()'s early "no contact" tests (2026-11-16, prepare_surfaces): the polygon's extent along its own normal
+			// (min / max of dot(n, vertex), the very sums contact() made per call), the normal's length, and how far outside the
+			// polygon's hull the closest-points part can place a point (its point_in_poly allows 1e-9; vertices off the plane)
+			double nmin = 0, nmax = 0, nlen = 1, slack = 1e30;
+		};
+		// face: |polygon normal . contact normal| (1 = a face contact). sep / edge / pt: for the welder's cull - the cores were apart
+		// (not a penetration), the polygon's closest point is on one of its edges or corners, and that point
+		struct Row { V3 n; double d; bool pair; bool soft; double face = 1.0; bool sep = false, edge = false; V3 pt{}; };
 		struct Pt { double x, y, zc, dist2; };
 		struct Fall { double vz, dx, dy; };
 
-		bool point_in_poly(V3 p, const std::vector<V3>& poly, V3 n)
+		bool point_in_poly(V3 p, const V3* poly, size_t np, V3 n)
 		{
-			for (size_t i = 0; i < poly.size(); ++i)
-				if (dot(cross(poly[(i + 1) % poly.size()] - poly[i], p - poly[i]), n) < -1e-9) return false;
+			for (size_t i = 0; i < np; ++i)
+				if (dot(cross(poly[(i + 1) % np] - poly[i], p - poly[i]), n) < -1e-9) return false;
 			return true;
 		}
+		inline bool point_in_poly(V3 p, const std::vector<V3>& poly, V3 n) { return point_in_poly(p, poly.data(), poly.size(), n); }
 		void seg_seg(V3 p1, V3 q1, V3 p2, V3 q2, V3& c1, V3& c2)
 		{
 			const V3 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
@@ -74,25 +96,44 @@ namespace h2cv::sbscan
 			c1 = p1 + d1 * s; c2 = p2 + d2 * t;
 		}
 
-		bool contact(const V3* core, int nc, const Surf& s, V3& n_out, double& d_out)
+		// 2026-11-16 (cost; the same answers bit for bit - H2 Monster Bounce Model\review_20261116\C_cost):
+		//  * each axis is projected ONCE for both of its signs: dot(-n, y) is exactly -dot(n, y), so the - sign's "most of the
+		//    polygon" is minus the + sign's least, and (-a) - (-b) rounds as b - a. Same values, compared in the same order
+		//    (axis by axis, - before +, at most 64 axes)
+		//  * the polygon's extent along its own normal comes precomputed (Surf::nmin / nmax)
+		//  * NO CONTACT, EARLY: the closest-points part below returns false unless the shapes are closer than REACH (TOL + both
+		//    radii). An axis that keeps them further apart than that proves it, and that part (two thirds of this function's
+		//    time) is not run. The slack covers the points that part accepts just outside the two shapes: its point-in-polygon
+		//    tests allow 1e-9 (cslack: the swept core's quad, from landing_contacts; Surf::slack: the polygon), + 1e-6
+		bool contact(const V3* core, int nc, const Surf& s, double cslack, V3& n_out, double& d_out, bool* sep_out = nullptr, V3* pt_out = nullptr, bool* edge_out = nullptr)
 		{
-			V3 axes[64]; int na = 0;
-			axes[na++] = s.n;
+			if (sep_out) *sep_out = false;
+			constexpr double REACH = TOL + CAP_R + R_TRI;
+			double best = 1e30; V3 bn{};
+			int na = 0;
+			auto axis = [&](const V3& ax, double pmin, double pmax)
+			{
+				double cmin = 1e30, cmax = -1e30;
+				for (int k = 0; k < nc; ++k) { const double c = dot(ax, core[k]); cmin = (std::min)(cmin, c); cmax = (std::max)(cmax, c); }
+				const double on = cmax - pmin, op = pmax - cmin;   // the - sign's overlap, then the + sign's
+				if (on < best) { best = on; bn = ax * -1.0; }
+				if (op < best) { best = op; bn = ax; }
+				++na;
+			};
+			auto poly_axis = [&](const V3& ax)
+			{
+				double pmin = 1e30, pmax = -1e30;
+				for (const V3& y : s.poly) { const double p = dot(ax, y); pmin = (std::min)(pmin, p); pmax = (std::max)(pmax, p); }
+				axis(ax, pmin, pmax);
+			};
+			axis(s.n, s.nmin, s.nmax);
+			if (best < -(REACH + 1e-6 + cslack) * s.nlen) return false;   // the whole core is further than a contact from the polygon's plane
 			V3 cd[2]; int ncd = 0;
 			cd[ncd++] = core[1] - core[0];
-			if (nc == 4) { cd[ncd++] = core[2] - core[0]; V3 pn; if (norm(cross(cd[0], cd[1]), pn)) axes[na++] = pn; }
+			if (nc == 4) { cd[ncd++] = core[2] - core[0]; V3 pn; if (norm(cross(cd[0], cd[1]), pn)) poly_axis(pn); }
 			for (int i = 0; i < ncd; ++i)
-				for (const V3& e : s.edges) { V3 ax; if (na < 64 && norm(cross(cd[i], e), ax)) axes[na++] = ax; }
-			double best = 1e30; V3 bn{};
-			for (int i = 0; i < na; ++i)
-				for (int sg = -1; sg <= 1; sg += 2)
-				{
-					const V3 n = axes[i] * (double)sg;
-					double mp = -1e30, mc = 1e30;
-					for (const V3& y : s.poly) mp = (std::max)(mp, dot(n, y));
-					for (int k = 0; k < nc; ++k) mc = (std::min)(mc, dot(n, core[k]));
-					if (mp - mc < best) { best = mp - mc; bn = n; }
-				}
+				for (const V3& e : s.edges) { V3 ax; if (na < 64 && norm(cross(cd[i], e), ax)) poly_axis(ax); }
+			if (best < -(REACH + 1e-6 + cslack + s.slack) * (std::max)(1.0, s.nlen)) return false;   // an axis keeps them further apart than a contact
 			if (best > 0)
 			{
 				// 2026-11-11: the game's penetration query tests its starting simplex for flatness with an UNNORMALISED normal, so on a small
@@ -101,11 +142,19 @@ namespace h2cv::sbscan
 				if (nc == 4 && s.poly.size() >= 3)
 				{
 					const V3 sw = core[2] - core[0];
-					double fn[3], fw;
-					if (h2gsk::face_rule<double>(&core[0].x, &core[1].x, &sw.x, &s.poly[0].x, (int)s.poly.size(), fn, fw) && fw - CAP_R - R_TRI < TOL)
-					{ n_out = { fn[0], fn[1], fn[2] }; d_out = fw - CAP_R - R_TRI; return true; }
+					double fn[3], fw, fpb[3]; int fnb = 3;
+					if (h2gsk::face_rule<double>(&core[0].x, &core[1].x, &sw.x, &s.poly[0].x, (int)s.poly.size(), fn, fw, &fnb, fpb) && fw - CAP_R - R_TRI < TOL)
+					{
+						// 2026-11-18: the search state's polygon-side feature size after the query (0x303dd0's end, matched source) is
+						// what the welder's cull flag reads - an edge / a corner can be dropped like any other contact; and the point
+						// is the engine's own (it was the polygon's support vertex along the normal, a stand-in)
+						n_out = { fn[0], fn[1], fn[2] }; d_out = fw - CAP_R - R_TRI;
+						if (pt_out) *pt_out = V3{ fpb[0], fpb[1], fpb[2] } + n_out * R_TRI;
+						if (edge_out) *edge_out = fnb == 1 || fnb == 2;
+						return true;
+					}
 				}
-				n_out = bn; d_out = -(best + CAP_R + R_TRI); return true;
+				n_out = bn; d_out = -(best + CAP_R + R_TRI); if (pt_out) { double mx = -1e300; for (const V3& y : s.poly) { const double t = dot(n_out, y); if (t > mx) { mx = t; *pt_out = y; } } } return true;
 			}
 			double bd = 1e30; V3 ba{}, bb{};
 			auto consider = [&](V3 pa, V3 pb) { const V3 d = pa - pb; const double dd = dot(d, d); if (dd < bd) { bd = dd; ba = pa; bb = pb; } };
@@ -120,11 +169,11 @@ namespace h2cv::sbscan
 				V3 pn;
 				if (norm(cross(core[1] - core[0], core[2] - core[0]), pn))
 				{
-					const std::vector<V3> quad = { core[0], core[1], core[3], core[2] };
+					const V3 quad[4] = { core[0], core[1], core[3], core[2] };   // (an array: this ran a heap allocation per swept contact test)
 					for (const V3& v : s.poly)
 					{
 						const V3 q = v - pn * (dot(pn, v) - dot(pn, core[0]));
-						if (point_in_poly(q, quad, pn) || point_in_poly(q, quad, pn * -1.0)) consider(q, v);
+						if (point_in_poly(q, quad, 4, pn) || point_in_poly(q, quad, 4, pn * -1.0)) consider(q, v);
 					}
 				}
 			}
@@ -132,6 +181,33 @@ namespace h2cv::sbscan
 			if (dist >= TOL) return false;
 			if (!norm(ba - bb, n_out)) n_out = s.n;
 			d_out = dist;
+			if (sep_out)
+			{
+				// for the welder's cull: the polygon's closest point, and whether it lies on an edge or a corner (within 1e-4)
+				*sep_out = true; *pt_out = bb;
+				bool on_edge = false;
+				for (size_t i = 0; i < s.poly.size() && !on_edge; ++i)
+				{
+					const V3 a = s.poly[i], e = s.edges[i], w = bb - a;
+					const double l2 = dot(e, e), t = l2 > 1e-24 ? std::clamp(dot(w, e) / l2, 0.0, 1.0) : 0.0;
+					const V3 q = w - e * t;
+					on_edge = dot(q, q) < 1e-8;
+				}
+				*edge_out = on_edge;
+				// 2026-11-17: the engine's welder (Xbox 0x2fa2f0, keep test 0x2f97e0) asks the pair's SEARCH STATE which feature of
+				// the polygon the closest point is on (a corner or an edge = may be dropped; a face = always stays). Where the
+				// pill's closest point sits right on a border shared by two polygons - falling down a wall made of several
+				// polygons - the geometry cannot tell: the search's own sign tests decide, and usually call ONE of the
+				// polygons a face and the rest edges, sometimes none. So the search itself is run (h2gsk::features: the same
+				// port face_rule uses) and its answer taken; its contact point too (0x3032c0, + the polygon's radius).
+				const V3 fsw = nc == 4 ? core[2] - core[0] : V3{ 0, 0, 0 };
+				int fa = 0, fb = 0; double fnn[3], fw = 0, fp[3];
+				if (h2gsk::features<double>(&core[0].x, &core[1].x, &fsw.x, &s.poly[0].x, (int)s.poly.size(), fa, fb, fnn, fw, fp))
+				{
+					*edge_out = fb == 1 || fb == 2;
+					*pt_out = V3{ fp[0], fp[1], fp[2] } + n_out * R_TRI;
+				}
+			}
 			return true;
 		}
 
@@ -140,7 +216,21 @@ namespace h2cv::sbscan
 			V3 v = v0, vsum{};
 			// the landing rule (Halo's contact-added listener sub_180989B40, traced 2026-11-01): a new contact while the pill moves faster than
 			// its sweep threshold (5.4465) sets the speed to 0.75 x the threshold (4.08488), direction kept; slower: left alone
-			{ const double sm = sweep_min(); const double s2 = dot(v, v); if (s2 > sm * sm) v = v * (sm * 0.75 / std::sqrt(s2)); }
+			// 2026-11-16 (review agents A + E, read in sub_18078D890 / sub_18078DB80 and measured on ~3,800 first-contact ticks): the
+			// engine only cuts the speed for a contact the pill is approaching faster than the threshold, or an edge-type contact
+			// (|face normal . contact normal| < 0.577). Applied here in its safest part only: when NOTHING opposes the motion and
+			// every contact is a face contact - the pill passing a polygon from behind (falling through a floor's back: recorded,
+			// velocity untouched) or sliding along a face - the speed is left alone. Everything else keeps the cut as before
+			// (the full rule disagreed with the recordings on some launch ticks, so it is not used there).
+			{
+				const double sm = sweep_min(); const double s2 = dot(v, v);
+				if (s2 > sm * sm)
+				{
+					bool cut = false;
+					for (int i = 0; i < n && !cut; ++i) cut = -dot(rows[i].n, v) > 0.0 || rows[i].face < 0.577;
+					if (cut) v = v * (sm * 0.75 / std::sqrt(s2));
+				}
+			}
 			double rhs[32];
 			for (int i = 0; i < n; ++i) rhs[i] = rows[i].d < 0 ? (std::min)(0.05 * std::fabs(rows[i].d), DT) * 8.0 / DT : 0.0;
 			for (int pass = 0; pass < PASSES; ++pass)
@@ -201,6 +291,7 @@ namespace h2cv::sbscan
 		{
 			const uint64_t serial = ++g_job_serial;   // tells a NearCache this job from an earlier one at the same address
 			uint64_t key = 0;
+			uint64_t objSig = 0;   // which set of objects its surfaces hold (start(): another set = another job)
 			int tick = 30;
 			std::vector<Surf> S;
 			std::unordered_map<long long, std::vector<int>> grid;
@@ -245,10 +336,11 @@ namespace h2cv::sbscan
 			// Before, the cache held whole columns (every height), and Reach's dense instance meshes put hundreds to thousands of
 			// surfaces in them, rescanned on each of the ~700-1800 calls a tick (offline bench on m50: lists identical on 23,488 of
 			// 23,488 recorded calls, the gather 8.1 -> 3.5 us a call; HCM Reach Bounce Perf\bench.cpp).
-			void near_surfs_cached(NearCache& c, double x, double y, double r, std::vector<int>& out, double zlo, double zhi) const
+			// the cache part of near_surfs_cached on its own: after it, c holds every surface a query at x, y, [zlo, zhi] keeps
+			// (the caller has ruled out a NaN band)
+			void cache_fit(NearCache& c, double x, double y, double r, double zlo, double zhi) const
 			{
 				constexpr double M = 0.5, ZM = 2.0;
-				if (std::isnan(zlo) || std::isnan(zhi)) { near_surfs(x, y, r, out, zlo, zhi); return; }   // never cache a NaN band
 				if (c.job != this || c.serial != serial || c.r != r || std::fabs(x - c.cx) > M || std::fabs(y - c.cy) > M || zlo < c.zlo || zhi > c.zhi)
 				{
 					c.job = this; c.serial = serial; c.cx = x; c.cy = y; c.r = r; c.zlo = zlo - ZM; c.zhi = zhi + ZM;
@@ -256,6 +348,11 @@ namespace h2cv::sbscan
 					c.box.resize(c.ids.size());
 					for (size_t k = 0; k < c.ids.size(); ++k) { const Surf& s = S[c.ids[k]]; c.box[k] = { s.lo.x, s.hi.x, s.lo.y, s.hi.y, s.lo.z, s.hi.z }; }
 				}
+			}
+			void near_surfs_cached(NearCache& c, double x, double y, double r, std::vector<int>& out, double zlo, double zhi) const
+			{
+				if (std::isnan(zlo) || std::isnan(zhi)) { near_surfs(x, y, r, out, zlo, zhi); return; }   // never cache a NaN band
+				cache_fit(c, x, y, r, zlo, zhi);
 				out.clear();
 				for (size_t k = 0; k < c.ids.size(); ++k)
 				{
@@ -263,7 +360,64 @@ namespace h2cv::sbscan
 					if (b.lx - r <= x && x <= b.hx + r && b.ly - r <= y && y <= b.hy + r && b.hz >= zlo && b.lz <= zhi) out.push_back(c.ids[k]);
 				}
 			}
-			int landing_contacts(V3 feet, V3 v_pre, const std::vector<int>& local, Row* rows, int maxr) const
+			// contact()'s slack for the swept core (2026-11-16): its closest-points part takes a polygon vertex's projection onto
+			// the core's quad when point_in_poly(quad) allows it, and that allows 1e-9 - at the quad's corners up to
+			// 1e-9 (|a| + |b|) / |a x b| outside it (a, b: the quad's sides; much when the sweep is nearly along the pill's axis)
+			static double core_slack(const V3* core, int nc)
+			{
+				if (nc != 4) return 0.0;
+				const V3 a = core[1] - core[0], b = core[2] - core[0];
+				const double l = len(cross(a, b));
+				return l < 1e-12 ? 0.0 : 2e-9 * (len(a) + len(b)) / l;   // under 1e-12 contact() does not use the quad at all
+			}
+			// THE WELDER'S SEAM CULL (2026-11-16; hkConvexConvexWelderAgent sub_1809AC680 and its predicate sub_1809ABDB0, read in
+			// the code and checked against the recordings - review_20261116\F_contact_timing\tim_model.py). After a tick's new
+			// points are sorted deepest first, a point is thrown away when a DEEPER one that was kept stands as its reference and
+			// all of these hold: its polygon's closest point is on an edge or a corner (face contacts and penetrations always
+			// stay), it is not deeper than 0.1, its normal is more than ~5.7 deg from the reference's (dot < 0.995), and it does
+			// not sit above the reference's plane (by more than 0.01). A penetration has no closest point, so it is never a
+			// reference. In the recordings the game keeps 99.4% of face contacts but only 23% of edge and 20% of corner ones;
+			// without this the rules made contacts on polygons the game had dropped - shallow side contacts that paired with a
+			// deep one into launches that never happened (95 false launches in 1,518 recorded Headlong falls). With it the
+			// tick's set of contacts equals the game's on 74% of recorded ticks at 30 tick (49% before), 90% at 60 (73%).
+			// Only the live landings (landingLaunch) use it; the map scan's candidates are as before. rows: sorted, deepest first.
+			// 2026-11-16 (evening), scored on 1,518 recorded Headlong falls (s8_physics/hcmstate/score.py, each fall stepped on its real
+			// tick states): as first ported, with only SEPARATED contacts as references, it changed nothing (100 false launches, 1
+			// missed) - the false launches' deep point is a PENETRATION. With a penetration as a reference too (its point: the
+			// polygon's support vertex along the normal - an approximation, the engine's own point was not read) and a contact
+			// pushed along its own face normal never culled: 38 false launches, 1 missed (1,479 of 1,518 right, was 1,417).
+			// 2026-11-17, from the engine's own source (Xbox decomp: welder 0x2fa2f0, keep test 0x2f97e0, world setup 0x1c2d40 -
+			// weld limits 0.01 / 0.995, contact tolerance 0.0328): the 38 were all one thing. "Edge or corner" is not where
+			// the closest point falls - it is the polygon-side feature size the pair's SEARCH ended on (search state byte 9).
+			// Falling beside a wall built of several polygons the closest point sits on their shared border; the search calls
+			// one of them a face (kept) or all of them edges (all dropped), and the old "face normal = face contact" guess
+			// kept one every time. Now contact() runs that search (h2gsk::features) and Row::edge is its answer; the face-
+			// normal exemption is gone; TOL is the engine's 0.0328 (was 0.0333: two contacts at +0.033 the game never made).
+			// Scoreboard: 1,517 of 1,518 right, 0 false launches, 1 missed (a lamp-post sliver - the penetration query's case).
+			static int weld_cull(Row* rows, int n)
+			{
+#ifndef H2SB_NO_WELD
+				bool gone[32] = {};
+				for (int i = 0; i < n && i < 32; ++i)
+				{
+					if (gone[i]) continue;   // (a penetration is a reference too: its point = the polygon's support vertex along the normal)
+					for (int j = i + 1; j < n && j < 32; ++j)
+					{
+						if (gone[j] || !rows[j].edge) continue;   // (edge: the engine search's own word - see contact(); 2026-11-18: also after a penetration query that ended on the polygon's plane)
+						if (rows[j].d < -0.1) continue;
+						if (dot(rows[i].n, rows[j].n) >= 0.995) continue;
+						if (dot(rows[j].pt - rows[i].pt, rows[i].n) > 0.01) continue;
+						gone[j] = true;
+					}
+				}
+				int m = 0;
+				for (int i = 0; i < n; ++i) if (i >= 32 || !gone[i]) rows[m++] = rows[i];
+				return m;
+#else
+				return n;
+#endif
+			}
+			int landing_contacts(V3 feet, V3 v_pre, const std::vector<int>& local, Row* rows, int maxr, bool weld = false) const
 			{
 				V3 core[4]; int nc = 2;
 				core[0] = { feet.x, feet.y, feet.z + CAP_LO }; core[1] = { feet.x, feet.y, feet.z + CAP_HI };
@@ -274,20 +428,21 @@ namespace h2cv::sbscan
 					lo = { (std::min)(lo.x, core[k].x), (std::min)(lo.y, core[k].y), (std::min)(lo.z, core[k].z) };
 					hi = { (std::max)(hi.x, core[k].x), (std::max)(hi.y, core[k].y), (std::max)(hi.z, core[k].z) };
 				}
-				const double mg = CAP_R + 0.05;
+				const double mg = CAP_R + 0.05, cslack = core_slack(core, nc);
 				int n = 0;
 				for (int i : local)
 				{
 					const Surf& s = S[i];
 					if (s.hi.x < lo.x - mg || s.lo.x > hi.x + mg || s.hi.y < lo.y - mg || s.lo.y > hi.y + mg || s.hi.z < lo.z - mg || s.lo.z > hi.z + mg) continue;
-					V3 nn; double d;
-					if (!contact(core, nc, s, nn, d)) continue;
+					V3 nn, pt{}; double d; bool sep = false, edge = false;
+					if (!contact(core, nc, s, cslack, nn, d, &sep, &pt, &edge)) continue;
 					if (n >= maxr) break;
-					rows[n++] = { nn, d, false, s.soft };
+					rows[n++] = { nn, d, false, s.soft, std::fabs(dot(s.n, nn)), sep, edge, pt };
 				}
 				// Havok's order on the landing tick: deepest first, and each point coupled with the one before it unless that one
 				// already is (verified on 954 recorded landings: 952 deepest-first, 948 alternating) - no lottery
 				std::stable_sort(rows, rows + n, [](const Row& a, const Row& b) { return a.d < b.d; });
+				if (weld) n = weld_cull(rows, n);
 				bool prev_paired = true;
 				for (int k = 0; k < n; ++k) { rows[k].pair = k > 0 && !prev_paired; prev_paired = rows[k].pair; }
 				return n;
@@ -303,6 +458,103 @@ namespace h2cv::sbscan
 				const int n = landing_contacts(feet - v_pre * DT, len(v_prev) > sweep_min() ? v_pre : v_prev, local, prev, 32);
 				for (int k = 0; k < n; ++k) if (prev[k].d < -0.001) return false;
 				return true;
+			}
+			// ---- landingLaunch's own two passes (2026-11-16, cost; the same answers as reachable() + landing_contacts()) ----
+			// Both read the near cache's boxes directly: a surface is tested when it passes near_surfs' test AND the pass's own box
+			// test - exactly the surfaces landing_contacts tested out of near_surfs_cached's list, in the same (ascending) order,
+			// without building that list or reading each fat Surf for its box.
+			struct Cores { V3 c[4]; int nc = 2; double lx, hx, ly, hy, lz, hz, cslack; };
+			static Cores cores_of(V3 feet, V3 v_pre)
+			{
+				Cores q;
+				q.c[0] = { feet.x, feet.y, feet.z + CAP_LO }; q.c[1] = { feet.x, feet.y, feet.z + CAP_HI };
+				if (len(v_pre) > sweep_min()) { const V3 sw = v_pre * DT; q.c[2] = q.c[0] + sw; q.c[3] = q.c[1] + sw; q.nc = 4; }
+				V3 lo = q.c[0], hi = q.c[0];
+				for (int k = 0; k < q.nc; ++k)
+				{
+					lo = { (std::min)(lo.x, q.c[k].x), (std::min)(lo.y, q.c[k].y), (std::min)(lo.z, q.c[k].z) };
+					hi = { (std::max)(hi.x, q.c[k].x), (std::max)(hi.y, q.c[k].y), (std::max)(hi.z, q.c[k].z) };
+				}
+				const double mg = CAP_R + 0.05;
+				q.lx = lo.x - mg; q.hx = hi.x + mg; q.ly = lo.y - mg; q.hy = hi.y + mg; q.lz = lo.z - mg; q.hz = hi.z + mg;
+				q.cslack = core_slack(q.c, q.nc);
+				return q;
+			}
+			// reachable(), stopping at the first contact that blocks: reachable() gathers up to 32 contacts in list order and then
+			// asks whether any is deeper than 0.001 - the first such one among the first 32 answers that
+			bool clear_before(const NearCache& c, double x, double y, double r, double zlo, double zhi, V3 feet, V3 v_pre) const
+			{
+				const V3 v_prev{ v_pre.x, v_pre.y, v_pre.z + G * DT };
+				const Cores q = cores_of(feet - v_pre * DT, len(v_prev) > sweep_min() ? v_pre : v_prev);
+				int n = 0;
+				const size_t nk = c.ids.size();
+				for (size_t k = 0; k < nk; ++k)
+				{
+					const NearBox& b = c.box[k];
+					if (!(b.lx - r <= x && x <= b.hx + r && b.ly - r <= y && y <= b.hy + r && b.hz >= zlo && b.lz <= zhi)) continue;   // near_surfs' test
+					if (b.hx < q.lx || b.lx > q.hx || b.hy < q.ly || b.ly > q.hy || b.hz < q.lz || b.lz > q.hz) continue;            // landing_contacts' box test
+					V3 nn; double d;
+					if (!contact(q.c, q.nc, S[c.ids[k]], q.cslack, nn, d)) continue;
+					if (n >= 32) break;
+					++n;
+					if (d < -0.001) return false;
+				}
+				return true;
+			}
+			// landing_contacts(), with the tick before asked about only once this tick has a contact at all (blocked: it was not
+			// clear -> landingLaunch's answer is false, as when reachable() was asked first; without a contact it is false anyway)
+			int launch_contacts(const NearCache& c, double x, double y, double r, double zlo, double zhi, V3 feet, V3 v_pre, Row* rows, int maxr, bool& blocked, bool gate) const
+			{
+				blocked = false;
+				const Cores q = cores_of(feet, v_pre);
+				int n = 0;
+				const size_t nk = c.ids.size();
+				// SCENERY IS FOUND LATE (2026-11-16; the user's Season 8+ rock bounces, superbounce_log sessions with key 8000006e).
+				// The pill's sweep vector is written by its polygon children as they run (hkConvexSweepConvexAgent, sub_180989590) -
+				// with no polygon child there is no sweep, and the box the pill looks for polygons with is its UNSWEPT one. A baked
+				// scenery object is ONE child of the level (a nested collection) whose own polygons only become children once that
+				// unswept box (grown by 1.5 x the tolerance) reaches them. Recorded: falling onto a rock at 8.9-9.2 u/s with no level
+				// polygon near, the sweep stays 0 for 5 ticks beside the object's helper, the pill ends one tick 0.08 above the
+				// surface and starts the next 0.07 inside - only then a polygon child exists, the sweep switches on and the first
+				// contact is deep (the launches). With level polygons within reach (sweep already on) the same object is met early
+				// and shallow, as level floors are (0 of 39 recorded level landings at that speed launched).
+				// So: on a swept tick, when no LEVEL surface is within reach of the unswept pill, a scenery triangle only counts
+				// if the unswept pill's box reaches it. Read in the code + fitted to those recordings; not verified beyond them.
+				const double um = CAP_R + 1.5 * 0.0328;
+				const double ulx = feet.x - um, uhx = feet.x + um, uly = feet.y - um, uhy = feet.y + um, ulz = feet.z + CAP_LO - um, uhz = feet.z + CAP_HI + um;
+				int armed = -1;   // -1 not asked yet; 1: a level surface is within reach of the unswept pill (the sweep is on)
+				for (size_t k = 0; k < nk; ++k)
+				{
+					const NearBox& b = c.box[k];
+					if (!(b.lx - r <= x && x <= b.hx + r && b.ly - r <= y && y <= b.hy + r && b.hz >= zlo && b.lz <= zhi)) continue;
+					if (b.hx < q.lx || b.lx > q.hx || b.hy < q.ly || b.ly > q.hy || b.hz < q.lz || b.lz > q.hz) continue;
+					const Surf& s = S[c.ids[k]];
+					if (s.scen && q.nc == 4)
+					{
+						if (armed < 0)
+						{
+							armed = 0;
+							const double g = 0.1;   // level polygons' bounds in the level's tree are loose: counted a little further out
+							for (size_t k2 = 0; k2 < nk && !armed; ++k2)
+							{
+								const NearBox& b2 = c.box[k2];
+								if (b2.hx < ulx - g || b2.lx > uhx + g || b2.hy < uly - g || b2.ly > uhy + g || b2.hz < ulz - g || b2.lz > uhz + g) continue;
+								if (!S[c.ids[k2]].scen) armed = 1;
+							}
+						}
+						if (!armed && (b.hx < ulx || b.lx > uhx || b.hy < uly || b.ly > uhy || b.hz < ulz || b.lz > uhz)) continue;   // not found yet
+					}
+					V3 nn, pt{}; double d; bool sep = false, edge = false;
+					if (!contact(q.c, q.nc, s, q.cslack, nn, d, &sep, &pt, &edge)) continue;
+					if (n == 0 && gate && !clear_before(c, x, y, r, zlo, zhi, feet, v_pre)) { blocked = true; return 0; }
+					if (n >= maxr) break;
+					rows[n++] = { nn, d, false, s.soft, std::fabs(dot(s.n, nn)), sep, edge, pt };
+				}
+				std::stable_sort(rows, rows + n, [](const Row& a, const Row& b) { return a.d < b.d; });
+				n = weld_cull(rows, n);
+				bool prev_paired = true;
+				for (int k = 0; k < n; ++k) { rows[k].pair = k > 0 && !prev_paired; prev_paired = rows[k].pair; }
+				return n;
 			}
 			void add_found(const Spot& s)
 			{
@@ -360,7 +612,7 @@ namespace h2cv::sbscan
 			}
 			void save() const
 			{
-				char name[96]; snprintf(name, sizeof(name), "%s", fileName(key, tick).c_str());
+				char name[200]; snprintf(name, sizeof(name), "%s", fileName(key, tick).c_str());
 				FILE* f = nullptr;
 				if (fopen_s(&f, name, "w") != 0 || !f) return;
 				fprintf(f, "# predicted monster / dreadnought spots (HCM scanner): x,y,z,ceiling u/s,share 20+,share 35+,fall u/s,drift x,drift y\n");
@@ -369,7 +621,7 @@ namespace h2cv::sbscan
 			}
 			bool load()
 			{
-				char name[96]; snprintf(name, sizeof(name), "%s", fileName(key, tick).c_str());
+				char name[200]; snprintf(name, sizeof(name), "%s", fileName(key, tick).c_str());
 				bool any = false;
 				for (const std::string& path : { std::string(name), mapFile })
 				{
@@ -611,7 +863,7 @@ namespace h2cv::sbscan
 				for (Surface& s : in)
 				{
 					if (s.poly.size() < 9) continue;
-					Surf o; o.key = s.key; o.n = { s.n[0], s.n[1], s.n[2] }; o.soft = (s.flags & 3) != 0;
+					Surf o; o.key = s.key; o.n = { s.n[0], s.n[1], s.n[2] }; o.soft = (s.flags & 3) != 0; o.scen = (s.flags & 0x80) != 0;
 					for (size_t i = 0; i + 2 < s.poly.size(); i += 3) o.poly.push_back({ s.poly[i], s.poly[i + 1], s.poly[i + 2] });
 					o.lo = o.hi = o.poly[0];
 					for (const V3& v : o.poly)
@@ -620,6 +872,26 @@ namespace h2cv::sbscan
 						o.hi = { (std::max)(o.hi.x, v.x), (std::max)(o.hi.y, v.y), (std::max)(o.hi.z, v.z) };
 					}
 					for (size_t i = 0; i < o.poly.size(); ++i) o.edges.push_back(o.poly[(i + 1) % o.poly.size()] - o.poly[i]);
+					// contact()'s early tests (2026-11-16): the extent along the normal - the same sums, in the same order, as contact()'s
+					// own loop over the polygon made on every call
+					o.nmin = 1e30; o.nmax = -1e30;
+					for (const V3& y : o.poly) { const double p = dot(o.n, y); o.nmin = (std::min)(o.nmin, p); o.nmax = (std::max)(o.nmax, p); }
+					o.nlen = len(o.n);
+					{
+						// how far outside the polygon point_in_poly (which allows 1e-9) lets a point of its plane be: at a corner with
+						// inside angle t between sides a and b, (1e-9 / the shorter side / |n|) / sin(t / 2); doubled. Plus how far off
+						// the plane (through vertex 0) the vertices are. A polygon with a very short side or a needle corner: no early test.
+						double lat = 0; const size_t np = o.edges.size();
+						for (size_t i = 0; i < np && o.nlen > 1e-6; ++i)
+						{
+							const V3 a = o.edges[i], b = o.edges[(i + 1) % np];
+							const double la = len(a), lb = len(b), lm = (std::min)(la, lb);
+							if (lm < 1e-4) { lat = 1e30; break; }
+							const double sh = std::sqrt((std::max)(0.0, 0.5 * (1.0 + dot(a, b) / (la * lb))));   // sin(t / 2): cos t = -(a . b) / (|a| |b|)
+							lat = (std::max)(lat, sh > 1e-6 ? 2e-9 / (lm * o.nlen * sh) : 1e30);
+						}
+						o.slack = o.nlen > 1e-6 ? lat + 2.0 * (o.nmax - o.nmin) / o.nlen : 1e30;
+					}
 					S.push_back(std::move(o));
 				}
 				std::sort(S.begin(), S.end(), [](const Surf& a, const Surf& b) { return a.key < b.key; });
@@ -677,54 +949,136 @@ namespace h2cv::sbscan
 
 		std::mutex g_m;
 		std::shared_ptr<Job> g_job;
+		// 2026-11-16: landingLaunch / readySerial took g_m on every call - thousands a tick from the viewer's worker threads
+		// (BELOW_NORMAL). A worker descheduled while holding it stalled the render thread's own calls until it ran again: hitches.
+		// Now each thread keeps the job it last saw and only takes the lock when the job changed (g_job_gen: bumped under g_m with
+		// every change of g_job).
+		std::atomic<uint64_t> g_job_gen{ 1 };
+		thread_local std::shared_ptr<Job> tj;
+		thread_local uint64_t tgen = 0;
+		Job* job_fast()
+		{
+			if (tgen != g_job_gen.load(std::memory_order_acquire))
+			{
+				std::scoped_lock lk(g_m);
+				tj = g_job; tgen = g_job_gen.load(std::memory_order_relaxed);
+			}
+			return tj.get();   // kept alive by this thread's own reference until its next call
+		}
+		thread_local bool t_memo = true;   // landingLaunch's per-thread memo (off for a thread whose calls never repeat)
 		std::string g_map_name;   // setMapFile (under g_m)
 		std::string g_map_prefix = "gen3";   // setMapFile: "gen3" (Halo 3 / ODST) or "reach" -> superbounce_predicted_<prefix>_<map>[_t<tick>].csv
-		std::string map_file(int tick) { return g_map_name.empty() ? std::string() : (tick == 30 ? "superbounce_predicted_" + g_map_prefix + "_" + g_map_name + ".csv" : "superbounce_predicted_" + g_map_prefix + "_" + g_map_name + "_t" + std::to_string(tick) + ".csv"); }
+		std::string map_file(int tick) { return g_map_name.empty() ? std::string() : dataPath(tick == 30 ? "superbounce_predicted_" + g_map_prefix + "_" + g_map_name + ".csv" : "superbounce_predicted_" + g_map_prefix + "_" + g_map_name + "_t" + std::to_string(tick) + ".csv"); }
 
 		// the job's detached owner thread joins its workers; stopping only asks them to finish their current place
 		void stop_job(const std::shared_ptr<Job>& j) { if (j) j->stop = true; }
 	}
 
+	std::string dataPath(const std::string& name)
+	{
+		static const char* const kDir = "HCM Bounce Viewer";
+		static std::once_flag once;
+		std::call_once(once, []
+		{
+			CreateDirectoryA(kDir, nullptr);
+			// the files earlier builds left loose in the game folder: moved in once (one already there under that name wins)
+			WIN32_FIND_DATAA fd{};
+			std::vector<std::string> names;
+			HANDLE h = FindFirstFileA("superbounce_*", &fd);
+			if (h != INVALID_HANDLE_VALUE) { do { names.push_back(fd.cFileName); } while (FindNextFileA(h, &fd)); FindClose(h); }
+			for (const std::string& n : names) MoveFileA(n.c_str(), (std::string(kDir) + "\\" + n).c_str());
+		});
+		return std::string(kDir) + "\\" + name;
+	}
+
 	int tick() { return (int)std::lround(1.0 / DT); }
 
-	bool landingLaunch(float fx, float fy, float fz, float vx, float vy, float vz, float launch[3])
+	bool landingLaunch(float fx, float fy, float fz, float vx, float vy, float vz, float launch[3], float dt, bool gate, float sweepMin)
 	{
-		std::shared_ptr<Job> j;
-		{ std::scoped_lock lk(g_m); j = g_job; }
+		Job* const j = job_fast();
 		if (!j || !j->ready) return false;
+		// the caller's tick length and sweep threshold for everything below (restored on every way out)
+		struct DtScope { double prev, prevS; DtScope(double d, double s) : prev(t_call_dt), prevS(t_call_sweep) { t_call_dt = d; t_call_sweep = s; } ~DtScope() { t_call_dt = prev; t_call_sweep = prevS; } }
+			dtScope(dt > 0.f ? (double)dt : 0.0, sweepMin > 0.f ? (double)sweepMin : 0.0);
 		// a pure function of its six inputs and the level (2026-11-03): the viewer repeats the exact same calls every tick while
 		// you stand still, and the seams' straight-down falls are the same for every seam - remembered per job, bit-exact keys
-		struct MemoKey { uint32_t b[6]; bool operator==(const MemoKey& o) const { return std::memcmp(b, o.b, sizeof(b)) == 0; } };
+		struct MemoKey { uint32_t b[9]; bool operator==(const MemoKey& o) const { return std::memcmp(b, o.b, sizeof(b)) == 0; } };   // + the tick length, the gate, the threshold
 		struct MemoHash { size_t operator()(const MemoKey& k) const { uint64_t h = 1469598103934665603ull; for (uint32_t v : k.b) { h ^= v; h *= 1099511628211ull; } return (size_t)h; } };
-		struct MemoVal { bool ok; float l[3]; };
-		thread_local std::unordered_map<MemoKey, MemoVal, MemoHash> memo;
+		struct MemoVal { MemoKey k; uint32_t state; float l[3]; };   // state: 0 empty, 1 answered false, 2 answered true
+		// 2026-11-16 (cost): a fixed table, one slot per hash (a newer call takes the slot over). The unordered_map allocated a node
+		// per new call and freed all 16k of them at once every time it filled - in a fall no call repeats, so that was a
+		// malloc per call and a burst of frees on the render thread every few ticks. A memo only ever returns what the same
+		// seven inputs computed before, so what it forgets changes no answer.
+		constexpr size_t MEMO_N = 16384;   // a power of two
+		thread_local std::vector<MemoVal> memo;
 		thread_local uint64_t memoSerial = 0;
-		if (memoSerial != j->serial || memo.size() > 65536) { memo.clear(); memoSerial = j->serial; }
+		const bool use_memo = t_memo;
 		MemoKey mk;
-		{ const float in[6] = { fx, fy, fz, vx, vy, vz }; std::memcpy(mk.b, in, sizeof(in)); }
-		if (const auto it = memo.find(mk); it != memo.end())
+		{ const float in[9] = { fx, fy, fz, vx, vy, vz, (float)DT, gate ? 1.f : 0.f, (float)sweep_min() }; std::memcpy(mk.b, in, sizeof(in)); }
+		MemoVal unkept{};
+		MemoVal* mvp = &unkept;
+		if (use_memo)
 		{
-			if (it->second.ok) { launch[0] = it->second.l[0]; launch[1] = it->second.l[1]; launch[2] = it->second.l[2]; }
-			return it->second.ok;
+			if (memo.size() != MEMO_N || memoSerial != j->serial) { memo.assign(MEMO_N, MemoVal{}); memoSerial = j->serial; }
+			const uint64_t h = MemoHash()(mk);
+			mvp = &memo[(size_t)(h ^ (h >> 29)) & (MEMO_N - 1)];
+			if (mvp->state != 0 && mvp->k == mk)
+			{
+				if (mvp->state == 2) { launch[0] = mvp->l[0]; launch[1] = mvp->l[1]; launch[2] = mvp->l[2]; }
+				return mvp->state == 2;
+			}
+			mvp->k = mk;
 		}
-		MemoVal& mv = memo[mk];
-		mv.ok = false;
-		// the heights both landing_contacts calls can reach: this tick's cores (feet + CAP_LO .. CAP_HI, swept by a tick of v) and
-		// reachable's tick before (a tick higher, swept by v or v + a tick of gravity), widened past their own margin (CAP_R + 0.05)
+		MemoVal& mv = *mvp;
+		mv.state = 1;
+		// the heights both contact passes can reach: this tick's cores (feet + CAP_LO .. CAP_HI, swept by a tick of v) and
+		// the tick before's (a tick higher, swept by v or v + a tick of gravity), widened past their own margin (CAP_R + 0.05)
 		const double span = 2.0 * (std::fabs((double)vz) + G * DT) * DT;
-		thread_local std::vector<int> local;
+		const double zlo = (double)fz + CAP_LO - span - CAP_R - 0.25, zhi = (double)fz + CAP_HI + span + CAP_R + 0.25;
 		thread_local NearCache cache;
-		j->near_surfs_cached(cache, fx, fy, 1.0, local,(double)fz + CAP_LO - span - CAP_R - 0.25, (double)fz + CAP_HI + span + CAP_R + 0.25);
 		const V3 feet{ fx, fy, fz }, v_pre{ vx, vy, vz };
-		if (!j->reachable(feet, v_pre, local)) return false;
 		Row rows[32];
-		const int n = j->landing_contacts(feet, v_pre, local, rows, 32);
+		int n;
+		if (std::isnan(zlo) || std::isnan(zhi))
+		{
+			// a NaN band is never cached: the plain way
+			thread_local std::vector<int> local;
+			j->near_surfs(fx, fy, 1.0, local, zlo, zhi);
+			if (gate && !j->reachable(feet, v_pre, local)) return false;
+			n = j->landing_contacts(feet, v_pre, local, rows, 32, true);
+		}
+		else
+		{
+			// 2026-11-16 (cost): this tick's contacts FIRST, and the tick before (reachable) only once there is one - most calls
+			// of a fall touch nothing, and each paid for a second full contact pass whose answer could not matter (no contact is
+			// false whatever the tick before says). Every false is the same false: the answers are unchanged.
+			j->cache_fit(cache, fx, fy, 1.0, zlo, zhi);
+			bool blocked = false;
+			// gate (2026-11-16): "the tick before was clear" belongs to the map scan, whose landings start from nowhere. A caller
+			// stepping a fall tick by tick has already asked about the tick before; there the gate only hid the real landing after
+			// a brush (11 of 12 recorded launches the rules missed on Headlong were dropped by it).
+			n = j->launch_contacts(cache, fx, fy, 1.0, zlo, zhi, feet, v_pre, rows, 32, blocked, gate);
+			if (blocked) return false;
+		}
 		if (n == 0) return false;
 		bool hard = false; for (int k = 0; k < n; ++k) if (!rows[k].soft) { hard = true; break; }
-		if (!hard) return false;
+		if (!hard)
+		{
+			// only two-sided / invisible surfaces touched. The map scan counts that as "no launch here" (false). A fall being
+			// STEPPED must not treat it as empty air (2026-11-16, the user's "it says I can monster but it is barely not right",
+			// live probe on Headlong at (3.63, -16.90, 7.19): the game stopped a -16.3 u/s fall on the two-sided invisible slope
+			// 200007a8 - speed cut, out at -0.5 u/s - while the stepped fall flew on through it into the floor and walls behind
+			// and reported a monster). So for a stepped fall this tick IS a contact: the solved velocity, never as a launch
+			// (0 of 65 recorded launches came off such surfaces alone).
+			if (gate) return false;
+			const V3 vs = solve(rows, n, v_pre);
+			launch[0] = (float)vs.x; launch[1] = (float)vs.y; launch[2] = (float)(std::min)(vs.z, 0.0);
+			mv.state = 2; mv.l[0] = launch[0]; mv.l[1] = launch[1]; mv.l[2] = launch[2];
+			return true;
+		}
 		const V3 v = solve(rows, n, v_pre);
 		launch[0] = (float)v.x; launch[1] = (float)v.y; launch[2] = (float)v.z;
-		mv.ok = true; mv.l[0] = launch[0]; mv.l[1] = launch[1]; mv.l[2] = launch[2];
+		mv.state = 2; mv.l[0] = launch[0]; mv.l[1] = launch[1]; mv.l[2] = launch[2];
 		return true;
 	}
 
@@ -733,27 +1087,27 @@ namespace h2cv::sbscan
 		char name[96];
 		if (tick == 30) snprintf(name, sizeof(name), "superbounce_predicted_v3_%016llx.csv", (unsigned long long)key);
 		else snprintf(name, sizeof(name), "superbounce_predicted_v3_t%d_%016llx.csv", tick, (unsigned long long)key);
-		return name;
+		return dataPath(name);
 	}
 
-	void start(uint64_t key, std::vector<Surface>&& surfaces, float nearX, float nearY, int tick)
+	void start(uint64_t key, std::vector<Surface>&& surfaces, float nearX, float nearY, int tick, uint64_t objSig)
 	{
 		std::shared_ptr<Job> old;
 		{
 			std::scoped_lock lk(g_m);
-			if (g_job && g_job->key == key && g_job->tick == tick)
+			if (g_job && g_job->key == key && g_job->tick == tick && g_job->objSig == objSig)
 			{
 				// the same map again (the toggle went off / on): retry the file if it was missing (2026-10-31: no auto scan)
 				const std::string mf = map_file(tick);
 				if (!g_job->loaded || g_job->mapFile != mf) { std::scoped_lock lk2(g_job->m); g_job->mapFile = mf; g_job->found.clear(); g_job->loaded = g_job->load(); }
 				return;
 			}
-			old = g_job; g_job.reset();
+			old = g_job; g_job.reset(); ++g_job_gen;
 		}
 		stop_job(old);
 		auto j = std::make_shared<Job>();
-		j->key = key; j->tick = tick > 0 ? tick : 30;
-		DT = 1.0 / j->tick;
+		j->key = key; j->tick = tick > 0 ? tick : 30; j->objSig = objSig;
+		g_job_dt = 1.0 / j->tick;
 		{ std::scoped_lock lk(g_m); j->mapFile = map_file(j->tick); }
 		j->loaded = j->load();
 		j->recipeThread = std::thread([j]() { j->recipes(); });
@@ -774,7 +1128,7 @@ namespace h2cv::sbscan
 			if (!j->stop) j->save();
 		}).detach();
 		std::scoped_lock lk(g_m);
-		g_job = j;
+		g_job = j; ++g_job_gen;
 	}
 
 	void setMapFile(const std::string& mapName, const char* prefix)
@@ -804,8 +1158,8 @@ namespace h2cv::sbscan
 	void cancel()
 	{
 		std::shared_ptr<Job> j;
-		{ std::scoped_lock lk(g_m); j = g_job; g_job.reset(); }
-		if (j) j->stop = true;      // its threads finish their current place and exit; the detached owner joins them
+		{ std::scoped_lock lk(g_m); j = g_job; g_job.reset(); ++g_job_gen; }
+		if (j) j->stop = true;     // its threads finish their current place and exit; the detached owner joins them
 	}
 
 	void spots(std::vector<Spot>& out)
@@ -951,7 +1305,11 @@ namespace h2cv::sbscan
 
 	uint64_t readySerial()
 	{
-		std::scoped_lock lk(g_m);
-		return g_job && g_job->ready ? g_job->serial : 0;
+		const Job* const j = job_fast();
+		return j && j->ready ? j->serial : 0;
 	}
+
+	void setThreadMemo(bool on) { t_memo = on; }
+	// a worker with nothing to do lets go of the job it last saw (else an idle thread keeps a whole level's surfaces alive)
+	void dropThreadJob() { tj.reset(); tgen = 0; }
 }

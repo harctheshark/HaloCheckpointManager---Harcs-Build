@@ -11,6 +11,7 @@ struct temporaryMessage
 	std::chrono::steady_clock::time_point timeStamp;
 	long long lineCount;
 	float messageAge;
+	MessageKind kind = MessageKind::Neutral;   // resolved when added (never Auto)
 };
 
 
@@ -40,7 +41,7 @@ private:
 	void drawMessage(const temporaryMessage& message, const SimpleMath::Vector2& position);
 
 protected:
-	virtual void addMessage(std::string message) override;
+	virtual void addMessage(std::string message, MessageKind kind = MessageKind::Auto) override;
 
 public:
 

@@ -6,6 +6,7 @@
 #include "RuntimeExceptionHandler.h"
 #include "DirectXRenderEvent.h"
 #include "ScopedThreadSuspender.h"
+#include "H2SafeWrite.h"
 #include <Windows.h>
 #include <vector>
 #include <atomic>
@@ -91,12 +92,22 @@ namespace
 	constexpr uint8_t  kDecMultOrig[12] = { 0x01,0x00,0xC0,0x3E,0x01,0x00,0x40,0x3E,0x00,0x00,0x00,0x3E };
 	constexpr uint8_t  kDecMultNew[12]  = { 0xA6,0x9B,0xC4,0x3C,0xA6,0x9B,0xC4,0x3C,0xA6,0x9B,0xC4,0x3C };
 
+	// Shader level of detail (2026-11-19, user: "shaders have up to 3 LODs as well & it affects shadows"). MCC's pick is
+	// sub_18095A000(shader, projected size, level kind, *out) (= Xbox function_1bf50): it walks the shader template's levels
+	// and takes the first whose threshold the size reaches, except for level kind 5, which skips the walk and returns level
+	// 0 - the most detailed. `cmp edi,5 ; jz +0xD3` -> `cmp edi,5 ; nop ; jmp +0xD3` makes that every shader, every pass
+	// (the shadow passes included). Same fix as on the Xbox (0x1BFEF, 0F 8E -> 90 E9).
+	constexpr uint32_t kShaderLodRVA = 0x95A092;
+	constexpr uint8_t  kShaderLodAnchor[3] = { 0x83, 0xFF, 0x05 };               // cmp edi,5 (at kShaderLodRVA - 3)
+	constexpr uint8_t  kShaderLodOrig[6] = { 0x0F, 0x84, 0xD3, 0x00, 0x00, 0x00 }; // jz +0xD3
+	constexpr uint8_t  kShaderLodNew[2] = { 0x90, 0xE9 };                         // nop ; jmp +0xD3
+
 	class Patcher
 	{
 		uintptr_t base = 0;
 		bool applied = false;
 
-		struct Save { uintptr_t addr; std::vector<uint8_t> orig; };
+		struct Save { uintptr_t addr; std::vector<uint8_t> orig, patch; };
 		std::vector<Save> saves;
 		std::vector<std::pair<uintptr_t, std::vector<uint8_t>>> pending; // queued writes, committed under one suspend
 
@@ -105,7 +116,7 @@ namespace
 		// holding the heap lock -> deadlock). commitWrites() performs the actual .text writes under the suspend.
 		void writeSaved(uintptr_t addr, const uint8_t* data, size_t len)
 		{
-			Save s; s.addr = addr; s.orig.resize(len);
+			Save s; s.addr = addr; s.orig.resize(len); s.patch.assign(data, data + len);
 			memcpy(s.orig.data(), (void*)addr, len);
 			saves.push_back(std::move(s));
 			pending.emplace_back(addr, std::vector<uint8_t>(data, data + len));
@@ -117,15 +128,10 @@ namespace
 		{
 			if (pending.empty()) return;
 			{
+				const std::pair<uintptr_t, std::vector<uint8_t>>* const pw = pending.data(); const size_t n = pending.size();
 				ScopedThreadSuspender suspend;
-				for (auto& pw : pending)
-				{
-					uintptr_t addr = pw.first; const std::vector<uint8_t>& bytes = pw.second;
-					DWORD o; VirtualProtect((void*)addr, bytes.size(), PAGE_EXECUTE_READWRITE, &o);
-					memcpy((void*)addr, bytes.data(), bytes.size());
-					VirtualProtect((void*)addr, bytes.size(), o, &o);
-					FlushInstructionCache(GetCurrentProcess(), (void*)addr, bytes.size());
-				}
+				if (h2safe::moduleMappedAt(base))   // guarded writes (H2SafeWrite.h): never a fault if the dll goes away
+					for (size_t i = 0; i < n; ++i) h2safe::patch(pw[i].first, pw[i].second.data(), pw[i].second.size());
 			}
 			pending.clear(); // frees each queued byte-vector (heap), so it must run after the threads resume. (See ScopedThreadSuspender.)
 		}
@@ -158,6 +164,7 @@ namespace
 		// L6-cinematic-LOD patch. Returns false (no throw) if halo2.dll isn't loaded; throws on byte mismatch.
 		bool apply(uint32_t sizePx, bool forceLOD)
 		{
+			syncModule();
 			base = (uintptr_t)GetModuleHandleA("halo2.dll");
 			if (!base) return false;
 
@@ -196,6 +203,13 @@ namespace
 				}
 				else
 					PLOG_INFO << "H2ShadowResolution: decorator render-distance sites don't match build 1.3528; skipped (shadows/LOD still applied).";
+
+				// every shader at its most detailed level (see kShaderLodRVA). Best-effort like the decorators.
+				if (memcmp((void*)(base + kShaderLodRVA - 3), kShaderLodAnchor, sizeof(kShaderLodAnchor)) == 0
+					&& memcmp((void*)(base + kShaderLodRVA), kShaderLodOrig, sizeof(kShaderLodOrig)) == 0)
+					writeSaved(base + kShaderLodRVA, kShaderLodNew, sizeof(kShaderLodNew));
+				else
+					PLOG_INFO << "H2ShadowResolution: shader LOD site doesn't match build 1.3528; skipped (shadows/LOD still applied).";
 			}
 
 			commitWrites(); // write all queued patches once, under a single render-thread suspend (see writeSaved)
@@ -203,28 +217,43 @@ namespace
 			return true;
 		}
 
+		// MCC UNLOADS halo2.dll when a game ends and loads it again (often elsewhere) for the next one. What we saved belongs
+		// to the image it was read from: if that image is gone - or a fresh one sits at the same address - forget it, touch
+		// nothing. (2026-11-18, HCMInternal_CRASHDUMP_20261118_043820: the feature's destructor put "the stock bytes back"
+		// at halo2.dll+0xE136A0 after the dll had been unloaded - an access violation in memcpy while HCM shut down. The
+		// same stale state also left the NEXT game's fresh dll unpatched, because `applied` was still true.)
+		void syncModule()
+		{
+			if (!applied && saves.empty()) return;
+			const uintptr_t now = (uintptr_t)GetModuleHandleA("halo2.dll");
+			bool ours = now && now == base && h2safe::moduleMappedAt(base);
+			for (size_t i = 0; ours && i < saves.size(); ++i) ours = h2safe::equals(saves[i].addr, saves[i].patch.data(), saves[i].patch.size());
+			if (ours) return;
+			saves.clear(); pending.clear(); applied = false;
+		}
+
 		void revert()
 		{
 			pending.clear(); // discard any queued-but-uncommitted writes; we're reverting to stock
+			syncModule();    // only an image that still holds OUR bytes is written to
 			// restore patched bytes with other threads suspended so the render thread can't execute a
 			// half-restored instruction mid-revert (races and can crash the game). Only the memory
 			// writes are inside the suspend window; saves.clear() (heap) stays outside. (ScopedThreadSuspender.)
+			if (!saves.empty())
 			{
+				const Save* const sv = saves.data(); const size_t n = saves.size();
 				ScopedThreadSuspender suspend;
-				for (auto it = saves.rbegin(); it != saves.rend(); ++it)
-				{
-					size_t len = it->orig.size();
-					DWORD o; VirtualProtect((void*)it->addr, len, PAGE_EXECUTE_READWRITE, &o);
-					memcpy((void*)it->addr, it->orig.data(), len);
-					VirtualProtect((void*)it->addr, len, o, &o);
-					FlushInstructionCache(GetCurrentProcess(), (void*)it->addr, len);
-				}
+				if (h2safe::moduleMappedAt(base))   // MCC can unload between the check above and here: guarded writes
+					for (size_t i = n; i-- > 0;) h2safe::patch(sv[i].addr, sv[i].orig.data(), sv[i].orig.size());
 			}
 			saves.clear();
 			applied = false;
 		}
 
-		~Patcher() { if (applied && GetModuleHandleA("halo2.dll")) revert(); }
+		// is the patch live on the halo2.dll that is mapped now? (drops stale state first)
+		bool isAppliedNow() { syncModule(); return applied; }
+
+		~Patcher() { if (applied) revert(); }
 	};
 
 	uint32_t sizeForEnum(SettingsEnums::H2ShadowResolution v)
@@ -357,7 +386,7 @@ private:
 			return;
 		}
 		if (mDesired == SettingsEnums::H2ShadowResolution::Retail) return;
-		if (mPatcher.isApplied()) return;
+		if (mPatcher.isAppliedNow()) return;   // "now": a new game means a new halo2.dll, which is not patched yet
 		try { applyValue(mDesired); }
 		catch (HCMRuntimeException& ex) { PLOG_DEBUG << "H2ShadowResolution: load-time apply skipped (" << ex.what() << ")"; }
 	}

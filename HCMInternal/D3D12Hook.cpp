@@ -2607,6 +2607,7 @@ bool D3D12Hook::obsBypassOwnsFrame(bool forPresent1)
 HRESULT __stdcall D3D12Hook::newDX12PresentOBSBypass(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags)
 {
 	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::newDX12PresentOBSBypass");
+	checkOBSCaptureOverlaysWhileBypassed();   // OBS's "Capture third-party overlays" defeats any bypass: say so
 
 	OBSBypassDepthGuard bypassDepth;
 	// If our own dxgi Present detour is already on this thread's stack, this does not re-lock - it is
@@ -2647,6 +2648,7 @@ HRESULT __stdcall D3D12Hook::newDX12PresentOBSBypass(IDXGISwapChain* pSwapChain,
 HRESULT __stdcall D3D12Hook::newDX12Present1OBSBypass(IDXGISwapChain1* pSwapChain, UINT SyncInterval, UINT PresentFlags, const DXGI_PRESENT_PARAMETERS* pPresentParameters)
 {
 	LOG_ONCE(PLOG_DEBUG << "D3D12Hook::newDX12Present1OBSBypass");
+	checkOBSCaptureOverlaysWhileBypassed();   // OBS's "Capture third-party overlays" defeats any bypass: say so
 
 	OBSBypassDepthGuard bypassDepth;
 	DetourEntryGuard entry(swapChainHookGuard);

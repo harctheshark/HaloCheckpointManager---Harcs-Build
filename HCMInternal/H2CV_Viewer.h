@@ -69,7 +69,7 @@ namespace h2cv
 		// launch arrows' speed / height; sbRecord = superbounce_log.csv; sbHighlight = possible monster bounces (WIP);
 		// sbKeepCharge = a crouch charge survives reverts
 		std::atomic_bool sbObjects{ true };   // the superbounce viewer includes objects (scenery / crates / machines)
-		std::atomic_bool superbounce{ false }, sbSeamText{ true }, sbSpeed{ true }, sbDebounce{ true }, sbSeams{ true }, sbSpots{ true }, sbPredicted{ true }, sbRecord{ false }, sbHighlight{ false }, sbKeepCharge{ false };
+		std::atomic_bool superbounce{ false }, sbSeamText{ true }, sbSpeed{ true }, sbDebounce{ true }, sbMonsterFinder{ true }, sbMonsterOnly{ false }, sbMonsterRings{ true }, sbSeams{ true }, sbSpots{ true }, sbPredicted{ true }, sbRecord{ false }, sbHighlight{ false }, sbKeepCharge{ false };
 		std::atomic_bool sbForceCharge{ false };       // Force Charged state: the pair with the level held at -3
 		std::atomic_bool infoSuperbounce{ true };       // its Info panel section
 		std::atomic_bool collision{ true };              // the Collision Viewer itself (off: only the info panel / bars run)
@@ -95,6 +95,7 @@ namespace h2cv
 		std::atomic_bool sbPredictedMonsters{ true }, sbPredictedDreadnoughts{ true };   // which predicted kinds are drawn
 		std::atomic_bool sbPredictedHeights{ false }, sbScanSlow{ false }, sbScanCurrentTick{ false };   // start heights; spot scan options
 		std::atomic_bool sbPredictedHideNarrow{ false };   // hide predicted monsters with a window under 1%
+		std::atomic_bool sbNoInvisible{ false };   // Halo 2: "No invisible walls (*)" is on in the game (the bounce viewer leaves them out)
 		std::atomic<float> sbScanRadius{ 64.f };
 		std::atomic_bool ghostEdges{ true };            // lime/red edges of skipped / over-credited polygons [Shift+End]
 		std::atomic_bool ghostEdgesSuspectOnly{ false };// false = every skipped child (TIM>0), true = only stale / over-credited ones
@@ -216,6 +217,7 @@ namespace h2cv
 		struct ReachLoad;
 	private:
 		void renderReach();
+		void renderH4();      // Halo 4 (2026-11-21): the bounce viewer only, drawn at Present with Halo 4's camera (ViewerReach.cpp)
 		void pumpReachScene(const std::string& map);
 		void drawHudReach(const h2::Camera& cam);
 		void wantReachWorld(bool on);

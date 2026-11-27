@@ -62,6 +62,7 @@ private:
 
 	ScopedCallback <ActionEvent> freeCameraUserInputCameraIncreaseTranslationSpeedHotkeyCallback;
 	ScopedCallback <ActionEvent> freeCameraUserInputCameraDecreaseTranslationSpeedHotkeyCallback;
+	ScopedCallback <ActionEvent> freeCameraZoomHotkeyCallback;
 
 
 	// injected services
@@ -104,6 +105,42 @@ private:
 	// (reset, set-position) so that jump is never swept through walls.
 	SimpleMath::Vector3 collisionLastPos = SimpleMath::Vector3::Zero;
 	std::atomic_bool collisionHaveLast = false;
+
+	// ZOOM (2026-11-20, user: "a 'zoom' button/option to Free Cam ... implement it the way Halo 3 does"). Halo 3's Theater
+	// flying camera (halo3.dll sub_180215648): a button press toggles zoom (flag bit 0); while zoomed the FOV is globals'
+	// "zoomed field of view" (20 deg), look speed x "zoomed look speed" (0.5), and the change is eased over "zoom transition
+	// time" (0.5 s) - values from H3EK globals.globals' camera block. Here the zoomed FOV comes from Zoom Amount (x
+	// magnification of the free camera's own FOV) and the base FOV setting is never changed by zooming.
+	static constexpr float kZoomTransitionSeconds = 0.5f;
+	static constexpr float kZoomLookScale = 0.5f;
+	std::atomic_bool zoomWanted = false;
+	float zoomBlend = 0.f;   // 0 = out, 1 = fully in (camera thread only)
+
+	void onFreeCameraZoomHotkey()
+	{
+		lockOrThrow(settingsWeak, settings);
+		if (!settings->freeCameraToggle->GetValue()) { zoomWanted = false; return; }
+		zoomWanted = !zoomWanted.load();
+		PLOG_INFO << "free camera zoom " << (zoomWanted ? "in" : "out");
+	}
+
+	// the zoomed FOV for this frame (degrees); advances the ease by frameDelta (0 = paused: holds)
+	float zoomedFOV(float baseFOV, float frameDelta, float zoomAmount, FreeCameraData& data)
+	{
+		const float target = zoomWanted ? 1.f : 0.f;
+		if (frameDelta > 0.f)
+		{
+			const float step = frameDelta / kZoomTransitionSeconds;
+			zoomBlend = target > zoomBlend ? std::min(target, zoomBlend + step) : std::max(target, zoomBlend - step);
+		}
+		const float e = zoomBlend * zoomBlend * (3.f - 2.f * zoomBlend);   // smoothstep
+		data.zoomLookScale = 1.f + (kZoomLookScale - 1.f) * e;
+		if (e <= 0.f || zoomAmount <= 1.f || baseFOV <= 0.f) return baseFOV;
+		const float mag = std::pow(zoomAmount, e);                          // eased in magnification, so it feels even
+		constexpr float d2r = 0.017453292f;
+		const float half = std::clamp(baseFOV, 0.01f, 179.f) * 0.5f * d2r;
+		return 2.f * std::atan(std::tan(half) / mag) / d2r;
+	}
 
 	// event to fire on mcc state change (just set needToSetupCamera to true). also disable freecam.
 	void onGameStateChange(const MCCState&)
@@ -183,18 +220,32 @@ private:
 		const bool finiteNow = std::isfinite(freeCameraData.currentPosition.x) && std::isfinite(freeCameraData.currentPosition.y) && std::isfinite(freeCameraData.currentPosition.z);
 		if (!finiteNow) { collisionHaveLast = false; return; }
 
-		if (!noClip && collisionHaveLast.load() && h2fcc::available())
+		if (!noClip && collisionHaveLast.load())
 		{
 			const float from[3] = { collisionLastPos.x, collisionLastPos.y, collisionLastPos.z };
 			float to[3] = { freeCameraData.currentPosition.x, freeCameraData.currentPosition.y, freeCameraData.currentPosition.z };
-			if (h2fcc::sweep(from, to, collisionRadius))
+			if (h2fcc::collide(from, to, collisionRadius))
 			{
 				const SimpleMath::Vector3 allowed(to[0], to[1], to[2]);
 				if (allowed != freeCameraData.currentPosition)
 				{
+					// The camera's position is a SMOOTHED value chasing a target that the input moves; the target runs well
+					// ahead of it (the lead). Putting both on `allowed` (what the first version did) threw the lead away on
+					// every frame that touched a wall, so the camera crawled along walls - the "friction". Instead the lead
+					// is moved through the same collision from the allowed position: the part of it that points into the
+					// wall is lost, the part along the wall is kept - what Halo 3's flying camera gets from its mover
+					// handing back the displacement that is left.
+					const SimpleMath::Vector3 smoothed = userControlledPosition.getPositionTransformation();
+					const SimpleMath::Vector3 base = freeCameraData.currentPosition - smoothed;   // whatever else placed the camera
+					const SimpleMath::Vector3 lead = userControlledPosition.getTargetPositionTransformation() - smoothed;
+					SimpleMath::Vector3 leadEnd = allowed;
+					if (std::isfinite(lead.x) && std::isfinite(lead.y) && std::isfinite(lead.z) && lead.LengthSquared() > 1e-10f)
+					{
+						float lt[3] = { allowed.x + lead.x, allowed.y + lead.y, allowed.z + lead.z };
+						if (h2fcc::collide(to, lt, collisionRadius)) leadEnd = SimpleMath::Vector3(lt[0], lt[1], lt[2]);
+					}
 					freeCameraData.currentPosition = allowed;
-					// pull the stored position back too, so holding "forward" into a wall doesn't wind up a position behind it
-					userControlledPosition.setPositionTransformation(allowed);
+					userControlledPosition.setPositionTransformations(allowed - base, leadEnd - base);
 				}
 			}
 		}
@@ -261,7 +312,8 @@ private:
 				// we will scale rotation sensitivity by fov value so fov transform first
 				userControlledFOV.transformFOV(freeCameraData, frameDelta, targetFOVCopy);
 				LOG_ONCE(PLOG_DEBUG << "userControlledFOV.transformFOV DONE");
-				freeCameraData.currentFOV = targetFOVCopy;
+				// zoom: the camera (and look speed) use the zoomed FOV; the base FOV setting keeps targetFOVCopy
+				freeCameraData.currentFOV = zoomedFOV(targetFOVCopy, frameDelta, settings->freeCameraZoomAmount->GetValue(), freeCameraData);
 
 				// rotate before position so that the position transformer knows which direction is "forward/up/right" etc 
 				userControlledRotation.transformRotation(freeCameraData, frameDelta);
@@ -285,7 +337,9 @@ private:
 
 			LOG_ONCE(PLOG_DEBUG << "updating game camera");
 			lockOrThrow(updateGameCameraDataWeak, updateGameCameraData);
-			updateGameCameraData->updateGameCameraData(gameCameraData, freeCameraData, targetFOVCopy);
+			// zoomed FOV (eased); paused frames hold the current zoom
+			const float renderFOV = frameDelta != 0.f ? freeCameraData.currentFOV : zoomedFOV(targetFOVCopy, 0.f, settings->freeCameraZoomAmount->GetValue(), freeCameraData);
+			updateGameCameraData->updateGameCameraData(gameCameraData, freeCameraData, renderFOV);
 			LOG_ONCE(PLOG_DEBUG << "updating game camera DONE");
 		}
 		catch (HCMRuntimeException ex)
@@ -301,6 +355,9 @@ private:
 	// setting toggle event callback
 	void onFreeCameraToggleChange(bool newValue)
 	{
+		// zoom starts out each time the free camera is switched on or off
+		zoomWanted = false;
+		zoomBlend = 0.f;
 		try
 		{
 
@@ -747,6 +804,7 @@ public:
 	
 		freeCameraUserInputCameraIncreaseTranslationSpeedHotkeyCallback(dicon.Resolve< SettingsStateAndEvents>().lock()->freeCameraUserInputCameraIncreaseTranslationSpeedHotkey, [this]() { onFreeCameraUserInputCameraIncreaseTranslationSpeedHotkey(); }),
 		freeCameraUserInputCameraDecreaseTranslationSpeedHotkeyCallback(dicon.Resolve< SettingsStateAndEvents>().lock()->freeCameraUserInputCameraDecreaseTranslationSpeedHotkey, [this]() { onFreeCameraUserInputCameraDecreaseTranslationSpeedHotkey(); }),
+		freeCameraZoomHotkeyCallback(dicon.Resolve< SettingsStateAndEvents>().lock()->freeCameraZoomHotkey, [this]() { try { onFreeCameraZoomHotkey(); } catch (HCMRuntimeException ex) { runtimeExceptions->handleMessage(ex); } }),
 		freeCameraTeleportToCameraCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->freeCameraTeleportToCameraEvent, [this]() {onFreeCameraTeleportToCameraCallback(); }),
 		freeCameraFOVOverrideProviderWeak(resolveDependentCheat(FreeCameraFOVOverride))
 	{

@@ -77,4 +77,9 @@ namespace reach
 	// holding its centre). Any thread (only reads game memory); gameTls as for readCollision.
 	struct BspStats { int bsps = 0; size_t surfaces = 0, instances = 0, instancesLive = 0, nonCollidable = 0, seamLeftOut = 0; };
 	bool readCollisionBsps(uintptr_t gameTls, uint32_t mask, std::vector<h2cv::CollisionWorld::Bsp3>& out, std::string& log, BspStats* stats = nullptr);
+
+	// shared with Halo 4 (H2CV_Halo4.cpp, 2026-11-21: the same collision_bsp layout and segmented tag addresses): one collision bsp
+	// header at `at` parsed with the given module's segment table, and the seam faces between loaded bsps marked invalid
+	bool parseCollisionBspSegmented(uintptr_t moduleBase, uintptr_t segmentTableRva, uintptr_t at, bool large, h2cv::CollBsp& out);
+	size_t markSeamFacesBetweenBsps(std::vector<h2cv::CollisionWorld::Bsp3>& set, std::vector<size_t>& perBsp);
 }

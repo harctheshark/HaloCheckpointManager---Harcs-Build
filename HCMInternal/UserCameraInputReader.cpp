@@ -28,7 +28,12 @@ private:
 	std::shared_ptr<RebindableHotkey> cameraRollRightBinding;
 	std::shared_ptr<RebindableHotkey> cameraFOVIncreaseBinding;
 	std::shared_ptr<RebindableHotkey> cameraFOVDecreaseBinding;
+	std::shared_ptr<RebindableHotkey> cameraBoostBinding;
 
+	// Boost: the speed multiplier in effect right now. It ramps linearly towards Boost Factor while the binding is held
+	// and back to 1 when it is let go (freeCameraBoostAcceleration, multiples of speed per second; 0 = instant).
+	float mBoostNow = 1.f;
+	std::chrono::steady_clock::time_point mBoostLastUpdate{};
 
 	// callbacks
 	ScopedCallback< eventpp::CallbackList<void(float&)>> positionSpeedChangedCallback;
@@ -182,6 +187,7 @@ public:
 		cameraRollRightBinding = hkd.at(RebindableHotkeyEnum::cameraRollRightBinding);
 		cameraFOVIncreaseBinding = hkd.at(RebindableHotkeyEnum::cameraFOVIncreaseBinding);
 		cameraFOVDecreaseBinding = hkd.at(RebindableHotkeyEnum::cameraFOVDecreaseBinding);
+		cameraBoostBinding = hkd.at(RebindableHotkeyEnum::cameraBoostBinding);
 
 	}
 
@@ -218,6 +224,28 @@ void UserCameraInputReaderImpl<gameT>::updatePositionTransform(const FreeCameraD
 	else
 	{
 		cameraTranslationSpeed = cameraTranslationSpeed * 0.002f; // otherwise it's way too fast
+	}
+
+	// Boost. Timed off the real clock, not frameDelta (see above: third gen's is not usable), and updated every frame
+	// whether or not the camera is moving, so letting go mid-flight eases back down.
+	{
+		const auto now = std::chrono::steady_clock::now();
+		float dt = mBoostLastUpdate.time_since_epoch().count() == 0 ? 0.f : std::chrono::duration<float>(now - mBoostLastUpdate).count();
+		mBoostLastUpdate = now;
+		if (!(dt > 0.f)) dt = 0.f;
+		if (dt > 0.1f) dt = 0.1f;   // a hitch or a pause must not finish the ramp in one go
+
+		const float factor = settings->freeCameraBoostFactor->GetValue();
+		const float target = cameraBoostBinding->isCurrentlyDown() && std::isfinite(factor) && factor > 0.f ? factor : 1.f;
+		const float acceleration = settings->freeCameraBoostAcceleration->GetValue();
+		if (!(acceleration > 0.f) || !std::isfinite(mBoostNow)) mBoostNow = target;
+		else
+		{
+			const float step = acceleration * dt;
+			if (mBoostNow < target) mBoostNow = (std::min)(target, mBoostNow + step);
+			else if (mBoostNow > target) mBoostNow = (std::max)(target, mBoostNow - step);
+		}
+		cameraTranslationSpeed = cameraTranslationSpeed * mBoostNow;
 	}
 
 	
@@ -277,7 +305,9 @@ void UserCameraInputReaderImpl<gameT>::updateRotationTransform(const FreeCameraD
 	// Scale by FOV: small fovs rotate slower. will only apply to pitch and yaw, not roll!
 	float FOVScaleFactor = 1.f;
 	if (settings->freeCameraUserInputCameraRotationScalesToFOV->GetValue())
-		FOVScaleFactor = freeCameraData.currentFOV / 180.f;
+		FOVScaleFactor = freeCameraData.currentFOV / 180.f;   // the zoomed FOV while zoomed: slows looking already
+	else
+		FOVScaleFactor = freeCameraData.zoomLookScale;         // otherwise zoom slows it like Halo 3's Theater (x0.5)
 
 
 	auto analogRotationSpeed = frameDelta * mRotationSpeed;

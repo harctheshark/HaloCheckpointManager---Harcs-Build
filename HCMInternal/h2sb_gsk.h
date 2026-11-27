@@ -83,7 +83,7 @@ template<class T> struct St
 };
 
 // 0x308590: closest points of two segments; the flags say which ends were clamped (1 / 2 first at its end / start, 4 / 8 second)
-template<class T> H2D inline int seg_flags(const P<T>& p1, const P<T>& d1, const P<T>& p2, const P<T>& d2, T& dist2)
+template<class T> H2D inline int seg_flags(const P<T>& p1, const P<T>& d1, const P<T>& p2, const P<T>& d2, T& dist2, P<T>* first = 0)
 {
 	const P<T> between = sb(p2, p1);
 	const T directions = dt(d1, d2), first_along = dt(d1, between), second_along = dt(d2, between);
@@ -108,6 +108,7 @@ template<class T> H2D inline int seg_flags(const P<T>& p1, const P<T>& d1, const
 		else if (num >= l1) { f1 = T(1); flags |= 1; }
 		else f1 = num / l1;
 	}
+	if (first) *first = ad(p1, ml(d1, f1));
 	const P<T> off = sb(ad(p1, ml(d1, f1)), ad(p2, ml(d2, f2)));
 	dist2 = dt(off, off);
 	return flags;
@@ -338,6 +339,32 @@ template<class T> H2D inline int reduce(St<T>& s)
 	return 1;
 }
 
+// 0x303b80: two features holding more than four corners between them (a triangle against a segment or a triangle) cut down
+// to the parts that meet: a corner inside the other side's triangle is kept alone; otherwise the closest pair of edges is
+// found and each TRIANGLE loses the corner off its closest edge. (The engine calls 0x303360 with orient 0 for the inside
+// test, which leaves the working edge values behind - as tri_sides does.)
+template<class T> H2D inline void cut_pair(St<T>& s)
+{
+	const int cyc[5] = { 2, 0, 1, 2, 0 };
+	if (s.cb == 3)
+		for (int i = 0; i < s.ca; ++i)
+			if (tri_sides(s, s.a[i], s.b, false) == 7) { s.a[0] = s.a[i]; s.ca = 1; return; }
+	if (s.ca == 3)
+		for (int i = 0; i < s.cb; ++i)
+			if (tri_sides(s, s.b[i], s.a, false) == 7) { s.b[0] = s.b[i]; s.cb = 1; return; }
+	const int ea = s.ca == 3 ? 3 : 1, eb = s.cb == 3 ? 3 : 1;
+	T best = T(3.40282347e+38); int ba = 0, bb = 0;
+	for (int a = 0; a < ea; ++a)
+		for (int b = 0; b < eb; ++b)
+		{
+			T d2;
+			seg_flags(s.a[a], sb(s.a[cyc[a + 2]], s.a[a]), s.b[b], sb(s.b[cyc[b + 2]], s.b[b]), d2);
+			if (d2 < best) { best = d2; ba = a; bb = b; }
+		}
+	if (ea == 3) { --s.ca; s.a[cyc[ba]] = s.a[s.ca]; }
+	if (eb == 3) { --s.cb; s.b[cyc[bb]] = s.b[s.cb]; }
+}
+
 template<class T> H2D inline bool new_point(const P<T>* c, int count, const P<T>& direction, T threshold)
 {
 	T p = dt(sb(c[count], c[0]), direction);
@@ -461,7 +488,9 @@ template<class T> H2D inline bool flat_plane(const Pair<T>& q, P<T>* sa, P<T>* s
 // and w = the cores' signed distance along it (the contact depth is w - both radii; nearly always <= 0, but the query can also
 // end on a plane of a simplex it grew itself, with w > 0 - the caller keeps the contact only while that depth is inside the
 // contact tolerance).  false: use the least overlap.
-template<class T> H2D inline bool face_rule(const T* bottom, const T* top, const T* sweep, const T* poly, int nv, T* n_out, T& w_out)
+// nb_out / pb_out (optional, 2026-11-18): the polygon-side feature size the search state is left with (1 corner, 2 edge,
+// 3 face - the welder's cull flag reads it) and the contact's point on the polygon's core, placed as features() places it.
+template<class T> H2D inline bool face_rule(const T* bottom, const T* top, const T* sweep, const T* poly, int nv, T* n_out, T& w_out, int* nb_out = 0, T* pb_out = 0)
 {
 	if (nv < 3) return false;
 	Pair<T> q;
@@ -513,9 +542,26 @@ template<class T> H2D inline bool face_rule(const T* bottom, const T* top, const
 			if (same(s.a[0], s.a[1])) { --s.ca; s.a[0] = s.a[s.ca]; }
 			if (same(s.b[1], s.b[2]) || same(s.b[0], s.b[2])) --s.cb;
 			if (s.cb >= 2 && same(s.b[0], s.b[1])) { --s.cb; s.b[0] = s.b[s.cb]; }
-			if (s.ca + s.cb <= 4) reduce(s);
+			// 0x303dd0's end (matched source, drop of 2026-11-18): more than four corners are first cut down by 0x303b80,
+			// and the reduction ALWAYS runs - the distance is measured between the corners it leaves first
+			if (s.ca + s.cb > 4) cut_pair(s);
+			reduce(s);
 			const T w = dt(sb(s.a[0], s.b[0]), n);
 			n_out[0] = n.x; n_out[1] = n.y; n_out[2] = n.z; w_out = w;
+			if (nb_out) *nb_out = s.cb;
+			if (pb_out)
+			{
+				P<T> pa;
+				if (s.ca == 1) pa = s.a[0];
+				else if (s.cb == 1) pa = ad(s.b[0], ml(n, w));
+				else
+				{
+					T d2; pa = s.a[0];
+					seg_flags(s.a[0], sb(s.a[1], s.a[0]), s.b[0], sb(s.b[1], s.b[0]), d2, &pa);
+				}
+				const P<T> pb = sb(pa, ml(n, w));
+				pb_out[0] = pb.x; pb_out[1] = pb.y; pb_out[2] = pb.z;
+			}
 			return true;
 		}
 		const T threshold = l2 * tol;
@@ -539,5 +585,76 @@ template<class T> H2D inline bool face_rule(const T* bottom, const T* top, const
 	}
 	return false;
 }
+
+// THE FEATURES of a pair whose cores are APART (2026-11-17) - the same search as face_rule() (0x3048a0 from a fresh start, as the
+// swept pill's agent runs it), read where it ends with a separating direction.  The engine keeps the two feature sizes in the
+// pair's search state (bytes 8 / 9), and its contact welder (0x2fa2f0) may only drop a polygon's new contact when the POLYGON's
+// feature is a corner or an edge (size 1 or 2) - a face (3) always stays.  Where the pill's closest point sits exactly on a
+// polygon's border the size is decided by the search's own sign tests, not by the geometry, so it is taken from the search.
+// true: na / nb = the feature sizes (pill / polygon), n = the unit contact normal (the push on the pill), w = the cores'
+// distance along it (the contact's distance is w - both radii), pb = the contact's point on the polygon's core, as the engine
+// places it (0x3032c0: from the pill's single vertex, else from the polygon's single vertex, else the two edges' closest
+// points).  false: the cores overlap (the penetration query's case) or the search did not settle.
+template<class T> H2D inline bool features(const T* bottom, const T* top, const T* sweep, const T* poly, int nv, int& na, int& nb, T* n_out, T& w_out, T* pb_out)
+{
+	if (nv < 3) return false;
+	Pair<T> q;
+	q.A = mk<T>(top[0], top[1], top[2], 0); q.B = mk<T>(bottom[0], bottom[1], bottom[2], 16); q.sw = mk<T>(sweep[0], sweep[1], sweep[2]);
+	q.pv = poly; q.nv = nv;
+	St<T> s;
+	s.prevb = 0; s.restricted = 0; s.normal = mk<T>(0, 0, 0); s.ed[0] = s.ed[1] = s.ed[2] = T(0);
+	const P<T> cb = mk<T>(poly[0], poly[1], poly[2]);
+	const P<T> va = sup_a(q, sb(cb, q.B));
+	const P<T> vb = sup_b(q, ng(sb(cb, va)));
+	s.ca = 1; s.cb = 1;
+	s.a[0] = vert_a(q, va.id); s.b[0] = vb;
+	T tol = T(1.0e-10);
+	bool settled = false;
+	for (int iteration = 1; iteration <= 48 && !settled; ++iteration)
+	{
+		tol += tol;
+		const int overlap = reduce(s);
+		const T l2 = dt(s.normal, s.normal), sep = dt(sb(s.b[0], s.a[0]), s.normal);
+		if (overlap || tol * T(1.1920928955078125e-7) * l2 >= sep * sep * sep) return false;
+		const T threshold = l2 * tol;
+		if ((iteration & 1) && s.restricted != 1 && s.ca < 5)
+		{
+			s.a[s.ca] = sup_a(q, s.normal);
+			if (new_point(s.a, s.ca, s.normal, threshold)) { ++s.ca; continue; }
+		}
+		if (s.restricted != -1 && s.cb < 5)
+		{
+			const P<T> direction = ng(s.normal);
+			s.b[s.cb] = sup_b(q, direction);
+			if (new_point(s.b, s.cb, direction, threshold)) { ++s.cb; continue; }
+		}
+		if (!(iteration & 1) && s.restricted != 1 && s.ca < 5)
+		{
+			s.a[s.ca] = sup_a(q, s.normal);
+			if (new_point(s.a, s.ca, s.normal, threshold)) { ++s.ca; continue; }
+		}
+		settled = true;
+	}
+	if (!settled) return false;
+	const T l = dt(s.normal, s.normal);
+	if (!(l > T(0))) return false;
+	const P<T> np = ml(s.normal, T(1) / (T)sqrt((double)l));   // from the pill's feature to the polygon's
+	const T w = dt(sb(s.b[0], s.a[0]), np);
+	const P<T> n = ng(np);
+	P<T> pa;
+	if (s.ca == 1) pa = s.a[0];
+	else if (s.cb == 1) pa = ad(s.b[0], ml(n, w));
+	else
+	{
+		T d2; pa = s.a[0];
+		seg_flags(s.a[0], sb(s.a[1], s.a[0]), s.b[0], sb(s.b[1], s.b[0]), d2, &pa);
+	}
+	const P<T> pb = sb(pa, ml(n, w));
+	na = s.ca; nb = s.cb;
+	n_out[0] = n.x; n_out[1] = n.y; n_out[2] = n.z; w_out = w;
+	pb_out[0] = pb.x; pb_out[1] = pb.y; pb_out[2] = pb.z;
+	return true;
+}
+
 
 } // namespace h2gsk

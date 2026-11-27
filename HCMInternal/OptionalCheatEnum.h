@@ -131,6 +131,7 @@ DropShadowsOnObjects,\
 SphereSpecularForce,\
 OffscreenShadowCasters,\
 UncapDropShadows,\
+UncapDynamicLights,\
 UncapVisibilityLimits,\
 UncapClusterLimit,\
 H2ShadowResolution,\
@@ -221,7 +222,23 @@ H5DisplayInfo,\
 CollisionViewer,\
 LaunchTrajectory,\
 MPRevertRepair,\
-OneShotKill
+OneShotKill,\
+NoInvisibleCollision,\
+H2Supersampling,\
+H2TAA,\
+H2EraseEntities,\
+H2PlayerModelSwap,\
+MetroDisplayInfo,\
+MetroActorFlags,\
+MetroCheckpoint,\
+MetroForceTeleport,\
+MetroForceLaunch,\
+MetroAcrophobia,\
+MetroKillScripts,\
+MetroFirstPersonBody,\
+MetroCollisionViewer,\
+MetroGameSpeed,\
+Halo4Halo2Physics
 
 
 enum class OptionalCheatEnum {

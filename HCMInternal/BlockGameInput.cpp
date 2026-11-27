@@ -5,6 +5,7 @@
 #include "MultilevelPointer.h"
 #include "ImGuiManager.h"   // HCE keeps the WndProc swallow as a SECOND layer, on top of the exe hook
 #include "HCEExeAnchors.h"  // the HCE WndProc is scanned for, so this works on the Microsoft Store exe too
+#include "MetroInput.h"     // Metro Redux: DirectInput gate
 #include <atomic>
 #include <mutex>
 #include <vector>
@@ -499,6 +500,16 @@ public:
 
 extern bool hostIsCampaignEvolved(); // defined in FreeMCCCursor.cpp
 extern bool hostIsHalo5Forge();      // defined in FreeMCCCursor.cpp
+extern bool hostIsMetroRedux();      // defined in FreeMCCCursor.cpp
+
+// Metro Redux (2026-11-25): the game reads its mouse and keyboard through DirectInput 8 - blocked at dinput8's device methods
+// (MetroInput.h). (A controller, through XInput, is not blocked.)
+class BlockGameInputMetroImpl : public TokenSharedRequestProvider
+{
+public:
+	BlockGameInputMetroImpl() { PLOG_INFO << "BlockGameInput: using the Metro Redux implementation (DirectInput)"; }
+	virtual void updateService() override { MetroInput::setInputBlocked(serviceIsRequested()); }
+};
 
 // ⚠ Three titles, three mechanisms - MCC patches code, HaloCER hooks a raw-input WndProc, and Halo 5 writes
 // the engine's own keyboard-enable byte. Halo 5 used to fall through to the MCC implementation, which could
@@ -509,6 +520,8 @@ static std::shared_ptr<TokenSharedRequestProvider> makeBlockInputImpl(std::share
 		return std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<BlockGameInputH5Impl>(ptr));
 	if (hostIsCampaignEvolved())
 		return std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<BlockGameInputHCEImpl>(ptr));
+	if (hostIsMetroRedux())
+		return std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<BlockGameInputMetroImpl>());
 	return std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<BlockGameInputImpl>(ptr));
 }
 

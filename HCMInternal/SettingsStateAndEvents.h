@@ -133,7 +133,8 @@ public:
 		out.reserve(allPresetOptions.size());
 		for (auto* s : allPresetOptions)
 			if (s != masterTickrateEnabled.get() && s != customTickrate.get() && s != season7PhysicsToggle.get()
-				&& s != classicLayout.get() && s != uiFavourites.get() && s != uiRecents.get()) // window layout + favourites are not profile data
+				&& s != classicLayout.get() && s != uiFavourites.get() && s != uiRecents.get() // window layout + favourites are not profile data
+				&& s != bounceModeToggle.get() && s != season7BounceModeToggle.get()) // Bounce Mode sets other options itself: a preset holds those
 				out.push_back(s);
 		return out;
 	}
@@ -192,6 +193,11 @@ public:
 	std::shared_ptr<ActionEvent> freeCameraCameraInputDisableHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraUserInputCameraIncreaseTranslationSpeedHotkey = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraUserInputCameraDecreaseTranslationSpeedHotkey = std::make_shared<ActionEvent>();
+	// Free camera ZOOM (2026-11-20, user: "a 'zoom' button/option to Free Cam ... the way Halo 3 does"): press to zoom in,
+	// again to zoom out - Halo 3's Theater flying camera (halo3.dll sub_180215648, player action 57 toggles flag bit 0).
+	std::shared_ptr<ActionEvent> freeCameraZoomHotkey = std::make_shared<ActionEvent>();
+	// SMAA (2026-11-20, SMAAPostProcess.cpp): the toggle's hotkey
+	std::shared_ptr<ActionEvent> smaaToggleHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraUserInputCameraMaintainVelocityHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraAnchorPositionToObjectPositionHotkeyEvent = std::make_shared<ActionEvent>();
 	std::shared_ptr<ActionEvent> freeCameraAnchorPositionToObjectRotationHotkeyEvent = std::make_shared<ActionEvent>();
@@ -902,9 +908,154 @@ public:
 			[](bool in) { return true; },
 			nameof(infiniteAmmoToggle)
 		);
+	// Halo 2 (2026-11-24, user: "Set Grenade Type It effects/gives infinite of, with Default Being All, but a Frags Only
+	// option and a Plasmas Only Option"): which grenades Infinite Ammo covers. Not saved, like the cheat itself.
+	std::shared_ptr<BinarySetting<SettingsEnums::InfiniteAmmoGrenades>> infiniteAmmoGrenades = std::make_shared<BinarySetting<SettingsEnums::InfiniteAmmoGrenades>>
+		(
+			SettingsEnums::InfiniteAmmoGrenades::All,
+			[](SettingsEnums::InfiniteAmmoGrenades in) { return (int)in >= 0 && (int)in <= 2; },
+			nameof(infiniteAmmoGrenades)
+		);
+
+	// Halo 2 (2026-11-24, H2EraseEntities.cpp): the Erase All Entities button, and "Also Stop New AI From Spawning?" (not
+	// saved: a cheat)
+	std::shared_ptr<ActionEvent> h2EraseAllEntitiesEvent = std::make_shared<ActionEvent>();
+	std::shared_ptr<BinarySetting<bool>> h2BlockAISpawningToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h2BlockAISpawningToggle)
+		);
+
+	// Metro Redux (2026-11-25, MetroCheckpoint.cpp): Save Checkpoint / Revert use the game's own save files (gamesave /
+	// gameload auto_save - a level reload) instead of HCM's instant in-memory snapshot of the player. Not saved.
+	std::shared_ptr<BinarySetting<bool>> metroUseGameSavesToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(metroUseGameSavesToggle)
+		);
+
+	// Metro Redux (2026-11-25, MetroFirstPersonBody.cpp): the player's own body in first person. Not saved.
+	std::shared_ptr<BinarySetting<bool>> metroFirstPersonBodyToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(metroFirstPersonBodyToggle)
+		);
+	std::shared_ptr<BinarySetting<bool>> metroFirstPersonBodyShowArms = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(metroFirstPersonBodyShowArms)
+		);
+	// hide the weapons / knives / gear hanging on the body (its attachment points are collapsed)
+	std::shared_ptr<BinarySetting<bool>> metroFirstPersonBodyHideGear = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(metroFirstPersonBodyHideGear)
+		);
+	// how far the whole body is moved back along the view, in Halo world units (1 wu = 3.048 m)
+	std::shared_ptr<BinarySetting<float>> metroFirstPersonBodyBack = std::make_shared<BinarySetting<float>>
+		(
+			0.175f,   // user, 2026-11-25: "0.175 should be the default offset value, that looks best"
+			[](float in) { return in >= -1.f && in <= 1.f; },
+			nameof(metroFirstPersonBodyBack)
+		);
+
+	// Metro Redux (2026-11-25, MetroGameSpeed.cpp): the engine's static time multiplier 0xFC10F0 (physics clamps the product to 10).
+	std::shared_ptr<BinarySetting<bool>> metroGameSpeedToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(metroGameSpeedToggle)
+		);
+	std::shared_ptr<BinarySetting<float>> metroGameSpeedAmount = std::make_shared<BinarySetting<float>>
+		(1.f, [](float in) { return in >= 0.01f && in <= 10.f; }, nameof(metroGameSpeedAmount));
+
+	// Metro Redux (2026-11-25, MetroKillScripts.cpp): stop the level's scripts. Not saved.
+	std::shared_ptr<BinarySetting<bool>> metroKillScriptsToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(metroKillScriptsToggle)
+		);
+
+	// Metro Redux (2026-11-25, MetroCollisionViewer.cpp): the physics collision drawn as a wireframe overlay. Not saved.
+	std::shared_ptr<BinarySetting<bool>> metroCollisionViewerToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(metroCollisionViewerToggle)
+		);
+	// in Halo world units (1 wu = 3.048 m), like the rest of HCM's Metro numbers (user: "up to 50,000 world units")
+	std::shared_ptr<BinarySetting<float>> metroCollisionViewerRange = std::make_shared<BinarySetting<float>>
+		(
+			10.f,
+			[](float in) { return in >= 0.5f && in <= 50000.f; },
+			nameof(metroCollisionViewerRange)
+		);
+	// triangles (user 2026-11-25: "make the budget like 2 million, like CE"); drawn on the GPU from a cached line buffer
+	std::shared_ptr<BinarySetting<int>> metroCollisionViewerBudget = std::make_shared<BinarySetting<int>>
+		(
+			2000000,
+			[](int in) { return in >= 1000 && in <= 4000000; },
+			nameof(metroCollisionViewerBudget)
+		);
+	// edges between coplanar triangles (flat surfaces split into triangles) are not drawn
+	std::shared_ptr<BinarySetting<bool>> metroCollisionViewerHideFlatEdges = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(metroCollisionViewerHideFlatEdges)
+		);
+
+	// Halo 2 Player Model Swap (2026-11-24, H2PlayerModelSwap.cpp): inject the chief's first-person tags into an Arbiter
+	// level as it loads and spawn as the chief. Not saved (experimental). The stage stops the injection early for testing:
+	// 2 tables only, 3 + bitmaps / shaders, 4 + render models, 5 + animations, 6 + the wiring (everything).
+	std::shared_ptr<BinarySetting<bool>> h2PlayerModelSwapToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h2PlayerModelSwapToggle)
+		);
+	std::shared_ptr<BinarySetting<int>> h2PlayerModelSwapStage = std::make_shared<BinarySetting<int>>
+		(
+			6,
+			[](int in) { return in >= 2 && in <= 6; },
+			nameof(h2PlayerModelSwapStage)
+		);
+
+	// Bounce Mode (2026-11-24, BounceMode.h): the two buttons, and "load this file" for the armour colour preset and the
+	// custom emblem without a file dialog (H2ArmorColour.cpp listens).
+	// 2026-11-24 (user: "Bounce mode (and s7 bounce mode) should be a checkbox"): ticking sets the preset, unticking puts
+	// back what it changed (unless edited since). Only one of the two is on at a time. Not saved, not in presets.
+	std::shared_ptr<BinarySetting<bool>> bounceModeToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(bounceModeToggle)
+		);
+	std::shared_ptr<BinarySetting<bool>> season7BounceModeToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(season7BounceModeToggle)
+		);
+	std::shared_ptr<eventpp::CallbackList<void(const std::wstring&)>> h2ArmorColourLoadPresetFromPathEvent = std::make_shared<eventpp::CallbackList<void(const std::wstring&)>>();
+	std::shared_ptr<eventpp::CallbackList<void(const std::wstring&)>> h2ArmorEmblemLoadFromPathEvent = std::make_shared<eventpp::CallbackList<void(const std::wstring&)>>();
 
 	// One Shot Kill for the MCC games (2026-11-11): the engine's cheat_omnipotent (OneShotKill.cpp). Not saved, like the
 	// other cheats here.
+	// Halo 2: invisible "*" collision surfaces stop colliding for Havok bodies (NoInvisibleCollision.cpp). Not saved.
+	std::shared_ptr<BinarySetting<bool>> noInvisibleCollisionToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(noInvisibleCollisionToggle)
+		);
+
 	std::shared_ptr<BinarySetting<bool>> oneShotKillToggle = std::make_shared<BinarySetting<bool>>
 		(
 			false,
@@ -945,6 +1096,140 @@ public:
 			false,
 			[](bool in) { return true; },
 			nameof(uncapDropShadowsToggle)
+		);
+	// ...and how many drop shadows at once (2026-11-19): 4..120, default 30 (the first version's fixed value - the user saw
+	// glitches at 32 and above with it; see UncapDropShadows.cpp)
+	std::shared_ptr<BinarySetting<int>> uncapDropShadowsMax = std::make_shared<BinarySetting<int>>
+		(
+			30,
+			[](int in) { return in >= 4 && in <= 120; },
+			nameof(uncapDropShadowsMax)
+		);
+
+	// Halo 2 "Uncap Dynamic Lights" (2026-11-19): how many dynamic lights may shine at once in a view (stock 3) - HCM's own
+	// 128-entry fade lists (H2FadeListHooks). Like the other uncaps it is not saved and always starts off.
+	std::shared_ptr<BinarySetting<bool>> uncapDynamicLightsToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(uncapDynamicLightsToggle)
+		);
+	// ...and the number: 3 (stock) to 128 (every light the game gathers in a frame).
+	std::shared_ptr<BinarySetting<int>> uncapDynamicLightsMax = std::make_shared<BinarySetting<int>>
+		(
+			128,
+			[](int in) { return in >= 3 && in <= 128; },
+			nameof(uncapDynamicLightsMax)
+		);
+	// ...and how far the light tags' distance fading may dim a light (2026-11-19): 0..100 % = the least a light's
+	// illumination / shadow / specular fade can be; 100 = never fades with distance, 0 = the game's own fading.
+	std::shared_ptr<BinarySetting<int>> uncapDynamicLightsFadeFloor = std::make_shared<BinarySetting<int>>
+		(
+			100,
+			[](int in) { return in >= 0 && in <= 100; },
+			nameof(uncapDynamicLightsFadeFloor)
+		);
+
+	// SMAA anti-aliasing on MCC's frame (2026-11-20, user: "Did we ever add SMAA to HCM? ... i do not want to have to launch
+	// reshade seperately"). SMAAPostProcess.cpp; persisted (a display preference, not a cheat).
+	std::shared_ptr<BinarySetting<bool>> smaaToggle = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(smaaToggle)
+		);
+	std::shared_ptr<BinarySetting<SettingsEnums::SMAAQuality>> smaaQuality = std::make_shared<BinarySetting<SettingsEnums::SMAAQuality>>
+		(
+			SettingsEnums::SMAAQuality::High,
+			[](SettingsEnums::SMAAQuality in) { return (int)in >= 0 && (int)in <= 3; },
+			nameof(smaaQuality)
+		);
+	// 2026-11-21 (user: "it definitely helps but i think we need to tune the sensitivity"): live tuning
+	std::shared_ptr<BinarySetting<SettingsEnums::SMAAEdgeDetection>> smaaEdgeDetection = std::make_shared<BinarySetting<SettingsEnums::SMAAEdgeDetection>>
+		(
+			SettingsEnums::SMAAEdgeDetection::Colour,
+			[](SettingsEnums::SMAAEdgeDetection in) { return (int)in >= 0 && (int)in <= 1; },
+			nameof(smaaEdgeDetection)
+		);
+	// 2026-11-23 (user: "Lets try CMAA2"): SMAA or Intel's CMAA2 when the anti-aliasing toggle is on
+	std::shared_ptr<BinarySetting<SettingsEnums::PostAAMethod>> postAAMethod = std::make_shared<BinarySetting<SettingsEnums::PostAAMethod>>
+		(
+			SettingsEnums::PostAAMethod::SMAA,
+			[](SettingsEnums::PostAAMethod in) { return (int)in >= 0 && (int)in <= 2; },
+			nameof(postAAMethod)
+		);
+	// SMAA's edge threshold: the smallest contrast counted as an edge (lower = more edges smoothed). SMAA's presets: Low 0.15,
+	// Medium / High 0.10, Ultra 0.05.
+	std::shared_ptr<BinarySetting<float>> smaaThreshold = std::make_shared<BinarySetting<float>>
+		(
+			0.05f,
+			[](float in) { return in >= 0.01f && in <= 0.5f; },
+			nameof(smaaThreshold)
+		);
+	// depth predication (2026-11-21, GameDepthTap.h - Halo 2 for now): use the game's depth to tell geometry edges from texture
+	// detail; where depth shows no edge the threshold is smaaDepthStrength x the user's
+	std::shared_ptr<BinarySetting<bool>> smaaUseDepth = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(smaaUseDepth)
+		);
+	std::shared_ptr<BinarySetting<float>> smaaDepthStrength = std::make_shared<BinarySetting<float>>
+		(
+			2.5f,
+			[](float in) { return in >= 1.f && in <= 10.f; },
+			nameof(smaaDepthStrength)
+		);
+	// debug view: draws the detected edges instead of smoothing them (not saved)
+	std::shared_ptr<BinarySetting<bool>> smaaShowEdges = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(smaaShowEdges)
+		);
+
+	// Halo 2 supersampling (2026-11-21, H2Supersampling.cpp): the engine's render scale x 1.5 / 2, applied at the next
+	// resolution change. Not saved (experimental: a bad result must not come back on its own next session).
+	std::shared_ptr<BinarySetting<SettingsEnums::H2Supersampling>> h2Supersampling = std::make_shared<BinarySetting<SettingsEnums::H2Supersampling>>
+		(
+			SettingsEnums::H2Supersampling::Off,
+			[](SettingsEnums::H2Supersampling in) { return (int)in >= 0 && (int)in <= 2; },
+			nameof(h2Supersampling)
+		);
+
+	// Halo 2 TAA (2026-11-23, H2TAA.cpp): sub-pixel jitter in the engine's projection + HCM's own reprojected-history resolve
+	// inside the frame. 2026-11-24: it has no toggle of its own any more - it is on while the Anti Aliasing toggle
+	// (smaaToggle) is on and the method (postAAMethod) is TAA. The debug view is not saved; the rest is.
+	// the current frame's weight in the blend (lower = smoother and more stable, more ghosting / blur in motion)
+	std::shared_ptr<BinarySetting<float>> h2TAABlend = std::make_shared<BinarySetting<float>>
+		(
+			0.1f,
+			[](float in) { return in >= 0.05f && in <= 0.3f; },
+			nameof(h2TAABlend)
+		);
+	// 2026-11-24 (user: "lets add the speed based history limit"): the current frame's weight for pixels that MOVE on screen
+	// (2 pixels a frame or more; ramped below that). Bungie's own Reach TAA fades its blend out with screen speed and Unreal's
+	// TSR clamps the history to 4 frames (2 for competitive games) once a pixel moves a pixel a frame. At or below TAA Blend = off.
+	std::shared_ptr<BinarySetting<float>> h2TAAMotionBlend = std::make_shared<BinarySetting<float>>
+		(
+			0.4f,
+			[](float in) { return in >= 0.05f && in <= 1.0f; },
+			nameof(h2TAAMotionBlend)
+		);
+	// debug view: motion vectors / gun mask / rejected history instead of the picture
+	std::shared_ptr<BinarySetting<bool>> h2TAADebug = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(h2TAADebug)
+		);
+	// v2 (2026-11-23): moving objects (bipeds, vehicles, weapons, projectiles, machines, crates) follow their own motion
+	// (H2TAAObjects.cpp); off = the camera's motion only, as v1
+	std::shared_ptr<BinarySetting<bool>> h2TAAObjectMotion = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(h2TAAObjectMotion)
 		);
 
 	std::shared_ptr<BinarySetting<SettingsEnums::H2ShadowResolution>> h2ShadowResolutionSetting = std::make_shared<BinarySetting<SettingsEnums::H2ShadowResolution>>
@@ -1067,6 +1352,9 @@ public:
 	// HCM's others: the master switch is NOT in allSerialisableOptions and always starts off (the options are saved).
 	std::shared_ptr<BinarySetting<bool>> h2pPhysicsToggle = std::make_shared<BinarySetting<bool>>
 		(false, [](bool in) { return true; }, nameof(h2pPhysicsToggle));
+	// Halo 4's Halo 2 physics (Halo4Halo2Physics.cpp, its own mod dll): a cheat toggle, not saved
+	std::shared_ptr<BinarySetting<bool>> h4pPhysicsToggle = std::make_shared<BinarySetting<bool>>
+		(false, [](bool in) { return true; }, nameof(h4pPhysicsToggle));
 	std::shared_ptr<BinarySetting<int>> h2pBarriers = std::make_shared<BinarySetting<int>>
 		(2, [](int in) { return in >= 0 && in <= 3; }, nameof(h2pBarriers)); // 0 the game's, 1 soft ceilings off, 2 + out-of-bounds kill off, 3 + kill volumes off
 	std::shared_ptr<BinarySetting<bool>> h2pTick30Toggle = std::make_shared<BinarySetting<bool>>
@@ -1126,6 +1414,14 @@ public:
 			false,
 			[](bool in) { return true; },
 			nameof(collisionViewerShowBreakable)
+		);
+
+	// Halo 2: the scenery's collision MODEL (what bullets hit). collisionViewerShowScenery is what the player collides with.
+	std::shared_ptr<BinarySetting<bool>> collisionViewerShowSceneryBullet = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerShowSceneryBullet)
 		);
 
 	std::shared_ptr<BinarySetting<bool>> collisionViewerShowScenery = std::make_shared<BinarySetting<bool>>
@@ -1317,6 +1613,27 @@ public:
 			true,
 			[](bool in) { return true; },
 			nameof(collisionViewerSuperbounceDebounce)
+		);
+	// the live monster finder (2026-11-16): where this fall (or a jump from here) would launch 20+ u/s, by the exact rules
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceMonsterFinder = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceMonsterFinder)
+		);
+	// ... showing only its own marks: the regular seams' lines and labels are hidden while it is on
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceMonsterOnly = std::make_shared<BinarySetting<bool>>
+		(
+			false,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceMonsterOnly)
+		);
+	// ... with the ring and approach arrow on each seam's best landing (off: the small diamonds only)
+	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceMonsterRings = std::make_shared<BinarySetting<bool>>
+		(
+			true,
+			[](bool in) { return true; },
+			nameof(collisionViewerSuperbounceMonsterRings)
 		);
 	// the superbounce viewer: include objects (scenery / crates / machines) - off = none of their collision is read or used
 	std::shared_ptr<BinarySetting<bool>> collisionViewerSuperbounceObjects = std::make_shared<BinarySetting<bool>>
@@ -3032,6 +3349,31 @@ public:
 		);
 
 	
+
+	// Free camera Boost (held binding cameraBoostBinding): translation speed x factor while held. The multiplier does not
+	// jump - it ramps linearly at `acceleration` multiples of speed per second, up on press and down on release (0 = instant).
+	std::shared_ptr<BinarySetting<float>> freeCameraBoostFactor = std::make_shared<BinarySetting<float>>
+		(
+			2.f,
+			[](float in) { return in >= 0.05f && in <= 100.f; },
+			nameof(freeCameraBoostFactor)
+		);
+
+	std::shared_ptr<BinarySetting<float>> freeCameraBoostAcceleration = std::make_shared<BinarySetting<float>>
+		(
+			4.f,
+			[](float in) { return in >= 0.f && in <= 1000.f; },
+			nameof(freeCameraBoostAcceleration)
+		);
+
+	// Free camera zoom amount: magnification while zoomed (the FOV becomes 2*atan(tan(base/2)/amount)). Default 4.5 = Halo 3's
+	// Theater zoom: its globals.globals camera block has "zoomed field of view" 20 degrees against its 78 default (x4.6).
+	std::shared_ptr<BinarySetting<float>> freeCameraZoomAmount = std::make_shared<BinarySetting<float>>
+		(
+			4.5f,
+			[](float in) { return in >= 1.f && in <= 100.f; },
+			nameof(freeCameraZoomAmount)
+		);
 
 	std::shared_ptr<BinarySetting<float>> freeCameraUserInputCameraTranslationSpeedChangeFactor = std::make_shared<BinarySetting<float>>
 		(
@@ -4929,6 +5271,9 @@ public:
 		collisionViewerSuperbounceSeamText,
 		collisionViewerSuperbounceSpeed,
 		collisionViewerSuperbounceDebounce,
+		collisionViewerSuperbounceMonsterFinder,
+		collisionViewerSuperbounceMonsterOnly,
+		collisionViewerSuperbounceMonsterRings,
 		collisionViewerSuperbounceObjects,
 		collisionViewerSuperbounceSeams,
 		collisionViewerSuperbounceSpots,
@@ -5278,6 +5623,19 @@ public:
 		freeCameraGameInputDisable,
 		//freeCameraCameraInputDisable,
 		freeCameraUserInputCameraTranslationSpeedChangeFactor,
+		freeCameraZoomAmount,
+		smaaToggle,
+		smaaQuality,
+		smaaEdgeDetection,
+		postAAMethod,
+		smaaThreshold,
+		smaaUseDepth,
+		smaaDepthStrength,
+		h2TAABlend,
+		h2TAAMotionBlend,
+		h2TAAObjectMotion,
+		freeCameraBoostFactor,
+		freeCameraBoostAcceleration,
 		freeCameraUserInputCameraSetPositionVec3,
 		freeCameraUserInputCameraSetRotationVec3,
 		freeCameraUserInputCameraMaintainVelocity,

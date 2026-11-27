@@ -114,7 +114,12 @@ void HotkeyManager::pollInput()// we poll every frame. Really we could've chosen
 	// not only the boxes that take a hotkeyDisabler request. 2026-11-11: the Map Launcher's search box took none, the Pause
 	// hotkey was P, and a "p" typed there switched Pause on at the main menu - the next Halo 2 launch then sat on MCC's
 	// "Starting game..." for ever, because the game started paused.
-	bool hotkeysShouldBeDisabled = mHotkeyDisabler->serviceIsRequested() || ImGui::GetIO().WantTextInput;
+	// The one exception while TYPING is the window toggle (user, 2026-11-14: "so that I can press ~ and have it close"): it
+	// still fires from a text box. It does NOT fire while something has explicitly asked for hotkeys to be off (the rebind
+	// dialog - or ~ could never be bound - the HaloScript console, a naming dialog).
+	const bool hotkeysOffRequested = mHotkeyDisabler->serviceIsRequested();
+	const bool typing = ImGui::GetIO().WantTextInput;
+	bool hotkeysShouldBeDisabled = hotkeysOffRequested || typing;
 	const auto& settings = mHotkeyDefinitions->settings();
 	const bool flyHold = settings && settings->h2pFlyHoldToggle->GetValue();
 	pollFlyHold(hotkeysShouldBeDisabled);
@@ -122,7 +127,8 @@ void HotkeyManager::pollInput()// we poll every frame. Really we could've chosen
 
 	for (auto& [hotkeyEnum, hotkey] : mHotkeyDefinitions->getAllEventOnPressHotkeys())
 	{
-		if (hotkeysShouldBeDisabled && !hotkey->ignoresHotkeyDisabler)
+		if (hotkeysShouldBeDisabled && !hotkey->ignoresHotkeyDisabler
+			&& !(typing && !hotkeysOffRequested && hotkeyEnum == RebindableHotkeyEnum::toggleGUI))
 			continue;
 		if (flyHold && hotkeyEnum == RebindableHotkeyEnum::h2pFlyHotkey)
 			continue; // held instead of pressed (pollFlyHold)

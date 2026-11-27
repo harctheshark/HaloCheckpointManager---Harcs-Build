@@ -5,6 +5,7 @@
 #include "ModuleCache.h"
 #include "ModuleHookManager.h"
 #include "D3D11Hook.h"
+#include "SMAAPostProcess.h"
 #include "D3D12Hook.h"
 #include "ImGuiManager.h"
 #include "PointerDataStore.h"
@@ -15,6 +16,7 @@
 #include "MCCStateHook.h"
 #include "HCEStateHook.h"
 #include "H5StateHook.h"
+#include "MetroStateHook.h"
 #include "HeartbeatTimer.h"
 #include "GUIServiceInfo.h"
 #include "HotkeyManager.h"
@@ -37,6 +39,8 @@
 #include "ControlServiceContainer.h"
 #include "Lapua.h"
 #include "OBSBypassManager.h"
+#include "BounceMode.h"
+#include "H2TagProbe.h"
 #include "ModalDialogFactory.h"
 #include "HideWatermarkManager.h"
 #include "GetHCMVersion.h"
@@ -142,6 +146,9 @@ public:
             const MCCProcessType procType = ver->getMCCProcessType();
             const bool isCampaignEvolved = (procType == MCCProcessType::CampaignEvolved);
             const bool isHalo5Forge = (procType == MCCProcessType::Halo5Forge);
+            // Metro 2033 Redux / Last Light Redux (2026-11-24): D3D11 like MCC, but its own state hook, and the D3D11 hook
+            // finds the swapchain by capture (no pIDXGISwapChain pointer data - see D3D11Hook::beginHookByCapture)
+            const bool isMetroRedux = (procType == MCCProcessType::MetroRedux);
             const bool usesD3D12 = processUsesD3D12(procType);
 
             // DECLARATION ORDER HERE IS LOAD-BEARING.
@@ -170,13 +177,22 @@ public:
             auto imes = std::reinterpret_pointer_cast<IMessagesGUI>(mes);
             auto exp = std::make_shared<RuntimeExceptionHandler>(mes); PLOGV << "exp init";// tells user if a cheat hook throws a runtime exception
             auto settings = std::make_shared<SettingsStateAndEvents>(std::make_shared<SettingsSerialiser>(dirPath, exp, mes)); PLOGV << "settings init";
+            // SMAA on MCC's frame (D3D11 only). Declared after d3d, so it is destroyed before the hook it listens to.
+            std::shared_ptr<SMAAPostProcess> smaa;
+            if (d3d) { smaa = std::make_shared<SMAAPostProcess>(d3d, settings); PLOGV << "smaa init"; }
            
             // fires event when game or level changes. HCE is not MCC (no gameEngine/load/menu
             // indicators to hook), so it derives the same MCCState from HaloSimulation_tag_release.dll.
             std::shared_ptr<IMCCStateHook> mccStateHook;
             std::shared_ptr<HCEStateHook> hceStateHook; // concrete handle kept so we can read its cursor flag below
             std::shared_ptr<H5StateHook> h5StateHook;   // same, for Halo 5: Forge
-            if (isCampaignEvolved)
+            std::shared_ptr<MetroStateHook> metroStateHook;   // same, for Metro Redux
+            if (isMetroRedux)
+            {
+                metroStateHook = std::make_shared<MetroStateHook>(); PLOGV << "metroStateHook init";
+                mccStateHook = metroStateHook;
+            }
+            else if (isCampaignEvolved)
             {
                 hceStateHook = std::make_shared<HCEStateHook>(); PLOGV << "hceStateHook init";
                 mccStateHook = hceStateHook;
@@ -214,7 +230,12 @@ public:
             // address. HCE has no equivalent we know of, so HCEStateHook derives the same fact from the WIN32 cursor
             // state (GetCursorInfo/CURSOR_SHOWING) and we point at that - engine-agnostic and true to what the flag means.
             uintptr_t isCursorShowingResolved;
-            if (isCampaignEvolved)
+            if (isMetroRedux)
+            {
+                isCursorShowingResolved = (uintptr_t)metroStateHook->getCursorShowingFlag();
+                PLOG_DEBUG << "Metro: isCursorShowing is always true (HCM draws its own cursor)";
+            }
+            else if (isCampaignEvolved)
             {
                 isCursorShowingResolved = (uintptr_t)hceStateHook->getCursorShowingFlag();
                 PLOG_DEBUG << "HCE: isCursorShowing sourced from live WIN32 cursor state";
@@ -266,6 +287,10 @@ public:
                 ? std::make_shared<OBSBypassManager>(std::weak_ptr<D3D12Hook>(d3d12), settings->OBSBypassToggle, exp, imes)
                 : std::make_shared<OBSBypassManager>(std::weak_ptr<D3D11Hook>(d3d), settings->OBSBypassToggle, exp, imes); PLOGV << "obsBypass init";
             auto hideWatermark = std::make_shared<HideWatermarkManager>(settings->hideWatermark, exp); PLOGV << "hideWatermark init";
+            // 2026-11-24: the Bounce Mode / Season 7 Bounce Mode buttons (Halo 2): set a fixed list of options
+            auto bounceMode = std::make_shared<BounceMode>(settings, imes, mccStateHook, dirPath); PLOGV << "bounceMode init";
+            // 2026-11-24: player model swap, step 1 - a read-only log of each loaded Halo 2 map's player / weapon tags
+            auto h2TagProbe = std::make_shared<H2TagProbe>(mccStateHook); PLOGV << "h2TagProbe init";
             // Installed LAST, once every service that its callbacks touch exists.
             if (usesD3D12)
                 d3d12->beginHook();

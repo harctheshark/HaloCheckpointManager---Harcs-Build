@@ -216,11 +216,15 @@ namespace reach
 
 		struct Block { uint32_t count = 0, addr = 0; };
 
+		// Halo 4 (2026-11-21) has the same segmented scheme and the same collision_bsp layout, at its own segment table: the
+		// shared parser below runs with this set to Halo 4's table (reach::parseCollisionBspSegmented), 0 = Reach's
+		thread_local uintptr_t tSegRva = 0;
+
 		// a 32-bit tag address -> pointer (Reach's segmented scheme: base[addr >> 28] + 4 * addr)
 		uintptr_t tagAddr(uintptr_t b, uint32_t a)
 		{
 			if (!a) return 0;
-			const uintptr_t seg = mem::q(b + kTagSegments + 8 * (uintptr_t)(a >> 28));
+			const uintptr_t seg = mem::q(b + (tSegRva ? tSegRva : kTagSegments) + 8 * (uintptr_t)(a >> 28));
 			return mem::okp(seg) ? seg + 4ull * a : 0;
 		}
 		Block block(uintptr_t at) { Block k; k.count = mem::u32(at, 0); k.addr = mem::u32(at + 4, 0); return k; }
@@ -574,6 +578,16 @@ namespace reach
 			return total;
 		}
 	}
+
+	// Halo 4's reader (H2CV_Halo4.cpp) shares the parser and the seam-face rule
+	bool parseCollisionBspSegmented(uintptr_t moduleBase, uintptr_t segmentTableRva, uintptr_t at, bool large, h2cv::CollBsp& out)
+	{
+		tSegRva = segmentTableRva;
+		const bool ok = parseCollBsp(moduleBase, at, large, out);
+		tSegRva = 0;
+		return ok;
+	}
+	size_t markSeamFacesBetweenBsps(std::vector<h2cv::CollisionWorld::Bsp3>& set, std::vector<size_t>& perBsp) { return markSeamFaces(set, perBsp); }
 
 	bool readCollisionBsps(uintptr_t gameTls, uint32_t mask, std::vector<CollisionWorld::Bsp3>& out, std::string& log, BspStats* stats)
 	{

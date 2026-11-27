@@ -13,6 +13,7 @@ class HotkeyEventsLambdas
 	ScopedCallback<ActionEvent> mMedusaHotkeyCallbackHandle;
 	ScopedCallback<ActionEvent> mToggleGUIHotkeyCallbackHandle;
 	ScopedCallback<ActionEvent> mTogglePauseHotkeyCallbackHandle;
+	ScopedCallback<ActionEvent> mSMAAToggleHotkeyCallbackHandle;
 	ScopedCallback<ActionEvent> mNaturalCheckpointDisableHotkeyCallbackHandle;
 	ScopedCallback<ActionEvent> mInfiniteAmmoHotkeyCallbackHandle;
 	ScopedCallback<ActionEvent> mBottomlessClipHotkeyCallbackHandle;
@@ -58,6 +59,7 @@ public:
 		mMedusaHotkeyCallbackHandle(settings->medusaHotkeyEvent, [boolsetting = settings->medusaToggle]() { boolsetting->flipBoolSetting(); }),
 		mToggleGUIHotkeyCallbackHandle(settings->toggleGUIHotkeyEvent, [boolsetting = settings->GUIWindowOpen]() { boolsetting->flipBoolSetting(); }),
 		mTogglePauseHotkeyCallbackHandle(settings->togglePauseHotkeyEvent, [boolsetting = settings->togglePause]() { boolsetting->flipBoolSetting(); }),
+		mSMAAToggleHotkeyCallbackHandle(settings->smaaToggleHotkeyEvent, [boolsetting = settings->smaaToggle]() { boolsetting->flipBoolSetting(); }),
 		mNaturalCheckpointDisableHotkeyCallbackHandle(settings->naturalCheckpointDisableHotkeyEvent, [boolsetting = settings->naturalCheckpointDisable]() { boolsetting->flipBoolSetting(); }),
 		mInfiniteAmmoHotkeyCallbackHandle(settings->infiniteAmmoHotkeyEvent, [boolsetting = settings->infiniteAmmoToggle]() { boolsetting->flipBoolSetting(); }),
 		mBottomlessClipHotkeyCallbackHandle(settings->bottomlessClipHotkeyEvent, [boolsetting = settings->bottomlessClipToggle]() { boolsetting->flipBoolSetting(); }),

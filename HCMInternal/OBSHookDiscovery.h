@@ -112,6 +112,15 @@ bool followEntryDetour(uintptr_t functionEntry, uintptr_t& targetOut, std::wstri
 // ModuleInlineHook::attach(), with no service graph in reach and no way to throw.
 void setOBSDiscoveryMessageSink(std::weak_ptr<IMessagesGUI> sink);
 
+// 2026-11-21 (user: "bypass OBS capture brokied again"): OBS Game Capture's "Capture third-party overlays (such as Steam)".
+// With it ticked OBS copies the frame AFTER the real Present (its hook_present captures BEFORE RealPresent only when
+// hook_info.capture_overlay is false), so whatever the bypass draws is recorded - no hook placement can hide it. The user's
+// OBS 33.0.2 update left it ticked on the MCC source. HCM reads OBS's own hook-info shared memory READ-ONLY
+// ("CaptureHook_HookInfo<pid>", struct hook_info: u32 hook_ver_major @0, bool capture_overlay @66 - graphics-hook64 1.8.8,
+// read in its hook_present 2026-11-21) and says so. Call it from the bypass thunks (any thread): it re-reads at most every
+// 2 s and posts a message when the option turns on (once per change).
+void checkOBSCaptureOverlaysWhileBypassed();
+
 
 // A MultilevelPointer whose resolve() runs discovery and then dereferences the variable it found -
 // i.e. it yields the address of the Detours trampoline, which is what we inline-hook.

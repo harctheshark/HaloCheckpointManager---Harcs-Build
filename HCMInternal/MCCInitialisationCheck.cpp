@@ -49,6 +49,14 @@ std::expected<uintptr_t, std::string> getInitFlagAddress(HMODULE dllHandle)
 
 std::expected<bool, std::string> MCCInitialisationCheck(HMODULE dllHandle)
 {
+	// Metro Redux (2026-11-24): no init flag. Its exe is SteamStub-wrapped - .text is decrypted by the stub at start-up - and
+	// the game loads d3d11.dll itself once it is running its real code, so "d3d11.dll is loaded" = safe to scan and hook.
+	// (It used to fall into the WinStore branch below and read an address past the end of metro.exe's image.)
+	{
+		static const bool isMetro = []() { try { return GetMCCVersion().getMCCProcessType() == MCCProcessType::MetroRedux; } catch (...) { return false; } }();
+		if (isMetro) return GetModuleHandleW(L"d3d11.dll") != nullptr;
+	}
+
 	if (cachedInitFlagAddress.has_value() == false)
 	{
 		auto initFlagAddy = getInitFlagAddress(dllHandle);

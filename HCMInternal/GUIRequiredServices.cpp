@@ -609,6 +609,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::BottomlessClip}
 	},
 
+	{ GUIElementEnum::noInvisibleCollisionGUI,
+		{OptionalCheatEnum::NoInvisibleCollision}
+	},
+
 	{ GUIElementEnum::oneShotKillGUI,
 		{OptionalCheatEnum::OneShotKill}
 	},
@@ -635,6 +639,22 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 
 	{ GUIElementEnum::uncapDropShadowsToggle,
 		{OptionalCheatEnum::UncapDropShadows}
+	},
+
+	{ GUIElementEnum::uncapDropShadowsMaxGUI,
+		{OptionalCheatEnum::UncapDropShadows}
+	},
+
+	{ GUIElementEnum::uncapDynamicLightsToggle,
+		{OptionalCheatEnum::UncapDynamicLights}
+	},
+
+	{ GUIElementEnum::uncapDynamicLightsMaxGUI,
+		{OptionalCheatEnum::UncapDynamicLights}
+	},
+
+	{ GUIElementEnum::uncapDynamicLightsFadeFloorGUI,
+		{OptionalCheatEnum::UncapDynamicLights}
 	},
 
 	{ GUIElementEnum::uncapVisibilityLimitsToggle,
@@ -666,6 +686,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	},
 
 	{ GUIElementEnum::collisionViewerShowBreakableGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+
+	{ GUIElementEnum::collisionViewerShowSceneryBulletGUI,
 		{OptionalCheatEnum::CollisionViewer}
 	},
 
@@ -752,6 +776,15 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::CollisionViewer}
 	},
 	{ GUIElementEnum::collisionViewerSuperbounceDebounceGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbounceMonsterFinderGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbounceMonsterOnlyGUI,
+		{OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::collisionViewerSuperbounceMonsterRingsGUI,
 		{OptionalCheatEnum::CollisionViewer}
 	},
 	{ GUIElementEnum::collisionViewerSuperbounceObjectsGUI,
@@ -1011,6 +1044,94 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 		{OptionalCheatEnum::H2AShaderPrewarm}
 	},
 
+	{ GUIElementEnum::h2SupersamplingGUI,
+		{OptionalCheatEnum::H2Supersampling}
+	},
+	// 2026-11-23: Halo 2 TAA (H2TAA.cpp; its resolve runs from the Collision Viewer's Halo 2 pass hooks)
+	// 2026-11-24: TAA is switched on by the Anti Aliasing toggle + method now (no row of its own), so the Collision
+	// Viewer requirement moved to its first option row
+	{ GUIElementEnum::h2TAABlendGUI,
+		{OptionalCheatEnum::H2TAA, OptionalCheatEnum::CollisionViewer}
+	},
+	{ GUIElementEnum::infiniteAmmoGrenadesGUI,
+		{OptionalCheatEnum::InfiniteAmmo}
+	},
+	// 2026-11-24: Player Model Swap (H2PlayerModelSwap.cpp)
+	{ GUIElementEnum::h2PlayerModelSwapGUI,
+		{OptionalCheatEnum::H2PlayerModelSwap}
+	},
+	{ GUIElementEnum::h2PlayerModelSwapStageGUI,
+		{OptionalCheatEnum::H2PlayerModelSwap}
+	},
+	// 2026-11-24: Metro Redux (MetroDisplayInfo.cpp)
+	{ GUIElementEnum::metroDisplayInfoToggleGUI,
+		{OptionalCheatEnum::MetroDisplayInfo}
+	},
+	{ GUIElementEnum::metroInvincibilityGUI,
+		{OptionalCheatEnum::MetroActorFlags}
+	},
+	{ GUIElementEnum::metroInfiniteAmmoGUI,
+		{OptionalCheatEnum::MetroActorFlags}
+	},
+	{ GUIElementEnum::metroCheckpointGUI,
+		{OptionalCheatEnum::MetroCheckpoint}
+	},
+	{ GUIElementEnum::metroRevertGUI,
+		{OptionalCheatEnum::MetroCheckpoint}
+	},
+	{ GUIElementEnum::metroUseGameSavesGUI,
+		{OptionalCheatEnum::MetroCheckpoint}
+	},
+	{ GUIElementEnum::metroAcrophobiaGUI,
+		{OptionalCheatEnum::MetroAcrophobia}
+	},
+	{ GUIElementEnum::metroKillScriptsGUI, {OptionalCheatEnum::MetroKillScripts} },
+	{ GUIElementEnum::metroGameSpeedGUI, {OptionalCheatEnum::MetroGameSpeed} },
+	{ GUIElementEnum::metroGameSpeedAmountGUI, {OptionalCheatEnum::MetroGameSpeed} },
+	{ GUIElementEnum::metroFirstPersonBodyGUI, {OptionalCheatEnum::MetroFirstPersonBody} },
+	{ GUIElementEnum::metroFirstPersonBodyShowArmsGUI, {OptionalCheatEnum::MetroFirstPersonBody} },
+	{ GUIElementEnum::metroFirstPersonBodyHideGearGUI, {OptionalCheatEnum::MetroFirstPersonBody} },
+	{ GUIElementEnum::metroFirstPersonBodyBackGUI, {OptionalCheatEnum::MetroFirstPersonBody} },
+	{ GUIElementEnum::metroCollisionViewerGUI, {OptionalCheatEnum::MetroCollisionViewer} },
+	{ GUIElementEnum::metroCollisionViewerRangeGUI, {OptionalCheatEnum::MetroCollisionViewer} },
+	{ GUIElementEnum::metroCollisionViewerBudgetGUI, {OptionalCheatEnum::MetroCollisionViewer} },
+	{ GUIElementEnum::metroCollisionViewerHideFlatEdgesGUI, {OptionalCheatEnum::MetroCollisionViewer} },
+	// 2026-11-25: Metro Force Teleport / Force Launch (MetroForceTeleport.cpp, MetroForceLaunch.cpp)
+	{ GUIElementEnum::metroForceTeleportGUI, {OptionalCheatEnum::MetroForceTeleport} },
+	{ GUIElementEnum::metroForceTeleportSettingsSubheading, {OptionalCheatEnum::MetroForceTeleport} },
+	{ GUIElementEnum::metroForceTeleportSettingsRadioGroup, {OptionalCheatEnum::MetroForceTeleport} },
+	{ GUIElementEnum::metroForceTeleportForward, {OptionalCheatEnum::MetroForceTeleport} },
+	{ GUIElementEnum::metroForceTeleportRelativeVec3, {OptionalCheatEnum::MetroForceTeleport} },
+	{ GUIElementEnum::metroForceTeleportForwardIgnoreZ, {OptionalCheatEnum::MetroForceTeleport} },
+	{ GUIElementEnum::metroForceTeleportManual, {OptionalCheatEnum::MetroForceTeleport} },
+	{ GUIElementEnum::metroForceTeleportAbsoluteVec3, {OptionalCheatEnum::MetroForceTeleport} },
+	{ GUIElementEnum::metroForceTeleportAbsoluteFillCurrent, {OptionalCheatEnum::MetroForceTeleport} },
+	{ GUIElementEnum::metroForceTeleportAbsoluteCopy, {OptionalCheatEnum::MetroForceTeleport} },
+	{ GUIElementEnum::metroForceTeleportAbsolutePaste, {OptionalCheatEnum::MetroForceTeleport} },
+	{ GUIElementEnum::metroForceLaunchGUI, {OptionalCheatEnum::MetroForceLaunch} },
+	{ GUIElementEnum::metroForceLaunchSettingsSubheading, {OptionalCheatEnum::MetroForceLaunch} },
+	{ GUIElementEnum::metroForceLaunchSettingsRadioGroup, {OptionalCheatEnum::MetroForceLaunch} },
+	{ GUIElementEnum::metroForceLaunchForward, {OptionalCheatEnum::MetroForceLaunch} },
+	{ GUIElementEnum::metroForceLaunchRelativeVec3, {OptionalCheatEnum::MetroForceLaunch} },
+	{ GUIElementEnum::metroForceLaunchForwardIgnoreZ, {OptionalCheatEnum::MetroForceLaunch} },
+	{ GUIElementEnum::metroForceLaunchManual, {OptionalCheatEnum::MetroForceLaunch} },
+	{ GUIElementEnum::metroForceLaunchAbsoluteVec3, {OptionalCheatEnum::MetroForceLaunch} },
+	// 2026-11-24: Erase All Entities + Also Stop New AI From Spawning? (H2EraseEntities.cpp)
+	{ GUIElementEnum::h2EraseAllEntitiesGUI,
+		{OptionalCheatEnum::H2EraseEntities}
+	},
+	{ GUIElementEnum::h2BlockAISpawningGUI,
+		{OptionalCheatEnum::H2EraseEntities}
+	},
+	{ GUIElementEnum::h2TAAMotionBlendGUI,
+		{OptionalCheatEnum::H2TAA}
+	},
+	{ GUIElementEnum::h2TAADebugGUI,
+		{OptionalCheatEnum::H2TAA}
+	},
+	{ GUIElementEnum::h2TAAObjectMotionGUI,
+		{OptionalCheatEnum::H2TAA}
+	},
 	{ GUIElementEnum::h2ShadowResolutionCombo,
 		{OptionalCheatEnum::H2ShadowResolution}
 	},
@@ -1046,6 +1167,10 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 
 	{ GUIElementEnum::h2pPhysicsToggleGUI,
 		{OptionalCheatEnum::Halo2Physics}
+	},
+
+	{ GUIElementEnum::h4pPhysicsToggleGUI,
+		{OptionalCheatEnum::Halo4Halo2Physics}
 	},
 
 	{ GUIElementEnum::h2pArmGUI,

@@ -15,7 +15,18 @@
 #include "GetObjectPhysics.h"
 //#include "UnfreezeObjectPhysics.h"
 
-namespace h2cv::sb { void noteForceLaunch(); }   // H2CV_Superbounce.h: the launch is not a bounce / remembered spot
+namespace h2cv::sb
+{
+	void noteForceLaunch();   // H2CV_Superbounce.h: the launch is not a bounce / remembered spot
+	// Halo 4 (2026-11-21): hands a launch of the player to the bounce viewer's game-thread sampler, which writes it at the
+	// start of the next tick; false when that sampler is not running (or `datum` is not the player): write it here
+	bool h4DeferForceLaunch(uint32_t datum, float x, float y, float z);
+}
+
+namespace
+{
+	uint32_t datumValue(const Datum& d) { return (uint32_t)d.salt << 16 | d.index; }
+}
 
 class ForceLaunchSimple : public ForceLaunchImplUntemplated
 {
@@ -153,7 +164,8 @@ void ForceLaunchSimple::LaunchObjectAbsolute(SimpleMath::Vector3 coords, Datum d
 	lockOrThrow(getObjectPhysicsWeak, getObjectPhysics);
 	auto* currentVelocityMutable = getObjectPhysics->getObjectVelocityMutable(datumToLaunch);
 
-	*currentVelocityMutable = coords;
+	if (!(static_cast<GameState::Value>(mGame) == GameState::Value::Halo4 && h2cv::sb::h4DeferForceLaunch(datumValue(datumToLaunch), coords.x, coords.y, coords.z)))
+		*currentVelocityMutable = coords;
 
 	//if (unfreezeObjectPhysicsWeak.has_value())
 	//{
@@ -214,11 +226,13 @@ void ForceLaunchSimple::LaunchObjectRelativeToPlayer(SimpleMath::Vector3 coords,
 
 	normalisedLookDirUp.Normalize();
 
-	*currentVelocityMutable = *currentVelocityMutable
-		+ (normalisedLookDirForward * coords.x) // forward component of user input 
+	const SimpleMath::Vector3 launched = *currentVelocityMutable
+		+ (normalisedLookDirForward * coords.x) // forward component of user input
 		+ (normalisedLookDirRight * coords.y) // right component of user input
 		+ (normalisedLookDirUp * coords.z) // up component of user input
 		;
+	if (!(static_cast<GameState::Value>(mGame) == GameState::Value::Halo4 && h2cv::sb::h4DeferForceLaunch(datumValue(datumToLaunch), launched.x, launched.y, launched.z)))
+		*currentVelocityMutable = launched;
 
 	//if (unfreezeObjectPhysicsWeak.has_value())
 	//{

@@ -16,6 +16,7 @@ private:
 		{GameState::Value::HaloReach,""},
 		{GameState::Value::HaloCER,""},   // REQUIRED: ctor does toolTipStrings.at(game) for every AllGameStateValues entry
 		{GameState::Value::Halo5Forge,""},// REQUIRED, same reason - see below
+		{GameState::Value::MetroRedux,""},// REQUIRED, same reason
 		{GameState::Value::NoGame,""},
 	};
 

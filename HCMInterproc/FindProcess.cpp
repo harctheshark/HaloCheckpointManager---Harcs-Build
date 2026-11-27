@@ -85,6 +85,44 @@ static std::optional<HandlePtr> findValidHalo5ForgeProcess()
 	return std::nullopt;
 }
 
+// Metro 2033 Redux / Metro Last Light Redux (2026-11-24) - a fourth standalone title. BOTH games ship an exe named
+// metro.exe (and after SteamStub's decryption the two are byte-identical engine builds), so the name alone is not
+// enough to be sure it is one of them: the full image path must also lie in a "Metro ... Redux" folder.
+// Running both games at once is not supported (the first one found wins).
+static std::optional<HandlePtr> findValidMetroReduxProcess()
+{
+	HandlePtr snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
+	if (!snapshot || snapshot.get() == INVALID_HANDLE_VALUE) return std::nullopt;
+
+	PROCESSENTRY32 process;
+	ZeroMemory(&process, sizeof(process));
+	process.dwSize = sizeof(process);
+
+	if (Process32First(snapshot.get(), &process))
+	{
+		do
+		{
+			if (_wcsicmp(process.szExeFile, L"metro.exe") != 0) continue;
+			HandlePtr metroHandle(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, NULL, process.th32ProcessID));
+			if (!metroHandle) { PLOG_ERROR << "Found metro.exe but failed to open it (PROCESS_QUERY_LIMITED_INFORMATION)"; continue; }
+			wchar_t path[MAX_PATH * 2]{};
+			DWORD len = (DWORD)std::size(path);
+			if (!QueryFullProcessImageNameW(metroHandle.get(), 0, path, &len)) continue;
+			std::wstring p(path, len);
+			std::transform(p.begin(), p.end(), p.begin(), ::towlower);
+			if (p.find(L"metro") == std::wstring::npos || p.find(L"redux") == std::wstring::npos)
+			{
+				PLOG_DEBUG << "Ignoring a metro.exe outside a Metro ... Redux folder";
+				continue;
+			}
+			PLOG_DEBUG << "Found Metro Redux process, pid: " << process.th32ProcessID;
+			return metroHandle;
+		} while (Process32Next(snapshot.get(), &process));
+	}
+
+	return std::nullopt;
+}
+
 // Returns a HandlePtr (with QueryLimitedInformation perms) to an active MCC process,
 // or nothing if there are no MCC processes or they are all invalid (terminated/terminating)
 std::optional<HandlePtr> findValidMCCProcess()
@@ -107,7 +145,8 @@ std::optional<HandlePtr> findValidMCCProcess()
 		// No MCC -> try the standalone titles in turn. They are mutually exclusive processes, so the
 		// order only decides which wins in the (unsupported) case of both running at once.
 		if (auto hce = findValidCampaignEvolvedProcess()) return hce;
-		return findValidHalo5ForgeProcess();
+		if (auto h5 = findValidHalo5ForgeProcess()) return h5;
+		return findValidMetroReduxProcess();
 	}
 
 

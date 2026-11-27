@@ -268,6 +268,21 @@ public:
 		return currentPositionTransformation;
 	}
 
+	const SimpleMath::Vector3 getTargetPositionTransformation()
+	{
+		ScopedAtomicBool lock(dataInUse);
+		return targetPositionTransformation;
+	}
+
+	// Camera collision: the smoothed position and the position it is being pulled towards are corrected separately, so
+	// the part of the lead that runs along a wall survives (setPositionTransformation would throw the whole lead away).
+	void setPositionTransformations(SimpleMath::Vector3 newCurrent, SimpleMath::Vector3 newTarget)
+	{
+		ScopedAtomicBool lock(dataInUse);
+		currentPositionTransformation = newCurrent;
+		targetPositionTransformation = newTarget;
+	}
+
 	void setPositionTransformation(SimpleMath::Vector3 newPos)
 	{
 		ScopedAtomicBool lock(dataInUse);

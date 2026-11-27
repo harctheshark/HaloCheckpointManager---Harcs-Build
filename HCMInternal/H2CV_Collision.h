@@ -24,7 +24,8 @@ namespace h2cv
 	using h2::Vec3;
 
 	// SoftCeiling: Halo 3 / ODST only (structure design soft ceilings / soft kills / slip surfaces); always empty for Halo 2
-	enum class Cat : uint8_t { Bsp, BspInvisible, Breakable, Instanced, InstancedInvisible, Scenery, Crate, Machine, KillTrigger, SoftCeiling, Count };
+	// Scenery = what the PLAYER collides with; SceneryBullet = the scenery's collision model, what bullets hit (Halo 2).
+	enum class Cat : uint8_t { Bsp, BspInvisible, Breakable, Instanced, InstancedInvisible, Scenery, Crate, Machine, KillTrigger, SoftCeiling, SceneryBullet, Count };
 	constexpr int kCatCount = (int)Cat::Count;
 	const char* catName(Cat c);
 
@@ -176,6 +177,8 @@ namespace h2cv
 		              std::vector<Tri>* trisOut, std::vector<Tri>* invisTrisOut, int slot = 0);
 
 		uintptr_t mSbsp = 0;
+		std::vector<uint32_t> mSceneryKeys;   // the level MOPP's scenery keys (h2::levelSceneryKeys), read when the bsp loads
+		bool mSceneryKeysOk = false;
 		CollBsp mWorld;
 		std::vector<CollBsp> mIgDefs;
 		std::vector<IgInstance> mIgInstances;
@@ -208,6 +211,9 @@ namespace h2cv
 		struct ModelRegion { int8_t collRegion; std::vector<int8_t> collPerm; };
 		struct ModelMap { std::vector<ModelRegion> regions; bool anyMapped = false; };
 		std::unordered_map<uintptr_t, ModelMap> mModelCache;   // hlmt tag data address -> region mapping
+		// gatherObjects(): one object's output, reused while the signature of what it was made from is unchanged
+		struct ObjCache { uint64_t sig = 0; uint32_t seen = 0; bool valid = false, hasSpan = false; std::vector<Line> lines[4]; std::vector<Tri> tris; ObjSpan span; };
+		std::unordered_map<uint32_t, ObjCache> mObjCache;      // object datum -> its lines / triangles of the last build
 		const ObjColl* loadColl(uintptr_t coll, const h2::TagPools& p);
 		const ModelMap* loadModelMap(uintptr_t hlmt, const h2::TagPools& p);
 		uint32_t mFrame = 0;

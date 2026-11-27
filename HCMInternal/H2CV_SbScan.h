@@ -9,7 +9,7 @@
 
 namespace h2cv::sbscan
 {
-	struct Surface { uint32_t key = 0; float n[3]{}; std::vector<float> poly; uint8_t flags = 0; };   // poly: x,y,z per vertex; flags: 1 two-sided, 2 invisible
+	struct Surface { uint32_t key = 0; float n[3]{}; std::vector<float> poly; uint8_t flags = 0; };   // poly: x,y,z per vertex; flags: 1 two-sided, 2 invisible, 0x80 a baked scenery object's triangle
 	struct Spot
 	{
 		float x = 0, y = 0, z = 0, best = 0, share20 = 0, share35 = 0, fall = 0, driftX = 0, driftY = 0;   // the map scan
@@ -28,7 +28,9 @@ namespace h2cv::sbscan
 
 	// load this map's predictions for this tick rate (superbounce_predicted_v3[_t<tick>]_<key>.csv; no file = no spots - the map is
 	// scanned only on request, by the external scanner). Same map + tick again: the file is retried if it was missing.
-	void start(uint64_t mapKey, std::vector<Surface>&& surfaces, float nearX, float nearY, int tick = 30);
+	// objSig (2026-11-16): the surfaces may include baked scenery (Surface::flags 0x80) for the live landings; a different set of
+	// objects (another signature) rebuilds the level. The prediction file is still named by mapKey alone.
+	void start(uint64_t mapKey, std::vector<Surface>&& surfaces, float nearX, float nearY, int tick = 30, uint64_t objSig = 0);
 	// re-read the prediction file (after a manual scan merged new spots into it)
 	void reload();
 	// Halo 3 / ODST (2026-11-02): a second, per-map prediction file read with the key file - the offline whole-map scan of the
@@ -42,7 +44,12 @@ namespace h2cv::sbscan
 	inline float lineDreadnought(int tps) { const float t = tps < 30 ? 30.f : (tps > 60 ? 60.f : (float)tps); return 35.f + (t - 30.f) * (25.f / 30.f); }
 	// the tick rate of the loaded predictions (their share columns use that tick's lines)
 	int tick();
-	// the prediction file name for a map key + tick rate (relative to the game folder)
+	// THE VIEWER'S FILES (2026-11-16): everything it keeps - predictions, recipes, the recording, map dumps, spots, records, the
+	// scan work folder - lives in ONE folder inside the game folder, "HCM Bounce Viewer", instead of loose in the game folder.
+	// dataPath(name) = that folder + name (relative to the game folder, like the old loose names). The first call makes the
+	// folder and moves the files of earlier builds (superbounce_*, the superbounce_scan folder) into it.
+	std::string dataPath(const std::string& name);
+	// the prediction file name for a map key + tick rate (relative to the game folder, inside the viewer's folder)
 	std::string fileName(uint64_t mapKey, int tick);
 	void cancel();
 	// the predicted spots found so far (clustered), and the progress (0..1; 1 = done or loaded)
@@ -56,10 +63,20 @@ namespace h2cv::sbscan
 	// tick and its velocity for that tick (gravity already added). false: the level is not ready, nothing is touched, the tick
 	// before was not clear (it would have landed earlier) or only two-sided / invisible surfaces are touched. launch = the
 	// solved velocity (any direction). Thread-safe (the level is read-only once built); costs ~10-30 us.
-	bool landingLaunch(float fx, float fy, float fz, float vx, float vy, float vz, float launch[3]);
+	// dt (2026-11-16): the GAME's tick length - the rules run at it whatever tick rate the loaded predictions are for
+	// (0 = the predictions' own, as before)
+	// gate (2026-11-16): false for a caller that steps a fall tick by tick (it has already asked about the tick before) - the
+	// "tick before was clear" test is then skipped. sweepMin: the pill's live sweep threshold in u/s (its swept shape's +52:
+	// 5.4465 in stock MCC at any tick rate, the tick-matched value with Season 7 physics); 0 = tick-matched, as before.
+	bool landingLaunch(float fx, float fy, float fz, float vx, float vy, float vz, float launch[3], float dt = 0.f, bool gate = true, float sweepMin = 0.f);
 	// the current job's serial if it is ready (0: none / not ready): a caller on another thread reads it before and after a run
 	// of landingLaunch calls and drops the results if it changed (start() swapped the job / its tick rate meanwhile)
 	uint64_t readySerial();
+	// landingLaunch remembers its answers per thread (the viewer repeats the same calls while you stand still). A thread whose
+	// calls never repeat (the monster finder's) turns that off for itself: no hashing, no allocation per call
+	void setThreadMemo(bool on);
+	// a worker thread about to wait with nothing to do: release this thread's hold on the level it last used
+	void dropThreadJob();
 	// where the player is
 	void setPlayer(float x, float y, float z);
 	// recipes (each spot's best approach + launch direction) are worked out ONLY on request (2026-11-03): every spot within r

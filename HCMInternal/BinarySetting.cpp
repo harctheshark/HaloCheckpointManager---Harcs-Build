@@ -103,6 +103,11 @@ template void BinarySetting<ScreenAnchorEnum>::deserialise(pugi::xml_node input)
 template void BinarySetting<SoftCeilingRenderTypes>::deserialise(pugi::xml_node input);
 template void BinarySetting<SoftCeilingRenderDirection>::deserialise(pugi::xml_node input);
 template void BinarySetting<H2ShadowResolution>::deserialise(pugi::xml_node input);
+template void BinarySetting<H2Supersampling>::deserialise(pugi::xml_node input);   // 2026-11-21
+template void BinarySetting<SMAAQuality>::deserialise(pugi::xml_node input);   // 2026-11-20 SMAA
+template void BinarySetting<SMAAEdgeDetection>::deserialise(pugi::xml_node input);   // 2026-11-21 SMAA tuning
+template void BinarySetting<PostAAMethod>::deserialise(pugi::xml_node input);   // 2026-11-23 CMAA2
+template void BinarySetting<InfiniteAmmoGrenades>::deserialise(pugi::xml_node input);   // 2026-11-24 grenade type
 template void BinarySetting<CollisionViewerOcclusionEnum>::deserialise(pugi::xml_node input);
 
 

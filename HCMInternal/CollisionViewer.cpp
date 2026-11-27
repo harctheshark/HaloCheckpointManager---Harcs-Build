@@ -20,6 +20,9 @@
 #include "H2CV_Halo3.h"
 #include "H2CV_Engine.h"
 #include "H2CV_Log.h"
+#include "GameDepthTap.h"
+#include "H2PassTaps.h"
+#include "NoInvisibleCollision.h"
 
 namespace
 {
@@ -72,6 +75,7 @@ private:
 	uint32_t mWhyLogged = 0;                 // diagnostics: which "frame skipped" reasons were logged since the last toggle
 	const bool mIsReach;                      // Halo: Reach: no engine render hooks (drawn at Present only, ViewerReach.cpp; + the out-of-bounds bar)
 	const bool mIsH3;                         // Halo 3 or ODST (Havok 4.5 engine layer); Halo 2 otherwise
+	const bool mIsH4;                         // Halo 4 (2026-11-21): the bounce viewer only, drawn at Present (no hooks, no Collision Viewer)
 	std::weak_ptr<SettingsStateAndEvents> settingsWeak;
 	std::weak_ptr<IMessagesGUI> messagesWeak;
 	std::weak_ptr<DirectXRenderEvent> renderEventWeak;
@@ -87,6 +91,7 @@ private:
 	ScopedCallback<ActionEvent> mRecipeCallback;
 	ScopedCallback<ActionEvent> mRecipeRedoCallback;                        // superbounce: "redo approaches here"                            // superbounce: "work out approaches"                          // superbounce: "scan around me"
 	std::unique_ptr<ScopedCallback<DirectXRenderEvent>> mRenderCallback;
+	std::unique_ptr<ScopedCallback<DirectXRenderEvent>> mDepthTapArmCallback;   // Halo 2: arms the pass hooks for SMAA's depth tap
 	std::unique_ptr<ModuleInlineHook> mFpHook, mResolveHook;
 	std::shared_ptr<MultilevelPointer> mFp3Ptr;     // Halo 3 / ODST first-person pass (InternalPointerData.xml collisionViewerFirstPersonPass)
 	bool mHooksArmed = false;
@@ -101,7 +106,7 @@ private:
 	// HCM constructs one Impl per game (Halo 2, Halo 3, ODST) and all of them live for the whole session. Each one owns a slot,
 	// so a detour always reaches the Impl (and trampoline) of the module it was installed in, and only the Impl of the game MCC
 	// is running draws / samples. h2cv's game selector is process-global: the active Impl sets it before every call into h2cv.
-	static constexpr int kSlots = 4;
+	static constexpr int kSlots = 5;
 	static inline std::atomic<Impl*> sSlot[kSlots]{};
 	const int mSlot;
 	const h2cv::Game mCvGame;
@@ -111,7 +116,8 @@ private:
 
 	static int slotOf(GameState g)
 	{
-		return g == GameState(GameState::Value::Halo3) ? 1 : g == GameState(GameState::Value::Halo3ODST) ? 2 : g == GameState(GameState::Value::HaloReach) ? 3 : 0;
+		return g == GameState(GameState::Value::Halo3) ? 1 : g == GameState(GameState::Value::Halo3ODST) ? 2 : g == GameState(GameState::Value::HaloReach) ? 3
+			: g == GameState(GameState::Value::Halo4) ? 4 : 0;
 	}
 
 	bool isActiveGame()
@@ -121,9 +127,42 @@ private:
 	}
 
 	// ---- engine hook detours (render thread) ----
+	// SMAA's depth (2026-11-21, GameDepthTap.h): at this pass's entry the scene depth is the complete WORLD depth (by Present
+	// it holds only the gun). Copied only while SMAA asks for it; the texture-camera passes are skipped.
+	static void tapDepthH2(void* p)
+	{
+		Impl* self = static_cast<Impl*>(p);
+		h2::GameFrame f;
+		if (!h2::readFrame(f) || f.textureCamera) return;
+		const uintptr_t dsvp = mem::q(h2::base() + h2::rva::SCENE_DSV);
+		if (!mem::okp(dsvp) || !mem::okp(mem::q(dsvp)) || !mem::okp(mem::q(mem::q(dsvp)))) return;
+		auto* dsv = reinterpret_cast<ID3D11DepthStencilView*>(dsvp);
+		ID3D11Device* dev = nullptr;
+		dsv->GetDevice(&dev);
+		if (!dev) return;
+		ID3D11DeviceContext* ctx = nullptr;
+		dev->GetImmediateContext(&ctx);
+		dev->Release();
+		if (!ctx) return;
+		D3D11_VIEWPORT vp{};
+		vp.TopLeftX = f.vp[1]; vp.TopLeftY = f.vp[0];
+		vp.Width = (float)(f.vp[3] - f.vp[1]); vp.Height = (float)(f.vp[2] - f.vp[0]);
+		vp.MinDepth = 0; vp.MaxDepth = 1;
+		bool reversed = true;   // halo2 SCENE_DSV: reversed-Z (the Collision Viewer's own setting can say otherwise)
+		if (auto s = self->settingsWeak.lock()) reversed = s->collisionViewerReversedZ->GetValue();
+		GameDepthTap::capture(ctx, dsv, vp, reversed);
+		ctx->Release();
+	}
+
 	static int64_t __fastcall fpDetour(int64_t a1, int64_t a2, int64_t a3, char a4, unsigned a5, int a6)
 	{
 		Impl* self = sSlot[0].load();
+		const bool tapWanted = self && GameDepthTap::wanted() && self->isActiveGame();
+		if (tapWanted)
+			guardedCall(&tapDepthH2, self, "SMAA depth tap");
+		// Halo 2 TAA (2026-11-23, H2PassTaps.h): its matrix snapshot, at the same moment as the depth copy above
+		if (H2PassTaps::Fn fn = H2PassTaps::firstPersonPass.load(); fn && tapWanted)
+			guardedCall([](void* p) { reinterpret_cast<H2PassTaps::Fn>(p)(); }, reinterpret_cast<void*>(fn), "TAA first-person pass tap");
 		if (self && self->mEnabled.load() && self->mCollisionOn.load())
 			guardedCall([](void* p) { static_cast<Impl*>(p)->onFirstPersonPass(); }, self, "first-person pass hook");
 		return self ? self->mFpHook->getInlineHook().call<int64_t>(a1, a2, a3, a4, a5, a6) : 0;
@@ -132,6 +171,9 @@ private:
 	static int64_t __fastcall resolveDetour(int64_t a1, int64_t a2, int64_t a3)
 	{
 		Impl* self = sSlot[0].load();
+		// Halo 2 TAA (2026-11-23, H2PassTaps.h): resolves into the scene target BEFORE the engine copies it on (bloom, final pass)
+		if (H2PassTaps::Fn fn = H2PassTaps::beforeResolve.load(); fn && self && GameDepthTap::wanted() && self->isActiveGame())
+			guardedCall([](void* p) { reinterpret_cast<H2PassTaps::Fn>(p)(); }, reinterpret_cast<void*>(fn), "TAA resolve");
 		const int64_t r = self ? self->mResolveHook->getInlineHook().call<int64_t>(a1, a2, a3) : 0;
 		if (self && self->mEnabled.load() && self->mCollisionOn.load())
 			guardedCall([](void* p) { static_cast<Impl*>(p)->onResolveDone(); }, self, "resolve hook");
@@ -182,7 +224,13 @@ private:
 	void onSimTick(uint32_t tick)
 	{
 		++mSimInFlight;
-		if (mEnabled.load() && isActiveGame()) { h2cv::setGame(mCvGame); mViewer.onSimTick(tick); }
+		// Halo 4: h4SimTick checks halo4.dll itself (build stamp, player), so it does not wait on the MCC state here
+		if (mIsH4 && mEnabled.load()) h2cv::sb::h4SimTick(tick);
+		else if (mEnabled.load() && isActiveGame())
+		{
+			h2cv::setGame(mCvGame);
+			mViewer.onSimTick(tick);
+		}
 		--mSimInFlight;
 	}
 
@@ -205,6 +253,7 @@ private:
 		v.show[(int)Cat::InstancedInvisible] = invis;
 		v.show[(int)Cat::Breakable] = s.collisionViewerShowBreakable->GetValue();
 		v.show[(int)Cat::Scenery] = s.collisionViewerShowScenery->GetValue();
+		v.show[(int)Cat::SceneryBullet] = s.collisionViewerShowSceneryBullet->GetValue();
 		v.show[(int)Cat::Crate] = s.collisionViewerShowCrates->GetValue();
 		v.show[(int)Cat::Machine] = s.collisionViewerShowMachines->GetValue();
 		v.show[(int)Cat::KillTrigger] = s.collisionViewerShowKillTriggers->GetValue();
@@ -233,6 +282,9 @@ private:
 		v.sbSeamText = s.collisionViewerSuperbounceSeamText->GetValue();
 		v.sbSpeed = s.collisionViewerSuperbounceSpeed->GetValue();
 		v.sbDebounce = s.collisionViewerSuperbounceDebounce->GetValue();
+		v.sbMonsterFinder = s.collisionViewerSuperbounceMonsterFinder->GetValue();
+		v.sbMonsterOnly = s.collisionViewerSuperbounceMonsterOnly->GetValue();
+		v.sbMonsterRings = s.collisionViewerSuperbounceMonsterRings->GetValue();
 		v.sbObjects = s.collisionViewerSuperbounceObjects->GetValue();
 		v.sbSeams = s.collisionViewerSuperbounceSeams->GetValue();
 		v.sbSpots = s.collisionViewerSuperbounceSpots->GetValue();
@@ -250,6 +302,8 @@ private:
 		v.sbHighlight = s.collisionViewerSuperbounceHighlight->GetValue();
 		v.sbKeepCharge = s.collisionViewerSuperbounceKeepCharge->GetValue();
 		v.sbForceCharge = s.collisionViewerSuperbounceForceCharge->GetValue();
+		// Halo 2 "No invisible walls (*)": only while the game really has them off (the toggle on AND its hook applied)
+		v.sbNoInvisible = s.noInvisibleCollisionToggle->GetValue() && NoInvisibleCollision::wallsOffInGame();
 		v.infoSuperbounce = s.collisionViewerInfoSuperbounce->GetValue();
 		v.collision = s.collisionViewerToggle->GetValue();
 		v.oobAnchor = (int)s.oobBarAnchorCorner->GetValue();
@@ -294,6 +348,11 @@ private:
 		case O::OwnCollisionDepth: v.occlusion = (int)h2cv::Occlusion::Own; break;
 		default: v.occlusion = (int)h2cv::Occlusion::XRay; break;
 		}
+		// The Collision Viewer's children do nothing while it is off (2026-11-17). They were handed over as plain toggles, and
+		// the in-frame draw path drew TIM / capsules / ghost / weld zones whenever it ran - which it also did with only the
+		// info panel, the out-of-bounds bar or a charge option keeping the viewer's callbacks alive; Halo 3 / ODST went on
+		// sampling the ghost on every sim tick.
+		if (!v.collision) { v.tim = false; v.pills = false; v.ghost = false; v.weldZonesNear = false; v.weldZonesWelded = false; }
 	}
 
 	void onRender(ID3D11Device* dev, ID3D11DeviceContext* ctx, SimpleMath::Vector2 screen, ID3D11RenderTargetView* rtv)
@@ -318,6 +377,12 @@ private:
 			mViewer.onRenderReach();
 			return;
 		}
+		if (mIsH4)
+		{
+			// Halo 4 (2026-11-21): the bounce viewer only (Viewer::renderH4), no engine hooks
+			if (mBounceOn) mViewer.onRender(dev, ctx, rtv, (uint32_t)screen.x, (uint32_t)screen.y);
+			return;
+		}
 		if (!mHooksArmed) armHooks();
 		mViewer.onRender(dev, ctx, rtv, (uint32_t)screen.x, (uint32_t)screen.y);
 	}
@@ -326,7 +391,7 @@ private:
 	// (refuse rather than patch another build or a function someone else already hooked).
 	void armHooks()
 	{
-		if (mIsReach) { mHooksArmed = true; return; }
+		if (mIsReach || mIsH4) { mHooksArmed = true; return; }
 		if (mIsH3) { armHooks3(); return; }
 		if (!h2::base() || !h2::buildOk()) return;
 		mHooksArmed = true;
@@ -508,12 +573,14 @@ public:
 		: mGame(game),
 		mIsReach(game == GameState(GameState::Value::HaloReach)),
 		mIsH3(game == GameState(GameState::Value::Halo3) || game == GameState(GameState::Value::Halo3ODST)),
+		mIsH4(game == GameState(GameState::Value::Halo4)),
 		settingsWeak(dicon.Resolve<SettingsStateAndEvents>()),
 		messagesWeak(dicon.Resolve<IMessagesGUI>()),
 		renderEventWeak(dicon.Resolve<DirectXRenderEvent>()),
 		mccStateWeak(dicon.Resolve<IMCCStateHook>()),
 		mSlot(slotOf(game)),
-		mCvGame(game == GameState(GameState::Value::Halo3) ? h2cv::Game::Halo3 : game == GameState(GameState::Value::Halo3ODST) ? h2cv::Game::Halo3ODST : game == GameState(GameState::Value::HaloReach) ? h2cv::Game::HaloReach : h2cv::Game::Halo2),
+		mCvGame(game == GameState(GameState::Value::Halo3) ? h2cv::Game::Halo3 : game == GameState(GameState::Value::Halo3ODST) ? h2cv::Game::Halo3ODST : game == GameState(GameState::Value::HaloReach) ? h2cv::Game::HaloReach
+			: game == GameState(GameState::Value::Halo4) ? h2cv::Game::Halo4 : h2cv::Game::Halo2),
 		mToggleCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerToggle->valueChangedEvent,
 			[this](bool& on) { refreshActive(0, on); }),
 		mInfoPanelCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->collisionViewerInfoPanel->valueChangedEvent,
@@ -562,6 +629,15 @@ public:
 			mFpHook = ModuleInlineHook::make(mGame.toModuleName(), collisionViewerFirstPersonPass, mSlot == 2 ? (void*)&fp3Detour<2> : (void*)&fp3Detour<1>);
 			mTickEvent = resolveDependentCheat(GameTickEventHook)->getGameTickEvent();
 		}
+		else if (mIsH4)
+		{
+			// Halo 4 (2026-11-21): nothing hooked in the game's render - the bounce viewer reads the level from memory at Present.
+			// The player is sampled on the game thread every tick (GameTickEventHook, before the objects update and the Havok
+			// step), so the bounce sees each tick's finished state and its launch goes in at the start of a tick; without the
+			// hook the viewer falls back to reading the player at Present.
+			try { mTickEvent = resolveDependentCheat(GameTickEventHook)->getGameTickEvent(); }
+			catch (HCMInitException ex) { PLOG_ERROR << "[CollisionViewer] Halo 4: no game tick hook (" << ex.what() << "): the bounce samples the player at Present"; }
+		}
 		else
 		{
 			auto fp = std::make_shared<MultilevelPointerSpecialisation::ModuleOffset>(mGame.toModuleName(), std::vector<int64_t>{ kFirstPersonPassRva });
@@ -570,6 +646,16 @@ public:
 			mResolveHook = ModuleInlineHook::make(mGame.toModuleName(), rs, (void*)&resolveDetour);
 		}
 		sSlot[mSlot] = this;
+		if (!mIsReach && !mIsH3 && !mIsH4 && renderEventWeak.lock())
+		{
+			// SMAA's depth tap (Halo 2): the pass hooks are armed when SMAA asks for depth, the viewer itself can stay off
+			// (armHooks attaches them once and leaves them for the session - see there)
+			mDepthTapArmCallback = std::make_unique<ScopedCallback<DirectXRenderEvent>>(renderEventWeak.lock(),
+				[this](ID3D11Device*, ID3D11DeviceContext*, SimpleMath::Vector2, ID3D11RenderTargetView*)
+				{
+					if (!mHooksArmed && GameDepthTap::wanted() && isActiveGame()) armHooks();
+				});
+		}
 		if (auto s = settingsWeak.lock(); s && (s->collisionViewerToggle->GetValue() || s->collisionViewerInfoPanel->GetValue() || s->collisionViewerKillVolumes->GetValue()
 			|| s->collisionViewerSuperbounce->GetValue() || s->collisionViewerSuperbounceKeepCharge->GetValue()
 			|| s->collisionViewerSuperbounceForceCharge->GetValue()))
@@ -585,6 +671,7 @@ public:
 	~Impl()
 	{
 		mEnabled = false;
+		mDepthTapArmCallback.reset();
 		mRenderCallback.reset();
 		mTickCallback.reset();
 		for (int i = 0; i < 400 && mSimInFlight.load() > 0; ++i) Sleep(1);

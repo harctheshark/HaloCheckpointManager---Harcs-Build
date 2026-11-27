@@ -3,6 +3,7 @@
 #include "H2CV_Engine.h"
 #include "H2CV_Mem.h"
 #include "H2CV_Log.h"
+#include "H2CV_ViewerUtil.h"   // capsuleWire / capsuleTris for physics-model scenery
 #include <cmath>
 #include <algorithm>
 
@@ -56,6 +57,7 @@ namespace h2cv
 		case Cat::Machine: return "Machines";
 		case Cat::KillTrigger: return "Kill triggers";
 		case Cat::SoftCeiling: return "Soft ceilings";
+		case Cat::SceneryBullet: return "Scenery (bullets)";
 		default: return "?";
 		}
 	}
@@ -422,39 +424,40 @@ namespace h2cv
 
 	void CollisionWorld::gatherObjects()
 	{
-		for (Cat c : { Cat::Scenery, Cat::Crate, Cat::Machine }) mLines[(int)c].clear();
+		for (Cat c : { Cat::Scenery, Cat::SceneryBullet, Cat::Crate, Cat::Machine }) mLines[(int)c].clear();
 		mObjectTris.clear(); mObjSpans.clear();
 		h2::TagPools p;
 		if (!h2::tagPools(p)) return;
 		std::vector<h2::ObjectRef> objs;
 		h2::enumerateObjects(objs);
-		std::vector<uint32_t> baked;
-		h2::bakedSceneryDatums(baked);
-		for (const auto& o : objs)
+		std::vector<std::pair<uint32_t, uint16_t>> havok;   // (datum, havok index - 1) of every scenery in the scenery table
+		h2::sceneryHavokIndices(havok);
+		// one object's lines and triangles, appended to mLines / mObjectTris / mObjSpans
+		auto emitOne = [&](const h2::ObjectRef& o)
 		{
 			Cat cat;
 			if (o.type == h2::Scenery) cat = Cat::Scenery;
 			else if (o.type == h2::Crate) cat = Cat::Crate;
 			else if (o.type == h2::Machine) cat = Cat::Machine;
-			else continue;
+			else return;
 
 			// lifecycle, as the engine's own object walkers test it (sub_1808D70C0 / sub_1808D7130):
 			// header +2 bit 0x10 (being deleted) or object flags bit 0 (hidden) => not a live object
-			if ((o.hdrFlags & kHdrBeingDeleted) || h2::objectHidden(o.obj)) continue;
+			if ((o.hdrFlags & kHdrBeingDeleted) || h2::objectHidden(o.obj)) return;
 
 			const uint16_t defIdx = u16(o.obj + 0x00);
-			if (defIdx == 0xFFFF) continue;
+			if (defIdx == 0xFFFF) return;
 			const uintptr_t defTag = h2::tagData(defIdx, p);
-			if (!okp(defTag)) continue;
+			if (!okp(defTag)) return;
 			const uint16_t hlmt = u16(defTag + kDefModelRefOff);
 			const uintptr_t model = hlmt == 0xFFFF ? 0 : h2::tagData(hlmt, p);
-			if (!okp(model)) continue;
+			if (!okp(model)) return;
 			const uint16_t collIdx = u16(model + kModelCollRefOff);
 			const uintptr_t coll = collIdx == 0xFFFF ? 0 : h2::tagData(collIdx, p);
-			if (!okp(coll)) continue;
+			if (!okp(coll)) return;
 
 			const ObjColl* oc = loadColl(coll, p);
-			if (!oc || oc->regions.empty()) continue;
+			if (!oc || oc->regions.empty()) return;
 			const ModelMap* mm = loadModelMap(model, p);
 
 			// Which (collision region, permutation) pairs are live NOW. The engine accepts a collision bsp of key
@@ -494,7 +497,7 @@ namespace h2cv
 					add((int)cr, s < (int)oc->regions[cr].perms.size() ? s : 0);
 				}
 			}
-			if (!nsel) continue;
+			if (!nsel) return;
 
 			// root transform (fallback only): pos +0x64, forward +0x70, up +0x7C
 			float loc[9] = {};
@@ -506,43 +509,213 @@ namespace h2cv
 			const float m[13] = { 1.f, fwd.x, fwd.y, fwd.z, left.x, left.y, left.z, up.x, up.y, up.z, pos.x, pos.y, pos.z };
 			auto& out = mLines[(int)cat];
 			ObjSpan span; span.datum = o.datum; span.type = o.type; span.def = defIdx; span.pos = pos; span.first = (uint32_t)mObjectTris.size();
-			span.baked = o.type == h2::Scenery && std::binary_search(baked.begin(), baked.end(), o.datum);
-			// BAKED SCENERY = what the player collides with, built as the engine bakes it (sub_180791C10, ported in
-			// h2::bakedSceneryShape): the collision permutation's FIRST bsp only, on NODE 0, SCALE IGNORED. 2026-11-03: a statue
-			// placed at scale 9 (object +0xA0 / scenario placement scale) has a 1.7 wu collision mesh the player stands on, while
-			// the node matrix's scale made HCM's triangles a 15 wu statue - "monsters" where there is no collision at all.
-			// The drawn lines keep the node matrices (the collision viewer's view, unchanged).
-			float bakedM[13]; bool haveBakedM = false;
-			if (span.baked)
+
+			// the collision model as authored: every bsp of the live permutations, each on the node it is bound to (the root
+			// transform only when the node is missing, out of range, or invalid - xlive does the same, node-first)
+			auto emitAuthored = [&](std::vector<Line>* lines, bool tris)
 			{
-				if (h2::objectNodeMatrix(o.obj, 0, bakedM) && sanePlacement(bakedM)) haveBakedM = true;
-				else if (rootOk) { memcpy(bakedM, m, sizeof(bakedM)); haveBakedM = true; }
-				bakedM[0] = 1.f;
-			}
-			for (int si = 0; si < nsel; ++si)
-			{
-				bool firstBsp = true;
-				for (const auto& b : oc->regions[sel[si].r].perms[sel[si].p].bsps)
-				{
-					// each collision bsp is bound to a node (collision_model_bsp.node_index): use that node's world matrix,
-					// the root transform only when the node is missing, out of range, or invalid (xlive does the same, node-first)
-					float nm[13];
-					const float* bm = m;
-					if (b.node != 0xFFFF && h2::objectNodeMatrix(o.obj, b.node, nm) && sanePlacement(nm)) bm = nm;
-					else if (!rootOk) continue;
-					for (const auto& l : b.lines) out.push_back({ igTransform(bm, l.a), igTransform(bm, l.b) });
-					if (span.baked)
+				for (int si = 0; si < nsel; ++si)
+					for (const auto& b : oc->regions[sel[si].r].perms[sel[si].p].bsps)
 					{
-						if (firstBsp && haveBakedM)
-							for (const auto& t : b.tris) mObjectTris.push_back({ igTransform(bakedM, t.a), igTransform(bakedM, t.b), igTransform(bakedM, t.c) });
+						float nm[13];
+						const float* bm = m;
+						if (b.node != 0xFFFF && h2::objectNodeMatrix(o.obj, b.node, nm) && sanePlacement(nm)) bm = nm;
+						else if (!rootOk) continue;
+						if (lines) for (const auto& l : b.lines) lines->push_back({ igTransform(bm, l.a), igTransform(bm, l.b) });
+						if (tris) for (const auto& t : b.tris) mObjectTris.push_back({ igTransform(bm, t.a), igTransform(bm, t.b), igTransform(bm, t.c) });
 					}
-					else for (const auto& t : b.tris) mObjectTris.push_back({ igTransform(bm, t.a), igTransform(bm, t.b), igTransform(bm, t.c) });
-					firstBsp = false;
+			};
+
+			if (o.type != h2::Scenery)
+			{
+				// crates / machines: their own Havok bodies; the collision model on its nodes
+				emitAuthored(&out, true);
+				span.count = (uint32_t)mObjectTris.size() - span.first;
+				if (span.count) mObjSpans.push_back(span);
+				return;
+			}
+
+			// ================================ SCENERY ================================
+			// Two different things, drawn as two categories (2026-11-14):
+			//
+			// BULLET collision (Cat::SceneryBullet) = the collision model as authored. Projectiles test it directly.
+			//
+			// PLAYER collision (Cat::Scenery) = only the pieces whose key is a terminal of the level's MOPP
+			// (h2::levelSceneryKeys). Having a havok index (the scenery table) is not enough: on Desolation 39 scenery have
+			// one and the MOPP holds keys for 8; the other trees stop bullets and let the player walk through. A piece that
+			// IS in the MOPP is placed the way the engine bakes it: a collision-model key = the permutation's FIRST bsp
+			// (bsp physics[0]) on NODE 0 whatever node that bsp is bound to, scale ignored (a canopy bound to a node 3.27 wu
+			// up really sits 3.27 wu lower: a player standing on it had its top at his feet only with the node 0 placement);
+			// a physics-model key = that rigid body's Havok shape on its node.
+			emitAuthored(&mLines[(int)Cat::SceneryBullet], false);
+
+			const auto hk = std::lower_bound(havok.begin(), havok.end(), std::make_pair(o.datum, (uint16_t)0));
+			const bool inTable = hk != havok.end() && hk->first == o.datum;
+			auto hasKey = [&](uint32_t category, int region, int perm)
+			{
+				if (!inTable || region < 0 || perm < 0) return false;
+				if (!mSceneryKeysOk) return true;   // MOPP unreadable: fall back to "has a havok index"
+				const uint32_t key = (category << 29) | (((uint32_t)perm & 0xFF) << 21) | (((uint32_t)region & 0x1F) << 16) | hk->second;
+				return std::binary_search(mSceneryKeys.begin(), mSceneryKeys.end(), key);
+			};
+
+			std::vector<h2::BakedShape> phys;
+			const int nPhys = inTable ? h2::sceneryPhysicsShapes(o.obj, phys) : -1;
+			if (nPhys >= 0)
+			{
+				// the model has a physics model: the engine makes keys from it alone (category 3)
+				std::vector<LineVertex> wire;
+				for (const auto& bs : phys)
+				{
+					if (!hasKey(3, bs.region, bs.perm)) continue;
+					h2::BodyShape body;
+					if (!h2::readShapeTree(bs.shape, 0, bs.xf, body)) continue;
+					for (const auto& pr : body.prims)
+					{
+						if (pr.capsule)
+						{
+							h2::Capsule c; c.a = pr.a; c.b = pr.b; c.r = pr.r; c.ok = true;
+							if (vu::len(vu::sub(c.b, c.a)) < 1e-5f) c.b = vu::add(c.a, Vec3{ 0.f, 0.f, 1e-4f });   // a sphere: give the wire an axis
+							wire.clear();
+							vu::capsuleWire(wire, c, 0);
+							for (size_t i = 0; i + 1 < wire.size(); i += 2)
+								out.push_back({ Vec3{ wire[i].x, wire[i].y, wire[i].z }, Vec3{ wire[i + 1].x, wire[i + 1].y, wire[i + 1].z } });
+							vu::capsuleTris(mObjectTris, c);
+						}
+						else
+						{
+							const std::vector<Vec3>& v = pr.wire.size() == pr.verts.size() ? pr.wire : pr.verts;
+							for (const auto& e : pr.edges)
+								if (e.first < v.size() && e.second < v.size()) out.push_back({ v[e.first], v[e.second] });
+							for (const auto& f : pr.faces)
+								for (size_t k = 1; k + 1 < f.ring.size(); ++k)
+									if (f.ring[0] < v.size() && f.ring[k] < v.size() && f.ring[k + 1] < v.size())
+										mObjectTris.push_back({ v[f.ring[0]], v[f.ring[k]], v[f.ring[k + 1]] });
+						}
+					}
 				}
 			}
+			else if (inTable && mm && mm->anyMapped)
+			{
+				// no physics model: keys from the collision model (category 4), one per model region
+				float bakedM[13]; bool haveBakedM = false;
+				if (h2::objectNodeMatrix(o.obj, 0, bakedM) && sanePlacement(bakedM)) haveBakedM = true;
+				else if (rootOk) { memcpy(bakedM, m, sizeof(bakedM)); haveBakedM = true; }
+				bakedM[0] = 1.f;   // scale ignored (sub_180791C10)
+				for (size_t r = 0; haveBakedM && r < mm->regions.size(); ++r)
+				{
+					const ModelRegion& mr = mm->regions[r];
+					if (mr.collRegion < 0 || mr.collRegion >= (int)oc->regions.size()) continue;
+					const int mp = (int)r < ns ? (int)state[r] : 0;
+					if (mp < 0 || mp >= (int)mr.collPerm.size()) continue;
+					const int cp = mr.collPerm[mp];
+					if (cp < 0 || cp >= (int)oc->regions[mr.collRegion].perms.size()) continue;
+					if (!hasKey(4, (int)r, mp)) continue;
+					const auto& bsps = oc->regions[mr.collRegion].perms[cp].bsps;
+					if (bsps.empty()) continue;
+					const ObjBsp& b = bsps.front();
+					for (const auto& l : b.lines) out.push_back({ igTransform(bakedM, l.a), igTransform(bakedM, l.b) });
+					for (const auto& t : b.tris) mObjectTris.push_back({ igTransform(bakedM, t.a), igTransform(bakedM, t.b), igTransform(bakedM, t.c) });
+				}
+			}
+
 			span.count = (uint32_t)mObjectTris.size() - span.first;
+			span.baked = span.count != 0;   // = the player collides with it
+			if (!span.baked)
+			{
+				// no player collision: the authored collision model still hides lines behind it (occluder triangles only;
+				// the superbounce viewer uses baked spans alone)
+				emitAuthored(nullptr, true);
+				span.count = (uint32_t)mObjectTris.size() - span.first;
+			}
 			if (span.count) mObjSpans.push_back(span);
+		};
+
+		// PER-OBJECT CACHE (2026-11-17). emitOne() used to run for every object on every frame: tag lookups, Havok shape
+		// trees read from the game, every line and triangle transformed, capsules tessellated - measured at about 40% of a
+		// core on Ivory Tower (130 objects). An object's output only changes when the object does, so it is kept and reused
+		// while a signature of what it is made from stays the same: the datum, its definition, hidden / being-deleted, its
+		// placement, its node matrices, its region (damage) state and - scenery - its entry in the level's scenery table.
+		// Everything else emitOne reads is fixed for a loaded level (tags, the level's MOPP keys); update() empties the cache
+		// when the level changes. Objects that move or animate simply miss and are rebuilt as before.
+		auto signature = [&](const h2::ObjectRef& o, uint64_t& sig) -> bool
+		{
+			uint64_t h = 0x9E3779B97F4A7C15ull ^ o.datum ^ ((uint64_t)o.type << 40) ^ ((uint64_t)((o.hdrFlags & kHdrBeingDeleted) ? 1 : 0) << 48);
+			auto mix = [&](const uint8_t* d, size_t n)
+			{
+				size_t i = 0;
+				for (; i + 8 <= n; i += 8) { uint64_t v; memcpy(&v, d + i, 8); h = (h ^ v) * 0x100000001B3ull; h ^= h >> 29; }
+				for (; i < n; ++i) h = (h ^ d[i]) * 0x100000001B3ull;
+			};
+			uint8_t buf[52 * 64];
+			uint32_t head[2];
+			if (!copy(head, o.obj, 8)) return false;
+			head[0] &= 0xFFFFu; head[1] &= 1u;                                    // the definition index; hidden
+			mix((const uint8_t*)head, 8);
+			if (!copy(buf, o.obj + 0x64, 36)) return false;                         // position, forward, up
+			mix(buf, 36);
+			int16_t ref[4];                                                         // node block size / offset, region block size / offset
+			if (!copy(ref, o.obj + 0x118, 8)) return false;
+			mix((const uint8_t*)ref, 8);
+			if (ref[1] > 0 && ref[0] >= 52)
+			{
+				const size_t n = (std::min)((size_t)ref[0], sizeof(buf));
+				if (!copy(buf, o.obj + (uintptr_t)ref[1], n)) return false;
+				mix(buf, n);
+			}
+			if (ref[3] > 0 && ref[2] >= 10)
+			{
+				const size_t n = (std::min)((size_t)(ref[2] / 10), (size_t)64);        // the bytes objectRegionState() reads
+				if (!copy(buf, o.obj + (uintptr_t)ref[3], n)) return false;
+				mix(buf, n);
+			}
+			if (o.type == h2::Scenery)
+			{
+				const auto hk = std::lower_bound(havok.begin(), havok.end(), std::make_pair(o.datum, (uint16_t)0));
+				h = (h ^ ((hk != havok.end() && hk->first == o.datum) ? (0x10000u | hk->second) : 0u)) * 0x100000001B3ull;
+			}
+			sig = h;
+			return true;
+		};
+		static const Cat kObjCats[4] = { Cat::Scenery, Cat::SceneryBullet, Cat::Crate, Cat::Machine };
+		for (const auto& o : objs)
+		{
+			if (o.type != h2::Scenery && o.type != h2::Crate && o.type != h2::Machine) continue;
+			uint64_t sig = 0;
+			ObjCache* ce = signature(o, sig) ? &mObjCache[o.datum] : nullptr;   // unreadable: built the old way, not kept
+			if (ce && ce->valid && ce->sig == sig)
+			{
+				ce->seen = mFrame;
+				for (int k = 0; k < 4; ++k)
+				{
+					auto& dst = mLines[(int)kObjCats[k]];
+					dst.insert(dst.end(), ce->lines[k].begin(), ce->lines[k].end());
+				}
+				if (ce->hasSpan) { ObjSpan sp = ce->span; sp.first = (uint32_t)mObjectTris.size(); mObjSpans.push_back(sp); }
+				mObjectTris.insert(mObjectTris.end(), ce->tris.begin(), ce->tris.end());
+				continue;
+			}
+			size_t l0[4];
+			for (int k = 0; k < 4; ++k) l0[k] = mLines[(int)kObjCats[k]].size();
+			const size_t t0 = mObjectTris.size(), s0 = mObjSpans.size();
+			emitOne(o);
+			if (ce)
+			{
+				for (int k = 0; k < 4; ++k)
+				{
+					const auto& src = mLines[(int)kObjCats[k]];
+					ce->lines[k].assign(src.begin() + l0[k], src.end());
+				}
+				ce->tris.assign(mObjectTris.begin() + t0, mObjectTris.end());   // = the span's triangles: span.first is t0
+				ce->hasSpan = mObjSpans.size() > s0;
+				if (ce->hasSpan) ce->span = mObjSpans.back();
+				ce->sig = sig; ce->valid = true; ce->seen = mFrame;
+			}
 		}
+		// objects that are gone: forgotten after ~256 frames without being seen
+		if ((mFrame & 255) == 0)
+			for (auto it = mObjCache.begin(); it != mObjCache.end(); )
+				it = (mFrame - it->second.seen > 255) ? mObjCache.erase(it) : std::next(it);
 	}
 
 	void CollisionWorld::update(bool wantObjects, bool wantBreakableLive)
@@ -553,7 +726,9 @@ namespace h2cv
 		if (sbsp != mSbsp)
 		{
 			mSbsp = sbsp;
-			mCollCache.clear(); mModelCache.clear();
+			mCollCache.clear(); mModelCache.clear(); mObjCache.clear();
+			mSceneryKeysOk = okp(sbsp) && h2::levelSceneryKeys(sbsp, mSceneryKeys);
+			if (okp(sbsp)) LOGF("level MOPP scenery keys: %s, %zu", mSceneryKeysOk ? "read" : "UNREADABLE (falling back to the scenery table)", mSceneryKeys.size());
 			if (okp(sbsp)) rebuildStatic(sbsp);
 			else { mSbsp = 0; for (auto& l : mLines) l.clear(); mStaticTris.clear(); mObjectTris.clear(); mObjSpans.clear(); return; }
 		}
@@ -578,6 +753,6 @@ namespace h2cv
 				if (solid(be.left) || solid(be.right)) out.push_back(be.l);
 		}
 		if (wantObjects) gatherObjects();
-		else { for (Cat c : { Cat::Scenery, Cat::Crate, Cat::Machine }) mLines[(int)c].clear(); mObjectTris.clear(); mObjSpans.clear(); }
+		else { for (Cat c : { Cat::Scenery, Cat::SceneryBullet, Cat::Crate, Cat::Machine }) mLines[(int)c].clear(); mObjectTris.clear(); mObjSpans.clear(); }
 	}
 }

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <unordered_set>
 #include "H2CV_Halo2.h"
 #include "H2CV_Mem.h"
 #include "H2CV_Log.h"
@@ -543,6 +544,17 @@ namespace h2
 		c.a = { a[0], a[1], a[2] }; c.b = { bb[0], bb[1], bb[2] }; c.r = r;
 		c.ok = std::isfinite(a[0]) && std::isfinite(bb[2]);
 		return c;
+	}
+
+	// the pill's sweep threshold (u/s): hkConvexSweepShape +0x34 (its square at +0x30, a quarter of it at +0x38). Built by
+	// sub_18070DB90 as (size term) x the collision "tickrate scalar" (halo2+0x70DBFA): 5.4465 in stock MCC (Season 8+) at ANY
+	// tick rate, 0.18155 x the tick rate with Season 7 physics (10.893 at 60). 0 = not a swept shape / unreadable.
+	float entitySweepThreshold(uintptr_t entity)
+	{
+		const uintptr_t shape = q(entity + 0x18);
+		if (!okp(shape) || q(shape) != base() + 0xB6E468) return 0.f;
+		const float t = f32(shape + 0x34, 0.f);
+		return (std::isfinite(t) && t > 1.f && t < 100.f) ? t : 0.f;
 	}
 
 	Capsule entityCapsule(uintptr_t entity)
@@ -1424,6 +1436,148 @@ namespace h2
 		for (float f : m) if (!std::isfinite(f)) { out.why = "node matrix"; return false; }
 		out.xf.c[0] = { m[1], m[2], m[3] }; out.xf.c[1] = { m[4], m[5], m[6] }; out.xf.c[2] = { m[7], m[8], m[9] };
 		out.xf.t = { m[10], m[11], m[12] };
+		return true;
+	}
+
+	int sceneryPhysicsShapes(uintptr_t obj, std::vector<BakedShape>& out)
+	{
+		out.clear();
+		TagPools p;
+		if (!okp(obj) || !tagPools(p)) return -1;
+		const uintptr_t def = tagInstanceData(u16(obj, 0xFFFF));
+		const uintptr_t hlmt = def ? tagInstanceData(u16(def + 0x38, 0xFFFF)) : 0;
+		if (!hlmt) return -1;
+		const uintptr_t phmo = tagInstanceData(u16(hlmt + 0x24, 0xFFFF));
+		if (!phmo) return -1;   // no physics model: the collision model is what gets baked
+
+		int8_t state[64];
+		const int ns = objectRegionState(obj, state, 64);
+		uintptr_t rFirst = 0; uint32_t rCount = 0;
+		if (!resolveBlock(hlmt + 0x70, p, rFirst, rCount) || rCount > 32) return 0;
+		for (uint32_t r = 0; r < rCount; ++r)
+		{
+			const uintptr_t mreg = rFirst + 16 * (uintptr_t)r;
+			const int physRegion = (int8_t)u8(mreg + 5, 0xFF);
+			if (physRegion < 0) continue;
+			const int perm = (int)r < ns ? (int)state[r] : 0;   // the permutation the object shows now (no state block: 0)
+			const uintptr_t mperm = perm >= 0 ? blockElem(mreg + 0x08, perm, 8, p) : 0;
+			if (!mperm) continue;
+			const int physPerm = (int8_t)u8(mperm + 6, 0xFF);
+			if (physPerm < 0) continue;
+			const uintptr_t preg = blockElem(phmo + 0xC0, physRegion, 12, p);
+			const uintptr_t pperm = preg ? blockElem(preg + 0x04, physPerm, 12, p) : 0;
+			const uintptr_t rbl = pperm ? blockElem(pperm + 0x04, 0, 2, p) : 0;
+			const uintptr_t rb = rbl ? blockElem(phmo + 0x38, (int)(int16_t)u16(rbl, 0xFFFF), 0xA0, p) : 0;
+			if (!rb) continue;
+			if ((int16_t)u16(rb + 30, 0) <= 1) continue;   // rigid body size "default" / "tiny": the engine makes no key for it
+
+			BakedShape b;
+			b.category = 3; b.obj = obj; b.shape = q(rb + 0x38); b.region = (int)r; b.perm = perm;
+			if (!okp(b.shape)) continue;
+			int node = (int16_t)u16(rb, 0);
+			if (node < 0) node = 0;
+			float m[13];
+			if (!objectNodeMatrix(obj, (uint16_t)node, m) && !objectNodeMatrix(obj, 0, m)) continue;
+			bool fin = true;
+			for (float f : m) if (!std::isfinite(f)) fin = false;
+			if (!fin) continue;
+			// scale ignored, as the engine does for baked scenery (sub_180791C10)
+			b.xf.c[0] = { m[1], m[2], m[3] }; b.xf.c[1] = { m[4], m[5], m[6] }; b.xf.c[2] = { m[7], m[8], m[9] };
+			b.xf.t = { m[10], m[11], m[12] };
+			out.push_back(std::move(b));
+		}
+		return (int)out.size();
+	}
+
+	// ---- the level's MOPP: which scenery the PLAYER collides with -------------------------------------------------
+	// 2026-11-14: a tree drawn as collision that a player walks through (bullets hit it). The scenery table above only
+	// says a placement has a havok index. What the player collides with is the level body's shape, and that is searched
+	// through a MOPP (Havok's bounding-volume byte code) compiled with the map: a scenery piece is collided with only
+	// if its key is a terminal of that code. On Desolation 39 scenery have a havok index and the MOPP holds keys for 8.
+	//
+	// structure bsp tag +480 = data {size, offset}: 0x30-byte hkMoppCode header (code size u32 @+0x20), then the code.
+	// Byte code (Havok 2), as walked here - both branches of every split are followed, bounds are ignored:
+	//   00 return | 01-04 +3 operand bytes | 05/06/07 jump 8/16/24 (relative to the next instruction, big-endian)
+	//   09/0A key offset += 8/16-bit operand | 0B key offset = 32-bit operand
+	//   10-1C split: 3 operands, right branch = next + operand 3 | 20-22 split: 2 operands, right = next + operand 2
+	//   23-25 split with jumps: lo, hi, left u16, right u16 (both relative to the next instruction)
+	//   26-28 cut: 2 operands | 29-2B cut: 6 operands | 30-4F terminal (key offset + op - 0x30)
+	//   50/51/52/53 terminal with an 8/16/24/32-bit id | 60-63, 64-67, 68-6B property with 1 / 2 / 4 operand bytes
+	// Checked against the running game: 9420 structure-surface keys = indices 0..9419 exactly, no path left the code.
+	bool levelSceneryKeys(uintptr_t sbsp, std::vector<uint32_t>& out)
+	{
+		out.clear();
+		TagPools p;
+		if (!okp(sbsp) || !tagPools(p)) return false;
+		uintptr_t data = 0; uint32_t size = 0;
+		if (!resolveBlock(sbsp + 480, p, data, size) || size <= 0x30 || size > (64u << 20)) return false;
+		std::vector<uint8_t> raw(size);
+		if (!copy(raw.data(), data, size)) return false;
+		uint32_t codeSize = 0;
+		memcpy(&codeSize, raw.data() + 0x20, 4);
+		if (codeSize == 0) return false;
+		// ⚠ The size field is NOT a bound to trust: on Desolation it says 119259 while only 119216 bytes follow the header
+		// (data size 119264). The first build refused the MOPP for that and fell back to the scenery table - the bug that
+		// left a walk-through tree drawn as collision. Walk what is there; a path that runs off the end fails the walk.
+		const uint8_t* c = raw.data() + 0x30;
+		const uint32_t n = (std::min)(codeSize, size - 0x30);
+
+		std::vector<std::pair<uint32_t, uint32_t>> stack{ { 0u, 0u } };   // (pc, key offset)
+		std::unordered_set<uint64_t> seen;
+		bool bad = false;
+		size_t surfaces = 0, steps = 0;
+		auto be16 = [&](uint32_t a) { return (uint32_t)c[a] << 8 | c[a + 1]; };
+		auto be24 = [&](uint32_t a) { return (uint32_t)c[a] << 16 | (uint32_t)c[a + 1] << 8 | c[a + 2]; };
+		auto be32 = [&](uint32_t a) { return (uint32_t)c[a] << 24 | (uint32_t)c[a + 1] << 16 | (uint32_t)c[a + 2] << 8 | c[a + 3]; };
+		auto terminal = [&](uint32_t key) { const uint32_t cat = key >> 29; if (cat == 3 || cat == 4) out.push_back(key); else if (cat == 1) ++surfaces; };
+		while (!stack.empty() && !bad)
+		{
+			uint32_t pc = stack.back().first, off = stack.back().second;
+			stack.pop_back();
+			for (;;)
+			{
+				if (pc >= n || ++steps > 8000000) { bad = true; break; }
+				if (!seen.insert((uint64_t)pc << 32 | off).second) break;
+				const uint8_t op = c[pc];
+				const uint32_t len = op == 0x00 ? 1 : op <= 0x04 ? 4 : op == 0x05 ? 2 : op == 0x06 ? 3 : op == 0x07 ? 4 : op == 0x09 ? 2 : op == 0x0A ? 3
+					: op == 0x0B ? 5 : (op >= 0x10 && op <= 0x1C) ? 4 : (op >= 0x20 && op <= 0x22) ? 3 : (op >= 0x23 && op <= 0x25) ? 7
+					: (op >= 0x26 && op <= 0x28) ? 3 : (op >= 0x29 && op <= 0x2B) ? 7 : (op >= 0x30 && op <= 0x4F) ? 1 : op == 0x50 ? 2 : op == 0x51 ? 3
+					: op == 0x52 ? 4 : op == 0x53 ? 5 : (op >= 0x60 && op <= 0x63) ? 2 : (op >= 0x64 && op <= 0x67) ? 3 : (op >= 0x68 && op <= 0x6B) ? 5 : 0;
+				if (len == 0 || pc + len > n) { bad = true; break; }
+				const uint32_t next = pc + len;
+				if (op == 0x00) break;
+				else if (op == 0x05) pc = next + c[pc + 1];
+				else if (op == 0x06) pc = next + be16(pc + 1);
+				else if (op == 0x07) pc = next + be24(pc + 1);
+				else if (op == 0x09) { off += c[pc + 1]; pc = next; }
+				else if (op == 0x0A) { off += be16(pc + 1); pc = next; }
+				else if (op == 0x0B) { off = be32(pc + 1); pc = next; }
+				else if (op >= 0x10 && op <= 0x1C) { stack.push_back({ next + c[pc + 3], off }); pc = next; }
+				else if (op >= 0x20 && op <= 0x22) { stack.push_back({ next + c[pc + 2], off }); pc = next; }
+				else if (op >= 0x23 && op <= 0x25) { stack.push_back({ next + be16(pc + 5), off }); pc = next + be16(pc + 3); }
+				else if (op >= 0x30 && op <= 0x4F) { terminal(off + (op - 0x30)); break; }
+				else if (op == 0x50) { terminal(off + c[pc + 1]); break; }
+				else if (op == 0x51) { terminal(off + be16(pc + 1)); break; }
+				else if (op == 0x52) { terminal(off + be24(pc + 1)); break; }
+				else if (op == 0x53) { terminal(off + be32(pc + 1)); break; }
+				else pc = next;   // 01-04, cuts, properties: nothing to do here
+			}
+		}
+		if (bad || surfaces == 0) { out.clear(); return false; }   // not the code this walker knows: the caller falls back
+		std::sort(out.begin(), out.end());
+		out.erase(std::unique(out.begin(), out.end()), out.end());
+		return true;
+	}
+
+	bool sceneryHavokIndices(std::vector<std::pair<uint32_t, uint16_t>>& out)
+	{
+		out.clear();
+		const uintptr_t table = q(base() + rva::SCENERY_TABLE);
+		if (!okp(table)) return false;
+		uint32_t buf[2000];
+		if (!copy(buf, table, sizeof(buf))) return false;
+		for (uint32_t i = 0; i < 2000; ++i) if (buf[i] != 0xFFFFFFFFu) out.push_back({ buf[i], (uint16_t)i });
+		std::sort(out.begin(), out.end());
 		return true;
 	}
 }

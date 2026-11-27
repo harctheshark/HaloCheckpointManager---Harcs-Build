@@ -169,6 +169,9 @@ namespace h2
 	struct Capsule { Vec3 a{}, b{}; float r = 0; bool ok = false; };
 	// world-space capsule of an entity whose shape is (sweep-wrapped) hkCapsuleShape, at Havok's current pose
 	Capsule entityCapsule(uintptr_t entity);
+	// the pill's sweep threshold in u/s, from its swept shape (+0x34): 5.4465 in stock MCC at any tick rate (Season 8+ physics),
+	// the tick-matched value with Season 7 physics. 0 when it cannot be read
+	float entitySweepThreshold(uintptr_t entity);
 
 	// hkRigidMotion state of a dynamic entity (all read in ONE copy of motion+0x30..+0xE0)
 	//   +0x30 local centre of mass, +0x50 v, +0x70 PREV.xyz/.w, +0x80 CUR.xyz (centre of mass) / time (+0x8C),
@@ -347,8 +350,23 @@ namespace h2
 	// Baked scenery in the level shape: a level-welder child of key category 3 (physics model rigid body) or 4 (collision
 	// model) -> the shape the engine wraps in a transform for it, and that transform (object node matrix, scale ignored, as
 	// sub_180791C10 does). Ported from sub_180793760.
-	struct BakedShape { uintptr_t shape = 0, obj = 0; uint32_t datum = 0xFFFFFFFF; uint8_t type = 0xFF; int category = 0; Xf xf; std::string why; };
+	struct BakedShape { uintptr_t shape = 0, obj = 0; uint32_t datum = 0xFFFFFFFF; uint8_t type = 0xFF; int category = 0; Xf xf; std::string why; int region = -1, perm = -1; };
 	bool bakedSceneryShape(uint32_t key, BakedShape& out);
+	// What a baked scenery object's PLAYER collision is made of when its model has a PHYSICS MODEL (2026-11-14, a tree whose
+	// collision model was drawn while the player stood on something else). sub_180793C40 enumerates a scenery's level keys
+	// from the physics model ALONE when the model has one: a model region with a physics region, a model permutation with a
+	// physics permutation, that permutation's first rigid body, and only if the body's size (i16 +30) is above "tiny" (> 1).
+	// The collision model is then never baked (it still stops bullets). Only a model WITHOUT a physics model is baked from
+	// its collision model.
+	// Returns -1 when the object's model has no physics model (use the collision model); otherwise the number of shapes
+	// in `out` for the object's CURRENT permutations - 0 means the scenery has no player collision at all.
+	int sceneryPhysicsShapes(uintptr_t obj, std::vector<BakedShape>& out);   // each shape carries its model region / permutation
+	// The scenery keys (category 3 = physics model, 4 = collision model; key = cat << 29 | model permutation << 21 |
+	// model region << 16 | havok index - 1) that are terminals of the level's MOPP = the scenery pieces the PLAYER collides
+	// with. Sorted. false = the MOPP could not be read / walked (then nothing is known; use the scenery table).
+	bool levelSceneryKeys(uintptr_t sbsp, std::vector<uint32_t>& out);
+	// (object datum, havok index - 1) of every scenery in the scenery table, sorted by datum
+	bool sceneryHavokIndices(std::vector<std::pair<uint32_t, uint16_t>>& out);
 	// the datums of the scenery objects baked into the structure bsp's Havok body (2026-11-03). sub_180794440 fills the table at
 	// SCENERY_TABLE on map load: every live scenery object whose scenario placement (92-byte entry) has a nonzero havok index
 	// (u16 +88) gets table[index - 1] = its datum. Scenery has no Havok body of its own, so scenery NOT in this table has no

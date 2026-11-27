@@ -3,6 +3,7 @@
 #include "ModuleHook.h"
 #include "MidhookFlagInterpreter.h"
 #include "imgui.h"   // HCE fallback uses ImGui's software cursor
+#include "MetroInput.h"  // Metro Redux: hand the mouse back to Windows while the cursor is free
 
 
 
@@ -71,6 +72,21 @@ public:
 		PLOG_INFO << "FreeCursor (HCE) service is turning " << (requested ? "ON!" : "OFF!");
 		if (ImGui::GetCurrentContext() != nullptr)
 			ImGui::GetIO().MouseDrawCursor = requested;
+	}
+};
+
+// Metro Redux (2026-11-25): HCM's own cursor, AND the game lets go of the mouse (DirectInput unacquired, its SetCursorPos
+// re-centring ignored) so Windows moves the cursor and HCM's window gets the clicks - see MetroInput.h.
+class FreeCursorMetroImpl : public TokenSharedRequestProvider
+{
+public:
+	FreeCursorMetroImpl() { PLOG_INFO << "FreeCursor: using the Metro Redux implementation (DirectInput released)"; }
+	virtual void updateService() override
+	{
+		const bool requested = serviceIsRequested();
+		PLOG_INFO << "FreeCursor (Metro) service is turning " << (requested ? "ON!" : "OFF!");
+		if (ImGui::GetCurrentContext() != nullptr) ImGui::GetIO().MouseDrawCursor = requested;
+		MetroInput::setMouseReleased(requested);
 	}
 };
 
@@ -190,6 +206,17 @@ bool hostIsHalo5Forge()
 	return boost::iequals(exe, "halo5forge.exe");
 }
 
+// true when we're inside metro.exe (Metro 2033 Redux / Last Light Redux, 2026-11-24)
+bool hostIsMetroRedux()
+{
+	char path[MAX_PATH]{};
+	if (!GetModuleFileNameA(GetModuleHandleA(NULL), path, sizeof(path))) return false;
+	std::string exe(path);
+	auto slash = exe.find_last_of("\\/");
+	if (slash != std::string::npos) exe = exe.substr(slash + 1);
+	return boost::iequals(exe, "metro.exe");
+}
+
 // true when we're inside HaloCampaignEvolved.exe rather than MCC.
 bool hostIsCampaignEvolved()
 {
@@ -209,6 +236,8 @@ static std::shared_ptr<TokenSharedRequestProvider> makeCursorImpl(std::shared_pt
 {
 	if (hostIsHalo5Forge())
 		return std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<FreeCursorH5Impl>(ptr));
+	if (hostIsMetroRedux())
+		return std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<FreeCursorMetroImpl>());
 	if (hostIsCampaignEvolved())
 		return std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<FreeCursorHCEImpl>());
 	return std::static_pointer_cast<TokenSharedRequestProvider>(std::make_shared<FreeMCCCursorImpl>(ptr));

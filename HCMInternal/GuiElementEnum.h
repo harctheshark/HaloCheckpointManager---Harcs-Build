@@ -49,6 +49,10 @@
 #define ALL_SUPPORTED_GAMES_AND_HALOCER_AND_H2MP Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER, Halo2MP
 #define ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5_AND_H2MP Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, HaloCER, Halo5Forge, Halo2MP
 #define ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, NoGame, HaloCER, Halo2MP
+// Metro Redux (2026-11-24): the game-agnostic Control rows that work in metro.exe too (not Pause - no Metro pause yet)
+#define ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP_AND_METRO Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, NoGame, HaloCER, Halo2MP, MetroRedux
+#define ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_METRO Halo1, Halo2, Halo3, Halo3ODST, HaloReach, Halo4, NoGame, HaloCER, MetroRedux
+#define METRO_ONLY MetroRedux
 
 // interpolator macro for freecamera
 #define defFreeCameraInterpolator(name)\
@@ -87,20 +91,20 @@
 //   The trigger overlay does NOT qualify: OptionalCheatEnum::TriggerOverlay is MCC-only code, so HaloCER gets
 //   parallel hceTriggerOverlay* elements in sequence 3 driving the SAME triggerOverlay* settings.
 #define RELEASEGUIELEMENTS_ANDSUPPORTEDGAMES1 \
-((mapLauncherGUI, (NoGame)))\
+((mapLauncherGUI, (ALL_GAMES_AND_MAINMENU)))\
 ((presetsHeadingGUI, (ALL_GAMES_AND_MAINMENU)))\
 	((presetSaveButton, (ALL_GAMES_AND_MAINMENU)))\
 	((presetLoadButton, (ALL_GAMES_AND_MAINMENU)))\
-((controlHeadingGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
+((controlHeadingGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP_AND_METRO)))\
 	/* HaloCER: NOT cosmetic. hideWatermarkHideMessages defaults true, so hiding the watermark also hides the
 	   message log - without this rebind row a user can erase every visible trace of HCM and have nothing on
 	   screen telling them which key brings it back. (The key itself works on CER already.) */\
-	((toggleGUIHotkeyGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
+	((toggleGUIHotkeyGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP_AND_METRO)))\
 	((messagesFontSize, (ALL_GAMES_AND_MAINMENU)))\
 	((messagesFontColor, (ALL_GAMES_AND_MAINMENU)))\
-	((GUISettingsSubheading, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
-		((GUIShowingFreesCursor, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
-		((GUIShowingBlocksInput, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+	((GUISettingsSubheading, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_METRO)))\
+		((GUIShowingFreesCursor, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_METRO)))\
+		((GUIShowingBlocksInput, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_METRO)))\
 		((GUIShowingPausesGame, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((togglePauseGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 	((togglePauseSettingsSubheading, (ALL_GAMES_AND_MAINMENU)))\
@@ -108,15 +112,15 @@
 		((pauseAlsoFreesCursorGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 		((pauseAlsoBlocksInputGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
 		((pauseAlsoFreezesEffectsGUI, (Halo3, Halo3ODST)))\
-	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
+	((showGUIFailuresGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP_AND_METRO)))\
 	/* HaloCER: the bypass works there now - OBS picks d3d11/d3d10/d3d12_capture behind ONE shared Present hook,
 	   so D3D12Hook::setOBSBypass does the same job against Present and Present1. The backend was wired before
 	   this row was widened, so the feature existed with no way to switch it on. */\
-	((OBSBypassToggleGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+	((OBSBypassToggleGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_METRO)))\
 	/* The suppression itself (HCMInternalGUI.cpp) is backend-agnostic and already works on the D3D12 path;
 	   only these rows were gated off. */\
-	((HideWatermarkGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
-	((HideWatermarkIncludeMessagesGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER)))\
+	((HideWatermarkGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_METRO)))\
+	((HideWatermarkIncludeMessagesGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_METRO)))\
 ((saveManagementHeadingGUI, (ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5_AND_H2MP)))\
 	((forceCheckpointGUI, (ALL_SUPPORTED_GAMES_AND_H2MP)))\
 	((hceForceCheckpointGUI, (HALOCER_ONLY)))\
@@ -773,12 +777,21 @@
 	((chaseCameraToggleGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	((chaseCameraNoClipGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	((freeCameraCollisionRadiusGUI, (Halo2)))\
+	((freeCameraUserInputBoostBinding, (FREE_CAMERA_SUPPORT)))\
+	((freeCameraBoostFactor, (FREE_CAMERA_SUPPORT)))\
+	((freeCameraBoostAcceleration, (FREE_CAMERA_SUPPORT)))\
+	((collisionViewerShowSceneryBulletGUI, (Halo2)))\
+	((noInvisibleCollisionGUI, (Halo2)))\
+	((collisionViewerSuperbounceMonsterFinderGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+	((collisionViewerSuperbounceMonsterOnlyGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+	((collisionViewerSuperbounceMonsterRingsGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	((chaseCameraFovGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	((chaseCameraHeightGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 	/* Poorboy's Mods (Halo2Physics.cpp, GUIH2Physics.h): the last top-level section of the overlay */\
-	((halo2PhysicsHeadingGUI, (Halo3, Halo3ODST, HaloReach)))\
+	((halo2PhysicsHeadingGUI, (Halo3, Halo3ODST, HaloReach, Halo4)))\
 		((h2pStatusGUI, (Halo3, Halo3ODST, HaloReach)))\
 		((h2pPhysicsToggleGUI, (Halo3, Halo3ODST, HaloReach)))\
+		((h4pPhysicsToggleGUI, (Halo4)))\
 		((h2pArmGUI, (Halo3, Halo3ODST, HaloReach)))\
 		((h2pFlyToggleGUI, (Halo3, Halo3ODST, HaloReach)))\
 		((h2pFlySpeedGUI, (Halo3, Halo3ODST, HaloReach)))\
@@ -820,7 +833,7 @@
 			((collisionViewerTimGUI, (Halo2, Halo3, Halo3ODST)))\
 			((collisionViewerTimLabelsGUI, (Halo2, Halo3, Halo3ODST)))\
 			((collisionViewerPillsGUI, (Halo2, Halo3, Halo3ODST)))\
-			((collisionViewerInfoPanelGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerInfoPanelGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 			((collisionViewerGhostGUI, (Halo2, Halo3, Halo3ODST)))\
 			((collisionViewerGhostBelievedGUI, (Halo2, Halo3, Halo3ODST)))\
 			((collisionViewerGhostBelievedObjectsGUI, (Halo2)))\
@@ -861,32 +874,32 @@
 			((collisionViewerGhostLoggingHeadingGUI, (Halo2, Halo3, Halo3ODST)))\
 			((collisionViewerGhostColorsHeadingGUI, (Halo2, Halo3, Halo3ODST)))\
 			((collisionViewerKillVolumesGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbounceGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbounceSeamTextGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbounceSpeedGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbounceDebounceGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbounceSeamTextGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbounceSpeedGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbounceDebounceGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 			((collisionViewerSuperbounceObjectsGUI, (Halo2, Halo3, Halo3ODST)))\
-			((collisionViewerSuperbounceSeamsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbounceSpotsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbouncePredictedGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbouncePredictedRangeGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbouncePredictedMaxApproachGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbouncePredictedMonstersGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbouncePredictedDreadnoughtsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbouncePredictedHeightsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbouncePredictedHideNarrowGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSpotScanRadiusGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSpotScanSlowGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSpotScanCurrentTickGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSpotScanButtonGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerRecipeButtonGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerRecipeRedoButtonGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceSeamsGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbounceSpotsGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbouncePredictedGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbouncePredictedRangeGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbouncePredictedMaxApproachGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbouncePredictedMonstersGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbouncePredictedDreadnoughtsGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbouncePredictedHeightsGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbouncePredictedHideNarrowGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSpotScanRadiusGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSpotScanSlowGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSpotScanCurrentTickGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSpotScanButtonGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerRecipeButtonGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerRecipeRedoButtonGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 			((collisionViewerSuperbounceRecordGUI, (Halo2)))\
-			((collisionViewerSuperbounceHighlightGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceHighlightGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 			((collisionViewerSuperbounceKeepChargeGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbounceForceChargeGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerSuperbounceSettingsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
-			((collisionViewerInfoSuperbounceGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
+			((collisionViewerSuperbounceForceChargeGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerSuperbounceSettingsGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
+			((collisionViewerInfoSuperbounceGUI, (Halo2, Halo3, Halo3ODST, HaloReach, Halo4)))\
 			((oobBarSettingsGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
 			((oobBarAnchorCornerGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
 			((oobBarScreenOffsetGUI, (Halo2, Halo3, Halo3ODST, HaloReach)))\
@@ -977,8 +990,76 @@
 	((havokSleepCountdownToggleGUI, (Halo2)))\
 	((havokSleepCountdownSimpleGUI, (Halo2)))\
 	((havokSleepAutoJumpGUI, (Halo2)))\
-	((classicLayoutToggleGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
-	((focusSearchHotkeyGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))
+	((uncapDynamicLightsToggle, (Halo2)))\
+	((uncapDynamicLightsMaxGUI, (Halo2)))\
+	((uncapDynamicLightsFadeFloorGUI, (Halo2)))\
+	((uncapDropShadowsMaxGUI, (Halo2)))\
+	((classicLayoutToggleGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP_AND_METRO)))\
+	((focusSearchHotkeyGUI, (ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP_AND_METRO)))\
+	((freeCameraZoomHotkeyGUI, (FREE_CAMERA_SUPPORT)))\
+	((freeCameraZoomAmountGUI, (FREE_CAMERA_SUPPORT)))\
+	((smaaToggleGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((postAAMethodGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((smaaQualityGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((h2SupersamplingGUI, (Halo2)))\
+	((antiAliasingHeadingGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((cmaaQualityGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((cmaaShowEdgesGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((bounceModeHeadingGUI, (Halo2)))\
+	((bounceModeGUI, (Halo2)))\
+	((season7BounceModeGUI, (Halo2)))\
+	((infiniteAmmoGrenadesGUI, (Halo2)))\
+	((h2PlayerModelSwapGUI, (Halo2)))\
+	((h2PlayerModelSwapStageGUI, (Halo2)))\
+	((h2EraseAllEntitiesGUI, (Halo2)))\
+	((h2BlockAISpawningGUI, (Halo2)))\
+	((metroHeadingGUI, (METRO_ONLY)))\
+	((metroDisplayInfoToggleGUI, (METRO_ONLY)))\
+	((metroInvincibilityGUI, (METRO_ONLY)))\
+	((metroInfiniteAmmoGUI, (METRO_ONLY)))\
+	((metroCheckpointGUI, (METRO_ONLY)))\
+	((metroRevertGUI, (METRO_ONLY)))\
+	((metroUseGameSavesGUI, (METRO_ONLY)))\
+	((metroAcrophobiaGUI, (METRO_ONLY)))\
+	((metroKillScriptsGUI, (METRO_ONLY)))\
+	((metroGameSpeedGUI, (METRO_ONLY)))\
+	((metroGameSpeedAmountGUI, (METRO_ONLY)))\
+	((metroFirstPersonBodyGUI, (METRO_ONLY)))\
+	((metroFirstPersonBodyShowArmsGUI, (METRO_ONLY)))\
+	((metroFirstPersonBodyHideGearGUI, (METRO_ONLY)))\
+	((metroFirstPersonBodyBackGUI, (METRO_ONLY)))\
+	((metroCollisionViewerGUI, (METRO_ONLY)))\
+	((metroCollisionViewerRangeGUI, (METRO_ONLY)))\
+	((metroCollisionViewerBudgetGUI, (METRO_ONLY)))\
+	((metroCollisionViewerHideFlatEdgesGUI, (METRO_ONLY)))\
+	((metroForceTeleportGUI, (METRO_ONLY)))\
+	((metroForceTeleportSettingsSubheading, (METRO_ONLY)))\
+		((metroForceTeleportSettingsRadioGroup, (METRO_ONLY)))\
+		((metroForceTeleportForward, (METRO_ONLY)))\
+			((metroForceTeleportRelativeVec3, (METRO_ONLY)))\
+			((metroForceTeleportForwardIgnoreZ, (METRO_ONLY)))\
+		((metroForceTeleportManual, (METRO_ONLY)))\
+			((metroForceTeleportAbsoluteVec3, (METRO_ONLY)))\
+			((metroForceTeleportAbsoluteFillCurrent, (METRO_ONLY)))\
+			((metroForceTeleportAbsoluteCopy, (METRO_ONLY)))\
+			((metroForceTeleportAbsolutePaste, (METRO_ONLY)))\
+	((metroForceLaunchGUI, (METRO_ONLY)))\
+	((metroForceLaunchSettingsSubheading, (METRO_ONLY)))\
+		((metroForceLaunchSettingsRadioGroup, (METRO_ONLY)))\
+		((metroForceLaunchForward, (METRO_ONLY)))\
+			((metroForceLaunchRelativeVec3, (METRO_ONLY)))\
+			((metroForceLaunchForwardIgnoreZ, (METRO_ONLY)))\
+		((metroForceLaunchManual, (METRO_ONLY)))\
+			((metroForceLaunchAbsoluteVec3, (METRO_ONLY)))\
+	((h2TAABlendGUI, (Halo2)))\
+	((h2TAAMotionBlendGUI, (Halo2)))\
+	((h2TAAObjectMotionGUI, (Halo2)))\
+	((h2TAADebugGUI, (Halo2)))\
+	((smaaEdgeDetectionGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((smaaThresholdGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((smaaUseDepthGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((smaaDepthStrengthGUI, (ALL_GAMES_AND_MAINMENU)))\
+	((smaaShowEdgesGUI, (ALL_GAMES_AND_MAINMENU)))
 
 #define DEBUGGUIELEMENTS_ANDSUPPORTEDGAMES \
 ((HCMDebugHeadingGUI, (ALL_SUPPORTED_GAMES)))\

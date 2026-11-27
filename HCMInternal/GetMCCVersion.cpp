@@ -51,6 +51,16 @@ VersionInfo GetMCCVersion::evalVersion()
         return outCurrentMCCVersion;
     }
 
+    // Metro Redux: synthetic key 0.0.0.2 (as HaloCER / Halo 5 - the exe's own version resource is 1.0.0.4 for BOTH games and
+    // says nothing about which build the RVAs target; signature anchors are the update check). ⚠ Not 0.0.0.0 / 0.0.0.1.
+    if (evalVersionType() == MCCProcessType::MetroRedux)
+    {
+        outCurrentMCCVersion.major = 0; outCurrentMCCVersion.minor = 0;
+        outCurrentMCCVersion.build = 0; outCurrentMCCVersion.revision = 2;
+        PLOG_DEBUG << "Metro Redux synthetic version: " << outCurrentMCCVersion;
+        return outCurrentMCCVersion;
+    }
+
     if (evalVersionType() == MCCProcessType::WinStore)
     {
         // hard coded
@@ -124,6 +134,12 @@ MCCProcessType GetMCCVersion::evalVersionType()
         PLOG_DEBUG << "setting process type to Halo5Forge";
         return MCCProcessType::Halo5Forge;
     }
+    // Metro 2033 Redux / Last Light Redux: both ship metro.exe (the injector already checked the folder).
+    else if (boost::iequals(mccName, "metro.exe"))
+    {
+        PLOG_DEBUG << "setting process type to MetroRedux";
+        return MCCProcessType::MetroRedux;
+    }
     else
     {
         throw HCMInitException(std::format("Host process had an unrecognised name!: {}", mccName));
@@ -138,6 +154,7 @@ std::string GetMCCVersion::processToString(MCCProcessType in)
     case MCCProcessType::WinStore:        return "WinStore";
     case MCCProcessType::CampaignEvolved: return "CampaignEvolved";
     case MCCProcessType::Halo5Forge:      return "Halo5Forge";
+    case MCCProcessType::MetroRedux:      return "MetroRedux";
     default:                              return "Unknown";
     }
 }

@@ -32,6 +32,8 @@ freeCameraGameInputDisable,\
 freeCameraCameraInputDisable,\
 freeCameraUserInputCameraIncreaseTranslationSpeedHotkey,\
 freeCameraUserInputCameraDecreaseTranslationSpeedHotkey,\
+freeCameraZoomHotkey,\
+smaaToggleHotkey,\
 freeCameraUserInputCameraSetPosition,\
 freeCameraUserInputCameraSetRotation,\
 freeCameraUserInputCameraMaintainVelocity, \
@@ -282,6 +284,7 @@ cameraRollLeftBinding,\
 cameraRollRightBinding,\
 cameraFOVIncreaseBinding,\
 cameraFOVDecreaseBinding,\
+cameraBoostBinding,\
 hceCameraRollLeftBinding,\
 hceCameraRollRightBinding,\
 hceFieldOfViewIncreaseBinding,\

@@ -161,11 +161,13 @@ namespace
 			{ "hceFreecamToggleGUI", "noclip free camera fly cam spectate" },
 			{ "hceFreecamNoclipGUI", "fly through walls" },
 			{ "chaseCameraToggleGUI", "third person 3rd" },
+			{ "h4pPhysicsToggleGUI", "halo 2 physics superbounce bounce h2 movement" },
 			{ "chaseCameraNoClipGUI", "noclip" },
 			{ "hideHUDToggle", "hud interface clean" },
 			{ "infiniteAmmoGUI", "unlimited ammo" },
 			{ "bottomlessClipGUI", "no reload unlimited ammo" },
 			{ "oneShotKillGUI", "instakill ohk one hit damage" },
+			{ "noInvisibleCollisionGUI", "invisible walls barriers playerclip clip collision" },
 			{ "forceCheckpointGUI", "save cp" },
 			{ "hceForceCheckpointGUI", "save cp" },
 			{ "forceRevertGUI", "load reload cp" },
@@ -192,6 +194,30 @@ namespace
 			{ "focusSearchHotkeyGUI", "find command palette" },
 			{ "replayRecord30GUI", "tas input recording" },
 			{ "replayPlayGUI", "tas input playback" },
+			{ "smaaToggleGUI", "anti aliasing antialiasing aa jaggies reshade" },
+			{ "smaaQualityGUI", "anti aliasing antialiasing aa preset" },
+			{ "h2SupersamplingGUI", "supersampling ssaa dsr dldsr anti aliasing antialiasing aa render scale resolution" },
+			{ "h2PlayerModelSwapGUI", "player model swap biped character spartan elite chief arbiter dervish body tag injection" },
+			{ "h2PlayerModelSwapStageGUI", "player model swap test stage" },
+			{ "h2EraseAllEntitiesGUI","ai_erase_all erase delete kill remove all ai enemies npcs bodies corpses vehicles clear" },
+			{ "h2BlockAISpawningGUI", "stop block disable ai spawning spawns enemies npcs ai_place" },
+			{ "cmaaQualityGUI", "anti aliasing antialiasing aa cmaa cmaa2 preset" },
+			{ "cmaaShowEdgesGUI", "anti aliasing antialiasing aa cmaa cmaa2 debug edges" },
+			{ "bounceModeGUI", "bounce superbounce preset setup 30 tick frags taa" },
+			{ "season7BounceModeGUI", "bounce superbounce preset setup season 7 60 tick scalar" },
+			{ "infiniteAmmoGrenadesGUI", "infinite grenades frags plasmas only grenade type" },
+			{ "h2TAABlendGUI", "taa temporal anti aliasing antialiasing aa blend ghosting" },
+			{ "h2TAAMotionBlendGUI", "taa temporal anti aliasing antialiasing aa motion weight speed ghosting trails blur history" },
+			{ "h2TAADebugGUI", "taa temporal anti aliasing antialiasing aa debug motion vectors" },
+			{ "h2TAAObjectMotionGUI", "taa temporal anti aliasing antialiasing aa object motion ghosting trails velocity" },
+			{ "smaaEdgeDetectionGUI", "anti aliasing antialiasing aa luma colour color edges" },
+			{ "postAAMethodGUI", "anti aliasing antialiasing aa cmaa cmaa2 smaa taa temporal method" },
+			{ "smaaThresholdGUI", "anti aliasing antialiasing aa sensitivity threshold edges" },
+			{ "smaaShowEdgesGUI", "anti aliasing antialiasing aa debug edges sensitivity" },
+			{ "smaaUseDepthGUI", "anti aliasing antialiasing aa depth predication texture" },
+			{ "smaaDepthStrengthGUI", "anti aliasing antialiasing aa depth predication texture strength" },
+			{ "freeCameraZoomHotkeyGUI", "zoom magnify theater binoculars" },
+			{ "freeCameraZoomAmountGUI", "zoom magnification" },
 		};
 		return table;
 	}
@@ -222,7 +248,7 @@ namespace
 			{ "collisionViewerToggleGUI",
 				{
 					{ "Geometry", { "collisionViewerOcclusionGUI", "collisionViewerShowBspGUI", "collisionViewerShowInstancedGUI", "collisionViewerShowInvisibleGUI",
-						"collisionViewerShowBreakableGUI", "collisionViewerShowSceneryGUI", "collisionViewerShowCratesGUI", "collisionViewerShowMachinesGUI",
+						"collisionViewerShowBreakableGUI", "collisionViewerShowSceneryGUI", "collisionViewerShowSceneryBulletGUI", "collisionViewerShowCratesGUI", "collisionViewerShowMachinesGUI",
 						"collisionViewerShowKillTriggersGUI", "collisionViewerShowSoftCeilingsGUI", "collisionViewerFillsGUI", "collisionViewerTimGUI",
 						"collisionViewerTimLabelsGUI", "collisionViewerPillsGUI", "collisionViewerCreasesGUI", "collisionViewerCreaseFacesGUI" } },
 					{ "Ghost", { "collisionViewerGhostGUI", "collisionViewerGhostJumpGUI", "collisionViewerGhostVehiclesGUI", "collisionViewerGhostHaloGUI" } },
@@ -298,6 +324,9 @@ public:
 	std::vector<std::string> mFavourites, mRecents;      // GUIElementEnum names
 	std::vector<std::string> mPendingFavouriteToggles;   // applied at the end of the frame (never mid-iteration)
 
+	// Row alignment (2026-11-18): does this widget start with the hotkey column? Seen when it is drawn (renderLiveRow).
+	std::unordered_map<IGUIElement*, bool> mLeadsWithHotkey;
+
 	// ------------------------------------------------------------------------------------------- ui state
 	enum Tab { TabFavourites = 0, TabBrowse = 1 };
 	int mTab = TabBrowse;
@@ -305,6 +334,7 @@ public:
 	// Every widget object drawn so far this frame. A widget keeps its own measured height, so drawing the same one in
 	// two places makes the two fight over it (overlapping rows, empty boxes, the scroll position jumping).
 	std::unordered_set<const IGUIElement*> mDrawn;
+	bool mToggleKeyDown = false;   // the window toggle hotkey went down this frame: its character is not typed
 	int mPendingTab = -1;
 	int mBrowseCategory = 0;      // -1 = All
 	bool mShowActive = false;
@@ -408,6 +438,7 @@ public:
 	void rebuildIndex(GameState game)
 	{
 		mEntries.clear(); mCategories.clear(); mEntryByName.clear(); mEntryByNode.clear();
+		mLeadsWithHotkey.clear();
 		mHits.clear(); mLastQuery.clear(); mExpandedEntry = -1; mSelected = 0;
 
 		const auto& tree = mStore->getElementTree(game);
@@ -596,6 +627,8 @@ public:
 	static int inputCallback(ImGuiInputTextCallbackData* data)
 	{
 		auto* self = static_cast<Impl*>(data->UserData);
+		// the key that closes the HCM window is not text (it fires from a text box; see HotkeyManager::pollInput)
+		if (data->EventFlag == ImGuiInputTextFlags_CallbackCharFilter) return self->mToggleKeyDown ? 1 : 0;
 		if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory)
 		{
 			if (data->EventKey == ImGuiKey_UpArrow) self->mKeyNav = -1;
@@ -646,7 +679,8 @@ public:
 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.f, 5.f));
 		ImGui::SetNextItemWidth(-FLT_MIN);
 		const ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCompletion
-			| ImGuiInputTextFlags_CallbackHistory | ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_EscapeClearsAll;
+			| ImGuiInputTextFlags_CallbackHistory | ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_CallbackCharFilter | ImGuiInputTextFlags_EscapeClearsAll;
+		mToggleKeyDown = mHotkeyRenderer->isPressedNow(RebindableHotkeyEnum::toggleGUI);
 		const bool enterPressed = ImGui::InputTextWithHint("##hcmSearch", hint.c_str(), &mQuery, flags, &Impl::inputCallback, this);
 		ImGui::PopStyleVar();
 		const ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
@@ -701,7 +735,11 @@ public:
 		// requests the HaloScript console takes while it is open (CommandConsoleManager).
 		if (mSearchActive || mRefocusSearch || keepKeyboardThisFrame)
 		{
-			if (!mHotkeyDisableToken && mControl && mControl->hotkeyDisabler)
+			// Hotkeys: while the box is ACTIVE, HotkeyManager already holds them off because text is being typed - and lets
+			// the window toggle through, which an explicit request here would block. The request is only for the frames in
+			// which focus is on its way to the box (hotkey focus, Enter re-focus) and no text input is active yet.
+			if (mSearchActive) mHotkeyDisableToken.reset();
+			else if (!mHotkeyDisableToken && mControl && mControl->hotkeyDisabler)
 				mHotkeyDisableToken = mControl->hotkeyDisabler->makeScopedRequest();
 			if (!mBlockInputToken && mControl && mControl->blockGameInputService.has_value())
 			{
@@ -920,9 +958,23 @@ public:
 			ImGui::PopID();
 			return;
 		}
+		// ALIGNMENT (2026-11-18, user: "some options aren't indented so they appear to the left, others are"): a widget that
+		// starts with the hotkey column - a binding, or the blank space a widget without one leaves there - put its control
+		// further right than a widget that draws no such column at all (FP Scale Fix, One Shot Kill, No invisible walls, Skull
+		// Toggles, the preset buttons, Far Clip Distance...), so the list read as two ragged columns. Now every row's control
+		// starts in the same column: a widget that does not draw the hotkey column gets the same blank space in front.
+		// Which kind a widget is, is seen each time it is drawn (was its first hotkey call at the start of its row?), so a
+		// newly shown row can sit one frame in the old place.
+		IGUIElement* const el = e.node->element.get();
+		const auto known = mLeadsWithHotkey.find(el);
+		if (known != mLeadsWithHotkey.end() && !known->second) { mHotkeyRenderer->renderHotkey(std::nullopt); ImGui::SameLine(); }
+		mHotkeyRenderer->probeReset();
+		const ImVec2 rowStart = ImGui::GetCursorScreenPos();   // screen: see HotkeyRenderer::probeLedAt
 		markDrawn(*e.node);
-		e.node->element->render(*mHotkeyRenderer);
-		if (ImGui::GetCursorPosY() <= y0 + 0.5f) ImGui::NewLine();
+		el->render(*mHotkeyRenderer);
+		const bool drew = ImGui::GetCursorPosY() > y0 + 0.5f;
+		if (drew) mLeadsWithHotkey[el] = mHotkeyRenderer->probeLedAt(rowStart);
+		else ImGui::NewLine();
 		if (withCompanions)
 			for (const auto* c : e.companions) renderElement(*c, 15.f + ImGui::GetStyle().ItemSpacing.x);
 		ImGui::PopID();
@@ -1083,11 +1135,15 @@ public:
 			}
 			std::erase_if(favourites, [&](int i) { return inside.contains(mEntries[i].node); });
 		}
-		// grouped by where each one lives; order inside a group is the order they were starred
+		// grouped by where each one lives; inside a group in the MENU's order (2026-11-19, user: related options - an
+		// option and its settings, the uncaps - belong together; it used to be the order they were starred in, so an option
+		// starred later sat at the bottom, away from its siblings). mEntries is built walking the menu tree in order.
 		std::stable_sort(favourites.begin(), favourites.end(), [this](int a, int b)
 			{
 				const Entry& x = mEntries[a]; const Entry& y = mEntries[b];
-				return x.category != y.category ? x.category < y.category : x.path < y.path;
+				if (x.category != y.category) return x.category < y.category;
+				if (x.path != y.path) return x.path < y.path;
+				return a < b;
 			});
 		const std::string* lastPath = nullptr;
 		for (const int i : favourites)

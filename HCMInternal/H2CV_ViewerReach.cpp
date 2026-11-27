@@ -14,6 +14,7 @@
 //  * Only the BSPs the game has loaded are drawn (currentBSPSet).
 #include "H2CV_Viewer.h"
 #include "H2CV_Reach.h"
+#include "H2CV_Halo4.h"
 #include "H2CV_Engine.h"
 #include "H2CV_Log.h"
 #include "H2CV_ViewerUtil.h"
@@ -632,6 +633,28 @@ namespace h2cv
 			for (const auto& l : mSb.panel) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(l.rgba), "%s", l.text.c_str());
 		}
 		ImGui::End();
+	}
+
+	// Halo 4 (2026-11-21): the bounce viewer only - the structure read from tag memory (H2CV_Halo4.h) on the Reach bounce worker,
+	// Halo 4's own player, drawn here at Present with Halo 4's camera record, unoccluded (no Collision Viewer, no game depth).
+	void Viewer::renderH4()
+	{
+		const bool gameOk = h4::base() && h4::buildOk();
+		const h2::Camera cam = gameOk ? h4::readCamera() : h2::Camera{};   // the render camera record (its own vertical fov)
+		static bool s_logged = false;
+		if (!s_logged && gameOk) { s_logged = true; LOGF("Halo 4 bounce viewer: halo4.dll ok, camera %s (vfov %.3f), map '%s'", cam.ok ? "read" : "NOT read", cam.vfov, h4::mapName().c_str()); }
+		if (gameOk && superbounceActive() && cam.ok)
+		{
+			mLabelScaleX = mLabelScaleY = 1.f;
+			if (mR.begin(mCtx, mRtv, mW, mH, cam.pos, cam.fwd, cam.up, cam.vfov, 0.01f))
+			{
+				drawSuperbounce();
+				mR.end();
+			}
+		}
+		else { mSbLabels.clear(); mSb = sb::Output{}; }
+		drawSuperbounceOverlay(ImGui::GetBackgroundDrawList(), gameOk);
+		drawReachBouncePanel();
 	}
 
 	void Viewer::drawHudReach(const h2::Camera& cam)

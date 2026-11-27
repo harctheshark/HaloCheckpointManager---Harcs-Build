@@ -11,6 +11,9 @@ struct FreeCameraData
 	SimpleMath::Vector3 currentlookDirUp = SimpleMath::Vector3::UnitZ;
 
 	float currentFOV;
+	// 2026-11-20 free camera zoom: look-speed factor while zoomed when look speed does NOT already scale with the FOV
+	// (1 = none; Halo 3's Theater uses 0.5 - its "zoomed look speed")
+	float zoomLookScale = 1.f;
 
 	//// private data for math
 	//float frameDelta;

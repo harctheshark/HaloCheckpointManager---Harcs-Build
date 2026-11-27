@@ -1861,6 +1861,9 @@ namespace h2cv
 		o.forceCharge = settings.sbForceCharge;
 		o.seamText = settings.sbSeamText;
 		o.debounce = settings.sbDebounce;
+		o.monsterFinder = settings.sbMonsterFinder;
+		o.monsterOnly = settings.sbMonsterOnly;
+		o.monsterRings = settings.sbMonsterRings;
 		o.objects = settings.sbObjects;
 		o.seams = settings.sbSeams;
 		o.spots = settings.sbSpots;
@@ -1875,8 +1878,11 @@ namespace h2cv
 		o.record = settings.sbRecord;
 		o.highlight = settings.sbHighlight;
 		o.keepCharge = settings.sbKeepCharge;
-		o.gen3 = isH3() || isReach();     // Halo 3 / ODST / Reach: the Halo 2 body of Poorboy's h3sb.dll
-		o.reach = isReach();              // Reach: the bsps are read from tag memory on a worker thread (no CollisionWorld)
+		o.gen3 = isH3() || isReach() || isH4();   // Halo 3 / ODST / Reach: the Halo 2 body of Poorboy's h3sb.dll (Halo 4: its own player)
+		o.reach = isReach() || isH4();    // Reach / Halo 4: the bsps are read from tag memory on a worker thread (no CollisionWorld)
+		o.h4 = isH4();
+		if (o.h4) o.keepCharge = false;   // Halo 4: Force Charge arms HCM's own Halo 2 charge (Superbounce sb_state_h4); no Keep yet
+		o.noInvisible = settings.sbNoInvisible && !o.gen3;   // Halo 2: the game has its invisible (*) walls off
 		if (o.gen3) o.record = false;   // the charge options re-arm h3sb's Halo 2 body there (h3sb_arm)
 		sb::frame(mWorld, o, mSb);
 		if (!mSb.message.empty() && message) message(mSb.message);
@@ -2163,7 +2169,8 @@ namespace h2cv
 		// Halo 2: the stored projection is standard-Z while the depth buffer holds 1 - z/w (flip applied in gameViewProj).
 		// Halo 3 / ODST: the engine builds the projection for the depth convention in use (reversed when its byte is set) - used as stored.
 		const bool reversed = h3g ? h3::depthReversed() : settings.gameZReversed.load();
-		const bool wantObjects = settings.show[(int)Cat::Scenery] || settings.show[(int)Cat::Crate] || settings.show[(int)Cat::Machine]
+		if (!settings.collision && !settings.superbounce) return false;   // nothing is drawn in the world (see onRender's worldDraw)
+		const bool wantObjects = (settings.collision && (settings.show[(int)Cat::Scenery] || settings.show[(int)Cat::SceneryBullet] || settings.show[(int)Cat::Crate] || settings.show[(int)Cat::Machine]))
 			|| (settings.superbounce && settings.sbObjects && !isH3());   // the superbounce viewer measures their seams too (unless objects are off)
 		if (h3g) mWorld.setWantCreases(settings.creases);
 		mWorld.update(wantObjects, settings.show[(int)Cat::Breakable]);
@@ -2200,6 +2207,8 @@ namespace h2cv
 		const int occ = settings.occlusion.load();
 		if (occ != (int)Occlusion::InFrame) setBloomSuppressed(false);
 		if (occ != (int)Occlusion::InFrame && occ != (int)Occlusion::PostBloom) return;
+		// nothing is drawn in the world: the game's bloom stays as it is and no depth is copied
+		if (!settings.collision && !settings.superbounce) { setBloomSuppressed(false); return; }
 		h2::GameFrame f;
 		if (!h2::readFrame(f) || f.textureCamera) return;
 		const uintptr_t b = h2::base();
@@ -2410,15 +2419,20 @@ namespace h2cv
 
 		++mPresentCount;
 		if (isReach()) { renderReach(); return; }      // Halo: Reach: its own path (ViewerReach.cpp)
+		if (isH4()) { renderH4(); return; }            // Halo 4: the bounce viewer only (ViewerReach.cpp)
 		mWantSim3 = isH3() && (settings.ghost || settings.tim);
 		const bool gameOk = eng::base() && eng::buildOk();
 		h2::Camera cam;
 		if (gameOk) cam = isH3() ? camera3() : h2::readCamera();
 		mTick = gameOk ? eng::gameTick() : 0;
+		// Is anything DRAWN IN THE WORLD this frame? Only then is the collision world, the renderer or the game's depth needed.
+		// The info panel, the out-of-bounds bar and the charge options (Keep / Force Charge) keep this callback alive too, and
+		// none of them draws there (2026-11-17: Force Charge alone cost ~44% of a core through the path below).
+		const bool worldDraw = settings.collision || settings.superbounce;
 		int occ = settings.occlusion.load();
 		// Halo 3 / ODST have no post-bloom hook: "after bloom" is drawn here, at Present, against a copy of the game's own depth
 		if (isH3() && occ == (int)Occlusion::InFrame) occ = (int)Occlusion::PostBloom;   // H3 / ODST: no in-frame draw (it is bloomed)
-		if (isH3() && occ == (int)Occlusion::PostBloom && gameOk && mR.ready()) postBloom3();
+		if (isH3() && occ == (int)Occlusion::PostBloom && gameOk && mR.ready() && worldDraw) postBloom3();
 		const bool engineMode = occ == (int)Occlusion::InFrame || occ == (int)Occlusion::PostBloom;
 		const bool engineDrew = mInFrameThisFrame;
 		mInFrameThisFrame = false;
@@ -2435,16 +2449,25 @@ namespace h2cv
 		else mInFrameNote.clear();
 		if (isH3() && occ == (int)Occlusion::PostBloom && !mPb3Why.empty() && !engineDrew) mInFrameNote = mPb3Why;
 
-		if (gameOk && !settings.collision && !superbounceActive())   // the superbounce viewer and its charge options: Halo 2 only
+		if (gameOk && !worldDraw)
 		{
-			// Collision Viewer off, info panel / out-of-bounds bar on: no world drawing, just keep the bars current
+			// Collision Viewer and superbounce viewer off; info panel / out-of-bounds bar / a charge option on: no world drawing,
+			// just keep the bars current and let the charge options do their memory work (drawSuperbounce draws nothing then)
 			if (settings.killVolumes) { if (isH3()) drawDeath3(); else drawKillVolumes(); }
 			else { mOobBar = -1.f; mDetectTicks = -1; }
+			if (engineMode) setBloomSuppressed(false);
+			if (superbounceActive()) drawSuperbounce();
 		}
 		else if (gameOk && cam.ok && !(engineMode && (engineDrew || mPresentCount - mLastInFramePresent <= 2)))
 		{
 			const bool own = occ != (int)Occlusion::XRay;
-			const bool wantObjects = (own && !isH3()) || settings.show[(int)Cat::Scenery] || settings.show[(int)Cat::Crate] || settings.show[(int)Cat::Machine]
+			// 2026-11-17: the own-depth occluder pass (the level's collision and every object's shapes drawn into a hidden
+			// depth buffer) is only for things that get DRAWN in the world. With just a charge option on (Force Charge /
+			// Keep Charge: superbounceActive() without the viewer) nothing is drawn, yet the pass ran every frame - measured
+			// on Ivory Tower: ~44% of a core on the render thread, nearly all of it gatherObjects() rebuilding the objects'
+			// capsule meshes (the user: "HCM just being loaded is dropping my FPS, even with most everything turned off").
+			const bool occl = own && (settings.collision || settings.superbounce);
+			const bool wantObjects = (occl && !isH3()) || (settings.collision && (settings.show[(int)Cat::Scenery] || settings.show[(int)Cat::SceneryBullet] || settings.show[(int)Cat::Crate] || settings.show[(int)Cat::Machine]))
 				|| (settings.superbounce && settings.sbObjects && !isH3());   // the superbounce viewer measures their seams too (unless objects are off)
 			if (isH3()) mWorld.setWantCreases(settings.creases);
 			mWorld.update(wantObjects, settings.show[(int)Cat::Breakable]);
@@ -2468,7 +2491,7 @@ namespace h2cv
 			}
 			if (begun)
 			{
-				if (own)
+				if (occl)
 				{
 					mR.clearOwnDepth();
 					mR.setStaticOccluders(mWorld.staticOccluders(), mWorld.sbspId() ^ (mWorld.staticOccluders().size() << 1));

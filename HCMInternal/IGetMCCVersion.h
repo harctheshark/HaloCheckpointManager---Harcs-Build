@@ -10,6 +10,10 @@ enum class MCCProcessType
 	// an ACL granting ALL APPLICATION PACKAGES (S-1-15-2-1) or the process cannot reach it.
 	// Renders with D3D12, same as CampaignEvolved - see D3D12Hook.
 	Halo5Forge,
+	// Metro 2033 Redux / Metro Last Light Redux (metro.exe, 4A Engine) - not Halo at all. Both games are one
+	// identical engine build (after SteamStub's decryption), so one title covers both. Presents through D3D11
+	// (D3D12 is only a DLSS/FSR side device) - see D3D11Hook's "no pointer data" path.
+	MetroRedux,
 };
 
 // True for every non-MCC host that presents through D3D12 rather than D3D11. Used to pick the

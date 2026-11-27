@@ -3,9 +3,12 @@
 
 // A sequence of pairs, where the first element of a pair is the GUIElementEnum name, and the second element is a tuple of supported games for that GUIElementEnum
 #define TOPGUIELEMENTS_RELEASE \
-((mapLauncherGUI,(NoGame)))\
+((mapLauncherGUI,(ALL_GAMES_AND_MAINMENU)))\
 ((presetsHeadingGUI,(ALL_GAMES_AND_MAINMENU)))\
-((controlHeadingGUI,(ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP)))\
+((antiAliasingHeadingGUI,(ALL_GAMES_AND_MAINMENU)))\
+((bounceModeHeadingGUI,(Halo2)))\
+((metroHeadingGUI,(METRO_ONLY)))\
+((controlHeadingGUI,(ALL_GAMES_AND_MAINMENU_AND_HALOCER_AND_H2MP_AND_METRO)))\
 ((saveManagementHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5_AND_H2MP)))\
 ((cheatsHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER_AND_H2MP)))\
 ((overlaysHeadingGUI,(ALL_SUPPORTED_GAMES_AND_HALOCER_AND_HALO5_AND_H2MP)))\
@@ -13,7 +16,7 @@
 ((theaterHeadingGUI,(Halo3,Halo3ODST,HaloReach,Halo4)))\
 ((debugHeadingGUI, (ALL_SUPPORTED_GAMES)))\
 ((hceScriptHeadingGUI, (HALOCER_ONLY)))\
-((halo2PhysicsHeadingGUI,(Halo3,Halo3ODST,HaloReach)))
+((halo2PhysicsHeadingGUI,(Halo3,Halo3ODST,HaloReach,Halo4)))
 
 #define TOPGUIELEMENTS_DEBUG \
 ((HCMDebugHeadingGUI, (ALL_SUPPORTED_GAMES)))

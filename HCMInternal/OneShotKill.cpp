@@ -121,6 +121,7 @@ private:
 	std::weak_ptr<SettingsStateAndEvents> settingsWeak;
 	std::weak_ptr<GetPlayerDatum> getPlayerDatumWeak;
 	std::weak_ptr<GetObjectAddress> getObjectAddressWeak;
+	std::weak_ptr<IMCCStateHook> mccStateHookWeak;
 
 	std::mutex mMutex;
 	std::unique_ptr<ModuleInlineHook> mHook;
@@ -269,6 +270,20 @@ private:
 	void onToggle(bool& on)
 	{
 		const int r = apply(on);
+		// There is one of these per game and every one hears the toggle: six lines on screen for one click (2026-11-17, the
+		// user). Only the game being played speaks. With no supported game loaded (the MCC menu) the first instance alone
+		// does, without naming a game. Every instance still arms itself above.
+		GameState now = GameState::Value::NoGame;
+		if (auto hook = mccStateHookWeak.lock()) now = hook->getCurrentMCCState().currentGameState;
+		bool currentHasOne = false; int first = -1;
+		for (int i = 0; i < kSlots; ++i)
+		{
+			if (!sInstance[i].load()) continue;
+			if (first < 0) first = i;
+			if (GameState(kSpecs[i].game) == now) currentHasOne = true;
+		}
+		if (currentHasOne ? !(mGame == now) : mSlot != first) return;
+		if (!currentHasOne) { say(on ? "One Shot Kill is armed - it applies when a game loads" : "One Shot Kill off"); return; }
 		if (r < 0) say(std::format("One Shot Kill: this {} build is not supported (made for MCC 1.3528)", mGame.toString()));
 		else if (r == 0 && on) say(std::format("One Shot Kill is armed - it applies when {} loads", mGame.toString()));
 		else say(on ? "One Shot Kill on - what a player damages dies (never a player or their ride)" : "One Shot Kill off");
@@ -290,6 +305,7 @@ public:
 		settingsWeak(dicon.Resolve<SettingsStateAndEvents>()),
 		getPlayerDatumWeak(resolveDependentCheat(GetPlayerDatum)),
 		getObjectAddressWeak(resolveDependentCheat(GetObjectAddress)),
+		mccStateHookWeak(dicon.Resolve<IMCCStateHook>()),
 		mToggleCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->oneShotKillToggle->valueChangedEvent, [this](bool& n) { onToggle(n); }),
 		mMCCStateChangedCallback(dicon.Resolve<IMCCStateHook>().lock()->getMCCStateChangedEvent(), [this](const MCCState& s) { onMCCStateChanged(s); })
 	{

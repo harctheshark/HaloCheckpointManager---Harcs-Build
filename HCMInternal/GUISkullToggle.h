@@ -1,6 +1,8 @@
 #pragma once
 #include "IGUIElement.h"
 #include "SettingsStateAndEvents.h"
+#include "GUIExpanderBox.h"
+#include <algorithm>
 // Very similiar to GUIHeading but with less visual contrast and a parameter to add a left margin to it and it's child elements
 template<bool startsOpen>
 class GUISkullToggle : public IGUIElement {
@@ -8,6 +10,7 @@ class GUISkullToggle : public IGUIElement {
 private:
 	std::string mHeadingText;
 	bool headingOpen = false;
+	bool mOpen = startsOpen;   // the heading's own open / closed state (GUIExpanderBox)
 	float mLeftMargin;
 	std::weak_ptr<SettingsStateAndEvents> mSettingsWeak;
 
@@ -81,15 +84,16 @@ public:
 		auto mSettings = mSettingsWeak.lock();
 		if (!mSettings) { PLOG_ERROR << "bad mSettings weak ptr"; return; }
 		
-		ImGui::BeginChild(mHeadingText.c_str(), { GUIWindowWidth - mLeftMargin, currentHeight - GUISpacing });
-
-
-		constexpr ImGuiTreeNodeFlags treeFlags = startsOpen ? ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_FramePadding;
-		headingOpen = ImGui::TreeNodeEx(mHeadingText.c_str(), treeFlags);
+		// 2026-11-18: the heading is a tick-box-sized arrow box + the name (GUIExpanderBox.h), drawn where the row starts. It was
+		// a small tree arrow inside the child window - easy to lose among the tick boxes. The skulls below keep their own
+		// full-width child, from the left, whatever column the heading stands in.
+		headingOpen = GUIExpanderBox(mHeadingText.c_str(), mOpen);
 		renderTooltip();
 		DEBUG_GUI_HEIGHT;
 		if (headingOpen)
 		{
+			ImGui::Dummy({ 15.f, 1.f }); ImGui::SameLine();
+			ImGui::BeginChild(mHeadingText.c_str(), { GUIWindowWidth - mLeftMargin, std::max(1.f, currentHeight - GUIFrameHeightWithSpacing - GUISpacing) });
 
 			currentHeight = GUIFrameHeightWithSpacing * 2;
 
@@ -154,13 +158,12 @@ public:
 			
 
 
-			ImGui::TreePop();
+			ImGui::EndChild();
 		}
 		else
 		{
 			currentHeight = GUIFrameHeightWithSpacing;
 		}
-		ImGui::EndChild();
 
 
 	}

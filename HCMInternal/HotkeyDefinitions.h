@@ -288,6 +288,14 @@ private:
 		mSettings->freeCameraUserInputCameraDecreaseTranslationSpeedHotkey,
 		vsk{}),
 
+			initEventOnPressHotkey(freeCameraZoomHotkey,
+		mSettings->freeCameraZoomHotkey,
+		vsk{}),
+
+			initEventOnPressHotkey(smaaToggleHotkey,
+		mSettings->smaaToggleHotkeyEvent,
+		vsk{}),
+
 			initEventOnPressHotkey(freeCameraUserInputCameraSetPosition,
 		mSettings->freeCameraUserInputCameraSetPosition,
 		vsk{}),
@@ -638,6 +646,10 @@ private:
 
 						initRebindableHotkey(cameraFOVDecreaseBinding,
 			(vsk{{ ImGuiKey_H }, { ImGuiKey_GamepadR2 }})),
+
+		// held: multiplies the free camera's translation speed (Boost Factor), ramped by Boost Acceleration
+						initRebindableHotkey(cameraBoostBinding,
+			(vsk{{ ImGuiKey_LeftShift }})),
 
 		// Halo Campaign Evolved gets its OWN tilt / FOV bindings rather than borrowing the four above.
 		// ⚠ The reason is the DEFAULTS. Those four ship bound to G / T / Y / H plus gamepad buttons because

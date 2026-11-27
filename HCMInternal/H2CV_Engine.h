@@ -11,7 +11,7 @@
 
 namespace h2cv
 {
-	enum class Game : uint8_t { None = 0, Halo2, Halo3, Halo3ODST, HaloReach };
+	enum class Game : uint8_t { None = 0, Halo2, Halo3, Halo3ODST, HaloReach, Halo4 };
 
 	Game game();
 	void setGame(Game g);
@@ -20,6 +20,9 @@ namespace h2cv
 	inline bool isH3() { const Game g = game(); return g == Game::Halo3 || g == Game::Halo3ODST; }
 	// Halo: Reach has its own self-contained path (ViewerReach.cpp, Reach.h); the Halo 2 / 3 code never runs for it
 	inline bool isReach() { return game() == Game::HaloReach; }
+	// Halo 4 (2026-11-21): the bounce viewer only (H2CV_Halo4.h, ViewerReach.cpp renderH4); its geometry goes through the Reach
+	// bounce worker with the Halo 4 reader
+	inline bool isH4() { return game() == Game::Halo4; }
 	const char* gameName(Game g);   // "halo2" / "halo3" / "halo3odst" (JSONL "engine" field, log lines)
 
 	// the calls both engines answer with the same shared types

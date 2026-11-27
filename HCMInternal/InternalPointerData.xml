@@ -59,6 +59,9 @@
 		    ⚠ 0.0.0.1, deliberately NOT HaloCER's 0.0.0.0: two titles sharing a version key would
 		    share pointer-data entries. See GetMCCVersion::evalVersion.-->
 		<Entry>0.0.0.1</Entry>
+		<!--Metro 2033 Redux / Metro Last Light Redux (metro.exe, one identical engine build for both): synthetic key, see
+		    GetMCCVersion::evalVersion. Not 0.0.0.0 / 0.0.0.1.-->
+		<Entry>0.0.0.2</Entry>
 	</SupportedGameVersions>
 
 
@@ -11980,14 +11983,40 @@
 		</Version>
 	</VersionedEntry>
 
-	<!-- DropShadowsOnObjects: the `xor r9d, r9d` (45 33 C9) that sets a4=0 (object-receive shadow_mode mask)
-	     at the drop-shadow caster pass's call to the receiver-filter sub_1809EEDD0. The cheat rewrites these
-	     3 bytes to `mov r9b, 0xFF` (41 B1 FF) to let objects receive other objects' drop shadows. Verified 1.3528. -->
+	<!-- DropShadowsOnObjects (OLD site, kept for HCMInternal builds before 2026-11-17, which write 3 bytes here): the
+	     `xor r9d, r9d` (45 33 C9) that sets a4=0 (object-receive mask) at the drop-shadow caster pass's call to the
+	     receiver-filter sub_1809EEDD0, rewritten to `mov r9b, 0xFF` (41 B1 FF). Verified 1.3528. Newer builds do not
+	     use this entry. -->
 	<VersionedEntry Name="dropShadowsOnObjectsPatch" Type="MultilevelPointer::ModuleOffset">
 		<Version Version="1.3528.0.0" Game="Halo2">
 			<Module>halo2.dll</Module>
 			<Offsets>
 				<Offset>0x7EAC2B</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<!-- DropShadowsOnObjects, since 2026-11-17 (see DropShadowsOnObjects.cpp). Verified on 1.3528.
+	     FilterJump   0x9EEF1B: the `jb` (72) after `bt edx, ecx` in the receiver-filter sub_1809EEDD0 -> EB (jmp):
+	                  every object type keeps its receive bit, whatever the mask.
+	     SphereSelect 0x709951: the start of a 62-byte span in sub_1807098C0 (through 0x70998E) that picks which of an
+	                  object's two spheres the shadow passes test. Rewritten in place, same length: stock, except that
+	                  an object whose shadow sphere is under about a tenth of its bounding sphere is tested with its
+	                  bounding sphere. The .cpp holds both byte strings and refuses to write over anything else. -->
+	<VersionedEntry Name="dropShadowsOnObjectsFilterJump" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x9EEF1B</Offset>
+			</Offsets>
+		</Version>
+	</VersionedEntry>
+
+	<VersionedEntry Name="dropShadowsOnObjectsSphereSelect" Type="MultilevelPointer::ModuleOffset">
+		<Version Version="1.3528.0.0" Game="Halo2">
+			<Module>halo2.dll</Module>
+			<Offsets>
+				<Offset>0x709951</Offset>
 			</Offsets>
 		</Version>
 	</VersionedEntry>

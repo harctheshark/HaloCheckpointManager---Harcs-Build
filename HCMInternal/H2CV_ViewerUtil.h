@@ -28,6 +28,7 @@ namespace h2cv::vu
 		rgba(255, 130, 190),  // machines: pink
 		rgba(255, 90, 0),     // kill triggers: red-orange
 		rgba(255, 235, 120),  // soft ceilings / soft kills / slip surfaces (Halo 3 / ODST): pale yellow
+		rgba(190, 255, 0),    // scenery bullet collision: lime
 	};
 
 	inline Vec3 sub(const Vec3& a, const Vec3& b) { return { a.x - b.x, a.y - b.y, a.z - b.z }; }
@@ -111,6 +112,29 @@ namespace h2cv::vu
 		v.push_back({ b.x, b.y, b.z, c });
 	}
 
+	// The capsules' angles never change, so their sines and cosines are worked out once - with the very expressions the
+	// loops used to evaluate per vertex, so the vertices are bit-for-bit the same (2026-11-17: sinf / cosf were a fifth of
+	// the collision viewer's per-frame cost).
+	struct CapsuleTrig
+	{
+		float ringC[25], ringS[25];      // 6.2831853f * i / 24
+		float merC[8], merS[8];          // 6.2831853f * i / 8
+		float latC[2], latS[2];          // 0.78539816f * i
+		float arcC[7], arcS[7];          // 1.5707963f * i / 6
+		float triC[13], triS[13];        // 6.2831853f * i / 12
+		float tlatC[5], tlatS[5];        // 1.5707963f * (float)i / 4
+		CapsuleTrig()
+		{
+			for (int i = 0; i <= 24; ++i) { const float a = 6.2831853f * i / 24; ringC[i] = std::cos(a); ringS[i] = std::sin(a); }
+			for (int i = 0; i < 8; ++i) { const float a = 6.2831853f * i / 8; merC[i] = std::cos(a); merS[i] = std::sin(a); }
+			for (int i = 0; i < 2; ++i) { const float a = 0.78539816f * i; latC[i] = std::cos(a); latS[i] = std::sin(a); }
+			for (int i = 0; i <= 6; ++i) { const float a = 1.5707963f * i / 6; arcC[i] = std::cos(a); arcS[i] = std::sin(a); }
+			for (int i = 0; i <= 12; ++i) { const float a = 6.2831853f * i / 12; triC[i] = std::cos(a); triS[i] = std::sin(a); }
+			for (int i = 0; i <= 4; ++i) { const float a = 1.5707963f * (float)i / 4; tlatC[i] = std::cos(a); tlatS[i] = std::sin(a); }
+		}
+	};
+	inline const CapsuleTrig& capsuleTrig() { static const CapsuleTrig t; return t; }
+
 	// capsule wireframe (rings + meridians) and triangles
 	inline void capsuleWire(std::vector<LineVertex>& v, const h2::Capsule& c, uint32_t col)
 	{
@@ -120,32 +144,29 @@ namespace h2cv::vu
 		// same tessellation as Cartographer's xlive pill (CollisionLines.cpp pill_build_wireframe): 24-segment rings at
 		// each hemisphere's equator and at 45 degrees, 8 meridians running pole to pole with 6-segment quarter arcs
 		constexpr int kRing = 24, kMeridians = 8, kArc = 6;
-		auto surf = [&](const Vec3& centre, float sgn, float ang, float lat) {
-			const Vec3 dir = add(mul(t1, std::cos(ang)), mul(t2, std::sin(ang)));
-			return add(centre, add(mul(dir, std::cos(lat) * c.r), mul(axis, sgn * std::sin(lat) * c.r))); };
+		const CapsuleTrig& T = capsuleTrig();
+		// (cos, sin) of the angle round the axis, then of the latitude
+		auto surf = [&](const Vec3& centre, float sgn, float ca, float sa, float cl, float sl) {
+			const Vec3 dir = add(mul(t1, ca), mul(t2, sa));
+			return add(centre, add(mul(dir, cl * c.r), mul(axis, sgn * sl * c.r))); };
 		for (int top = 0; top < 2; ++top)
 		{
 			const Vec3& centre = top ? c.b : c.a;
 			const float sgn = top ? 1.f : -1.f;
 			for (int ri = 0; ri < 2; ++ri)                          // equator, then 45 degrees
 			{
-				const float lat = 0.78539816f * ri;
 				for (int si = 0; si < kRing; ++si)
-				{
-					const float a0 = 6.2831853f * si / kRing, a1 = 6.2831853f * (si + 1) / kRing;
-					addLine(v, surf(centre, sgn, a0, lat), surf(centre, sgn, a1, lat), col);
-				}
+					addLine(v, surf(centre, sgn, T.ringC[si], T.ringS[si], T.latC[ri], T.latS[ri]), surf(centre, sgn, T.ringC[si + 1], T.ringS[si + 1], T.latC[ri], T.latS[ri]), col);
 			}
 		}
 		for (int mi = 0; mi < kMeridians; ++mi)
 		{
-			const float ang = 6.2831853f * mi / kMeridians;
-			addLine(v, surf(c.a, -1, ang, 0.f), surf(c.b, 1, ang, 0.f), col);   // the straight side
+			const float ca = T.merC[mi], sa = T.merS[mi];
+			addLine(v, surf(c.a, -1, ca, sa, T.arcC[0], T.arcS[0]), surf(c.b, 1, ca, sa, T.arcC[0], T.arcS[0]), col);   // the straight side
 			for (int ai = 0; ai < kArc; ++ai)
 			{
-				const float l0 = 1.5707963f * ai / kArc, l1 = 1.5707963f * (ai + 1) / kArc;
-				addLine(v, surf(c.b, 1, ang, l0), surf(c.b, 1, ang, l1), col);
-				addLine(v, surf(c.a, -1, ang, l0), surf(c.a, -1, ang, l1), col);
+				addLine(v, surf(c.b, 1, ca, sa, T.arcC[ai], T.arcS[ai]), surf(c.b, 1, ca, sa, T.arcC[ai + 1], T.arcS[ai + 1]), col);
+				addLine(v, surf(c.a, -1, ca, sa, T.arcC[ai], T.arcS[ai]), surf(c.a, -1, ca, sa, T.arcC[ai + 1], T.arcS[ai + 1]), col);
 			}
 		}
 	}
@@ -156,14 +177,14 @@ namespace h2cv::vu
 		const Vec3 t1 = norm(std::fabs(axis.z) < 0.9f ? cross(axis, Vec3{ 0, 0, 1 }) : cross(axis, Vec3{ 1, 0, 0 }));
 		const Vec3 t2 = cross(axis, t1);
 		constexpr int N = 12, M = 4;
+		const CapsuleTrig& T = capsuleTrig();
 		auto pt = [&](int i, int j) -> Vec3 {
 			// j in [-M, M]: latitude rings; j<0 bottom hemisphere around A, j>=0 top around B
-			const float ang = 6.2831853f * i / N;
-			const float lat = 1.5707963f * (float)std::abs(j) / M;
-			const Vec3 radial = add(mul(t1, std::cos(ang)), mul(t2, std::sin(ang)));
+			const int aj = std::abs(j);
+			const Vec3 radial = add(mul(t1, T.triC[i]), mul(t2, T.triS[i]));
 			const Vec3 centre = j < 0 ? c.a : c.b;
 			const float s = j < 0 ? -1.f : 1.f;
-			return add(centre, add(mul(radial, std::cos(lat) * c.r), mul(axis, s * std::sin(lat) * c.r)));
+			return add(centre, add(mul(radial, T.tlatC[aj] * c.r), mul(axis, s * T.tlatS[aj] * c.r)));
 		};
 		for (int j = -M; j < M; ++j)
 			for (int i = 0; i < N; ++i)

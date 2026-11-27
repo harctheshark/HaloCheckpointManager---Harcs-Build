@@ -11,6 +11,7 @@
 #include "H2CV_Mem.h"
 #include "H2CV_Engine.h"          // eng::gameTick (Halo 3 / ODST keep charge: reverts)
 #include "H2CV_Reach.h"           // Halo: Reach (2026-11-04): the bsps read from tag memory, the map name, the game tick
+#include "H2CV_Halo4.h"           // Halo 4 (2026-11-21): its structure collision, player, map name, bsp mask
 #include "H2CV_Log.h"
 #include "imgui.h"
 #include <windows.h>
@@ -22,6 +23,7 @@
 #include <cmath>
 #include <numeric>
 #include <cctype>
+#include <chrono>
 #include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
@@ -54,9 +56,10 @@ namespace h2cv::sb
 
 		// this frame's output and settings (frame() points / fills them)
 		Output* g_out = nullptr;
-		struct s_settings_sb { bool superbounce = true, superbounce_record = false, superbounce_gaps = false, superbounce_seam_text = true, superbounce_debounce = true, superbounce_spots = true, superbounce_predicted = true, superbounce_seams = true;
+		struct s_settings_sb { bool superbounce = true, superbounce_record = false, superbounce_gaps = false, superbounce_seam_text = true, superbounce_debounce = true, superbounce_spots = true, superbounce_predicted = true, superbounce_seams = true, superbounce_monster_finder = true, superbounce_monster_only = false, superbounce_monster_rings = true;
 			bool predicted_heights = false, predicted_hide_narrow = false, spotscan_slow = false, spotscan_curtick = false; float spotscan_radius = 64.f; } g_settings;
 		bool g_sb_lines_off = false;   // sb_draw_predicted's labels-only pass (its lines come from a cache)
+		bool g_sb_no_invis = false;    // Halo 2: HCM's "No invisible walls (*)" is on in the game - the bounce cache leaves those surfaces out
 		bool g_sb_geo_pass = false;    // sb_draw_predicted's cache pass (lines and arrows, no nearest-spot labels)
 		void line(v3 a, v3 b, ImU32 c, float thick = 1.5f)
 		{
@@ -146,6 +149,7 @@ namespace h2cv::sb
 		struct s_sb_state { bool ok = false; v3 feet{}, vel{}; bool airborne = false; uintptr_t ent = 0; int tps = 30; uint32 tick = 0; bool armed = false, flying = false; };   // armed / flying: Gen3 (h3sb level -3, h3sb fly)
 		bool g_gen3 = false;   // Halo 3 / ODST (2026-11-02): h3sb.dll player, the active bsp set; no Halo 2 memory (also true for Reach)
 		bool g_reach = false;  // Halo: Reach (2026-11-04): g_gen3 too; differs only in the geometry source (a worker reads the tag memory), the map file / key salt
+		bool g_h4 = false;     // Halo 4 (2026-11-21): g_gen3 and g_reach too - the Reach worker with the Halo 4 reader (h4::), Halo 4's own player (no h3sb)
 		s_sb_state g_sbs;
 	}
 	/* ---- Superbounce viewer ----
@@ -290,7 +294,8 @@ namespace h2cv::sb
 		constexpr float k_sb_slot_zone = 0.025f;          // on a slot seam (bridge slot: +15.68 ~0.01 off, nothing ~0.04 off)
 		constexpr float k_sb_valley_min = 1.0f;           // a seam bent upward by more than this (deg) is a valley (shown, not used)
 		constexpr float k_sb_air_speed = 2.25f;           // stick held in the air: your horizontal speed (log: 2.2501)
-		constexpr float k_sb_air_friction = 1.0485f;      // air control's step toward its target (0.03495 per tick at 30)
+		constexpr float k_sb_air_friction = 1.05f;        // air control's step toward its target: 0.035000 per tick at 30, 0.017500 at 60
+		                                                  // (2026-11-16: the median of 423,384 recorded full steps; was 1.0485)
 		constexpr float k_sb_tag_jump = 3.08f;            // jump velocity, biped definition +0x1F8: masterchief.biped and
 		                                                  // dervish.biped both 3.08 wu/s (H2EK tags; gravity scale left default)
 		constexpr uintptr_t k_vt_contact_constraint = 0x3F3BD0;   // hkSimpleContactConstraint (MCC's RTTI name)
@@ -353,7 +358,8 @@ namespace h2cv::sb
 		// the world BSP's surfaces (polygon, outward normal from the plane and its flip bit, bounds) and its seams
 		// src / base: the collision BSP the surface comes from (the level's, or an instanced geometry definition's) and the
 		// index of that BSP's surface 0 in the cache (instances are transformed into world space when cached)
-		struct s_sb_surface { std::vector<v3> poly; std::vector<uint32> edges; v3 n{}; v3 lo{}, hi{}; bool ok = false; const collision_bsp* src = nullptr; uint32 base = 0; uint8 flags = 0; };   // flags: 1 two-sided, 2 invisible
+		struct s_sb_surface { std::vector<v3> poly; std::vector<uint32> edges; v3 n{}; v3 lo{}, hi{}; bool ok = false; const collision_bsp* src = nullptr; uint32 base = 0; uint8 flags = 0;
+			bool dropped = false; v3 key_pt{}; };   // flags: 1 two-sided, 2 invisible; dropped: an invisible (*) surface left out while HCM's "No invisible walls" is on (key_pt: its first corner, for the map key)
 		// bend: + valley, - ridge (deg); gap: a monster gap's mouth (s0 / s1 its two faces), width = its narrowest
 		// slot: steep faces hang from it on both sides (a slot / fin thinner than the pill right under the seam)
 		struct s_sb_seam { v3 a{}, b{}; uint32 s0 = 0, s1 = 0; float bend = 0.f; bool gap = false; float width = 0.f; bool slot = false; bool junction = false; };   // junction: a piece meeting a floor (bend: the faces' angle)
@@ -370,6 +376,8 @@ namespace h2cv::sb
 					size_t obj_surf = 0, obj_seam = 0;      // where the objects' surfaces / seams start (the level's come first)
 					std::vector<uint32> junctions;          // seam indices of the junctions (a piece meeting a floor at an angle)
 			bool skip_invalid = false;              // sb_add_bsp leaves out flags & 0x10 surfaces (Gen3 / Reach: invalid, bsp seam faces)
+			bool skip_invisible = false;            // sb_add_bsp leaves out flags & 2 surfaces (Halo 2 with HCM's "No invisible walls (*)" on, 2026-11-21)
+			size_t invis_dropped = 0;               // ... how many it left out
 			s_sb_xygrid sgrid; bool sgrid_on = false;   // a cache being BUILT (Reach worker): its own surface grid (g_sb_surf_grid is for g_sbb only)
 			const std::atomic<bool>* cancel = nullptr;  // a cache being BUILT (Reach worker): its job's cancel flag, polled by the long pair loops
 			bool cancelled() const { return cancel && cancel->load(std::memory_order_relaxed); }
@@ -414,6 +422,11 @@ namespace h2cv::sb
 			// the physics check (in the air, non-green seams): 0 not run, 1 launches at your forward speed, -1 slow down, 2 speed up,
 			// 3 no forward speed (0..2.25) launches; adj_lo..adj_hi = the forward speeds that do, adj_launch = their best launch (u/s)
 			int adj = 0; float adj_lo = 0.f, adj_hi = 0.f, adj_launch = 0.f;
+			// in the air the check is AIMED at this seam (2026-11-16): adj 1 = this fall, the stick as it is, lands on the seam and
+			// launches; -1 / 2 = ease off / push more along your heading; 4 = steer sideways (adj_side u/s, + = left); 3 = no stick
+			// position lands a launch on it. adj_lo = the forward stick speed that does, adj_hi = what the stick asks now
+			bool adj_aimed = false; float adj_side = 0.f;
+			bool phys_na = false;   // an object's seam: the exact rules have no geometry for it (the estimate shows)
 			// phys_req: this rating asked for the physics check; adj_src: the planning tick whose physics result adj.. holds (0xFFFFFFFF none)
 			bool phys_req = false; uint32 adj_src = 0xFFFFFFFF; };
 		struct s_sb_shown { uint32 seen = 0; uint32 piece_seen[24] = {}; uint32 air_id = 0; s_sb_rated r; };   // ticks + 1 (0 = never)
@@ -456,7 +469,7 @@ namespace h2cv::sb
 			if (g_sb_log) return true;
 			g_sb_fins_logged = false;
 			// readable by other programs while recording (only writers are kept out) - 2026-11-01: checking a recording needed record off
-			g_sb_log = _fsopen("superbounce_log.csv", "a", _SH_DENYWR);
+			g_sb_log = _fsopen(h2cv::sbscan::dataPath("superbounce_log.csv").c_str(), "a", _SH_DENYWR);
 			if (!g_sb_log) return false;
 			fprintf(g_sb_log, "# superbounce log (Spooky Ghost, Cartographer). Lines:\n"
 				"# T,tick,tps,x,y,z,vx,vy,vz,charged,airborne,seam_dist(-1 none within 1 wu),seam_dir_x,y,z,surf0_n_x,y,z,surf1_n_x,y,z,contact_points,"
@@ -555,9 +568,20 @@ namespace h2cv::sb
 			for (const v3& q : fl.poly) fz += q.z;
 			return wz / (float)wl.poly.size() < fz / (float)fl.poly.size() - 0.05f;   // the wall's middle below the floor: it goes down
 		}
-		bool sb_seam_pair(uint32 s0, uint32 s1, s_sb_bsp& B = g_sbb) { return sb_floor_seam(s0, s1, B) || sb_ledge_seam(s0, s1, B); }
 		float sb_seam_bend(uint32 s0, uint32 s1, s_sb_bsp& B = g_sbb);   // below
-		float sb_pair_bend(uint32 s0, uint32 s1, s_sb_bsp& B = g_sbb) { return sb_floor_seam(s0, s1, B) ? sb_seam_bend(s0, s1, B) : 0.f; }   // a ledge: 0
+		// a steep RIDGE (2026-11-16): two faces you can land on (slopes under 60 deg) meeting at a convex edge bent MORE than a floor
+		// seam's 30 deg - a floor's 45-degree shoulder / chamfer, a roof ridge. Neither a floor seam (bend) nor a ledge (the other
+		// face is no wall), so none was listed: Terminal's (38.6, 10.0, 50.1) floor / 45-degree face edge, where the exact rules
+		// launch +8 u/s from a 10 u/s fall drifting across it. Valleys bent this much stay out (a corner: soft bounces only).
+		bool sb_ridge_seam(uint32 s0, uint32 s1, s_sb_bsp& B = g_sbb)
+		{
+			const v3 na = B.surf[s0].n, nb = B.surf[s1].n;
+			if (na.z < 0.5f || nb.z < 0.5f || dot(na, nb) >= 0.866f) return false;
+			if (B.surf[s0].poly.empty() || B.surf[s1].poly.empty()) return false;
+			return sb_seam_bend(s0, s1, B) < 0.f;
+		}
+		bool sb_seam_pair(uint32 s0, uint32 s1, s_sb_bsp& B = g_sbb) { return sb_floor_seam(s0, s1, B) || sb_ledge_seam(s0, s1, B) || sb_ridge_seam(s0, s1, B); }
+		float sb_pair_bend(uint32 s0, uint32 s1, s_sb_bsp& B = g_sbb) { return (sb_floor_seam(s0, s1, B) || sb_ridge_seam(s0, s1, B)) ? sb_seam_bend(s0, s1, B) : 0.f; }   // a ledge: 0
 
 		// a seam's bend, signed: + valley (each face's middle lies above the other's plane: the floor gets steeper upward
 		// across the seam), - ridge, 0 flat
@@ -624,6 +648,15 @@ namespace h2cv::sb
 					sf.hi = { (std::max)(sf.hi.x, q.x), (std::max)(sf.hi.y, q.y), (std::max)(sf.hi.z, q.z) };
 				}
 				sf.ok = true;
+				// HCM "No invisible walls (*)" (2026-11-21): the game refuses these surfaces' collision (NoInvisibleCollision.cpp), so
+				// the viewer must too - no seams, landings, contacts or scan rows on them. Left as a hole (the surface indices = the
+				// Havok keys stay); its first corner is kept so the map key (remembered spots / records) stays the same.
+				if (B.skip_invisible && (sf.flags & 0x02))
+				{
+					sf.key_pt = sf.poly[0]; sf.dropped = true; sf.ok = false;
+					sf.poly.clear(); sf.edges.clear();
+					++B.invis_dropped;
+				}
 			}
 			for (int32 e = 0; e < bsp->edges.count; ++e)
 			{
@@ -1699,12 +1732,13 @@ namespace h2cv::sb
 			uint64_t h = 1469598103934665603ull;
 			auto mix = [&](int64_t v) { h ^= (uint64_t)v; h *= 1099511628211ull; };
 			mix((int64_t)g_sbb.surf.size()); if (legacy) mix((int64_t)g_sbb.seams.size());
-			if (g_reach) mix(0x52434831);   // 'RCH1': Reach maps never share a key with Halo 2's or Halo 3's
+			if (g_h4) mix(0x48344231);   // 'H4B1': Halo 4's own
+			else if (g_reach) mix(0x52434831);   // 'RCH1': Reach maps never share a key with Halo 2's or Halo 3's
 			else if (g_gen3) mix(0x47454E33);   // Gen3 maps never share a key with Halo 2's
 			for (size_t i = 0; i < g_sbb.surf.size() && i < 64; ++i)
 			{
-				if (g_sbb.surf[i].poly.empty()) continue;
-				const v3 p = g_sbb.surf[i].poly[0];
+				if (g_sbb.surf[i].poly.empty() && !g_sbb.surf[i].dropped) continue;
+				const v3 p = g_sbb.surf[i].dropped ? g_sbb.surf[i].key_pt : g_sbb.surf[i].poly[0];   // (the same key with invisible walls off)
 				mix((int64_t)std::lround(p.x * 100.f)); mix((int64_t)std::lround(p.y * 100.f)); mix((int64_t)std::lround(p.z * 100.f));
 			}
 			return h;
@@ -1713,7 +1747,7 @@ namespace h2cv::sb
 		void sb_spots_save()
 		{
 			FILE* f = nullptr;
-			if (fopen_s(&f, "superbounce_spots.csv", "w") != 0 || !f) return;
+			if (fopen_s(&f, h2cv::sbscan::dataPath("superbounce_spots.csv").c_str(), "w") != 0 || !f) return;
 			fprintf(f, "# superbounce spots: map key,x,y,z,charged landings,launches (20+ u/s at 30 tick, 35+ at 60),best u/s,launch dir x,y,z,tick rate\n");
 			for (const auto& l : g_sb_spot_other) fprintf(f, "%s\n", l.c_str());
 			for (const auto& s : g_sb_spots)
@@ -1726,7 +1760,7 @@ namespace h2cv::sb
 		void sb_records_save()
 		{
 			FILE* f = nullptr;
-			if (fopen_s(&f, "superbounce_records.csv", "w") != 0 || !f) return;
+			if (fopen_s(&f, h2cv::sbscan::dataPath("superbounce_records.csv").c_str(), "w") != 0 || !f) return;
 			fprintf(f, "# superbounce records: map key,most bounces in a row\n");
 			for (const auto& l : g_sb_record_other) fprintf(f, "%s\n", l.c_str());
 			fprintf(f, "%016llx,%d\n", (unsigned long long)g_sb_map_key, g_sb_record);
@@ -1736,7 +1770,7 @@ namespace h2cv::sb
 		{
 			g_sb_record = 0; g_sb_streak = 0; g_sb_record_other.clear();
 			FILE* f = nullptr;
-			if (fopen_s(&f, "superbounce_records.csv", "r") != 0 || !f) return;
+			if (fopen_s(&f, h2cv::sbscan::dataPath("superbounce_records.csv").c_str(), "r") != 0 || !f) return;
 			char line[160];
 			while (fgets(line, sizeof(line), f))
 			{
@@ -1768,7 +1802,7 @@ namespace h2cv::sb
 		void sb_ghosts_save()
 		{
 			FILE* f = nullptr;
-			if (fopen_s(&f, "superbounce_seams.csv", "w") != 0 || !f) return;
+			if (fopen_s(&f, h2cv::sbscan::dataPath("superbounce_seams.csv").c_str(), "w") != 0 || !f) return;
 			fprintf(f, "# superbounce ghost seams: map key,seam index,end a x,y,z,end b x,y,z,lottery landings,launched\n");
 			for (const auto& l : g_sb_ghost_other) fprintf(f, "%s\n", l.c_str());
 			for (const auto& gh : g_sb_ghosts)
@@ -1779,7 +1813,7 @@ namespace h2cv::sb
 		{
 			g_sb_ghosts.clear(); g_sb_ghost_other.clear();
 			FILE* f = nullptr;
-			if (fopen_s(&f, "superbounce_seams.csv", "r") != 0 || !f) return;
+			if (fopen_s(&f, h2cv::sbscan::dataPath("superbounce_seams.csv").c_str(), "r") != 0 || !f) return;
 			char line[320];
 			while (fgets(line, sizeof(line), f))
 			{
@@ -1826,7 +1860,7 @@ namespace h2cv::sb
 			sb_ghosts_load();
 			g_sb_spots.clear(); g_sb_spot_other.clear();
 			FILE* f = nullptr;
-			if (fopen_s(&f, "superbounce_spots.csv", "r") != 0 || !f) return;
+			if (fopen_s(&f, h2cv::sbscan::dataPath("superbounce_spots.csv").c_str(), "r") != 0 || !f) return;
 			char line[320];
 			while (fgets(line, sizeof(line), f))
 			{
@@ -1882,6 +1916,7 @@ namespace h2cv::sb
 		{
 			if (!g_sbb.bsp || sig == g_sb_obj_sig) return;
 			g_sb_obj_sig = sig;
+			g_sb_scan_pending = true;                              // 2026-11-16: the exact rules' level holds the objects too - made again with this set
 			g_sbb.surf.resize(g_sbb.obj_surf);
 			g_sbb.seams.resize(g_sbb.obj_seam);
 			g_sb_shown.clear();                                     // seam indices past the level's change
@@ -1957,15 +1992,21 @@ namespace h2cv::sb
 					(s < (size_t)g_sbb.surface_count ? nstruct : ninst) += 1; nvert += (int64_t)sf.poly.size();
 				}
 				for (int64_t v : { nstruct, ninst, nvert }) { geo ^= (uint64_t)v; geo *= 1099511628211ull; }
-				if (g_reach) { geo ^= 0x52434831ull; geo *= 1099511628211ull; }   // Reach ('RCH1'): its own prediction files
+				if (g_h4) { geo ^= 0x48344231ull; geo *= 1099511628211ull; }   // Halo 4 ('H4B1'): its own prediction files
+				else if (g_reach) { geo ^= 0x52434831ull; geo *= 1099511628211ull; }   // Reach ('RCH1'): its own prediction files
 				else if (g_gen3) { geo ^= 0x47454E33ull; geo *= 1099511628211ull; }   // Gen3: its own prediction files
+				// HCM "No invisible walls (*)" (2026-11-21): a level without its invisible surfaces is another level to the scan - its
+				// own prediction file ('NOIV'). A map that has none keeps its usual file.
+				if (g_sbb.invis_dropped > 0) { geo ^= 0x4E4F4956ull; geo *= 1099511628211ull; }
 			}
+			if (g_sbb.invis_dropped == 0)
 			{
 				// a cache saved by the previous builds under the old map key: adopt it under the geometry key
-				char gname[80], oname[80];
-				snprintf(gname, sizeof(gname), "superbounce_predicted_v3_%016llx.csv", (unsigned long long)geo);
-				snprintf(oname, sizeof(oname), "superbounce_predicted_v3_%016llx.csv", (unsigned long long)g_sb_map_key);
-				if (GetFileAttributesA(gname) == INVALID_FILE_ATTRIBUTES && GetFileAttributesA(oname) != INVALID_FILE_ATTRIBUTES) CopyFileA(oname, gname, TRUE);
+				char gn[80], on[80];
+				snprintf(gn, sizeof(gn), "superbounce_predicted_v3_%016llx.csv", (unsigned long long)geo);
+				snprintf(on, sizeof(on), "superbounce_predicted_v3_%016llx.csv", (unsigned long long)g_sb_map_key);
+				const std::string gname = h2cv::sbscan::dataPath(gn), oname = h2cv::sbscan::dataPath(on);   // (the viewer's own folder, 2026-11-16)
+				if (GetFileAttributesA(gname.c_str()) == INVALID_FILE_ATTRIBUTES && GetFileAttributesA(oname.c_str()) != INVALID_FILE_ATTRIBUTES) CopyFileA(oname.c_str(), gname.c_str(), TRUE);
 			}
 			// level + instanced geometry only (the scan always ran at BSP load, before objects are added; now it can start later)
 			for (size_t s = 0; s < g_sbb.surf.size() && s < g_sbb.obj_surf; ++s)
@@ -1976,8 +2017,18 @@ namespace h2cv::sb
 				for (const v3& p : sf.poly) { o.poly.push_back(p.x); o.poly.push_back(p.y); o.poly.push_back(p.z); }
 				out.push_back(std::move(o));
 			}
+			// + the objects' triangles (baked scenery), flagged 0x80 (2026-11-16): the live landings' rules meet them as the game does -
+			// late, when no level polygon is near (H2CV_SbScan.cpp launch_contacts). Not part of the prediction file's key (geo above).
+			for (size_t s = g_sbb.obj_surf; s < g_sbb.surf.size(); ++s)
+			{
+				const s_sb_surface& sf = g_sbb.surf[s];
+				if (!sf.ok || sf.poly.size() < 3) continue;
+				h2cv::sbscan::Surface o; o.key = 0xC0000000u | (uint32)(s - g_sbb.obj_surf); o.n[0] = sf.n.x; o.n[1] = sf.n.y; o.n[2] = sf.n.z; o.flags = (uint8_t)(sf.flags | 0x80);
+				for (const v3& p : sf.poly) { o.poly.push_back(p.x); o.poly.push_back(p.y); o.poly.push_back(p.z); }
+				out.push_back(std::move(o));
+			}
 			g_sb_pred_key = geo;
-			h2cv::sbscan::start(geo, std::move(out), g_sbs.feet.x, g_sbs.feet.y, (g_settings.spotscan_curtick && g_sbs.tps > 0) ? g_sbs.tps : 30);
+			h2cv::sbscan::start(geo, std::move(out), g_sbs.feet.x, g_sbs.feet.y, (g_settings.spotscan_curtick && g_sbs.tps > 0) ? g_sbs.tps : 30, g_sb_obj_sig);
 		}
 
 		// ================================================================================================================
@@ -2205,6 +2256,8 @@ namespace h2cv::sb
 		struct s_reach_job
 		{
 			std::string map; uint32 mask = 0; uint32_t gen = 0;
+			bool h4 = false;                         // Halo 4 (2026-11-21): read with h4::readCollisionBsps
+			uint64_t igVer = 0;                      // Halo 4: the instanced geometry gather's version the build used (0: none)
 			std::atomic<bool> done{ false }, cancel{ false };
 			std::atomic<size_t> surfaces{ 0 };
 			std::atomic<int> stage{ 0 };                 // 0 reading the map, 1 surfaces and seams, 2 gaps / fins / junctions / slots
@@ -2215,6 +2268,7 @@ namespace h2cv::sb
 		std::atomic<uint32_t> g_reach_gen{ 1 };
 		std::string g_reach_map;                          // the map g_sbb holds (g_sbb_owner == 2)
 		uint32 g_reach_mask = 0;                          // ... and the bsp set it was built for
+		uint64_t g_reach_igver = 0;                       // Halo 4: ... and the instanced geometry gather it used (a newer one rebuilds)
 		std::string g_reach_fail_key; ULONGLONG g_reach_retry_ms = 0;   // a failed read is retried after 5 s (resources may still be loading)
 		uint32 g_reach_seen_mask = 0; ULONGLONG g_reach_seen_ms = 0;    // the mask must hold still for a moment before a build starts
 		std::string g_reach_status;                       // for the panel ("" = nothing to say)
@@ -2270,7 +2324,7 @@ namespace h2cv::sb
 			std::string m; for (const char ch : map) m += (std::isalnum((unsigned char)ch) || ch == '_' || ch == '-') ? ch : '_';
 			const std::string dir = hcm + "\\ReachBounceCache";
 			CreateDirectoryA(dir.c_str(), nullptr);
-			char name[160]; snprintf(name, sizeof(name), "\\%s_%08X.bin", m.c_str(), mask);
+			char name[160]; snprintf(name, sizeof(name), "\\%s_%08X.bin", m.c_str(), mask);   // (Halo 4's map names come prefixed "h4_")
 			return dir + name;
 		}
 		struct s_reach_disk_head { char magic[4]; uint32 ver, sseam, sgap, sfin, nbase; uint64_t ka, kb; uint64_t nchanged, nappended, ngap, nfin, njun; };
@@ -2334,8 +2388,46 @@ namespace h2cv::sb
 				std::vector<CollisionWorld::Bsp3> set;
 				std::string log;
 				reach::BspStats st;
-				const bool ok = reach::readCollisionBsps(tls, job->mask, set, log, &st);
-				{ char hd[160]; snprintf(hd, sizeof(hd), "Reach bounce geometry read (map %s, bsp mask %08X):\n", job->map.c_str(), job->mask); PLOG_INFO << "[CollisionViewer] " << hd << log; }   // per-bsp lines: longer than LOGF's buffer
+				bool ok = false;
+				if (job->h4)
+				{
+					// Halo 4: the structure only (its instanced geometry is Havok-only); the same stats fields the log line below uses
+					h4::BspStats s4;
+					ok = h4::readCollisionBsps(tls, job->mask, set, log, &s4);
+					st.bsps = s4.bsps; st.surfaces = s4.surfaces; st.nonCollidable = s4.nonCollidable; st.seamLeftOut = s4.seamLeftOut;
+					// its instanced geometry: the game-thread Havok gather (h4::igGatherTick), waited for up to 20 s; it becomes
+					// instance collision bsps placed at the origin (the triangles are in world space) on the first bsp
+					if (ok && !set.empty())
+					{
+						std::vector<float> ig;
+						std::string igLog;
+						uint64_t ver = 0;
+						const ULONGLONG tw = GetTickCount64();
+						while (!h4::igTriangles(job->mask, ig, &ver, &igLog) && !job->cancel.load() && GetTickCount64() - tw < 20000) Sleep(100);
+						job->igVer = h4::igVersion(job->mask);
+						if (!ig.empty())
+						{
+							std::vector<CollBsp> defs;
+							std::string clog;
+							h4::igToCollBsps(ig, set, defs, clog);
+							for (auto& d : defs)
+							{
+								IgInstance in{};
+								in.m[0] = 1.f; in.m[1] = 1.f; in.m[5] = 1.f; in.m[9] = 1.f;   // scale 1, identity basis, origin
+								in.def = (int)set[0].igDefs.size();
+								set[0].igDefs.push_back(std::move(d));
+								set[0].igOk.push_back(1);
+								set[0].igInst.push_back(in);
+							}
+							st.instances = defs.size(); st.instancesLive = defs.size();
+							log += "Havok instanced geometry gather:\n" + igLog + clog + "\n";
+						}
+						else log += job->igVer ? "Havok instanced geometry gather: no triangles\n" + igLog
+							: "Havok instanced geometry: not gathered yet (the viewer's game-thread sampling is off?) - the cache is built without it and rebuilt when it arrives\n";
+					}
+				}
+				else ok = reach::readCollisionBsps(tls, job->mask, set, log, &st);
+				{ char hd[160]; snprintf(hd, sizeof(hd), "%s bounce geometry read (map %s, bsp mask %08X):\n", job->h4 ? "Halo 4" : "Reach", job->map.c_str(), job->mask); PLOG_INFO << "[CollisionViewer] " << hd << log; }   // per-bsp lines: longer than LOGF's buffer
 				if (!ok || job->cancel.load()) { job->done.store(true, std::memory_order_release); return; }
 				job->surfaces.store(st.surfaces); job->stage.store(1);
 				auto res = std::make_unique<s_reach_build>();
@@ -2420,6 +2512,7 @@ namespace h2cv::sb
 		void sb_reach_swap(s_reach_job& job)
 		{
 			sb_reach_retire();                    // the old cache is freed by the next job's worker
+			g_reach_igver = job.igVer;
 			g_sbb = std::move(job.result->bsp);
 			g_sbb.cancel = nullptr;               // the job (and its flag) goes away
 			g_bsp_copies = std::move(job.result->copies);
@@ -2445,9 +2538,11 @@ namespace h2cv::sb
 			g_reach_status.clear();
 			if (g_sbb_owner != 2 && g_sbb.bsp) sb_reach_drop();       // another game's cache (Halo 3 -> Reach): never draw it on this map
 			const ULONGLONG now = GetTickCount64();
-			const std::string map = reach::mapName();
-			const uint32 mask = reach::activeBspMask();
-			const uintptr_t tls = reach::thisThreadTls();
+			// Halo 4 (2026-11-21): its map name prefixed "h4_", so its jobs, caches (ReachBounceCache\h4_<map>_<mask>.bin) and drops
+			// never mix with Reach's; its reader tries every resource view, so a missing TLS block is not a reason to wait
+			const std::string map = g_h4 ? (h4::mapName().empty() ? std::string() : "h4_" + h4::mapName()) : reach::mapName();
+			const uint32 mask = g_h4 ? h4::activeBspMask() : reach::activeBspMask();
+			const uintptr_t tls = g_h4 ? h4::gameTls() : reach::thisThreadTls();
 			// a finished build: used if it is still the map and bsp set asked for
 			if (g_reach_job && g_reach_job->done.load(std::memory_order_acquire))
 			{
@@ -2456,12 +2551,16 @@ namespace h2cv::sb
 				if (job->result && !job->cancel.load() && job->gen == g_reach_gen.load() && job->map == map && job->mask == mask) sb_reach_swap(*job);
 				else if (!job->result && !job->cancel.load()) { g_reach_fail_key = job->map + "/" + std::to_string(job->mask); g_reach_retry_ms = now + 5000; }
 			}
-			if (map.empty() || !tls) { g_reach_status = map.empty() ? "bounce geometry: the map name could not be read" : "bounce geometry: waiting for the game thread"; return; }
+			if (map.empty() || (!tls && !g_h4)) { g_reach_status = map.empty() ? "bounce geometry: the map name could not be read" : "bounce geometry: waiting for the game thread"; return; }
 			if (!g_reach_map.empty() && map != g_reach_map) sb_reach_drop();          // a different map: nothing of the old one is drawn
 			if (g_reach_job && g_reach_job->map != map) g_reach_job->cancel.store(true);
 			if (mask == 0) { g_reach_status = "bounce geometry: waiting for the level (no bsp loaded yet)"; return; }
 			if (mask != g_reach_seen_mask) { g_reach_seen_mask = mask; g_reach_seen_ms = now; }
-			if (g_sbb.bsp && g_sbb_owner == 2 && g_reach_map == map && g_reach_mask == mask) return;   // up to date
+			// up to date (Halo 4: also built with the latest instanced geometry gather of this bsp set)
+			const bool igCurrent = !g_h4 || g_reach_igver == h4::igVersion(mask);
+			if (g_sbb.bsp && g_sbb_owner == 2 && g_reach_map == map && g_reach_mask == mask && igCurrent) return;
+			if (g_sbb.bsp && g_sbb_owner == 2 && g_reach_map == map && g_reach_mask == mask && !igCurrent && !g_reach_job)
+				LOGF("Halo 4 bounce geometry: the instanced geometry gather is newer than the cache - rebuilding");
 			if (g_reach_job)
 			{
 				if (g_reach_job->map == map && g_reach_job->mask == mask && !g_reach_job->cancel.load())
@@ -2476,7 +2575,7 @@ namespace h2cv::sb
 			if (now - g_reach_seen_ms < 400) { g_reach_status = "bounce geometry: loading (waiting for the zone set to settle)"; return; }   // a zone switch changes the mask a few times
 			if (map + "/" + std::to_string(mask) == g_reach_fail_key && now < g_reach_retry_ms) { g_reach_status = "bounce geometry: could not read the map (see the HCM log) - retrying"; return; }
 			auto job = std::make_shared<s_reach_job>();
-			job->map = map; job->mask = mask; job->gen = g_reach_gen.load();
+			job->map = map; job->mask = mask; job->gen = g_reach_gen.load(); job->h4 = g_h4;
 			job->old = std::move(g_reach_old); g_reach_old.clear();
 			g_reach_job = job;
 			g_reach_status = "bounce geometry: loading (0 surfaces) - reading the map";
@@ -2491,16 +2590,20 @@ namespace h2cv::sb
 			SbTimer sbt_(SBT_BSP);
 			// HCM: the resident structure bsp's collision (CollisionWorld) and its instanced geometry, rebuilt on every bsp load
 			static uintptr_t s_id = 0;
+			static bool s_no_invis = false;   // the "No invisible walls (*)" state the cache was built with (rebuilt when it changes)
 			if (g_reach) { sb_reach_update(); return; }    // Halo: Reach: the worker-built cache (above)
 			if (g_sbb_owner == 2) { g_sbb = s_sb_bsp{}; g_bsp_copies.clear(); g_sbb_owner = 0; g_reach_map.clear(); g_reach_mask = 0; ++g_sb_geo_gen; s_id = 0; }   // Reach's cache: not for this game
 			if (!g_reach_old.empty()) g_reach_old.clear();   // Reach caches waiting for a next Reach job that will not come (another game now)
 			if (!g_world || !g_world->valid()) { g_sbb = s_sb_bsp{}; ++g_sb_geo_gen; s_id = 0; g_sbb_owner = 0; return; }
-			if (g_world->sbspId() == s_id && g_sbb.bsp) return;
-			s_id = g_world->sbspId();
+			if (g_world->sbspId() == s_id && g_sbb.bsp && s_no_invis == g_sb_no_invis) return;
+			if (s_id && g_world->sbspId() == s_id && s_no_invis != g_sb_no_invis)
+				LOGF("bounce geometry: rebuilding - invisible walls (*) %s", g_sb_no_invis ? "off (left out)" : "back on");
+			s_id = g_world->sbspId(); s_no_invis = g_sb_no_invis;
 			g_sbb = s_sb_bsp{}; ++g_sb_geo_gen; g_sbb_owner = 1;
 			g_sb_shown.clear(); g_sb_plan_tick = 0xFFFFFFFF;
 			g_bsp_copies.clear();
 			g_sbb.skip_invalid = g_gen3;   // sb_add_bsp: Gen3 leaves out flags & 0x10 surfaces
+			g_sbb.skip_invisible = !g_gen3 && g_sb_no_invis;   // Halo 2, "No invisible walls (*)" on: the level's flags & 2 surfaces too
 			if (g_gen3)
 			{
 				// Halo 3 / ODST: every ACTIVE structure bsp (a zone set loads several) - all their worlds first (the level rows), then
@@ -2563,6 +2666,8 @@ namespace h2cv::sb
 			g_sb_fins_logged = false;
 			sb_spots_on_map();                    // this map's remembered monster / dreadnought spots
 			g_sbb.obj_surf = g_sbb.surf.size(); g_sbb.obj_seam = g_sbb.seams.size(); g_sb_obj_sig = 0;   // objects come after
+			g_sbb.skip_invisible = false;         // (objects are not filtered by the game: scenery keys are left alone)
+			if (g_sbb.invis_dropped) LOGF("bounce geometry: %zu invisible (*) surfaces left out (No invisible walls is on)", g_sbb.invis_dropped);
 			++g_sb_geo_gen;                       // the xy grids: rebuilt on next use
 			g_sb_scan_pending = true;             // HCM: predicted spots are scanned once the Predicted toggle is on (sb_draw)
 		}
@@ -3008,11 +3113,12 @@ namespace h2cv::sb
 		void sb_dump_map_if_new()
 		{
 			if (g_sb_map_key == 0 || g_sb_map_key == g_sb_map_dumped || g_sbb.surf.empty()) return;
+			if (g_sbb.invis_dropped > 0) return;   // the dump is the whole level: not while invisible walls are left out (same map key)
 			g_sb_map_dumped = g_sb_map_key;
 			char name[64];
 			snprintf(name, sizeof(name), "superbounce_map_%016llx.csv", (unsigned long long)g_sb_map_key);
 			FILE* f = nullptr;
-			if (fopen_s(&f, name, "w") != 0 || !f) return;
+			if (fopen_s(&f, h2cv::sbscan::dataPath(name).c_str(), "w") != 0 || !f) return;
 			fprintf(f, "# M,surface,havok key,normal x,y,z,vertices,x,y,z ... (level surfaces; instance keys: 0xA0000000 | surface << 16 | instance)\n");
 			std::vector<uint32> key(g_sbb.surf.size(), 0);
 			for (size_t s = 0; s < g_sbb.surf.size() && s < (size_t)g_sbb.surface_count; ++s) key[s] = 0x20000000u | (uint32)s;
@@ -3296,6 +3402,10 @@ namespace h2cv::sb
 		// in reach if it lies inside the outline (plus the pill's width) when the fall gets down to its height
 		struct s_sb_reach { bool on = false; float dt = 1.f / 30.f, z0 = 0.f, vz0 = 0.f; int n = 0; std::vector<v3> ring; };   // ring[k * 17 + j]
 		s_sb_reach g_sb_reach;
+		uint32 g_sb_reach_tick = 0xFFFFFFFF;           // the tick g_sb_reach was built for (2026-11-24: once a tick, not every frame)
+		// (re)build the reach outline for this tick's state - the state only changes per tick, so every frame between two ticks
+		// had rebuilt the same outline (2026-11-24, user: "sideways/slanted bounce, my FPS drops dramatically")
+		void sb_reach_for_tick(uint32 tick, bool airborne, v3 feet, v3 vel, float dt);
 		int g_sb_land_seam = -1;                       // the seam the landing cursor is on (drawn whole)
 		uint32 g_sb_frame = 0, g_sb_land_frame = 0;    // frames drawn / when that was last set
 		void sb_reach_build(v3 feet, v3 vel, float dt)
@@ -3343,6 +3453,18 @@ namespace h2cv::sb
 			}
 			return inside || dmin <= 0.35f;                                            // the pill's width and a little
 		}
+		void sb_reach_for_tick(uint32 tick, bool airborne, v3 feet, v3 vel, float dt)
+		{
+			if (g_sb_reach_tick == tick) return;
+			g_sb_reach_tick = tick;
+			if (airborne) sb_reach_build(feet, vel, dt); else g_sb_reach.on = false;
+		}
+		// any part of the seam a..b inside the reach outline (25 points, as the drawing tests it)
+		bool sb_reach_seam(v3 a, v3 b)
+		{
+			for (int k = 0; k <= 24; ++k) if (sb_reach_ok(a + (b - a) * ((float)k / 24.f))) return true;
+			return false;
+		}
 
 		// a seam's index in g_sbb.seams by its ends (as sb_nearest_seam hands them back), -1 if none
 		int sb_seam_index(const v3& a, const v3& b)
@@ -3355,11 +3477,168 @@ namespace h2cv::sb
 			return -1;
 		}
 
+		// ---- the landing's EXACT verdict (2026-11-16) ----
+		// The landing cursor used to be rated by the old estimate (depth / tilt / "EDGE: about 1 in 2" in orange) even after the seams got
+		// the scan's exact rules. Now this very fall - your position and velocity, air control toward the target your stick sets - is
+		// stepped tick by tick through h2cv::sbscan::landingLaunch until it finds the landing tick's contacts: the solved velocity is
+		// what the game will do with it (as long as the stick stays where it is). Charged only (the rules are the charged pill's).
+		// through: a contact that left the velocity untouched while the tick ended under the floor - the pill passing the floor from
+		// behind (2026-11-16, review agent E: the recorded natural fall-throughs are exactly this, a swept fall of 15-40 u/s whose
+		// shortest way out of the floor polygon is DOWN; the engine neither cuts the speed nor pushes). through_v: the speed it had.
+		struct s_sb_exact { bool ran = false, contact = false; v3 at{}, v_in{}, launch{}; int clips = 0; bool through = false; float through_v = 0.f; };   // at: feet at the landing tick's start; clips: brushes on the way down
+		s_sb_exact g_sb_exact;
+		// the pill's live sweep threshold (u/s; h2::entitySweepThreshold - 5.4465 in stock MCC at any tick rate, tick-matched with
+		// Season 7 physics); 0 = not known (Halo 3 / ODST / Reach): the rules then use the tick-matched value. Set every frame.
+		float g_sb_sweep_now = 0.f;
+		// a bounce: thrown UP more than this (u/s). A plain fast landing on open floor rebounds up to 4.6 (measured by review agent B:
+		// 1.3 M such "launches" on Headlong with the old line of 4); the smallest real seam bounce in the simulations is 5.3
+		// 2026-11-17 (the user: failed bounces that end in a "mini hop" were still drawn green): 5.0. In 9,075 recorded 30-tick
+		// landings the hops pile up at 4.7 u/s and reach 4.9 (135 at 4.7, 30 at 4.8, 5 at 4.9); real bounces are an even ~10 per
+		// 0.1 u/s from 5.0 up. At 60 tick the recorded hops top out at 4.7 and nothing lies between 5 and 12 (287 landings).
+		// 5.4 would have hidden ~45 real small 30-tick bounces. (review_20261116\F_contact_timing\x19_hop_hist.py)
+		constexpr float k_sb_launch_min = 5.0f;
+		s_sb_exact sb_exact_fall(v3 feet, v3 vel, float dt, v3 target, float z_floor, float sweep)
+		{
+			s_sb_exact e;
+			if (h2cv::sbscan::readySerial() == 0) return e;
+			e.ran = true;
+			const float g1 = k_sb_gravity * dt, step = k_sb_air_friction * dt;
+			v3 p = feet, v = vel;
+			for (int k = 0; k < 900 && p.z > z_floor - 0.8f; ++k)
+			{
+				// this tick's velocity, in sb_predict_landing's order: air control toward the target, then gravity
+				const v3 to{ target.x - v.x, target.y - v.y, 0.f };
+				const float gap = len(to);
+				if (gap <= step) { v.x = target.x; v.y = target.y; }
+				else { v.x += to.x / gap * step; v.y += to.y / gap * step; }
+				v.z -= g1;
+				float out[3];
+				// (gate off: this loop has already asked about the tick before - see landingLaunch)
+				if (v.z < 0.f && p.z - z_floor < (std::max)(1.5f, -1.6f * v.z * dt) && h2cv::sbscan::landingLaunch(p.x, p.y, p.z, v.x, v.y, v.z, out, dt, false, sweep))
+				{
+					// caught: a landing or a launch
+					if (out[2] > -1.f)
+					{
+						e.contact = true; e.at = p; e.v_in = v; e.launch = v3{ out[0], out[1], out[2] };
+						return e;
+					}
+					// still falling. Only a brush that CHANGES the velocity counts (2026-11-16, review agent D: sliding down beside a
+					// wall returns a contact with the velocity unchanged every tick - the old "7th contact is the landing" ended such
+					// falls in mid-air); an untouched pass that ends under the floor is the pill going through it from behind
+					const v3 o3{ out[0], out[1], out[2] };
+					if (len(o3 - v) > 0.05f)
+					{
+						if (++e.clips > 12) { e.contact = true; e.at = p; e.v_in = v; e.launch = o3; return e; }
+					}
+					else if (!e.through && p.z + v.z * dt < z_floor - 0.05f) { e.through = true; e.through_v = len(v); }
+					v = o3;
+				}
+				p = p + v * dt;
+			}
+			return e;
+		}
+		// a launch: thrown up more than k_sb_launch_min, or kicked sideways - 4+ u/s of new horizontal speed AND leaving at 8+ u/s
+		// without being left falling (2026-11-16: the speed cut on a fast horizontal approach alone changes the horizontal
+		// velocity by more than 4 while leaving you at 4.08 - 317 of 968 recorded plain landings read as "launches")
+		bool sb_exact_launches(const s_sb_exact& e)
+		{
+			const v3 dvh{ e.launch.x - e.v_in.x, e.launch.y - e.v_in.y, 0.f };
+			return e.contact && (e.launch.z > k_sb_launch_min || (e.launch.z > -1.f && len(dvh) > 4.f && len(e.launch) >= 8.f));
+		}
+		// how many ticks until a fall from z0 (this tick's vertical speed vz0) is down at z_to: the landing tick is the last of them
+		int sb_fall_ticks(float z0, float vz0, float dt, float z_to)
+		{
+			const float g1 = k_sb_gravity * dt;
+			float z = z0, vz = vz0; int k = 0;
+			while (k < 900 && z + (vz - g1) * dt > z_to + 0.02f) { vz -= g1; z += vz * dt; ++k; }
+			return k + 1;
+		}
+		// where air control toward the stick target w has taken you (x, y) after n ticks - sb_predict_landing's own stepping
+		v3 sb_air_pos(v3 feet, v3 vel, float dt, v3 w, int n)
+		{
+			const float step = k_sb_air_friction * dt;
+			float x = feet.x, y = feet.y, vx = vel.x, vy = vel.y;
+			for (int i = 0; i < n; ++i)
+			{
+				const float tx = w.x - vx, ty = w.y - vy, gap = std::sqrt(tx * tx + ty * ty);
+				if (gap <= step) { vx = w.x; vy = w.y; }
+				else { vx += tx / gap * step; vy += ty / gap * step; }
+				x += vx * dt; y += vy * dt;
+			}
+			return v3{ x, y, 0.f };
+		}
+		// the stick target (a horizontal velocity of at most 2.25, held from now until you land) that has you at tp after n ticks.
+		// w: the first guess in, the answer out. false: air control cannot get you there. Newton on the two unknowns.
+		// fst (2026-11-16, cost): a seam's 13 targets all start from the same guess, so the first iteration's three integrations do
+		// not depend on the target - made once and shared (filled when first needed; the same sums, so the same answers bit for
+		// bit: proven on three maps at 30 and 60 tick, review_20261116\C_cost)
+		struct s_air_first { bool has_p = false, has_xy = false; v3 p{}, px{}, py{}; };
+		bool sb_air_solve(v3 feet, v3 vel, float dt, int n, v3 tp, v3& w, s_air_first* fst = nullptr)
+		{
+			for (int it = 0; it < 8; ++it)
+			{
+				const bool sh = fst && it == 0;
+				v3 p;
+				if (sh) { if (!fst->has_p) { fst->p = sb_air_pos(feet, vel, dt, w, n); fst->has_p = true; } p = fst->p; }
+				else p = sb_air_pos(feet, vel, dt, w, n);
+				const float ex = tp.x - p.x, ey = tp.y - p.y;
+				if (ex * ex + ey * ey < 0.002f * 0.002f) return true;
+				const float h = 0.05f;
+				v3 px, py;
+				if (sh)
+				{
+					if (!fst->has_xy) { fst->px = sb_air_pos(feet, vel, dt, v3{ w.x + h, w.y, 0.f }, n); fst->py = sb_air_pos(feet, vel, dt, v3{ w.x, w.y + h, 0.f }, n); fst->has_xy = true; }
+					px = fst->px; py = fst->py;
+				}
+				else { px = sb_air_pos(feet, vel, dt, v3{ w.x + h, w.y, 0.f }, n); py = sb_air_pos(feet, vel, dt, v3{ w.x, w.y + h, 0.f }, n); }
+				const float a = (px.x - p.x) / h, b = (py.x - p.x) / h, c = (px.y - p.y) / h, d = (py.y - p.y) / h, det = a * d - b * c;
+				if (std::fabs(det) < 1e-8f) return false;
+				w.x += (d * ex - b * ey) / det; w.y += (a * ey - c * ex) / det;
+				const float wl = std::sqrt(w.x * w.x + w.y * w.y);
+				if (wl > k_sb_air_speed) { w.x *= k_sb_air_speed / wl; w.y *= k_sb_air_speed / wl; }
+			}
+			const v3 p = sb_air_pos(feet, vel, dt, w, n);
+			return (tp.x - p.x) * (tp.x - p.x) + (tp.y - p.y) * (tp.y - p.y) < 0.004f * 0.004f;
+		}
+		// green for a launch; the predicted spots' colours for the big ones: cyan = monster, white = dreadnought (lines at this tick rate)
+		ImU32 sb_launch_color(float speed)
+		{
+			const int tps_now = (int)std::lround(30.f * g_sb_tick_scale);
+			return speed >= h2cv::sbscan::lineDreadnought(tps_now) ? IM_COL32(255, 255, 255, 255) : speed >= h2cv::sbscan::lineMonster(tps_now) ? IM_COL32(0, 235, 255, 255) : IM_COL32(80, 230, 90, 255);
+		}
+		const char* sb_launch_name(float speed)
+		{
+			const int tps_now = (int)std::lround(30.f * g_sb_tick_scale);
+			return speed >= h2cv::sbscan::lineDreadnought(tps_now) ? "DREADNOUGHT" : speed >= h2cv::sbscan::lineMonster(tps_now) ? "MONSTER" : "launches";
+		}
+		// gap / fin landings keep their own drawing: the exact verdict is added to it as one more line and the launch arrow
+		void sb_draw_exact_note(v3 at)
+		{
+			const s_sb_exact& e = g_sb_exact;
+			if (!e.ran || !e.contact) return;
+			const float sp = len(e.launch);
+			char t[160];
+			if (sb_exact_launches(e))
+			{
+				const ImU32 c = sb_launch_color(sp);
+				const v3 d = norm(e.launch);
+				if (d.z > 0.7f) sb_arrow(at, d, e.launch.z, c, 3.f, true); else sb_dir_arrow(at, d, sp, c);
+				snprintf(t, sizeof(t), "PHYSICS (this exact fall): %s %.1f u/s (x %+.1f, y %+.1f, up %+.1f)", sb_launch_name(sp), sp, e.launch.x, e.launch.y, e.launch.z);
+				if (g_settings.superbounce_seam_text) text(at + v3{ 0.f, 0.f, 0.7f }, c, t);
+			}
+			else
+			{
+				snprintf(t, sizeof(t), "PHYSICS (this exact fall): no launch - it leaves you at %+.1f u/s up", e.launch.z);
+				if (g_settings.superbounce_seam_text) text(at + v3{ 0.f, 0.f, 0.7f }, sb_quality_color(0), t);
+			}
+		}
+
 		void sb_draw_landing(const s_sb_landing& ld, bool charged, float vsweep)
 		{
 			for (size_t i = 1; i < ld.path.size(); ++i) line(ld.path[i - 1], ld.path[i], IM_COL32(200, 200, 255, 140), 1.f);
 			v3 sa{}, sb{}; float off = 0.f, bend = 0.f;
 			const bool seam = sb_nearest_seam(ld.surface, ld.at, sa, sb, off, bend);
+			const bool exact = charged && g_sb_exact.ran && g_sb_exact.contact;   // the exact rules ran this fall to its contacts
 			// the seam's bend from above at the landing: a sideways push of its own, no sweep needed
 			float yaw = 0.f; v3 side{};
 			const bool bent = seam && sb_seam_yaw(ld.at, yaw, side) && yaw * 57.29578f >= k_sb_tilt_min;
@@ -3401,6 +3680,7 @@ namespace h2cv::sb
 				why += t1;
 			}
 			// landing on a remembered monster / dreadnought spot: the speed you arrive at, against the monster windows
+			std::string spot_note;
 			if (g_settings.superbounce_spots)
 			{
 				const int cur_tps = (int)std::lround(30.f * g_sb_tick_scale);
@@ -3408,11 +3688,12 @@ namespace h2cv::sb
 				{
 					if (sp.tps != cur_tps || std::fabs(sp.at.z - ld.at.z) > 1.f || (sp.at.x - ld.at.x) * (sp.at.x - ld.at.x) + (sp.at.y - ld.at.y) * (sp.at.y - ld.at.y) > 0.4f * 0.4f) continue;
 					char wb[160];
-					why += sp.best >= h2cv::sbscan::lineDreadnought(sp.tps) ? "  on a DREADNOUGHT SPOT:" : "  on a MONSTER SPOT:";
-					why += sb_monster_window(speed, wb, sizeof(wb)) + 1;
+					spot_note += sp.best >= h2cv::sbscan::lineDreadnought(sp.tps) ? "  on a DREADNOUGHT SPOT:" : "  on a MONSTER SPOT:";
+					spot_note += sb_monster_window(speed, wb, sizeof(wb)) + 1;
 					break;
 				}
 			}
+			why += spot_note;
 			// the launch: the up tilt from your drift across the seam (only above the sweep speed) and the seam's bend
 			// (sideways) add as vectors - the pair's two pushes are that many degrees from opposite, along that direction
 			float tilt = 0.f, total = 0.f;
@@ -3490,28 +3771,67 @@ namespace h2cv::sb
 				why += tg;
 			}
 			else if (!hard_fail) why += "  LOTTERY (about 1 in 30: deep only if Havok's contact comes a tick late)";
+			// the exact rules ran this very fall to its contacts (2026-11-16): their answer replaces the estimate's verdict and colour -
+			// green / cyan (monster) / white (dreadnought) = it launches, red = it does not; no "edge" left to guess at
+			ImU32 cq = sb_quality_color(q);
+			bool ex_launch = false; float ex_speed = 0.f; v3 ex_dir{ 0.f, 0.f, 1.f };
+			if (exact)
+			{
+				const v3 L = g_sb_exact.launch;
+				ex_launch = sb_exact_launches(g_sb_exact); ex_speed = len(L);
+				if (ex_speed > 1e-4f) ex_dir = L * (1.f / ex_speed);
+				q = ex_launch ? 2 : 0;
+				cq = ex_launch ? sb_launch_color(ex_speed) : sb_quality_color(0);
+				char te[220];
+				if (ex_launch) snprintf(te, sizeof(te), "  PHYSICS (this exact fall): %s %.1f u/s (x %+.1f, y %+.1f, up %+.1f)%s", sb_launch_name(ex_speed), ex_speed, L.x, L.y, L.z, seam ? "" : " - no listed seam here");
+				else snprintf(te, sizeof(te), "  PHYSICS (this exact fall): no launch - it leaves you at %+.1f u/s up", L.z);
+				why = te; why += spot_note;
+				if (g_sb_exact.clips > 0) why += "  (after brushing something on the way down)";
+				if (g_sb_exact.through) why += "  - after passing THROUGH the floor above it";
+			}
+			else if (charged && g_sb_exact.ran && g_sb_exact.through)
+			{
+				// the pill goes through this floor from behind (a debounce): the tick's sweep carries it past the floor polygon,
+				// the shortest way out is down, and the engine neither stops nor pushes it. Pink, as the debounce marks were.
+				q = 0; cq = IM_COL32(255, 80, 200, 255); hard_fail = true;
+				char tt[200];
+				snprintf(tt, sizeof(tt), "  PHYSICS (this exact fall): FALLS THROUGH the floor here (debounce) - arriving %.1f u/s, nothing catches you", g_sb_exact.through_v);
+				why = tt;
+			}
+			else if (charged && g_sb_exact.ran)
+			{
+				// the rules ran and found nothing solid to land on along this path: no guess in its place
+				q = 0; cq = IM_COL32(160, 160, 160, 255); hard_fail = true;   // (no estimate arrow either)
+				why = "  PHYSICS (this exact fall): no solid landing found on this path (two-sided / invisible ground, or past an edge)";
+			}
 			if (seam)
 			{
-				line(sa, sb, sb_quality_color(q), 4.f);
+				line(sa, sb, cq, 4.f);
 				line(ld.at, sb_closest_on_segment(ld.at, sa, sb), IM_COL32(255, 255, 255, 220), 1.5f);
 			}
 			for (int i = 0; i < 16; ++i)
 			{
 				const float a0 = 6.2831853f * (float)i / 16.f, a1 = 6.2831853f * (float)(i + 1) / 16.f;
-				line(ld.at + v3{ std::cos(a0) * 0.15f, std::sin(a0) * 0.15f, 0.01f }, ld.at + v3{ std::cos(a1) * 0.15f, std::sin(a1) * 0.15f, 0.01f }, sb_quality_color(q), 2.f);
+				line(ld.at + v3{ std::cos(a0) * 0.15f, std::sin(a0) * 0.15f, 0.01f }, ld.at + v3{ std::cos(a1) * 0.15f, std::sin(a1) * 0.15f, 0.01f }, cq, 2.f);
 			}
 			// everything you control is right: green arrow when it is deep on time, yellow when it needs a late contact;
 			// mostly up shows how high, otherwise the direction it throws you
 			g_sb_pred.kind = 1; g_sb_pred.q = q; g_sb_pred.speed = speed; g_sb_pred.depth = ld.depth; g_sb_pred.depth_late = ld.depth_late;
 			g_sb_pred.lottery = pure_lottery;
 			g_sb_pred.off = seam ? off : -1.f; g_sb_pred.tilt = total * 57.29578f; g_sb_pred.at = ld.at;
-			g_sb_pred.launch_lo = g_sb_pred.launch_hi = seam ? sb_up_estimate(total) * g_sb_tick_scale : 0.f;
+			g_sb_pred.launch_lo = g_sb_pred.launch_hi = exact ? (ex_launch ? ex_speed : 0.f) : (seam ? sb_up_estimate(total) * g_sb_tick_scale : 0.f);
 			g_sb_pred.late_start = ld.have_depth ? ld.h_last - ld.step : 1.f;
 			g_sb_pred.debounce = (seam && ld.have_depth && !ld.braked && ld.h_last - ld.step <= -k_sb_debounce) ? 1 : 0;
 			g_sb_pred.feature = seam ? sb_seam_index(sa, sb) : -1;
 			g_sb_land_seam = g_sb_pred.feature; g_sb_land_frame = g_sb_frame;
 			// (no arrow for a landing that needs a late contact: of 99 recorded, 1 launched)
-			if (!hard_fail && !fixable && on_ok)
+			if (exact)
+			{
+				// the solved launch itself: its direction, and its real speed
+				if (ex_launch && ex_dir.z > 0.7f) sb_arrow(ld.at, ex_dir, g_sb_exact.launch.z, cq, 3.f, true);
+				else if (ex_launch) sb_dir_arrow(ld.at, ex_dir, ex_speed, cq);
+			}
+			else if (!hard_fail && !fixable && on_ok)
 			{
 				if (dir.z > 0.7f) sb_arrow(ld.at, up_axis, sb_up_estimate(total) * g_sb_tick_scale, sb_quality_color(q), 3.f, true);
 				else sb_dir_arrow(ld.at, dir, sb_up_estimate(total) * g_sb_tick_scale, sb_quality_color(q));
@@ -3522,8 +3842,8 @@ namespace h2cv::sb
 			snprintf(t, sizeof(t), slot ? "land %.3f wu off %s seam, %.2f u/s, depth %.2f (late %.2f), tilt %.1f deg%s%s" :
 				"land %.2f wu off %s seam, %.2f u/s, depth %.2f (late %.2f), tilt %.1f deg%s%s", seam ? off : 0.f, shape, speed,
 				ld.have_depth ? ld.depth : 0.f, ld.have_depth ? ld.depth_late : 0.f, tilt * 57.29578f, bend_txt, why.c_str());
-			if (g_settings.superbounce_seam_text) text(ld.at + v3{ 0.f, 0.f, 0.25f }, sb_quality_color(q), t);
-			if (g_settings.superbounce_seam_text && seam && speed >= vsweep && down > 0.1f)
+			if (g_settings.superbounce_seam_text) text(ld.at + v3{ 0.f, 0.f, 0.25f }, cq, t);
+			if (g_settings.superbounce_seam_text && !exact && seam && speed >= vsweep && down > 0.1f)
 			{
 				char t4[120];
 				snprintf(t4, sizeof(t4), "best: drift across the seam at about %.2f u/s (now %.2f)", k_sb_best_tilt * down, std::tan(tilt) * down);
@@ -3748,7 +4068,7 @@ namespace h2cv::sb
 			if (g_sb_scan_proc.load()) { if (g_out) g_out->message = "A spot scan is already running"; return; }
 			if (g_sb_map_key == 0 || g_sbb.surf.empty()) { if (g_out) g_out->message = "Spot scan: no level geometry yet"; return; }
 			char cwd[MAX_PATH] = {}; GetCurrentDirectoryA(MAX_PATH, cwd);
-			const std::string dir = std::string(cwd) + "\\superbounce_scan";
+			const std::string dir = std::string(cwd) + "\\" + h2cv::sbscan::dataPath("superbounce_scan");
 			CreateDirectoryA(dir.c_str(), nullptr);
 			const std::string mapcsv = dir + "\\scan_map.csv", flagcsv = dir + "\\scan_map.flags.csv", outcsv = dir + "\\scan_out.csv", logf = dir + "\\scan_log.txt";
 			// the level rows (structure + instances, like the map dump) and their two-sided / invisible flags
@@ -3844,7 +4164,7 @@ namespace h2cv::sb
 			}
 			char cwd[MAX_PATH] = {};
 			GetCurrentDirectoryA(MAX_PATH, cwd);
-			const std::string dir = std::string(cwd) + "\\superbounce_scan";
+			const std::string dir = std::string(cwd) + "\\" + h2cv::sbscan::dataPath("superbounce_scan");
 			CreateDirectoryA(dir.c_str(), nullptr);
 			const std::string mapcsv = dir + "\\recipe_map.csv", flagcsv = dir + "\\recipe_map.flags.csv", spotcsv = dir + "\\recipe_spots.csv";
 			g_sb_recipe_out = dir + "\\recipe_out.csv";
@@ -4202,10 +4522,99 @@ namespace h2cv::sb
 		// planning tick; Reach on a worker thread: its dense instance meshes made the 6 checks a tick cost up to ~25 ms (offline
 		// bench on m50, HCM Reach Bounce Perf\) - a whole frame every tick. landingLaunch is thread-safe (the job under its mutex,
 		// its memo and near cache thread_local).
-		struct s_sb_phys_in { uint32 si = 0, tick = 0, geo = 0, epoch = 0; bool jump = false; v3 feet{}, vel{}, near_pt{}; float jump_speed = 0.f, dt = 0.f; };
-		struct s_sb_phys_out { int adj = 0; float adj_lo = 0.f, adj_hi = 0.f, adj_launch = 0.f; };
+		struct s_sb_phys_in { uint32 si = 0, tick = 0, geo = 0, epoch = 0; bool jump = false; v3 feet{}, vel{}, near_pt{}; float jump_speed = 0.f, dt = 0.f;
+			v3 sa{}, sb{}, target{};      // the seam's ends and the stick's air-control target now (the aimed check, in the air)
+			float sweep = 0.f;            // the pill's live sweep threshold (g_sb_sweep_now when the request was made)
+			bool unreachable = false; };  // in the air: no part of the seam is inside the reach outline (set on the render thread)
+		struct s_sb_phys_out { int adj = 0; float adj_lo = 0.f, adj_hi = 0.f, adj_launch = 0.f; bool aimed = false; float side = 0.f; };
+
+		// IN THE AIR: aimed at this seam (2026-11-16). The old check flew one path - along your heading at forward speeds 0..2.25 in
+		// 0.25 steps, your own speed rounded to a step - so every seam at a similar height got the same answer, about wherever that
+		// path happened to land. Now, for THIS seam:
+		//   1. as you are: this very fall with the stick where it is (air control toward q.target, the landing cursor's own path).
+		//      It lands on this seam and launches -> green.
+		//   2. otherwise 13 landing targets across the seam (0.025 apart, at the point of it nearest to where you are heading):
+		//      for each, the stick target that puts you there on the landing tick (sb_air_solve: air control as the game does it,
+		//      held from now), and that fall through the exact rules. Of those that launch, the one needing the smallest change of
+		//      the stick decides: less along your heading -> slow down (light blue), more -> speed up (purple), mostly sideways ->
+		//      steer (yellow). None -> red: no stick position lands a launch on this seam from this fall.
+		// Recomputed as you go, so following the colour closes in on green - and green is the exact rules on your real path.
+		s_sb_phys_out sb_phys_check_air(const s_sb_phys_in& q)
+		{
+			s_sb_phys_out o;
+			o.aimed = true; o.adj = 3;
+			// 2026-11-24 (user: "when i hit a sideways/slanted bounce, my FPS drops dramatically"): a seam air control cannot reach
+			// is red without the 13 solves. Flying fast sideways, most seams around the landing are out of reach, and for each of
+			// those every solve ran all 8 Newton steps from BOTH starts (each 3 integrations over the whole fall) before giving up -
+			// the profile's top cost (sb_air_pos <- sb_air_solve <- sb_phys_check_air). The answer is the same: no stick position
+			// lands there; and such a seam is not drawn anyway (the drawing clips to the same outline).
+			if (q.unreachable) return o;
+			const v3 feet = q.feet, vel = q.vel;
+			const float dt = q.dt;
+			const v3 flat{ q.sb.x - q.sa.x, q.sb.y - q.sa.y, 0.f };
+			const float fl = len(flat);
+			if (fl < 0.05f) return o;                                           // an upright edge
+			const v3 along = flat * (1.f / fl), across{ -along.y, along.x, 0.f };
+			// the seam's point nearest (in x, y) to p, kept 0.05 clear of its ends
+			auto seam_pt = [&](v3 p) {
+				float s = ((p.x - q.sa.x) * along.x + (p.y - q.sa.y) * along.y) / fl;
+				const float m = fl > 0.2f ? 0.05f / fl : 0.5f;
+				s = (std::min)((std::max)(s, m), 1.f - m);
+				return q.sa + (q.sb - q.sa) * s;
+			};
+			auto dxy2 = [](v3 a, v3 b) { return (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y); };
+			// 1. as you are
+			const s_sb_exact e0 = sb_exact_fall(feet, vel, dt, q.target, q.near_pt.z, q.sweep);
+			const v3 land0 = e0.contact ? v3{ e0.at.x + e0.v_in.x * dt, e0.at.y + e0.v_in.y * dt, 0.f }
+				: sb_air_pos(feet, vel, dt, q.target, sb_fall_ticks(feet.z, vel.z, dt, q.near_pt.z));
+			const v3 c0 = seam_pt(land0);
+			if (e0.contact && dxy2(land0, c0) <= 0.25f * 0.25f && std::fabs(e0.at.z - c0.z) < 2.f && sb_exact_launches(e0))
+			{
+				o.adj = 1; o.adj_launch = len(e0.launch);
+				return o;
+			}
+			// 2. what would work
+			const int n = sb_fall_ticks(feet.z, vel.z, dt, c0.z);
+			bool any = false; v3 best_w{}; float best_cost = 1e9f, best_launch = 0.f;
+			s_air_first first, first_v;
+			for (int j = -6; j <= 6; ++j)
+			{
+				const v3 tp = c0 + across * (0.025f * (float)j);
+				v3 w = q.target;
+				if (!sb_air_solve(feet, vel, dt, n, tp, w, &first))
+				{
+					// second start: your current velocity (2026-11-16, review agent D, tested). While you are still steering - the
+					// stick's target further from your velocity than air control can close before you land - the landing only
+					// depends on the DIRECTION of target - velocity, the first guess's Jacobian has rank 1 and the solve failed for
+					// 2 of 3 reachable targets (every seam red while course-correcting). At the velocity itself it never is singular.
+					w = v3{ vel.x, vel.y, 0.f };
+					const float wl0 = len(w);
+					if (wl0 > k_sb_air_speed) w = w * (k_sb_air_speed / wl0);
+					if (!sb_air_solve(feet, vel, dt, n, tp, w, &first_v)) continue;   // (this start too is the same for every target)
+				}
+				const s_sb_exact e = sb_exact_fall(feet, vel, dt, w, c0.z, q.sweep);
+				if (!e.contact || !sb_exact_launches(e)) continue;
+				const v3 land{ e.at.x + e.v_in.x * dt, e.at.y + e.v_in.y * dt, 0.f };
+				if (dxy2(land, tp) > 0.3f * 0.3f) continue;                     // it touched down somewhere else first
+				const float cost = len(v3{ w.x - q.target.x, w.y - q.target.y, 0.f });
+				if (cost < best_cost) { best_cost = cost; best_w = w; best_launch = len(e.launch); any = true; }
+			}
+			if (!any) return o;
+			// the change of the stick, along your heading (toward the seam when you are not drifting) and across it (+ = left)
+			const v3 hv{ vel.x, vel.y, 0.f };
+			v3 u = len(hv) > 0.3f ? hv : v3{ c0.x - feet.x, c0.y - feet.y, 0.f };
+			u = len(u) > 1e-4f ? u * (1.f / len(u)) : along;
+			const v3 left{ -u.y, u.x, 0.f };
+			const v3 dw{ best_w.x - q.target.x, best_w.y - q.target.y, 0.f };
+			const float f = dot(dw, u), l = dot(dw, left);
+			o.adj = (std::fabs(l) > std::fabs(f) && std::fabs(l) > 0.15f) ? 4 : (f < 0.f ? -1 : 2);
+			o.adj_lo = dot(best_w, u); o.adj_hi = dot(v3{ q.target.x, q.target.y, 0.f }, u); o.side = l; o.adj_launch = best_launch;
+			return o;
+		}
+
 		s_sb_phys_out sb_phys_check(const s_sb_phys_in& q)
 		{
+			if (!q.jump) return sb_phys_check_air(q);
 			s_sb_phys_out o;
 			const bool jump = q.jump;
 			const v3 feet = q.feet, vel = q.vel, near_pt = q.near_pt;
@@ -4225,9 +4634,9 @@ namespace h2cv::sb
 				for (int k = 0; k < 600 && z > near_pt.z - 0.6f; ++k)
 				{
 					// contacts only while descending (a jump's rise, or a ceiling, is not the landing)
-					if (vz - g1 < 0.f && z - near_pt.z < 1.5f && h2cv::sbscan::landingLaunch(x, y, z, u.x * h, u.y * h, vz - g1, out))
+					if (vz - g1 < 0.f && z - near_pt.z < 1.5f && h2cv::sbscan::landingLaunch(x, y, z, u.x * h, u.y * h, vz - g1, out, dt, false, q.sweep))
 					{
-						if (out[2] > 4.f) { ok[i] = true; lv[i] = std::sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]); ++nok; }
+						if (out[2] > k_sb_launch_min) { ok[i] = true; lv[i] = std::sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]); ++nok; }
 						break;
 					}
 					vz -= g1; z += vz * dt; x += u.x * h * dt; y += u.y * h * dt;
@@ -4254,7 +4663,7 @@ namespace h2cv::sb
 			}
 			return o;
 		}
-		void sb_phys_apply(s_sb_rated& r, const s_sb_phys_out& o, uint32 src) { r.adj = o.adj; r.adj_lo = o.adj_lo; r.adj_hi = o.adj_hi; r.adj_launch = o.adj_launch; r.adj_src = src; }
+		void sb_phys_apply(s_sb_rated& r, const s_sb_phys_out& o, uint32 src) { r.adj = o.adj; r.adj_lo = o.adj_lo; r.adj_hi = o.adj_hi; r.adj_launch = o.adj_launch; r.adj_aimed = o.aimed; r.adj_side = o.side; r.adj_src = src; }
 
 		// Reach: the worker. One thread, this planning tick's checks nearest seam first; a new tick's list replaces what was not started.
 		struct s_sb_phys_worker
@@ -4265,7 +4674,7 @@ namespace h2cv::sb
 			bool stop = false;
 		};
 		std::shared_ptr<s_sb_phys_worker> g_sb_pw;
-		struct s_sb_phys_last { uint32 tick = 0; s_sb_phys_out o; };
+		struct s_sb_phys_last { uint32 tick = 0; s_sb_phys_out o; uint64_t sig = 0; bool have = false; };   // sig / have: the in-frame checks' state signature (Halo 2 / 3 / ODST)
 		std::unordered_map<uint32, s_sb_phys_last> g_sb_phys_last;   // the newest worker result per seam (seam indices of g_sb_phys_geo's cache)
 		uint32 g_sb_phys_geo = 0;
 		uint32 g_sb_phys_epoch = 1;          // bumped when time goes back (revert / restart): older requests and results are dropped
@@ -4277,6 +4686,7 @@ namespace h2cv::sb
 			{
 				s_sb_phys_in q;
 				{
+					{ bool idle; { std::scoped_lock lk0(w->m); idle = w->todo.empty(); } if (idle) h2cv::sbscan::dropThreadJob(); }   // idle: hold no level
 					std::unique_lock<std::mutex> lk(w->m);
 					w->cv.wait(lk, [&w] { return w->stop || !w->todo.empty(); });
 					if (w->stop) return;
@@ -4347,6 +4757,284 @@ namespace h2cv::sb
 			}
 		}
 
+		// ---- the live MONSTER FINDER (2026-11-16) ----
+		// Where would THIS fall (in the air), or a jump from where you stand (on the ground), launch 20+ u/s? Along every rated seam
+		// below you (and the fins' ridges), and on a small grid around where you are about to land, landing targets are tried with the
+		// scan's exact rules: per target the one steady horizontal velocity (<= 2.25) that puts you there on the landing tick, the whole
+		// fall stepped through h2cv::sbscan::landingLaunch (a clip that leaves you falling carries on with the solved velocity, as the
+		// debounce finder does). A target whose landing comes out at the monster line or more is a hit: its stretch of the seam is
+		// drawn cyan (monster) / white (dreadnought) - the predicted spots' colours - and each seam's best hit gets a ring where to
+		// land, an arrow for how to be moving, and a label. It runs on its own thread (BELOW_NORMAL): the grid and the 4 nearest seams
+		// for every new state, the rest in 25 ms slices; a state that stops changing (standing still) is finished once and then left.
+		struct s_sb_mf_seam { v3 a{}, b{}; int pieces = 1; uint32 open = 0; };
+		struct s_sb_mf_in
+		{
+			uint32 tick = 0, geo = 0, epoch = 0; uint64_t sig = 0; bool air = false, grid = false, settled = false;
+			float sweep = 0.f;                    // the pill's live sweep threshold when the request was made
+			float dt = 0.f, vz0 = 0.f, line20 = 20.f; v3 feet{}, focus{};
+			std::vector<s_sb_mf_seam> seams;      // nearest first
+		};
+		struct s_sb_mf_hit { v3 at{}, vh{}, launch{}; float speed = 0.f, s0 = 0.f, s1 = 0.f; };   // s0..s1: its stretch of the seam (0..1)
+		struct s_sb_mf_res { uint32 tick = 0; uint64_t sig = 0; float dt = 0.f; bool air = false, grid = false; v3 a{}, b{}; int tried = 0; std::vector<s_sb_mf_hit> hits; };
+		struct s_sb_mf_worker
+		{
+			std::mutex m; std::condition_variable cv;
+			bool stop = false, fresh = false;
+			s_sb_mf_in todo;                      // the newest request (an unstarted older one is dropped)
+			std::vector<s_sb_mf_res> res;         // each seam's newest result (+ the grid's)
+			uint32 epoch = 0, geo = 0;            // what res belongs to: a result for another timeline / cache is not kept
+			uint32 version = 0;                   // bumped with every change of res: the render thread copies only then
+		};
+		std::shared_ptr<s_sb_mf_worker> g_sb_mf;
+		bool g_sb_mf_failed = false;
+		// how long until the fall from q.feet is down at height z (the landing tick's end), as the debounce finder counts it
+		float sb_mf_fall_time(const s_sb_mf_in& q, float z_to)
+		{
+			const float g1 = k_sb_gravity * q.dt;
+			float z = q.feet.z, vz = q.vz0; int k = 0;
+			while (k < 900 && z + (vz - g1) * q.dt > z_to + 0.02f) { vz -= g1; z += vz * q.dt; ++k; }
+			return (float)(k + 1) * q.dt;
+		}
+		bool sb_mf_try(const s_sb_mf_in& q, v3 tp, float t_land, s_sb_mf_hit& h)
+		{
+			const v3 vh{ (tp.x - q.feet.x) / t_land, (tp.y - q.feet.y) / t_land, 0.f };
+			if (len(vh) > k_sb_air_speed) return false;                      // beyond the biped's horizontal speed
+			const float g1 = k_sb_gravity * q.dt;
+			float x = q.feet.x, y = q.feet.y, zz = q.feet.z, v = q.vz0, hx = vh.x, hy = vh.y, out[3];
+			int clips = 0;
+			for (int kk = 0; kk < 900 && zz > tp.z - 0.8f; ++kk)
+			{
+				// (from 0.75 above the target, or a tick and a half of fall: the 1.5 the seams' checks use cost twice the calls)
+				if (v - g1 < 0.f && zz - tp.z < (std::max)(0.75f, -1.6f * (v - g1) * q.dt) && h2cv::sbscan::landingLaunch(x, y, zz, hx, hy, v - g1, out, q.dt, false, q.sweep))
+				{
+					if (out[2] > -1.f)                                            // caught: a landing, or a launch
+					{
+						const float sp = std::sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+						if (sp < q.line20) return false;
+						h.at = v3{ x + hx * q.dt, y + hy * q.dt, tp.z }; h.vh = v3{ hx, hy, 0.f }; h.launch = v3{ out[0], out[1], out[2] }; h.speed = sp;
+						return true;
+					}
+					// (only a brush that changes the velocity counts: a wall slid along returns one every tick)
+					if (len(v3{ out[0] - hx, out[1] - hy, out[2] - (v - g1) }) > 0.05f && ++clips > 2) return false;
+					hx = out[0]; hy = out[1]; v = out[2] + g1;                    // a clip that leaves you falling: on with the solved velocity
+				}
+				v -= g1; zz += v * q.dt; x += hx * q.dt; y += hy * q.dt;
+			}
+			return false;
+		}
+		s_sb_mf_res sb_mf_seam_run(const s_sb_mf_in& q, const s_sb_mf_seam& sm)
+		{
+			s_sb_mf_res r;
+			r.tick = q.tick; r.sig = q.sig; r.dt = q.dt; r.air = q.air; r.a = sm.a; r.b = sm.b;
+			const v3 flat{ sm.b.x - sm.a.x, sm.b.y - sm.a.y, 0.f };
+			const float fl = len(flat), L = len(sm.b - sm.a);
+			if (fl < 0.05f || sm.pieces < 1) return r;                         // an upright edge: nothing to land along
+			const v3 along = flat * (1.f / fl), across{ -along.y, along.x, 0.f };
+			constexpr int NC = 6; constexpr float ac_step = 0.03f, al_step = 0.125f;   // across: -0.18 .. +0.18
+			for (int k = 0; k < sm.pieces && k < 32; ++k)
+			{
+				if (!(sm.open & (1u << k))) continue;
+				const float f0 = (float)k / (float)sm.pieces, f1 = (float)(k + 1) / (float)sm.pieces;
+				const int na = (std::max)(1, (int)std::ceil(L * (f1 - f0) / al_step));
+				for (int ia = 0; ia < na; ++ia)
+				{
+					const v3 c = sm.a + (sm.b - sm.a) * (f0 + (f1 - f0) * (((float)ia + 0.5f) / (float)na));
+					const float t_land = sb_mf_fall_time(q, c.z);
+					s_sb_mf_hit best; bool any = false;
+					for (int ic = -NC; ic <= NC; ++ic)
+					{
+						++r.tried;
+						s_sb_mf_hit h;
+						if (sb_mf_try(q, c + across * (ac_step * (float)ic), t_land, h) && (!any || h.speed > best.speed)) { best = h; any = true; }
+					}
+					if (!any) continue;
+					best.s0 = f0 + (f1 - f0) * ((float)ia / (float)na); best.s1 = f0 + (f1 - f0) * ((float)(ia + 1) / (float)na);
+					r.hits.push_back(best);
+				}
+			}
+			return r;
+		}
+		// around where this fall is about to land, seam or not: 17 x 17 targets 0.05 apart
+		s_sb_mf_res sb_mf_grid_run(const s_sb_mf_in& q)
+		{
+			s_sb_mf_res r;
+			r.tick = q.tick; r.sig = q.sig; r.dt = q.dt; r.air = q.air; r.grid = true; r.a = r.b = q.focus;
+			const float t_land = sb_mf_fall_time(q, q.focus.z);
+			for (int ix = -8; ix <= 8; ++ix)
+				for (int iy = -8; iy <= 8; ++iy)
+				{
+					++r.tried;
+					s_sb_mf_hit h;
+					if (sb_mf_try(q, q.focus + v3{ 0.05f * (float)ix, 0.05f * (float)iy, 0.f }, t_land, h)) r.hits.push_back(h);
+				}
+			return r;
+		}
+		void sb_mf_loop(std::shared_ptr<s_sb_mf_worker> w)
+		{
+			SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+			h2cv::sbscan::setThreadMemo(false);                                 // its landings never repeat
+			size_t rr = 0;                                                      // where the slices of the farther seams go on
+			for (;;)
+			{
+				s_sb_mf_in q;
+				{
+					h2cv::sbscan::dropThreadJob();   // between requests this thread holds no level (an idle worker kept the last one alive)
+					std::unique_lock<std::mutex> lk(w->m);
+					w->cv.wait(lk, [&w] { return w->stop || w->fresh; });
+					if (w->stop) return;
+					q = w->todo; w->fresh = false;
+				}
+				// the scan job (and its tick rate) must be the same, ready one before and after each result (as the physics worker)
+				const uint64_t js0 = h2cv::sbscan::readySerial();
+				if (js0 == 0) continue;
+				// false: stop this request (the worker is stopping, or a newer request waits and this one may be dropped)
+				auto publish = [&](s_sb_mf_res&& r, bool may_drop) -> bool
+				{
+					if (h2cv::sbscan::readySerial() != js0) return false;
+					std::scoped_lock lk(w->m);
+					if (w->stop) return false;
+					if (q.epoch != w->epoch || q.geo != w->geo) return false;      // time went back, or another cache: not for this world
+					bool put = false;
+					for (auto& e : w->res)
+						if (e.grid == r.grid && (r.grid || (std::memcmp(&e.a, &r.a, sizeof(v3)) == 0 && std::memcmp(&e.b, &r.b, sizeof(v3)) == 0))) { e = std::move(r); put = true; break; }
+					if (!put) w->res.push_back(std::move(r));
+					++w->version;
+					return !(may_drop && w->fresh);
+				};
+				try
+				{
+					if (q.grid && !publish(sb_mf_grid_run(q), false)) continue;
+					const size_t n = q.seams.size(), near_n = (std::min)(n, (size_t)4);
+					bool go = true;
+					for (size_t i = 0; i < near_n && go; ++i) go = publish(sb_mf_seam_run(q, q.seams[i]), false);
+					if (!go || n <= near_n) continue;
+					const size_t far_n = n - near_n;
+					const auto t0 = std::chrono::steady_clock::now();
+					for (size_t k = 0; k < far_n; ++k)
+					{
+						const size_t i = near_n + (q.settled ? k : (rr++ % far_n));
+						// a settled state is finished whole (until a newer one comes); a changing one gets a 25 ms slice
+						if (!publish(sb_mf_seam_run(q, q.seams[i]), q.settled)) break;
+						if (!q.settled && std::chrono::steady_clock::now() - t0 > std::chrono::milliseconds(25)) break;
+					}
+				}
+				catch (...) {}
+			}
+		}
+		bool sb_mf_ensure()
+		{
+			if (g_sb_mf) return true;
+			if (g_sb_mf_failed) return false;
+			auto w = std::make_shared<s_sb_mf_worker>();
+			try { std::thread([w]() { sb_mf_loop(w); }).detach(); }
+			catch (...) { g_sb_mf_failed = true; LOGF("bounce viewer: the monster finder's thread could not be started - it stays off"); return false; }
+			g_sb_mf = w;
+			return true;
+		}
+		void sb_mf_stop()
+		{
+			if (g_sb_mf) { { std::scoped_lock lk(g_sb_mf->m); g_sb_mf->stop = true; g_sb_mf->fresh = false; g_sb_mf->res.clear(); } g_sb_mf->cv.notify_all(); g_sb_mf.reset(); }
+			g_sb_mf_failed = false;
+		}
+		// The render thread NEVER waits for the worker's lock (2026-11-16: the worker runs at BELOW_NORMAL, and when it was
+		// descheduled inside its lock the frame waited for it - the hitches): it tries, and on a miss sends next tick / draws the
+		// copy it already has.
+		bool sb_mf_submit(s_sb_mf_in&& q)
+		{
+			if (!sb_mf_ensure()) return false;
+			{
+				std::unique_lock<std::mutex> lk(g_sb_mf->m, std::try_to_lock);
+				if (!lk.owns_lock()) return false;
+				if (g_sb_mf->epoch != q.epoch || g_sb_mf->geo != q.geo) { g_sb_mf->res.clear(); ++g_sb_mf->version; g_sb_mf->epoch = q.epoch; g_sb_mf->geo = q.geo; }
+				g_sb_mf->todo = std::move(q); g_sb_mf->fresh = true;
+			}
+			g_sb_mf->cv.notify_one();
+			return true;
+		}
+		// every frame: the results that still hold - made for the state as it is now (any age), or at most a second old (fading)
+		void sb_mf_draw(uint32 tick, int tps, float dt, uint64_t sig_now, uint32 epoch, uint32 geo, v3 feet)
+		{
+			if (!g_sb_mf) return;
+			// this frame's copy: taken only when the worker published something new and its lock is free right now - otherwise
+			// the copy from before is drawn again (each result still tested for its age below)
+			static std::vector<s_sb_mf_res> res;
+			static uint32 s_ver = 0xFFFFFFFF, s_epoch = 0, s_geo = 0;
+			{
+				std::unique_lock<std::mutex> lk(g_sb_mf->m, std::try_to_lock);
+				if (lk.owns_lock())
+				{
+					auto& rv = g_sb_mf->res;
+					if (g_sb_mf->epoch != epoch || g_sb_mf->geo != geo) { rv.clear(); ++g_sb_mf->version; }
+					if (g_sb_mf->version != s_ver)
+					{
+						rv.erase(std::remove_if(rv.begin(), rv.end(), [&](const s_sb_mf_res& r) { return r.sig != sig_now && (r.tick > tick || tick - r.tick > (uint32)tps); }), rv.end());
+						res = rv; s_ver = g_sb_mf->version; s_epoch = g_sb_mf->epoch; s_geo = g_sb_mf->geo;
+					}
+				}
+			}
+			if (s_epoch != epoch || s_geo != geo) return;                       // the copy is of another timeline / cache
+			const bool rings = g_settings.superbounce_monster_rings;
+			struct s_lab { float d2; v3 at; ImU32 c; std::string t; };
+			std::vector<s_lab> labs;
+			auto diamond = [&](v3 at, ImU32 c) {
+				const float s = 0.022f;
+				const v3 p = at + v3{ 0.f, 0.f, 0.03f };
+				line(p + v3{ s, 0.f, 0.f }, p + v3{ 0.f, s, 0.f }, c, 3.f); line(p + v3{ 0.f, s, 0.f }, p + v3{ -s, 0.f, 0.f }, c, 3.f);
+				line(p + v3{ -s, 0.f, 0.f }, p + v3{ 0.f, -s, 0.f }, c, 3.f); line(p + v3{ 0.f, -s, 0.f }, p + v3{ s, 0.f, 0.f }, c, 3.f);
+			};
+			for (const s_sb_mf_res& r : res)
+			{
+				if (r.hits.empty() || r.dt != dt) continue;
+				if (r.sig != sig_now && (r.tick > tick || tick - r.tick > (uint32)tps)) continue;   // too old for the state as it is now
+				const float age = r.sig == sig_now ? 0.f : (float)(tick - r.tick) / (float)(std::max)(1, tps);
+				const float fade = 1.f - 0.6f * age;
+				const s_sb_mf_hit* best = nullptr;
+				for (const s_sb_mf_hit& h : r.hits)
+				{
+					if (!best || h.speed > best->speed) best = &h;
+					const ImU32 c = sb_fade(sb_launch_color(h.speed), fade);
+					// every hit: a small diamond exactly where that landing is (user, 2026-11-16: "super useful"); on a seam also
+					// its stretch of the seam, lifted off the seam's own line
+					diamond(h.at, c);
+					if (!r.grid)
+					{
+						const v3 up{ 0.f, 0.f, 0.05f };
+						line(r.a + (r.b - r.a) * h.s0 + up, r.a + (r.b - r.a) * h.s1 + up, c, 5.f);
+					}
+				}
+				// the best landing of this seam (or of the grid): a ring where to land and the way to be moving (both off with
+				// "rings and arrows" off - the diamonds stay), and what it gives
+				const ImU32 c = sb_fade(sb_launch_color(best->speed), fade);
+				if (rings) for (int i = 0; i < 20; ++i)
+				{
+					const float a0 = 6.2831853f * (float)i / 20.f, a1 = 6.2831853f * (float)(i + 1) / 20.f;
+					line(best->at + v3{ std::cos(a0) * 0.09f, std::sin(a0) * 0.09f, 0.03f }, best->at + v3{ std::cos(a1) * 0.09f, std::sin(a1) * 0.09f, 0.03f }, c, 3.f);
+				}
+				const float sp = len(best->vh);
+				const v3 dir = sp > 0.05f ? best->vh * (1.f / sp) : v3{ 0.f, 0.f, 0.f };
+				if (rings && sp > 0.05f)
+				{
+					const v3 tip = best->at + v3{ 0.f, 0.f, 0.06f } - dir * 0.11f, tail = tip - dir * 0.7f, side{ -dir.y, dir.x, 0.f };
+					line(tail, tip, c, 3.f);
+					line(tip, tip - dir * 0.14f + side * 0.07f, c, 3.f);
+					line(tip, tip - dir * 0.14f - side * 0.07f, c, 3.f);
+				}
+				char t[260];
+				const float hd = std::atan2(dir.y, dir.x) * 57.29578f;
+				const char* how = r.air ? "this fall" : "a JUMP from here";
+				const char* mark = rings ? "ring" : "diamond";
+				if (sp > 0.05f) snprintf(t, sizeof(t), "%s %.0f u/s %s (%d of %d landings tried here): %s, land on the %s moving %.2f u/s, heading %.0f deg",
+					sb_launch_name(best->speed), best->speed, sb_dir_name(norm(best->launch)), (int)r.hits.size(), r.tried, how, mark, sp, hd < 0.f ? hd + 360.f : hd);
+				else snprintf(t, sizeof(t), "%s %.0f u/s %s (%d of %d landings tried here): %s, land on the %s falling straight",
+					sb_launch_name(best->speed), best->speed, sb_dir_name(norm(best->launch)), (int)r.hits.size(), r.tried, how, mark);
+				const v3 d = best->at - feet;
+				labs.push_back({ d.x * d.x + d.y * d.y + (r.grid ? -1e6f : 0.f), best->at + v3{ 0.f, 0.f, 0.42f }, c, t });
+			}
+			// the labels of the three nearest (the grid's - where you are landing - first)
+			std::sort(labs.begin(), labs.end(), [](const s_lab& x, const s_lab& y) { return x.d2 < y.d2; });
+			if (g_settings.superbounce_seam_text) for (size_t i = 0; i < labs.size() && i < 3; ++i) text(labs[i].at, labs[i].c, labs[i].t.c_str());
+		}
+
 		void draw_superbounce(int32 user)
 		{
 			if (user != 0 || !g_sbs.ok) return;                 // the local player only
@@ -4354,10 +5042,15 @@ namespace h2cv::sb
 			const v3 feet = g_sbs.feet;
 			const v3 vel = g_sbs.vel;
 			const int tps = g_sbs.tps;
-			const float dt = 1.f / (float)tps, vsweep = k_sb_sweep_per_tick * (float)tps;
+			const float dt = 1.f / (float)tps;
 			g_sb_tick_scale = (float)tps / 30.f;                     // launches (and the limits naming them) scale with the tick rate
 			const bool airborne = g_sbs.airborne;
 			const uintptr_t own = g_sbs.ent;
+			// the sweep threshold, from the pill itself (2026-11-16): it follows the collision "tickrate scalar", not the tick rate -
+			// 5.4465 u/s in stock MCC (Season 8+) even at 60 tick, tick-matched (10.893 at 60) with Season 7 physics. The viewer
+			// assumed tick-matched for every 60-tick game. Halo 3 / ODST / Reach (no Halo 2 pill to read): tick-matched as before.
+			g_sb_sweep_now = (!g_gen3 && own) ? h2::entitySweepThreshold(own) : 0.f;
+			const float vsweep = g_sb_sweep_now > 0.f ? g_sb_sweep_now : k_sb_sweep_per_tick * (float)tps;
 			const bool charged = g_gen3 ? g_sbs.armed : (own && sb_charged(own));   // Gen3: h3sb's armed state (level -3)
 			const v3 center = feet + v3{ 0.f, 0.f, 0.36f };
 
@@ -4526,7 +5219,7 @@ namespace h2cv::sb
 				const int merged = g_sb_recipe_merged;
 				if (g_out) g_out->message = g_sb_recipe_exit.load() == 0
 					? "Approaches worked out (GPU): " + std::to_string(merged) + " of " + std::to_string(g_sb_recipe_n) + " spots, " + std::to_string((GetTickCount() - g_sb_recipe_t0) / 1000) + " s"
-					: "The GPU approach run failed (superbounce_scan\\recipe_log.txt) - " + std::to_string(merged) + " spots merged";
+					: "The GPU approach run failed (HCM Bounce Viewer\\superbounce_scan\\recipe_log.txt) - " + std::to_string(merged) + " spots merged";
 			}
 			const bool redoReq = g_sb_recipe_redo_req.exchange(false);
 			if (g_sb_recipe_request.exchange(false) && !sb_recipe_gpu_launch(feet, redoReq))
@@ -4540,13 +5233,13 @@ namespace h2cv::sb
 			if (g_sb_scan_done.exchange(false))
 			{
 				h2cv::sbscan::reload();
-				if (g_out) g_out->message = g_sb_scan_exit.load() == 0 ? "Spot scan done - predictions updated" : "Spot scan failed (see superbounce_scan\\scan_log.txt in the game folder)";
+				if (g_out) g_out->message = g_sb_scan_exit.load() == 0 ? "Spot scan done - predictions updated" : "Spot scan failed (see HCM Bounce Viewer\\superbounce_scan\\scan_log.txt in the game folder)";
 			}
-			if (g_settings.superbounce_predicted)   // HCM: the scanner's predictions (own toggle); nothing is scanned while it is off
-			{
-				if (g_sb_scan_pending) { g_sb_scan_pending = false; sb_scan_start(); }
-				sb_draw_predicted(feet);
-			}
+			// the level for the exact rules (h2cv::sbscan::landingLaunch) is made here. 2026-11-16: it was only made with the Predicted
+			// toggle on, so with it off every seam's physics check found nothing and came out red - the seams, the landing's verdict
+			// and the monster finder need it just as much (it only loads the prediction file; nothing is scanned)
+			if (g_sb_scan_pending && (g_settings.superbounce_predicted || g_settings.superbounce_seams)) { g_sb_scan_pending = false; sb_scan_start(); }
+			if (g_settings.superbounce_predicted) sb_draw_predicted(feet);   // HCM: the scanner's predictions (own toggle)
 			if (base) {   // ---- the base viewer: gaps / fins, landing path, seams, debounce finder (to "end of the base viewer") ----
 			if (g_settings.superbounce_gaps)
 			{
@@ -4645,12 +5338,18 @@ namespace h2cv::sb
 				static uint32 s_path_tick = 0xFFFFFFFF;
 				static s_sb_landing s_path;
 				static bool s_hit = false;
+				static s_sb_exact s_exact;
 				if (tick != s_path_tick)
 				{
 					SbTimer sbt_(SBT_PATH);
 					s_path_tick = tick;
 					s_hit = sb_predict_landing(feet, vel, dt, g_sbl.target, s_path);
+					// the same fall through the exact rules (a few landingLaunch calls near the floor): the cursor's verdict
+					// (not onto an object: the rules' level holds the level and its instanced geometry only - scenery, crates and
+					// machines are not in it, so such a landing keeps the estimate instead of "no solid landing found")
+					s_exact = (s_hit && charged) ? sb_exact_fall(feet, vel, dt, g_sbl.target, s_path.at.z, g_sb_sweep_now) : s_sb_exact{};
 				}
+				g_sb_exact = charged ? s_exact : s_sb_exact{};
 				// attached to the drawn character: shifted by its render offset at the start, fading to none at the
 				// landing (which stays where the physics will put it)
 				s_sb_landing path = s_path;
@@ -4669,8 +5368,8 @@ namespace h2cv::sb
 					v3 psa{}, psb{}; float poff = 1e9f, pbend = 0.f;
 					if (sb_nearest_seam(path.surface, path.at, psa, psb, poff, pbend) && poff <= 0.15f) fin_i = -1;
 				}
-				if (sb_gap_crossing(path, gap_i, gap_at, gap_v, gap_off)) sb_draw_gap_landing(path, gap_i, gap_at, gap_v, gap_off, charged, vsweep);
-				else if (fin_i >= 0) sb_draw_fin_landing(path, fin_i, charged);
+				if (sb_gap_crossing(path, gap_i, gap_at, gap_v, gap_off)) { sb_draw_gap_landing(path, gap_i, gap_at, gap_v, gap_off, charged, vsweep); sb_draw_exact_note(gap_at); }
+				else if (fin_i >= 0) { sb_draw_fin_landing(path, fin_i, charged); sb_draw_exact_note(path.at); }
 				else if (hit) sb_draw_landing(path, charged, vsweep);
 				else
 				{
@@ -4694,7 +5393,9 @@ namespace h2cv::sb
 			{
 				SbTimer sbt_(SBT_SEAMS);
 				g_sb_plan_tick = tick;
+				sb_reach_for_tick(tick, airborne, feet, vel, dt);   // the physics checks below skip seams outside it
 				std::vector<s_sb_phys_in> phys_reqs;   // Reach: this tick's physics checks, for the worker
+				std::vector<s_sb_phys_in> phys_pend;   // Halo 2 / 3 / ODST: every rated seam's check, nearest first (run after the loop)
 				// in the air the search also covers where this fall lands, as far as air control can still move that (high up: a
 				// wide area), with no limit on how far below you
 				const bool air_wide = airborne && g_sb_air_tick == tick;
@@ -4835,12 +5536,30 @@ namespace h2cv::sb
 					// heading with the scan's exact rules: keep it, slow down, speed up, or none (starting bounces included)
 					// every nearby seam, green ones too (2026-11-01: the old depth model showed a seam fully green that the game - and the
 					// physics - do not launch: the sweep ended 0.03 above the slope). The physics decides the colour where it has run.
-					if (phys_budget > 0)
+					// an object's seam (scenery, crates, machines): the rules' level does not hold objects, so there is no exact answer
+					// for it - it keeps the estimate's colour and wording instead of a false red (review agent D, 2026-11-16)
+					r.phys_na = false;   // (2026-11-16, later: the objects are in the rules' level now - their seams are checked like any other)
+					if (r.phys_na) {}
+					else if (!g_reach)
+					{
+						// Halo 2 / 3 / ODST (2026-11-16): EVERY rated seam asks; they are run after this loop, as many as the tick's
+						// time allows, and a seam keeps its last answer meanwhile (see "the in-frame checks" below). No cap on how
+						// many ask: the drawing picks its seams in another order, and a seam left out stayed "not checked" for good
+						s_sb_phys_in q;
+						q.si = si; q.tick = tick; q.geo = g_sb_geo_gen; q.epoch = g_sb_phys_epoch; q.jump = !airborne; q.feet = feet; q.vel = vel; q.near_pt = near_pt; q.jump_speed = jump_speed; q.dt = dt;
+						q.sa = sm.a; q.sb = sm.b; q.target = g_sbl.target; q.sweep = g_sb_sweep_now;
+						q.unreachable = airborne && g_sb_reach.on && (int)si != g_sb_land_seam && !sb_reach_seam(sm.a, sm.b);   // (the landing cursor's seam is drawn whole: always checked)
+						r.phys_req = true;
+						phys_pend.push_back(q);
+					}
+					else if (phys_budget > 0)
 					{
 						--phys_budget;
 						// on the ground: the JUMP from here (take-off jump_speed), holding forward toward the seam (2026-11-01)
 						s_sb_phys_in q;
 						q.si = si; q.tick = tick; q.geo = g_sb_geo_gen; q.epoch = g_sb_phys_epoch; q.jump = !airborne; q.feet = feet; q.vel = vel; q.near_pt = near_pt; q.jump_speed = jump_speed; q.dt = dt;
+						q.sa = sm.a; q.sb = sm.b; q.target = g_sbl.target; q.sweep = g_sb_sweep_now;
+						q.unreachable = airborne && g_sb_reach.on && (int)si != g_sb_land_seam && !sb_reach_seam(sm.a, sm.b);   // (the landing cursor's seam is drawn whole: always checked)
 						r.phys_req = true;
 						if (g_reach && sb_phys_ensure_worker())
 						{
@@ -4864,6 +5583,38 @@ namespace h2cv::sb
 					for (int k = 0; k < pieces; ++k) if (open & (1u << k)) e.piece_seen[k] = tick + 1;
 				}
 				if (!phys_reqs.empty()) sb_phys_submit(std::move(phys_reqs));
+				// the in-frame checks (Halo 2 / 3 / ODST, 2026-11-16; before: the 6 nearest seams, every other seam on the old estimate's
+				// colours). Each seam's last answer is kept with the state it was made for (where you are to 1 mm, how you move and what
+				// the stick asks to 0.01 u/s): the same state again (standing still) costs nothing, and all seams get done over a few
+				// ticks. A changed state (falling): the 3 nearest first, then the seams whose answer is oldest, for about 1.5 ms a tick;
+				// a seam shows its last answer for up to a quarter of a second, then grey until its turn.
+				if (!phys_pend.empty() && h2cv::sbscan::readySerial() != 0)
+				{
+					uint64_t sg = 1469598103934665603ull;
+					auto mixi = [&](int64_t v) { sg ^= (uint64_t)v; sg *= 1099511628211ull; };
+					mixi(std::llround(feet.x * 1000.f)); mixi(std::llround(feet.y * 1000.f)); mixi(std::llround(feet.z * 1000.f));
+					mixi(std::llround(vel.x * 100.f)); mixi(std::llround(vel.y * 100.f)); mixi(std::llround(vel.z * 100.f));
+					mixi(std::llround(g_sbl.target.x * 100.f)); mixi(std::llround(g_sbl.target.y * 100.f));
+					mixi(airborne ? 1 : 0); mixi(tps); mixi(std::llround(jump_speed * 100.f)); mixi(std::llround(g_sb_sweep_now * 100.f));
+					auto last_tick = [&](const s_sb_phys_in& q) -> uint32 { const auto it = g_sb_phys_last.find(q.si); return (it != g_sb_phys_last.end() && it->second.have) ? it->second.tick + 1 : 0; };
+					if (phys_pend.size() > 3)
+						std::stable_sort(phys_pend.begin() + 3, phys_pend.end(), [&](const s_sb_phys_in& x, const s_sb_phys_in& y) { return last_tick(x) < last_tick(y); });
+					const auto t0 = std::chrono::steady_clock::now();
+					const uint32 keep = (uint32)(std::max)(2, tps / 4);
+					int ran = 0;
+					for (const s_sb_phys_in& q : phys_pend)
+					{
+						s_sb_phys_last& last = g_sb_phys_last[q.si];
+						// (2026-11-24: the 3 nearest used to run whatever they cost, on top of the 1.5 ms - now only the nearest does;
+						// the 3 nearest still go first, so they are done whenever the tick's time allows)
+						if (!(last.have && last.sig == sg) && (ran < 1 || std::chrono::steady_clock::now() - t0 < std::chrono::microseconds(1500)))
+						{
+							last.o = sb_phys_check(q); last.tick = tick; last.sig = sg; last.have = true; ++ran;
+						}
+						const auto sh = g_sb_shown.find(q.si);
+						if (sh != g_sb_shown.end() && last.have && (last.sig == sg || (tick >= last.tick && tick - last.tick <= keep))) sb_phys_apply(sh->second.r, last.o, last.tick);
+					}
+				}
 				for (auto it = g_sb_shown.begin(); it != g_sb_shown.end();)
 				{
 					if (tick + 1 - it->second.seen > hold) it = g_sb_shown.erase(it); else ++it;
@@ -4885,22 +5636,47 @@ namespace h2cv::sb
 			// in the air: only the seams (and the parts of them) air control can still reach - seeing a green seam you can't
 			// get to is false hope. The seam your landing cursor is on is drawn whole.
 			++g_sb_frame;
-			if (airborne) sb_reach_build(feet, vel, dt); else g_sb_reach.on = false;
+			sb_reach_for_tick(tick, airborne, feet, vel, dt);
 			const bool clip = air_draw && g_sb_reach.on;
 			const bool land_fresh = g_sb_land_frame + 2 >= g_sb_frame;
+			// which stretches of each seam are in reach: worked out once per tick and kept (2026-11-24: it was ~25 + 4 per piece
+			// outline tests per seam EVERY frame - the same answers until the next tick)
+			struct s_sb_clip { bool any = false; uint32 m[3] = { 0, 0, 0 }; };   // m: piece k's stretch s = bit k*4+s
+			static std::unordered_map<uint32, s_sb_clip> s_clip;
+			static uint32 s_clip_tick = 0xFFFFFFFF;
+			if (s_clip_tick != tick) { s_clip.clear(); s_clip_tick = tick; }
+			auto clip_of = [&](uint32 si, const s_sb_rated& r) -> const s_sb_clip& {
+				auto it = s_clip.find(si);
+				if (it != s_clip.end()) return it->second;
+				s_sb_clip c;
+				c.any = sb_reach_seam(r.a, r.b);
+				for (int k = 0; k < r.pieces && k < 24; ++k)
+				{
+					const v3 p0 = r.a + (r.b - r.a) * ((float)k / (float)r.pieces), p1 = r.a + (r.b - r.a) * ((float)(k + 1) / (float)r.pieces);
+					for (int s = 0; s < 4; ++s)
+					{
+						const v3 s0 = p0 + (p1 - p0) * ((float)s / 4.f), s1 = p0 + (p1 - p0) * ((float)(s + 1) / 4.f);
+						if (sb_reach_ok((s0 + s1) * 0.5f)) { const int bit = k * 4 + s; c.m[bit >> 5] |= 1u << (bit & 31); }
+					}
+				}
+				return s_clip.emplace(si, c).first->second;
+			};
 			std::vector<char> whole(order.size(), 1), in_reach(order.size(), 1);
 			if (clip)
 				for (size_t i = 0; i < order.size(); ++i)
 				{
 					if (land_fresh && (int)order[i].second == g_sb_land_seam) continue;
-					const s_sb_rated& rr = g_sb_shown[order[i].second].r;
-					bool any = false;
-					for (int k = 0; k <= 24 && !any; ++k) any = sb_reach_ok(rr.a + (rr.b - rr.a) * ((float)k / 24.f));
-					whole[i] = 0; in_reach[i] = any ? 1 : 0;
+					whole[i] = 0; in_reach[i] = clip_of(order[i].second, g_sb_shown[order[i].second].r).any ? 1 : 0;
 				}
 			std::vector<char> labelled(order.size(), 0);
 			int nlab = 0;
-			for (size_t i = 0; i < order.size() && nlab < 3; ++i) if (in_reach[i] && g_sb_shown[order[i].second].r.q != 0) { labelled[i] = 1; ++nlab; }
+			// 2026-11-16: with the exact rules loaded, a seam's colour is their answer and nothing else - no "lottery" yellow or "edge"
+			// orange from the old depth estimate. Not answered yet (its turn has not come): thin grey. The estimate's colours and
+			// wording only show when the rules have no level to work on.
+			// (Reach keeps the estimate for the seams past its worker's 6 a tick)
+			const bool phys_ready = !g_reach && h2cv::sbscan::readySerial() != 0;
+			auto seam_live = [&](const s_sb_rated& r) { return (phys_ready && !r.phys_na) ? (r.adj != 0 && r.adj != 3) : r.q != 0; };
+			for (size_t i = 0; i < order.size() && nlab < 3; ++i) if (in_reach[i] && seam_live(g_sb_shown[order[i].second].r)) { labelled[i] = 1; ++nlab; }
 			for (size_t i = 0; i < order.size() && nlab < 3; ++i) if (in_reach[i] && !labelled[i]) { labelled[i] = 1; ++nlab; }
 			for (size_t i = 0; i < order.size(); ++i)
 			{
@@ -4910,8 +5686,15 @@ namespace h2cv::sb
 				const float age = (float)(tick + 1 - e.seen) / (float)(std::max)(1u, (unsigned)hold);
 				// the physics check overrides the colour: light blue = slow your forward speed, purple = speed it up, green = keep it
 				// adj 3 = the physics found no forward speed that launches: red, whatever the old depth model said
-				const bool red = (r.q == 0 && r.adj != 1 && r.adj != -1 && r.adj != 2) || r.adj == 3;
-				const ImU32 cq = r.adj == -1 ? IM_COL32(90, 170, 255, 255) : r.adj == 2 ? IM_COL32(200, 110, 255, 255) : r.adj == 1 ? IM_COL32(80, 230, 90, 255) : r.adj == 3 ? sb_quality_color(0) : sb_quality_color(r.q);
+				// "Monster predictor: hide regular seams": only the finder's own marks show (the seams are still rated - they are
+				// what the finder tests)
+				if (g_settings.superbounce_monster_finder && g_settings.superbounce_monster_only) continue;
+				// bright yellow (2026-11-16, in the air): it works if you steer sideways; orange: not answered yet (user: that colour
+				// for "it has not been tried yet" - no longer a guess at the odds)
+				const bool waiting = phys_ready && r.adj == 0 && !r.phys_na;
+				const bool red = (!waiting && r.adj == 0 && r.q == 0) || r.adj == 3;
+				const ImU32 cq = r.adj == -1 ? IM_COL32(90, 170, 255, 255) : r.adj == 2 ? IM_COL32(200, 110, 255, 255) : r.adj == 1 ? IM_COL32(80, 230, 90, 255) : r.adj == 4 ? IM_COL32(255, 245, 70, 255)
+					: r.adj == 3 ? sb_quality_color(0) : waiting ? IM_COL32(255, 150, 40, 255) : sb_quality_color(r.q);
 				const ImU32 c = sb_fade(cq, (1.f - 0.7f * age) * (red ? 0.35f : 1.f));
 				const float wl = red ? 1.f : (labelled[i] ? 3.f : 1.5f);
 				for (int k = 0; k < r.pieces; ++k)
@@ -4919,10 +5702,12 @@ namespace h2cv::sb
 					{
 						const v3 p0 = r.a + (r.b - r.a) * ((float)k / (float)r.pieces), p1 = r.a + (r.b - r.a) * ((float)(k + 1) / (float)r.pieces);
 						if (whole[i]) { line(p0, p1, c, wl); continue; }
+						const s_sb_clip& cl = clip_of(order[i].second, r);
 						for (int s = 0; s < 4; ++s)                                         // only the stretches in reach
 						{
 							const v3 s0 = p0 + (p1 - p0) * ((float)s / 4.f), s1 = p0 + (p1 - p0) * ((float)(s + 1) / 4.f);
-							if (sb_reach_ok((s0 + s1) * 0.5f)) line(s0, s1, c, wl);
+							const int bit = k * 4 + s;
+							if (k < 24 && (cl.m[bit >> 5] & (1u << (bit & 31)))) line(s0, s1, c, wl);
 						}
 					}
 				// "Seam info text" off: these seams keep only their coloured lines (your own landing keeps its verdict and arrow)
@@ -4936,7 +5721,13 @@ namespace h2cv::sb
 				const char* opt = r.opt == 1 ? "JUMP" : "WALK OFF";
 				const char* blocked = (r.opt == 1 && !r.walk_ok) ? " (walking off is blocked)" : "";
 				const float spd = r.opt == 1 ? r.jump : r.walk, dep = r.opt == 1 ? r.depth_jump : r.depth_walk;
-				if (r.gap && r.q >= 1 && !r.carried)
+				if (phys_ready && !r.phys_na)
+				{
+					// the exact rules answer below: this line only says what the seam is and how you get to it
+					if (r.air) snprintf(t, sizeof(t), "%sfalling: arrive about %.1f u/s%s", pre, r.walk, r.adj == 0 ? " (not checked yet)" : "");
+					else snprintf(t, sizeof(t), "%sdrop %.1f%s", pre, r.drop, r.adj == 0 ? " (not checked yet)" : "");
+				}
+				else if (r.gap && r.q >= 1 && !r.carried)
 				{
 					char est[48];
 					if (r.best_hi > r.best_launch + 1.f) snprintf(est, sizeof(est), "%.0f u/s, up to %.0f", r.best_launch, r.best_hi);
@@ -4975,13 +5766,22 @@ namespace h2cv::sb
 				{
 					char tp[220];
 					const char* ph = r.air ? "PHYSICS" : "PHYSICS (JUMP from here)";
-					if (r.adj == 1) snprintf(tp, sizeof(tp), "%s: launches %s (%.2f-%.2f u/s forward work) -> about %.0f u/s", ph, r.air ? "at your forward speed" : "holding forward", r.adj_lo, r.adj_hi, r.adj_launch);
+					if (r.adj_aimed)
+					{
+						// in the air, aimed at this seam: what the stick has to ask for (forward = along your heading)
+						if (r.adj == 1) snprintf(tp, sizeof(tp), "PHYSICS: launches as you are -> about %.0f u/s", r.adj_launch);
+						else if (r.adj == -1) snprintf(tp, sizeof(tp), "PHYSICS: SLOW DOWN - ease the stick to about %.2f u/s forward (it asks %.2f now) -> about %.0f u/s", r.adj_lo, r.adj_hi, r.adj_launch);
+						else if (r.adj == 2) snprintf(tp, sizeof(tp), "PHYSICS: SPEED UP - push to about %.2f u/s forward (the stick asks %.2f now) -> about %.0f u/s", r.adj_lo, r.adj_hi, r.adj_launch);
+						else if (r.adj == 4) snprintf(tp, sizeof(tp), "PHYSICS: STEER %s (about %.2f u/s sideways) -> about %.0f u/s", r.adj_side > 0.f ? "LEFT" : "RIGHT", std::fabs(r.adj_side), r.adj_launch);
+						else snprintf(tp, sizeof(tp), "PHYSICS: no stick position lands a launch on this seam from this fall");
+					}
+					else if (r.adj == 1) snprintf(tp, sizeof(tp), "%s: launches %s (%.2f-%.2f u/s forward work) -> about %.0f u/s", ph, r.air ? "at your forward speed" : "holding forward", r.adj_lo, r.adj_hi, r.adj_launch);
 					else if (r.adj == -1) snprintf(tp, sizeof(tp), "%s: SLOW DOWN - forward %.2f-%.2f u/s launches (tap / fragment forward) -> about %.0f u/s", ph, r.adj_lo, r.adj_hi, r.adj_launch);
 					else if (r.adj == 2) snprintf(tp, sizeof(tp), "%s: SPEED UP - forward %.2f-%.2f u/s launches (max 2.25) -> about %.0f u/s", ph, r.adj_lo, r.adj_hi, r.adj_launch);
 					else snprintf(tp, sizeof(tp), "%s: no forward speed (0-2.25) launches %s", ph, r.air ? "from this fall" : "from a jump here");
 					text(r.near_pt + v3{ 0.f, 0.f, 0.55f }, c, tp);
 				}
-				if (i == 0 && r.q >= 1 && r.down > 0.f && !r.flat)
+				if (!phys_ready && i == 0 && r.q >= 1 && r.down > 0.f && !r.flat)
 				{
 					char t4[140];
 					snprintf(t4, sizeof(t4), "biggest kick: drift across it at about %.2f u/s at contact (steer to it: with, against or off the stick)", k_sb_best_tilt * r.down);
@@ -4989,9 +5789,76 @@ namespace h2cv::sb
 				}
 			}
 
+			// MONSTER FINDER (2026-11-16): this fall (or a jump from here) against the rated seams below, the fins' ridges and a grid
+			// around the landing - on its own thread; see sb_mf_* above. A new request only when the state changed; an unchanged
+			// state (standing still) is sent once more as "settled" (finished whole) and then left alone.
+			{
+				static uint32 s_mf_tick = 0xFFFFFFFF; static uint64_t s_mf_sig = 0; static bool s_mf_settled = false, s_mf_was_on = false;
+				if (!g_settings.superbounce_monster_finder)
+				{
+					if (s_mf_was_on) { sb_mf_stop(); s_mf_was_on = false; s_mf_sig = 0; }
+				}
+				else
+				{
+					s_mf_was_on = true;
+					if (tick != s_mf_tick && h2cv::sbscan::readySerial() != 0)
+					{
+						s_mf_tick = tick;
+						s_sb_mf_in q;
+						q.tick = tick; q.geo = g_sb_geo_gen; q.epoch = g_sb_phys_epoch; q.air = airborne; q.dt = dt;
+						q.vz0 = airborne ? vel.z : jump_speed; q.line20 = h2cv::sbscan::lineMonster(tps);
+						q.feet = feet; q.grid = air_draw; q.focus = air_draw ? g_sb_air_at : feet; q.sweep = g_sb_sweep_now;
+						for (size_t i = 0; i < order.size(); ++i)
+						{
+							if (!in_reach[i]) continue;
+							const s_sb_shown& e = g_sb_shown[order[i].second];
+							s_sb_mf_seam ms; ms.a = e.r.a; ms.b = e.r.b; ms.pieces = e.r.pieces;
+							for (int k = 0; k < e.r.pieces && k < 24; ++k) if (e.piece_seen[k] != 0 && tick + 1 - e.piece_seen[k] <= hold) ms.open |= 1u << k;
+							if (ms.open) q.seams.push_back(ms);
+						}
+						// the fins' ridges (two steep sides: no floor seam runs along them) within 10 wu of the landing, below you
+						for (const s_sb_fin& fn : g_sbb.fins)
+						{
+							if (fn.parallel) continue;
+							const v3 c = (fn.a + fn.b) * 0.5f, d = c - q.focus;
+							if (d.x * d.x + d.y * d.y > 100.f || c.z > feet.z - 0.3f) continue;
+							s_sb_mf_seam ms; ms.a = fn.a; ms.b = fn.b; ms.pieces = (std::max)(1, (std::min)(24, (int)(len(fn.b - fn.a) / 0.5f))); ms.open = 0xFFFFFFFFu;
+							q.seams.push_back(ms);
+						}
+						// the state's signature: where you are (to 1 mm), how you move (to 0.01 u/s), and what is being tested
+						uint64_t sg = 1469598103934665603ull;
+						auto mixi = [&](int64_t v) { sg ^= (uint64_t)v; sg *= 1099511628211ull; };
+						auto mixf = [&](float f) { uint32 v; std::memcpy(&v, &f, 4); mixi(v); };
+						mixi(std::llround(feet.x * 1000.f)); mixi(std::llround(feet.y * 1000.f)); mixi(std::llround(feet.z * 1000.f));
+						mixi(std::llround(vel.x * 100.f)); mixi(std::llround(vel.y * 100.f)); mixi(std::llround(q.vz0 * 100.f));
+						mixi(airborne ? 1 : 0); mixi(tps); mixi((int64_t)q.seams.size());
+						// + the timeline and the cache: after a revert (or an object rebuild) while you stand still the worker's
+						// results are dropped, and without these the same signature meant nothing was asked again (review agent D)
+						mixi(g_sb_phys_epoch); mixi(g_sb_geo_gen); mixi(std::llround(g_sb_sweep_now * 100.f));
+						for (const s_sb_mf_seam& ms : q.seams) { mixf(ms.a.x); mixf(ms.a.y); mixf(ms.a.z); mixf(ms.b.x); mixf(ms.b.y); mixf(ms.b.z); mixi(ms.open); }
+						q.sig = sg;
+						// (a send that finds the worker's lock taken is simply tried again next tick; in the air at most every 2nd tick -
+						// the fall's landing tick is the same from one tick to the next, only the steering to each target shifts a little)
+						static uint32 s_mf_sent = 0;
+						if (sg != s_mf_sig)
+						{
+							if (!(airborne && tick >= s_mf_sent && tick - s_mf_sent < 2) && sb_mf_submit(std::move(q))) { s_mf_sig = sg; s_mf_settled = false; s_mf_sent = tick; }
+						}
+						else if (!s_mf_settled) { q.settled = true; if (sb_mf_submit(std::move(q))) s_mf_settled = true; }
+					}
+					sb_mf_draw(tick, tps, dt, s_mf_sig, g_sb_phys_epoch, g_sb_geo_gen, feet);
+				}
+			}
+
 			// DEBOUNCE FINDER (2026-11-02): where and how to land so the pill falls through a seam / edge - see patch_debounce_finder.py.
 			// Charged only, the Debounce option on; recomputed every 3rd tick on a 9 x 7 grid (0.05 wu) around the seam nearest the landing.
-			if (g_settings.superbounce_debounce && charged && g_sbs.ok)
+			// OFF since 2026-11-16 (kept for reference): review agent E checked it against the recordings - every natural fall-through
+			// of a floor is a FAST swept fall (15-40 u/s) through the middle of a polygon, never at a seam and never from a slow
+			// fall (0 of 2,319), so this grid around the nearest seam looks where it cannot happen; and it was the costliest thing
+			// on the render thread (up to 6.6 ms a run, review agent C). The landing's own exact fall now reports a pass through
+			// the floor ("FALLS THROUGH", pink) where the rules produce one.
+			constexpr bool k_sb_seam_debounce_finder = false;
+			if (k_sb_seam_debounce_finder && g_settings.superbounce_debounce && charged && g_sbs.ok)
 			{
 				struct s_db { uint32 tick = 0; bool ok = false; v3 at{}, vh{}, along{}; float chg = 1e9f; int best = 0, good = 0, tried = 0; };
 				static s_db s_d;
@@ -5039,7 +5906,7 @@ namespace h2cv::sb
 								bool touched = false, caught = false; v3 first{};
 								for (int kk = 0; kk < 900 && zz > c0.z - 0.6f; ++kk)
 								{
-									if (v - g1 < 0.f && zz - c0.z < 1.5f && h2cv::sbscan::landingLaunch(x, y, zz, hx, hy, v - g1, out))
+									if (v - g1 < 0.f && zz - c0.z < 1.5f && h2cv::sbscan::landingLaunch(x, y, zz, hx, hy, v - g1, out, dt))
 									{
 										if (out[2] > -1.f) { caught = true; break; }
 										if (!touched) { touched = true; first = v3{ x, y, c0.z }; }
@@ -5048,7 +5915,7 @@ namespace h2cv::sb
 									v -= g1; zz += v * dt; x += hx * dt; y += hy * dt;
 								}
 								// through the FLOOR, not off a ledge: a shallow straight-down landing where you ended up is caught
-								if (touched && !caught && zz <= c0.z - 0.6f && h2cv::sbscan::landingLaunch(x, y, c0.z - 0.03f, 0.f, 0.f, -4.5f, out) && out[2] > -1.f)
+								if (touched && !caught && zz <= c0.z - 0.6f && h2cv::sbscan::landingLaunch(x, y, c0.z - 0.03f, 0.f, 0.f, -4.5f, out, dt) && out[2] > -1.f)
 								{
 									hit[ia][ic] = true; land[ia][ic] = first;
 								}
@@ -5119,6 +5986,7 @@ namespace h2cv::sb
 				else sb_panel(w, "jump take-off %.2f u/s (tags; measured on your first jump)", k_sb_tag_jump);
 				if (!live.empty()) sb_panel(w, "coupled pairs now: %d, best %.1fx", (int)live.size(), live_best);
 				if (g_sb_loaded_text[0]) sb_panel(ImVec4(1.f, 0.35f, 0.2f, 1.f), "%s", g_sb_loaded_text);
+				if (g_sbb.invis_dropped) sb_panel(ImVec4(1.f, 0.75f, 0.3f, 1.f), "invisible walls (*) off: %zu surfaces left out of seams, landings and spot scans", g_sbb.invis_dropped);
 				if (airborne)
 				{
 					const float drift = std::sqrt(vel.x * vel.x + vel.y * vel.y);
@@ -5127,7 +5995,7 @@ namespace h2cv::sb
 					else sb_panel(w, "air: holding (drift steady at %.2f u/s)", drift);
 				}
 				if (g_settings.superbounce_record)
-					sb_panel(ImVec4(1.f, 0.6f, 0.2f, 1.f), g_sb_log ? "recording to superbounce_log.csv" : "recording: waiting for a charged fall");
+					sb_panel(ImVec4(1.f, 0.6f, 0.2f, 1.f), g_sb_log ? "recording to HCM Bounce Viewer\\superbounce_log.csv" : "recording: waiting for a charged fall");
 				if (g_sbl.have_bounce)
 				{
 					if (g_sbl.bounce_side > 4.f)
@@ -5228,6 +6096,397 @@ namespace h2cv::sb
 		if (_wfopen_s(&f, path, L"r") == 0 && f) { int t = 0; if (fscanf_s(f, "%d", &t) == 1 && (t == 30 || t == 60)) s_tps = t; fclose(f); }
 		return s_tps;
 	}
+	// Halo 4 (2026-11-21): the local player straight from Halo 4 (H2CV_Halo4.h: biped +0x64 less the 0.1172 it floats above the
+	// floor, velocity +0x88). There is no Halo 2 body yet, so: never armed; the viewer's tick counts Halo 2's 30 a second (Halo 4
+	// runs 60: every second game tick); airborne = the vertical speed changed by Halo 4's own gravity, or is far from 0.
+	// ---- Halo 4: Halo 2's bounce on top of Halo 4's movement (2026-11-21, the CyberBounce route of the "Halo 2 Bounces in Other
+	// Games" handoff: only Halo 2's landing tick is modelled; Halo 4 moves the player, HCM decides and applies the launch) ----
+	//  CHARGE: standing up out of a crouch arms you when Halo 2's standing pill (axis feet+0.175 .. feet+0.55, radius 0.175)
+	//    starts more than 0.00984 wu inside a non-floor surface (Havok's level-0 allowed depth: a back-step that gives up = level
+	//    -3). Crouch = the eye (render camera) dropping below the standing eye height. Disarmed by crouching, a vehicle, death.
+	//    Force Charge keeps it on.
+	//  CLOCK: Halo 2's 30 Hz ticks counted from take-off (every 2nd Halo 4 game tick after it).
+	//  LANDING: each charged airborne 30 Hz tick runs the scan's exact Halo 2 rules (sbscan::landingLaunch, gate off: stepped)
+	//    with Halo 4's velocity plus one Halo 2 gravity step; the first tick with contacts decides the fall.
+	//  LAUNCH: a decided launch (falling faster than 2, leaving at 5+ with more than 4 up or sideways) is written to the biped's
+	//    velocity (as Force Launch does) on the first game tick Halo 4 has put the player down, within 6 game ticks. The charge
+	//    stays (doubles / monsters).
+	struct s_h4bounce
+	{
+		bool armed = false, crouched = false, air = false, decided = false, pending = false;
+		float eyeStand = 0.f;                // the highest grounded eye height seen (standing)
+		uint32 takeoffGt = 0, lastEvalGt = 0, decideGt = 0, lastGt = 0;
+		v3 launch{};
+		std::string last;                    // the last decision, for the panel
+		float lastSpeed = 0.f;
+		int evals = 0;                       // Halo 2 ticks evaluated in this fall
+		float takeoffZ = 0.f;
+	};
+	static s_h4bounce g_h4b;
+	static bool g_h4_force = false;          // Force Charge (frame() sets it)
+
+	// deepest start-of-tick overlap of Halo 2's standing pill with a non-floor surface near the feet (0 = none)
+	static float sb_h4_stand_overlap(v3 feet)
+	{
+		const float r = 0.175f;
+		const v3 a{ feet.x, feet.y, feet.z + 0.175f }, b{ feet.x, feet.y, feet.z + 0.55f };
+		std::vector<uint32> cand;
+		sb_surfs_near(v3{ feet.x - 1.f, feet.y - 1.f, feet.z - 1.f }, v3{ feet.x + 1.f, feet.y + 1.f, feet.z + 2.f }, cand);
+		float deepest = 0.f;
+		for (uint32 si : cand)
+		{
+			if (si >= g_sbb.surf.size()) continue;
+			const s_sb_surface& s = g_sbb.surf[si];
+			if (!s.ok || s.poly.size() < 3 || (s.flags & 3)) continue;              // two-sided / invisible never charge
+			if (s.n.z > 0.7f && s.hi.z <= a.z) continue;                             // the floor under you
+			if (s.lo.z > b.z + r || s.hi.z < a.z - r) continue;
+			// the closest point of the axis to the polygon: the axis sampled, each point against the plane / edges
+			float best = 1e9f;
+			for (int k = 0; k <= 16; ++k)
+			{
+				const float t = (float)k / 16.f;
+				const v3 p{ a.x, a.y, a.z + (b.z - a.z) * t };
+				const float dpl = dot(p - s.poly[0], s.n);
+				const v3 q = p - s.n * dpl;
+				bool inside = true;
+				for (size_t i = 0; i < s.poly.size() && inside; ++i)
+				{
+					const v3 e = s.poly[(i + 1) % s.poly.size()] - s.poly[i];
+					if (dot(cross(e, q - s.poly[i]), s.n) < -1e-6f) inside = false;
+				}
+				float d;
+				if (inside) d = std::fabs(dpl);
+				else
+				{
+					d = 1e9f;
+					for (size_t i = 0; i < s.poly.size(); ++i)
+					{
+						const v3 p0 = s.poly[i], e = s.poly[(i + 1) % s.poly.size()] - p0;
+						const float ee = dot(e, e);
+						const float u = ee > 1e-12f ? std::clamp(dot(p - p0, e) / ee, 0.f, 1.f) : 0.f;
+						d = (std::min)(d, len(p - (p0 + e * u)));
+					}
+				}
+				best = (std::min)(best, d);
+			}
+			deepest = (std::max)(deepest, r - best);
+		}
+		return deepest;
+	}
+
+	// GAME-THREAD SAMPLES (2026-11-21, h4_bounce_58). HCM's GameTickEventHook fires on Halo 4's game thread at halo4+0x9A6F6:
+	// game_tick has just stored the new tick number, and the objects update and the Havok step have not run yet - so a sample
+	// taken there is the previous tick's FINISHED state, one per tick, none missed. The first version sampled from the render
+	// thread: it saw the new tick number while Halo 4 was still moving the player through that tick, so the feet / velocity were
+	// from before or after its step at random - and with them the depth Halo 2's landing tick ran at. A seam that bounces every
+	// time in Halo 2 bounced about 1 time in 100. The launch is written from the game thread too, at the start of the touchdown
+	// tick (before Halo 4's biped update and step), not at a random point of a tick. Without the hook (it failed to install)
+	// the old render-thread sampling still runs.
+	struct s_h4sample
+	{
+		uint32 gt = 0; v3 feet{}, vel{};
+		bool inVehicle = false, air = false, crouch = false, crouchKnown = false;
+		bool revert = false;      // the tick counter went back (revert / checkpoint load)
+		bool kick = false;        // the velocity jumped this tick (force launch, jump, our launch): the fall starts again
+		bool kickMoved = false;   // ... and the player already moved one tick with the new velocity
+		bool forced = false;      // HCM's Force Launch, written by h4SimTick at the start of this tick (vel = the launch)
+		v3 prevFeet{};            // the previous tick's feet (the tick boundary of a kick that already moved)
+	};
+	// HCM's Force Launch of the player, waiting for the next game tick (h4DeferForceLaunch; under g_h4q_mu)
+	static bool g_h4f_pending = false;
+	static v3 g_h4f_v{};
+	struct s_h4result { int kind = 0; v3 v{}; float speed = 0.f; uint32 gt = 0; };   // kind 1 launched, 2 dropped
+	static std::mutex g_h4q_mu;
+	static std::vector<s_h4sample> g_h4q;        // samples the render thread has not taken yet (under g_h4q_mu)
+	static std::vector<s_h4result> g_h4r;        // what the game thread did with the pending launch (under g_h4q_mu)
+	static bool g_h4l_pending = false;           // a decided launch waiting for touchdown (under g_h4q_mu)
+	static v3 g_h4l_v{};
+	static float g_h4l_speed = 0.f;
+	static uint32 g_h4l_gt = 0;
+	static std::atomic<uint64_t> g_h4_lastSampleMs{ 0 };
+
+	// the game thread, every Halo 4 tick (CollisionViewer::onSimTick)
+	void h4SimTick(uint32_t)
+	{
+		// diagnostics (h4_bounce_59): is this called, and why does it give up
+		static std::atomic<uint64_t> s_calls{ 0 }, s_noTick{ 0 }, s_noPlayer{ 0 }, s_same{ 0 }, s_taken{ 0 };
+		static uint64_t s_lastLog = 0;
+		if (s_calls.fetch_add(1) == 0) LOGF("Halo 4 bounce: game-thread sampling started (thread %lu)", GetCurrentThreadId());
+		if (const uint64_t now = GetTickCount64(); now - s_lastLog > 10000)
+		{
+			s_lastLog = now;
+			LOGF("Halo 4 bounce: game-thread samples: %llu calls, %llu taken, %llu no tick, %llu no player, %llu same tick",
+				(unsigned long long)s_calls.load(), (unsigned long long)s_taken.load(), (unsigned long long)s_noTick.load(),
+				(unsigned long long)s_noPlayer.load(), (unsigned long long)s_same.load());
+		}
+		h4::igGatherTick();   // the instanced geometry, a slice of Havok shape keys per tick (game thread only)
+		h2::Vec3 f{}, v{};
+		bool inVehicle = false;
+		const uint32 gt = h4::gameTick();
+		if (!gt) { ++s_noTick; return; }
+		if (!h4::readPlayer(f, v, &inVehicle)) { ++s_noPlayer; return; }
+		static uint32 s_gt = 0; static float s_vz = 0.f; static bool s_air = false;
+		static v3 s_v{}, s_p{};
+		if (gt == s_gt) { ++s_same; return; }
+		++s_taken;
+		s_h4sample s;
+		// a revert / checkpoint load moves the tick counter back: nothing carries over
+		s.revert = s_gt != 0 && gt < s_gt;
+		const bool contiguous = gt == s_gt + 1;
+		// standing still Halo 4 holds vz at -0.119 (live), not 0: airborne = vz falling further under gravity this tick (Halo 4's
+		// gravity takes ~0.079 u/s off it every tick, rising or falling); a landing jumps it UP to about -0.12
+		const float dvz = v.z - s_vz;
+		s_air = !s.revert && (gt - s_gt <= 3 && dvz < -0.04f);
+		// a KICK: the velocity changed by more than gravity can in one tick (HCM's Force Launch, a jump, our own launch). The
+		// fall starts again from it (Halo 2's 30 Hz clock restarts). Force Launch writes from HCM's render thread at any point
+		// of a tick, so the first sample with the new velocity has either already moved one tick with it (written before
+		// Halo 4's step) or not (written after): `kickMoved` tells which, so the clock always starts at the first tick the new
+		// velocity was integrated, wherever in the tick the write landed.
+		const v3 vel{ v.x, v.y, v.z }, pos{ f.x, f.y, f.z };
+		if (contiguous)
+		{
+			const v3 dv{ vel.x - s_v.x, vel.y - s_v.y, vel.z - s_v.z + 0.079f };
+			if (std::sqrt(dv.x * dv.x + dv.y * dv.y + dv.z * dv.z) > 1.5f)
+			{
+				s.kick = true;
+				const float dz = pos.z - s_p.z, tick = 1.f / 60.f;
+				s.kickMoved = std::fabs(dz - vel.z * tick) < std::fabs(dz - s_v.z * tick);
+			}
+		}
+		s.prevFeet = s_p;
+		// HCM's Force Launch, handed over by h4DeferForceLaunch: written now, at the start of the tick (before Halo 4's biped
+		// update and step), so this sample IS the Halo 2 tick boundary: these feet, the launch velocity
+		v3 velOut = vel;
+		{
+			std::scoped_lock lkf(g_h4q_mu);
+			if (g_h4f_pending)
+			{
+				g_h4f_pending = false;
+				h4::writePlayerVelocity(h2::Vec3{ g_h4f_v.x, g_h4f_v.y, g_h4f_v.z });
+				velOut = g_h4f_v;
+				s.forced = true; s.kick = true; s.kickMoved = false;
+				s_air = true;
+			}
+		}
+		s_gt = gt; s_vz = velOut.z; s_v = velOut; s_p = pos;
+		s.gt = gt; s.feet = pos; s.vel = velOut; s.inVehicle = inVehicle; s.air = s_air;
+		const float c = h4::crouchAmount();
+		s.crouchKnown = c >= 0.f; s.crouch = c > 0.5f;
+		std::scoped_lock lk(g_h4q_mu);
+		if (g_h4q.size() < 4096) g_h4q.push_back(s);
+		if (g_h4l_pending)
+		{
+			if (!s_air)
+			{
+				h4::writePlayerVelocity(h2::Vec3{ g_h4l_v.x, g_h4l_v.y, g_h4l_v.z });
+				g_h4r.push_back(s_h4result{ 1, g_h4l_v, g_h4l_speed, gt });
+				g_h4l_pending = false;
+			}
+			else if (gt - g_h4l_gt > 6)
+			{
+				g_h4r.push_back(s_h4result{ 2, g_h4l_v, g_h4l_speed, gt });
+				g_h4l_pending = false;
+			}
+		}
+		g_h4_lastSampleMs.store(GetTickCount64());
+	}
+
+	bool h4DeferForceLaunch(uint32_t datum, float x, float y, float z)
+	{
+		const uint64_t last = g_h4_lastSampleMs.load(), now = GetTickCount64();
+		if (!last || (last < now && now - last > 300)) return false;   // the game-thread sampler is not running
+		const uint32_t player = h4::playerDatum();
+		if (player == 0xFFFFFFFFu || datum != player) return false;
+		std::scoped_lock lk(g_h4q_mu);
+		g_h4f_pending = true;
+		g_h4f_v = v3{ x, y, z };
+		return true;
+	}
+
+	// one Halo 4 tick's sample through the charge / clock / landing rules (render thread). gameThread: the sample came from
+	// h4SimTick (the launch is handed to it); else it was read on this thread and the launch is written here (the fallback).
+	static void sb_h4_tick(const s_h4sample& s, bool gameThread)
+	{
+		s_h4bounce& B = g_h4b;
+		const uint32 gt = s.gt;
+		const v3 feet = s.feet, vel = s.vel;
+		bool crouchedNow = false;
+		if (s.crouchKnown) crouchedNow = s.crouch;        // the unit's crouch amount (+0x7E4)
+		else
+		{
+			// the fallback: the eye (render camera) dropping below the highest grounded eye height seen
+			const h2::Camera cam = h4::readCamera();
+			const float eye = cam.ok ? cam.pos.z - feet.z : 0.f;
+			if (cam.ok && !s.air && eye > 0.2f && eye < 1.2f) B.eyeStand = (std::max)(B.eyeStand * 0.9999f, eye);
+			crouchedNow = cam.ok && B.eyeStand > 0.f && eye < B.eyeStand - 0.12f;
+		}
+		if (s.inVehicle) { B.armed = false; B.pending = false; }
+		else if (crouchedNow && !B.crouched) { if (B.armed) B.last = "charge lost: crouched"; B.armed = false; }
+		else if (!crouchedNow && B.crouched && !B.armed && g_sbb.bsp)
+		{
+			const float d = sb_h4_stand_overlap(feet);
+			if (d > 0.00984f)
+			{
+				B.armed = true;
+				char t[96]; snprintf(t, sizeof(t), "CHARGED: stood up %.3f wu inside a surface", d); B.last = t;
+				LOGF("Halo 4 bounce: charged (stand-up overlap %.4f wu at %.2f %.2f %.2f)", d, feet.x, feet.y, feet.z);
+			}
+		}
+		B.crouched = crouchedNow;
+		if (g_h4_force && !s.inVehicle) B.armed = true;
+
+		// the fall: Halo 2's 30 Hz clock from take-off
+		if (s.revert)
+		{
+			if (B.air || B.pending) LOGF("Halo 4 bounce: revert (game tick %u): the fall and any pending launch are forgotten", gt);
+			B.air = false; B.decided = false; B.pending = false; B.evals = 0;
+			if (gameThread) { std::scoped_lock lk(g_h4q_mu); g_h4l_pending = false; }
+		}
+		// a new fall: leaving the ground, or a kick while airborne (the 30 Hz clock restarts at the first tick the new velocity
+		// moved the player: this one, or the one before when the sample shows it already moved)
+		// The take-off sample is itself a Halo 2 tick boundary and is evaluated (a launch straight into the floor lands inside
+		// the first Halo 2 tick: the old code first looked a tick later, when Halo 4 had already put the player down). A kick that
+		// already moved a tick is evaluated from the boundary before that move (the previous tick's feet, the new velocity).
+		bool boundaryNow = false;
+		v3 evalFeet = feet;
+		if (s.air && (!B.air || (s.kick && !B.pending)))
+		{
+			B.takeoffGt = (s.kick && s.kickMoved) ? gt - 1 : gt;
+			B.decided = false; B.lastEvalGt = 0; B.evals = 0; B.takeoffZ = feet.z;
+			boundaryNow = true;
+			if (s.kick && s.kickMoved) evalFeet = s.prevFeet;
+			if (s.kick)
+				LOGF("Halo 4 bounce: %s at game tick %u (v %.2f %.2f %.2f, %s): Halo 2's clock restarts", s.forced ? "force launch" : "kick",
+					gt, vel.x, vel.y, vel.z, s.forced ? "written at the start of this tick" : s.kickMoved ? "already moved a tick with it" : "not moved yet");
+		}
+		if (!s.air && B.air && B.armed && !B.decided && !B.pending && B.evals > 0)
+			LOGF("Halo 4 bounce: fall ended undecided after %d Halo 2 ticks (Halo 4 landed at z %.3f, %.2f below take-off; no contacts "
+				"in Halo 2's sweep on any tick)", B.evals, feet.z, B.takeoffZ - feet.z);
+		B.air = s.air;
+		if (B.armed && s.air && !B.decided && !B.pending && (boundaryNow || ((gt - B.takeoffGt) & 1) == 0) && gt != B.lastEvalGt && h2cv::sbscan::readySerial() != 0)
+		{
+			B.lastEvalGt = gt;
+			++B.evals;
+			const float dt = 1.f / 30.f;
+			const v3 vpre{ vel.x, vel.y, vel.z - k_sb_gravity * dt };
+			float out[3];
+			const v3 feet = evalFeet;
+			if (vpre.z < 0.f && h2cv::sbscan::landingLaunch(feet.x, feet.y, feet.z, vpre.x, vpre.y, vpre.z, out, dt, false, 5.4465f))
+			{
+				B.decided = true;
+				const float sp = std::sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+				const float hz = std::sqrt(out[0] * out[0] + out[1] * out[1]);
+				const bool launch = vpre.z < -2.f && sp >= 5.f && (out[2] > 4.f || hz > 4.f);
+				char t[160];
+				if (launch)
+				{
+					B.pending = true; B.decideGt = gt; B.launch = v3{ out[0], out[1], out[2] }; B.lastSpeed = sp;
+					if (gameThread)
+					{
+						std::scoped_lock lk(g_h4q_mu);
+						g_h4l_pending = true; g_h4l_v = B.launch; g_h4l_speed = sp; g_h4l_gt = gt;
+					}
+					snprintf(t, sizeof(t), "LAUNCH %.1f u/s (%.1f up) from a %.1f u/s landing - applying on touchdown", sp, out[2], -vpre.z);
+				}
+				else snprintf(t, sizeof(t), "landed, no launch (out %.1f u/s, %.1f up; landing %.1f)", sp, out[2], -vpre.z);
+				B.last = t;
+				LOGF("Halo 4 bounce: Halo 2 tick %d of the fall (game tick %u, %s): feet %.3f %.3f %.3f, v in %.2f %.2f %.2f -> out %.2f "
+					"%.2f %.2f (%.1f u/s): %s", B.evals, gt, gameThread ? "game-thread sample" : "render-thread sample", feet.x, feet.y,
+					feet.z, vpre.x, vpre.y, vpre.z, out[0], out[1], out[2], sp, launch ? "LAUNCH" : "no launch");
+			}
+		}
+		// touchdown, the fallback only (with game-thread samples h4SimTick writes it at the start of the touchdown tick)
+		if (B.pending && !gameThread)
+		{
+			if (!s.air)
+			{
+				h4::writePlayerVelocity(h2::Vec3{ B.launch.x, B.launch.y, B.launch.z });
+				g_sb_force_launch.store(0);
+				LOGF("Halo 4 bounce: launched %.2f %.2f %.2f (%.1f u/s, render thread)", B.launch.x, B.launch.y, B.launch.z, B.lastSpeed);
+				char t[120]; snprintf(t, sizeof(t), "LAUNCHED %.1f u/s (%.1f up)", B.lastSpeed, B.launch.z); B.last = t;
+				B.pending = false;
+			}
+			else if (gt - B.decideGt > 6) { B.pending = false; B.last = "launch dropped: Halo 4 never put you down (its collision differs here)"; }
+		}
+	}
+
+	static void sb_state_h4()
+	{
+		static uint32 s_lastGt = 0;
+		const uint64_t lastSample = g_h4_lastSampleMs.load();
+		const uint64_t now = GetTickCount64();
+		const bool gameThreadSamples = lastSample != 0 && (lastSample >= now || now - lastSample < 500);
+		static int s_mode = -1;
+		if ((int)gameThreadSamples != s_mode)
+		{
+			s_mode = (int)gameThreadSamples;
+			LOGF("Halo 4 bounce: %s", gameThreadSamples ? "using game-thread samples" : "no game-thread samples: reading the player at Present (fallback)");
+		}
+		if (gameThreadSamples)
+		{
+			// game-thread samples: every tick since the last frame, in order
+			std::vector<s_h4sample> q;
+			std::vector<s_h4result> r;
+			{
+				std::scoped_lock lk(g_h4q_mu);
+				q.swap(g_h4q);
+				r.swap(g_h4r);
+			}
+			for (const s_h4sample& s : q) sb_h4_tick(s, true);
+			for (const s_h4result& x : r)
+			{
+				g_h4b.pending = false;
+				char t[140];
+				if (x.kind == 1)
+				{
+					g_sb_force_launch.store(0);
+					LOGF("Halo 4 bounce: launched %.2f %.2f %.2f (%.1f u/s) at the start of game tick %u", x.v.x, x.v.y, x.v.z, x.speed, x.gt);
+					snprintf(t, sizeof(t), "LAUNCHED %.1f u/s (%.1f up)", x.speed, x.v.z);
+				}
+				else
+				{
+					LOGF("Halo 4 bounce: launch %.1f u/s dropped: Halo 4 kept the player airborne 6 ticks after the decision", x.speed);
+					snprintf(t, sizeof(t), "launch dropped: Halo 4 never put you down (its collision differs here)");
+				}
+				g_h4b.last = t;
+			}
+			// g_sbs is cleared every frame (frame()), and most frames bring no new sample (the game ticks at 60, the screen draws
+			// faster): the last sample fills it every frame, or the panel's speed / feet read 0 between ticks
+			static s_h4sample s_last;
+			if (!q.empty()) { s_last = q.back(); s_lastGt = s_last.gt; }
+			g_sbs.feet = s_last.feet; g_sbs.vel = s_last.vel; g_sbs.airborne = s_last.air;
+			g_sbs.armed = g_h4b.armed;
+			g_sbs.tps = 30;
+			g_sbs.tick = s_lastGt / 2;
+			g_sbs.ok = s_lastGt != 0;
+			return;
+		}
+
+		// the fallback (no game-thread samples): read on this thread once per new tick
+		h2::Vec3 f{}, v{};
+		bool inVehicle = false;
+		if (!h4::readPlayer(f, v, &inVehicle)) { g_h4b.armed = false; g_h4b.pending = false; return; }   // dead / no player
+		const uint32 gt = h4::gameTick();
+		if (!gt) return;
+		static uint32 s_gt = 0; static float s_vz = 0.f; static bool s_air = false;
+		if (gt != s_gt)
+		{
+			const float dvz = v.z - s_vz;
+			s_air = (gt - s_gt <= 3 && dvz < -0.04f);
+			s_gt = gt; s_vz = v.z;
+			s_h4sample s;
+			s.gt = gt; s.feet = v3{ f.x, f.y, f.z }; s.vel = v3{ v.x, v.y, v.z }; s.inVehicle = inVehicle; s.air = s_air;
+			sb_h4_tick(s, false);
+		}
+		g_sbs.feet = v3{ f.x, f.y, f.z };
+		g_sbs.vel = v3{ v.x, v.y, v.z };
+		g_sbs.airborne = s_air;
+		g_sbs.armed = g_h4b.armed;
+		g_sbs.tps = 30;
+		g_sbs.tick = gt / 2;
+		g_sbs.ok = true;
+	}
+
 	static void sb_state_gen3()
 	{
 		typedef int (*StatusFn)(H3sbStatus*);
@@ -5368,11 +6627,16 @@ namespace h2cv::sb
 		g_settings.superbounce = opt.on;
 		g_gen3 = opt.gen3;
 		g_reach = opt.reach;
+		g_h4 = opt.h4;
+		g_h4_force = opt.h4 && opt.forceCharge;
+		g_sb_no_invis = opt.noInvisible && !opt.gen3;
 		if (!opt.gen3) h2cv::sbscan::setMapFile("");   // Halo 2: the key file only
 		g_settings.superbounce_record = opt.record && !opt.gen3;   // the recorder logs Halo 2 contacts
 		g_settings.superbounce_gaps = opt.highlight;
 		g_settings.superbounce_seam_text = opt.seamText;
 		g_settings.superbounce_debounce = opt.debounce;
+		g_settings.superbounce_monster_finder = opt.monsterFinder;
+		g_settings.superbounce_monster_only = opt.monsterOnly; g_settings.superbounce_monster_rings = opt.monsterRings;
 		g_settings.superbounce_spots = opt.spots;
 		g_settings.superbounce_seams = opt.seams;
 		g_settings.superbounce_predicted = opt.predicted;
@@ -5385,7 +6649,12 @@ namespace h2cv::sb
 		g_sb_hud = -1; g_sb_speed_now = -1.f;
 		g_sbs = s_sb_state{};
 		uintptr_t units[4] = {};
-		if (g_gen3)
+		if (g_h4)
+		{
+			sb_state_h4();                           // Halo 4: its own player (no Halo 2 body yet)
+			h2cv::sbscan::setMapFile(h4::mapName(), "h4");   // superbounce_predicted_h4_<map>[_t<tick>].csv
+		}
+		else if (g_gen3)
 		{
 			sb_state_gen3();                         // Halo 3 / ODST / Reach: the Halo 2 body of Poorboy's h3sb.dll
 			if (g_reach) h2cv::sbscan::setMapFile(reach::mapName(), "reach");   // superbounce_predicted_reach_<map>[_t<tick>].csv
@@ -5425,7 +6694,14 @@ namespace h2cv::sb
 		if (g_reach && opt.on)
 		{
 			// Reach: the geometry loads even before the Halo 2 body shows up; what the panel says while it does not
-			if (!g_sbs.ok) { sb_bsp_update(); sb_panel(ImVec4(1.f, 0.75f, 0.3f, 1.f), "Halo 2 physics body not running (Poorboy's h3sb): switch \"Halo 2 physics\" on for Halo: Reach to see bounces"); }
+			if (!g_sbs.ok) { sb_bsp_update(); sb_panel(ImVec4(1.f, 0.75f, 0.3f, 1.f), g_h4 ? "Halo 4: no player to show (menu, loading or dead)" : "Halo 2 physics body not running (Poorboy's h3sb): switch \"Halo 2 physics\" on for Halo: Reach to see bounces"); }
+			if (g_h4)
+			{
+				sb_panel(g_h4b.armed ? ImVec4(1.f, 0.35f, 0.35f, 1.f) : ImVec4(0.65f, 0.65f, 0.65f, 1.f), "Halo 4 + Halo 2 bounces: %s",
+					g_h4b.armed ? (g_h4_force ? "CHARGED (Force Charge)" : "CHARGED - crouching drops it") : "not charged - crouch, then stand up into a surface");
+				if (!g_h4b.last.empty()) sb_panel(ImVec4(0.9f, 0.9f, 0.9f, 1.f), "last: %s", g_h4b.last.c_str());
+				sb_panel(ImVec4(0.65f, 0.65f, 0.65f, 1.f), "the level's structure only - instanced geometry (rocks, props) not yet");
+			}
 			if (!g_reach_status.empty()) sb_panel(ImVec4(1.f, 0.75f, 0.3f, 1.f), "%s", g_reach_status.c_str());
 		}
 		if (opt.on && g_sbs.ok)
@@ -5624,6 +6900,7 @@ namespace h2cv::sb
 		}
 		g_reach_job.reset(); g_reach_old.clear(); g_reach_map.clear(); g_reach_mask = 0; g_sbb_owner = 0;
 		sb_phys_stop();                                    // Reach's physics worker (it exits at its next wake-up)
+		sb_mf_stop();                                      // the monster finder's thread, likewise
 		g_sbb = s_sb_bsp{};
 		g_bsp_copies.clear();
 		g_sb_shown.clear();

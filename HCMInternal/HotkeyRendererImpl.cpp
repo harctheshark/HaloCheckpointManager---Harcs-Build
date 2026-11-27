@@ -59,6 +59,27 @@ std::string HotkeyRendererImpl::getBindingTextShort(RebindableHotkeyEnum hotkeyE
 	return std::string(found->second->getBindingTextShort());
 }
 
+// Same test HotkeyManager uses to fire a hotkey: every key of one binding held, at least one of them newly pressed.
+// For text boxes that must not take the character of the key that is about to close the window.
+bool HotkeyRendererImpl::isPressedNow(RebindableHotkeyEnum hotkeyEnum)
+{
+	const auto& all = hotkeyDefinitions->getAllRebindableHotkeys();
+	const auto found = all.find(hotkeyEnum);
+	if (found == all.end() || !found->second) return false;
+	for (const auto& bindingSet : found->second->getBindings())
+	{
+		if (bindingSet.empty()) continue;
+		bool allDown = true, newPress = false;
+		for (auto key : bindingSet)
+		{
+			if (!ImGui::IsKeyDown(key)) { allDown = false; break; }
+			if (ImGui::IsKeyPressed(key, false)) newPress = true;
+		}
+		if (allDown && newPress) return true;
+	}
+	return false;
+}
+
 void HotkeyRendererImpl::renderHotkeyRebindDialog(SimpleMath::Vector2 screenSize)
 {
 	if (hotkeyRebindDialog)

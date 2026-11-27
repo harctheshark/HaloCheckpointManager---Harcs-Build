@@ -13,6 +13,9 @@ namespace h2cv::sb
 	{
 		bool on = false;           // the viewer
 		bool debounce = true;      // flag landings / seams where a late contact falls through the floor (a debounce)
+		bool monsterFinder = true; // the live monster finder: where this fall would launch 20+ u/s (2026-11-16)
+		bool monsterOnly = false;  // ... hiding the regular seams' lines and labels while it is on
+		bool monsterRings = true;  // ... with the ring + approach arrow on each seam's best landing (off: the diamonds only)
 		bool objects = true;       // include objects (scenery / crates / machines); off = none of their collision is used
 		bool seams = true;         // the viewer's own drawing (seams, path / landing, contacts, gaps / fins, debounce finder); off = spots + HUD only
 		bool spots = true;         // show the remembered monster / dreadnought spots
@@ -30,6 +33,8 @@ namespace h2cv::sb
 		bool forceCharge = false;  // the pair with the level held at -3 no matter what (overrides keepCharge)
 		bool gen3 = false;         // Halo 3 / ODST / Reach: player from h3sb.dll, the active bsp set; Halo 2-only parts off (2026-11-02)
 		bool reach = false;        // Halo: Reach (gen3 is set too): the bsps are read from tag memory on a worker thread (2026-11-04)
+		bool h4 = false;           // Halo 4 (gen3 and reach set too): the Reach worker with the Halo 4 reader, Halo 4's own player (2026-11-21)
+		bool noInvisible = false;  // Halo 2: HCM's "No invisible walls (*)" is on in the game - those surfaces are left out (2026-11-21)
 	};
 	struct Label { h2::Vec3 at; uint32_t rgba; std::string text; };       // world-anchored text
 	struct PanelLine { uint32_t rgba; std::string text; };                // a line of the Info panel's superbounce section
@@ -50,5 +55,8 @@ namespace h2cv::sb
 	void forgetCheckpointCharges();   // HCM injected a checkpoint: forget which checkpoints were made charged (any thread)
 	void requestSpotScan();
 	void requestRecipes(bool redo = false);   // redo: every spot in range again, replacing the saved approaches (GPU tool)            // the "work out approaches" button (any thread): the spots within the drawing range, from the next frame           // the "scan around me" button (any thread): scanned on the next frame
+	// Halo 4, from the GAME thread every tick (GameTickEventHook, before the objects update / Havok step): samples the player
+	// for the bounce state and writes a pending launch at touchdown (2026-11-21)
+	void h4SimTick(uint32_t tick);
 	void noteForceLaunch();           // HCM's Force Launch just set the player's velocity (any thread): not a bounce / spot
 }

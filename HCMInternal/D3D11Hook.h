@@ -17,6 +17,9 @@
 // Define the DX functions we're going to hook
 typedef HRESULT __stdcall DX11Present(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags);
 typedef HRESULT __stdcall DX11ResizeBuffers(IDXGISwapChain* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags);
+// IDXGISwapChain1::Present1 (slot 22). The last parameter is const DXGI_PRESENT_PARAMETERS* - void* here so this header
+// does not need dxgi1_2.h.
+typedef HRESULT __stdcall DX11Present1(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags, const void* pPresentParameters);
 
 //SCALAR TO ImVec4 OPERATIONS
 inline ImVec4 operator + (const ImVec4& v1, float s) { return ImVec4(v1.x + s, v1.y + s, v1.z + s, v1.w + s); }
@@ -49,6 +52,27 @@ private:
 
 	static DX11Present newDX11PresentOBSBypass;
 	static DX11Present mandatoryManualRender;
+	static DX11Present1 newDX11Present1;
+	// the work every hooked Present does before the frame goes on (device init, the render events). false = the device
+	// could not be initialised (HCM is shutting itself down) - the caller just presents.
+	static bool presentWork(D3D11Hook* d3d, IDXGISwapChain* pSwapChain);
+
+	// ---- the INLINE path (2026-11-24, Metro Redux): titles with no pIDXGISwapChain pointer data ----
+	// A dummy swapchain on HCM's own hidden window gives dxgi's Present / Present1 entry points, and both stay inline-hooked.
+	// The overlay draws on whichever D3D11 swapchain is presenting to a visible window of this process right now - Metro
+	// presents its intro videos through one swapchain and the 3D game through another, so "the first one seen" is not
+	// enough. The render target view is made each frame and released after it: HCM holds no reference to the game's back
+	// buffers between frames, so the game can resize or recreate its swapchain freely (no ResizeBuffers hook needed).
+	static DX11Present captureDX11Present;
+	static DX11Present1 captureDX11Present1;
+	static void inlinePresentWork(IDXGISwapChain* pSwapChain, bool viaPresent1);
+	void beginHookByCapture();
+	safetyhook::InlineHook mCapturePresent, mCapturePresent1;
+	static inline std::atomic<DX11Present*> sOrigPresent{ nullptr };
+	static inline std::atomic<DX11Present1*> sOrigPresent1{ nullptr };
+	static inline IDXGISwapChain* sCurrent = nullptr;   // the swapchain the overlay draws on (Present thread only)
+	bool mInlineMode = false;
+	safetyhook::VmHook present1Hook; // (VMT path) Present1, when the game presents through it
 
 	std::weak_ptr<PointerDataStore> pointerDataStoreWeak; // not required but used to attempt to resolve vmt entries without needing a dummy swapchain
 
@@ -81,6 +105,11 @@ public:
 
 	// Callback for present rendering
 	std::shared_ptr<eventpp::CallbackList<void(ID3D11Device*, ID3D11DeviceContext*, IDXGISwapChain*, ID3D11RenderTargetView*)>> presentHookEvent = std::make_shared<eventpp::CallbackList<void(ID3D11Device*, ID3D11DeviceContext*, IDXGISwapChain*, ID3D11RenderTargetView*)>>();
+
+	// 2026-11-21 (user: "make SMAA an exception to the 'bypass obs' rule ... so it can show up in recordings"): fired from the
+	// swapchain VMT hook on EVERY frame, before presentHookEvent and before the frame reaches OBS's capture, whether the OBS
+	// bypass is on or not. For post-processing that belongs to the game's picture (SMAA), never for HCM's own UI.
+	std::shared_ptr<eventpp::CallbackList<void(ID3D11Device*, ID3D11DeviceContext*, IDXGISwapChain*, ID3D11RenderTargetView*)>> preCapturePresentEvent = std::make_shared<eventpp::CallbackList<void(ID3D11Device*, ID3D11DeviceContext*, IDXGISwapChain*, ID3D11RenderTargetView*)>>();
 
 
 

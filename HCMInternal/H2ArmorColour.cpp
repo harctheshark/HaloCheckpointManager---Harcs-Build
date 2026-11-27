@@ -51,6 +51,16 @@ namespace
 
 	typedef char(__fastcall* set_change_color_t)(uint32_t objectDatum, int colorIndex, void* rgb);
 
+	// The engine's setter resolves the datum by its INDEX only (no salt check) - a stale datum (the player's biped
+	// right after a revert / load, before the player global is updated) reads a freed slot and crashed MCC
+	// 2026-11-26 (AV halo2+0x8D9BED, 0.3 s after Force Revert). Callers verify the object first; this guard is the
+	// last line: a fault in the setter is caught instead of taking the game down.
+	bool sehSetColor(set_change_color_t fn, uint32_t datum, int index, float* rgb)
+	{
+		__try { fn(datum, index, rgb); return true; }
+		__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+	}
+
 	// --- Emblem pixel-injection (TEST): hijack MCC's per-player emblem SRV override on the biped ---
 	// halo2.dll sub_1809548A0(int16 slot, uint32 tagIdx, int16 sprite) binds the emblem sprite's
 	// ID3D11ShaderResourceView via sub_180965BE0 -> ppImmediateContext->PSSetShaderResources(slot,1,&srv).
@@ -560,6 +570,7 @@ private:
 
 	// original colours captured before our first override, restored on toggle-off (game thread)
 	bool  mCapturedOriginal = false;
+	bool  mLoggedSetterFault = false;
 	float mOrigPrimary[3]   = { 0,0,0 };
 	float mOrigSecondary[3] = { 0,0,0 };
 
@@ -580,6 +591,9 @@ private:
 	std::shared_ptr<ModuleInlineHook> mEmblemHook;
 	std::unique_ptr<ScopedCallback<DirectXRenderEvent>> mRenderCallback;
 	ScopedCallback<ActionEvent> mLoadEmblemCallback;
+	// 2026-11-24 (Bounce Mode): a colour preset / an emblem image by path, no file dialog
+	ScopedCallback<eventpp::CallbackList<void(const std::wstring&)>> mLoadPresetFromPathCallback;
+	ScopedCallback<eventpp::CallbackList<void(const std::wstring&)>> mLoadEmblemFromPathCallback;
 	bool mEmblemHookWanted = false;
 	std::mutex mEmblemPathMutex;
 	std::wstring mEmblemPngPath;                    // chosen custom emblem image (set by the Load Emblem button)
@@ -979,6 +993,48 @@ private:
 		mEmblemReload.store(true, std::memory_order_release);
 	}
 
+	// 2026-11-24 (Bounce Mode): the same as Load Emblem with the file already chosen - no dialog.
+	void onLoadEmblemFromPath(const std::wstring& path)
+	{
+		std::error_code ec;
+		if (path.empty() || !std::filesystem::exists(std::filesystem::path(path), ec))
+		{
+			if (auto m = messagesWeak.lock()) m->addMessage("Custom emblem: file not found: " + std::filesystem::path(path).filename().string());
+			return;
+		}
+		{ std::lock_guard<std::mutex> lk(mEmblemPathMutex); mEmblemPngPath = path; }
+		mEmblemReload.store(true, std::memory_order_release);
+	}
+
+	// 2026-11-24 (Bounce Mode): a colour preset by path - its two colours only. An emblem stored inside the preset is
+	// left alone here: Bounce Mode names its own emblem file right after.
+	void onLoadPresetFromPath(const std::wstring& path)
+	{
+		try
+		{
+			lockOrThrow(settingsWeak, settings);
+			const std::filesystem::path chosen(path);
+			std::ifstream in(chosen);
+			if (!in) { if (auto m = messagesWeak.lock()) m->addMessage("Colour preset: couldn't open " + chosen.filename().string()); return; }
+			SimpleMath::Vector4 prim = settings->h2ArmorColourPrimary->GetValue();
+			SimpleMath::Vector4 sec = settings->h2ArmorColourSecondary->GetValue();
+			std::string line, tag; float r, g, b;
+			while (std::getline(in, line))
+			{
+				if (line.size() > 512) continue;   // the embedded emblem's line: megabytes of base64, not needed here
+				std::istringstream ss(line); tag.clear(); ss >> tag;
+				if (tag == "primary" && (ss >> r >> g >> b)) prim = { r, g, b, 1.0f };
+				else if (tag == "secondary" && (ss >> r >> g >> b)) sec = { r, g, b, 1.0f };
+			}
+			settings->h2ArmorColourPrimary->GetValueDisplay() = prim;
+			settings->h2ArmorColourPrimary->UpdateValueWithInput();
+			settings->h2ArmorColourSecondary->GetValueDisplay() = sec;
+			settings->h2ArmorColourSecondary->UpdateValueWithInput();
+			if (auto m = messagesWeak.lock()) m->addMessage("Colour preset loaded: " + chosen.filename().string());
+		}
+		catch (HCMRuntimeException&) {}
+	}
+
 	// Build the common OPENFILENAME for our .mccolour presets. These handlers fire on GUISimpleButton's own
 	// spawned thread, so the modal dialog doesn't block the render thread.
 	std::optional<std::filesystem::path> browsePreset(bool saving)
@@ -1221,23 +1277,38 @@ private:
 			// scope the custom emblem to the local player's biped (0 = unresolved -> inject on all, as before)
 			sMyEmblemObj.store(resolveMyEmblemObject(base, player), std::memory_order_release);
 			if (!setterOk(base)) return;
-			auto setColor = (set_change_color_t)(base + kSetChangeColorRVA);
+			const auto fn = (set_change_color_t)(base + kSetChangeColorRVA);
+			const bool wantColour = settings->h2ArmorColourToggle->GetValue();
+			if (!wantColour && !mCapturedOriginal) return;   // nothing to apply or restore
 
-			if (settings->h2ArmorColourToggle->GetValue())
+			// The datum must name a LIVE object (salt matches) with at least two colour slots - right after a revert
+			// the player global still holds the old biped for a moment (see sehSetColor).
+			uintptr_t obj = 0;
+			try { lockOrThrow(getObjectAddressWeak, getObjectAddress); obj = getObjectAddress->getObjectAddress(player); }
+			catch (HCMRuntimeException&) { obj = 0; }
+			if (!obj || IsBadReadPtr((void*)(obj + kBlockSizeOff), 4) || *(int16_t*)(obj + kBlockSizeOff) < 24) return;
+
+			auto setColor = [&](int index, float* rgb)
+			{
+				if (sehSetColor(fn, (uint32_t)player, index, rgb)) return true;
+				if (!mLoggedSetterFault) { mLoggedSetterFault = true; PLOG_ERROR << "H2ArmorColour: the colour setter faulted on datum " << std::hex << (uint32_t)player << " (caught) - skipped (logged once)"; }
+				return false;
+			};
+
+			if (wantColour)
 			{
 				if (!mCapturedOriginal) captureOriginal(player); // snapshot the normal colours first
 				auto pc = settings->h2ArmorColourPrimary->GetValue();
 				auto sc = settings->h2ArmorColourSecondary->GetValue();
 				float primary[3]   = { pc.x, pc.y, pc.z };
 				float secondary[3] = { sc.x, sc.y, sc.z };
-				setColor((uint32_t)player, 0, primary);   // primary armour
-				setColor((uint32_t)player, 1, secondary);  // secondary / trim
+				if (setColor(0, primary))      // primary armour
+					setColor(1, secondary);    // secondary / trim
 			}
-			else if (mCapturedOriginal)
+			else
 			{
 				// toggled off: put the original colours back, then stop until re-enabled
-				setColor((uint32_t)player, 0, mOrigPrimary);
-				setColor((uint32_t)player, 1, mOrigSecondary);
+				if (setColor(0, mOrigPrimary)) setColor(1, mOrigSecondary);
 				mCapturedOriginal = false;
 			}
 		}
@@ -1253,7 +1324,9 @@ public:
 		messagesWeak(dicon.Resolve<IMessagesGUI>()),
 		mSavePresetCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->h2ArmorColourSavePresetEvent, [this]() { onSavePreset(); }),
 		mLoadPresetCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->h2ArmorColourLoadPresetEvent, [this]() { onLoadPreset(); }),
-		mLoadEmblemCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->h2ArmorEmblemLoadEvent, [this]() { onLoadEmblem(); })
+		mLoadEmblemCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->h2ArmorEmblemLoadEvent, [this]() { onLoadEmblem(); }),
+		mLoadPresetFromPathCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->h2ArmorColourLoadPresetFromPathEvent, [this](const std::wstring& p) { onLoadPresetFromPath(p); }),
+		mLoadEmblemFromPathCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->h2ArmorEmblemLoadFromPathEvent, [this](const std::wstring& p) { onLoadEmblemFromPath(p); })
 	{
 		mPresetDir = (std::filesystem::path(dicon.Resolve<DirPathContainer>().lock()->dirPath) / "armour_colours").string();
 

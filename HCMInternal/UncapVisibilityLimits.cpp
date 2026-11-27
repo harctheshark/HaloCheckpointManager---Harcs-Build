@@ -6,6 +6,7 @@
 #include "RuntimeExceptionHandler.h"
 #include "ScopedThreadSuspender.h"
 #include "H2QuietWindow.h"
+#include "H2SafeWrite.h"
 #include "GlobalKill.h"
 #include <Windows.h>
 #include <vector>
@@ -151,9 +152,9 @@ namespace
 		{
 			UncapDbg& d = UncapDbg::get();
 			p.which = which;
-			p.subp = *(uintptr_t*)(base + coll + subOff);
+			if (!h2safe::copy(&p.subp, (const void*)(base + coll + subOff), 8)) p.subp = 0;
 			if (!p.subp) { d.logf("  resizeSub %s: subp NULL, skip", which); return; }
-			p.oldCap = *(uint32_t*)p.subp; p.cnt = *(uint16_t*)(p.subp + 4);
+			if (!h2safe::copy(&p.oldCap, (const void*)p.subp, 4) || !h2safe::copy(&p.cnt, (const void*)(p.subp + 4), 2)) { d.logf("  resizeSub %s: unreadable, skip", which); return; }
 			d.logf("  resizeSub %s subp=%p cap=%u cnt=%u", which, (void*)p.subp, p.oldCap, p.cnt);
 			if (p.oldCap == 0 || p.oldCap >= (uint32_t)VIS_NEWCAP) { d.logf("    skip (cap)"); return; }
 			if (p.cnt > p.oldCap) { d.logf("    skip (cnt>cap)"); return; }
@@ -167,19 +168,24 @@ namespace
 			for (int i = 0; i < 4; ++i) memset(p.n[i], 0, sz[i]);
 			p.result = 1;
 		}
-		// INSIDE the quiet window: memory only.
+		// INSIDE the quiet window: memory only. Guarded (2026-11-18): a fault can only come from READING the game's old
+		// arrays, which is before anything is repointed - the plan is then simply left uninstalled (result 3).
 		static void commitSub(SubPlan& p)
 		{
 			if (p.result != 1) return;
-			const uint32_t cap = *(uint32_t*)p.subp; const uint16_t cnt = *(uint16_t*)(p.subp + 4);
-			if (cap != p.oldCap || cnt > cap) { p.result = 3; return; }
-			p.cnt = cnt;
-			for (int i = 0; i < 4; ++i) p.o[i] = *(uintptr_t*)(p.subp + 8 + 8 * i);
-			memcpy(p.n[0], (void*)p.o[0], (size_t)cnt * 2); memcpy(p.n[1], (void*)p.o[1], (size_t)cnt * 4);
-			memcpy(p.n[2], (void*)p.o[2], (size_t)cnt * 8); memcpy(p.n[3], (void*)p.o[3], (size_t)cnt * 2);
-			for (int i = 0; i < 4; ++i) *(uintptr_t*)(p.subp + 8 + 8 * i) = (uintptr_t)p.n[i];
-			*(uint32_t*)p.subp = VIS_NEWCAP;
-			p.result = 2;
+			__try
+			{
+				const uint32_t cap = *(uint32_t*)p.subp; const uint16_t cnt = *(uint16_t*)(p.subp + 4);
+				if (cap != p.oldCap || cnt > cap) { p.result = 3; return; }
+				p.cnt = cnt;
+				for (int i = 0; i < 4; ++i) p.o[i] = *(uintptr_t*)(p.subp + 8 + 8 * i);
+				memcpy(p.n[0], (void*)p.o[0], (size_t)cnt * 2); memcpy(p.n[1], (void*)p.o[1], (size_t)cnt * 4);
+				memcpy(p.n[2], (void*)p.o[2], (size_t)cnt * 8); memcpy(p.n[3], (void*)p.o[3], (size_t)cnt * 2);
+				for (int i = 0; i < 4; ++i) *(uintptr_t*)(p.subp + 8 + 8 * i) = (uintptr_t)p.n[i];
+				*(uint32_t*)p.subp = VIS_NEWCAP;
+				p.result = 2;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER) { p.result = 3; }
 		}
 		// Threads LIVE again: bookkeeping, frees, log.
 		void finishSub(SubPlan& p)
@@ -204,9 +210,10 @@ namespace
 		void planRenderState(RsPlan& r)
 		{
 			UncapDbg& d = UncapDbg::get();
-			r.d0 = *(uintptr_t*)(base + RS_PTR);
+			if (!h2safe::copy(&r.d0, (const void*)(base + RS_PTR), 8)) r.d0 = 0;
 			if (!r.d0) { d.logf("  rs-live: no datum (not in a map yet)"); return; }
-			r.maxOld = *(uint32_t*)(r.d0 + 32); r.elem = *(uint32_t*)(r.d0 + 36); r.dataOff = *(uint32_t*)(r.d0 + 72); r.bvOffOld = *(uint32_t*)(r.d0 + 80);
+			if (!h2safe::copy(&r.maxOld, (const void*)(r.d0 + 32), 4) || !h2safe::copy(&r.elem, (const void*)(r.d0 + 36), 4)
+				|| !h2safe::copy(&r.dataOff, (const void*)(r.d0 + 72), 4) || !h2safe::copy(&r.bvOffOld, (const void*)(r.d0 + 80), 4)) { d.logf("  rs-live: datum unreadable, skip"); return; }
 			d.rsDatum = r.d0; d.rsMax = r.maxOld; d.rsElem = r.elem;
 			d.logf("  rs-live: datum=%p max=%u elem=%u dataOff=%u bvOff=%u", (void*)r.d0, r.maxOld, r.elem, r.dataOff, r.bvOffOld);
 			if (r.maxOld >= (uint32_t)RS_NEWMAX) { d.logf("    skip (already big - our block)"); return; }
@@ -222,17 +229,21 @@ namespace
 		static void commitRenderState(RsPlan& r, uintptr_t base)
 		{
 			if (r.result != 1) return;
-			if (*(uintptr_t*)(base + RS_PTR) != r.d0 || *(uint32_t*)(r.d0 + 32) != r.maxOld || *(uint32_t*)(r.d0 + 36) != r.elem
-				|| *(uint32_t*)(r.d0 + 72) != r.dataOff || *(uint32_t*)(r.d0 + 80) != r.bvOffOld) { r.result = 3; return; }
-			uint8_t* const block = (uint8_t*)r.block;
-			memcpy(block, (void*)r.d0, r.dataOff);
-			*(uint32_t*)(block + 32) = RS_NEWMAX;
-			*(uint32_t*)(block + 72) = r.dataOff;
-			*(uint32_t*)(block + 80) = r.newBvOff;
-			memcpy(block + r.dataOff, (void*)(r.d0 + r.dataOff), (size_t)r.maxOld * r.elem);     // the rest is already zero
-			memcpy(block + r.newBvOff, (void*)(r.d0 + r.bvOffOld), r.bvOld);
-			*(uintptr_t*)(base + RS_PTR) = (uintptr_t)block;
-			r.result = 2;
+			__try   // guarded (2026-11-18): the pointer swap is the LAST step, so a fault leaves the game's own pool in place
+			{
+				if (*(uintptr_t*)(base + RS_PTR) != r.d0 || *(uint32_t*)(r.d0 + 32) != r.maxOld || *(uint32_t*)(r.d0 + 36) != r.elem
+					|| *(uint32_t*)(r.d0 + 72) != r.dataOff || *(uint32_t*)(r.d0 + 80) != r.bvOffOld) { r.result = 3; return; }
+				uint8_t* const block = (uint8_t*)r.block;
+				memcpy(block, (void*)r.d0, r.dataOff);
+				*(uint32_t*)(block + 32) = RS_NEWMAX;
+				*(uint32_t*)(block + 72) = r.dataOff;
+				*(uint32_t*)(block + 80) = r.newBvOff;
+				memcpy(block + r.dataOff, (void*)(r.d0 + r.dataOff), (size_t)r.maxOld * r.elem);     // the rest is already zero
+				memcpy(block + r.newBvOff, (void*)(r.d0 + r.bvOffOld), r.bvOld);
+				*(uintptr_t*)(base + RS_PTR) = (uintptr_t)block;
+				r.result = 2;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER) { r.result = 3; }
 		}
 		void finishRenderState(RsPlan& r)
 		{
@@ -352,7 +363,10 @@ namespace
 			for (void* p : rsOld) VirtualFree(p, 0, MEM_RELEASE);
 			// our render-state block may still be the one the game is using (toggle-off no longer swaps it back): then it
 			// must outlive us - leak it
-			const bool inUse = rsActive && base && GetModuleHandleA("halo2.dll") && *(uintptr_t*)(base + RS_PTR) == (uintptr_t)rsActive;
+			// (guarded read, 2026-11-18: MCC can unload halo2.dll between the check and the read; "cannot tell" = in use)
+			uintptr_t rsNow = 0;
+			const bool mapped = base && (uintptr_t)GetModuleHandleA("halo2.dll") == base;
+			const bool inUse = rsActive && mapped && (!h2safe::copy(&rsNow, (const void*)(base + RS_PTR), 8) || rsNow == (uintptr_t)rsActive);
 			if (rsActive && !inUse) VirtualFree(rsActive, 0, MEM_RELEASE);
 		}
 	};

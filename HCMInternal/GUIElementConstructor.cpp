@@ -8,6 +8,7 @@
 #include "GUIElementEnum.h"
 
 #include "GUISimpleButton.h"
+#include "GUIEventCheckbox.h"
 #include "GUIButtonWithCopyableResult.h"
 #include "GUISimpleToggle.h"
 #include "GUISpeedhack.h"
@@ -203,6 +204,114 @@ private:
 						createNestedElement(GUIElementEnum::HideWatermarkGUI),
 						}));
 
+			// 2026-11-24 (user: "Roll in TAA with the 'SMAA' section ... rename it Anti Aliasing ... TAA goes under AA method ... the
+			// options that show up should change based on what AA method you have open"): one section, one toggle, one method
+			// list (SMAA / CMAA2 / TAA); each method's options are the method row's children, so only the chosen one's show.
+			case GUIElementEnum::antiAliasingHeadingGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
+					(game, ToolTipCollection("Anti-aliasing of the game's picture: SMAA, CMAA2 or (Halo 2) TAA, with the chosen method's options"), "Anti Aliasing", headerChildElements
+						{
+						createNestedElement(GUIElementEnum::smaaToggleGUI),
+						createNestedElement(GUIElementEnum::postAAMethodGUI),
+						}));
+
+				// 2026-11-20: SMAA on MCC's frame (SMAAPostProcess.cpp) - MCC (D3D11) only
+				case GUIElementEnum::smaaToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Anti-aliasing on the game's picture, built into HCM: smooths jagged edges with the method chosen below. HCM's own window is not affected. It is part of the game's picture, so it shows in recordings whether Bypass OBS Capture is on or off. Saved between sessions."), RebindableHotkeyEnum::smaaToggleHotkey, "Anti Aliasing", settings->smaaToggle));
+
+				case GUIElementEnum::postAAMethodGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnumWithChildren<SettingsEnums::PostAAMethod, 90.f>>
+						(game, ToolTipCollection("Which anti-aliasing the toggle above runs; the options under this row are the chosen method's. SMAA: smooths the most of the two edge filters, the most tunable. CMAA2 (Intel's Conservative Morphological AA): changes far fewer pixels, so less blur, fewer false edges on textures and text. Both work on the finished frame, HUD included, in every game. TAA: Halo 2 only (in the other games it does nothing) - temporal anti-aliasing inside the game's frame, before bloom and the HUD: every frame the camera is shifted by a fraction of a pixel and blended with the previous frames, which also smooths shimmer on fences, grates and distant detail. Classic graphics, single player view (pauses in split screen and cinematics), MCC 1.3528."), "Anti-Aliasing Method", settings->postAAMethod,
+							vectorOfHeaderChildElements
+							{
+								headerChildElements   // SMAA
+								{
+									createNestedElement(GUIElementEnum::smaaQualityGUI),
+									createNestedElement(GUIElementEnum::smaaEdgeDetectionGUI),
+									createNestedElement(GUIElementEnum::smaaThresholdGUI),
+									createNestedElement(GUIElementEnum::smaaUseDepthGUI),
+									createNestedElement(GUIElementEnum::smaaDepthStrengthGUI),
+									createNestedElement(GUIElementEnum::smaaShowEdgesGUI),
+								},
+								headerChildElements   // CMAA2
+								{
+									createNestedElement(GUIElementEnum::cmaaQualityGUI),
+									createNestedElement(GUIElementEnum::cmaaShowEdgesGUI),
+								},
+								headerChildElements   // TAA (Halo 2 only: these rows do not exist in the other games)
+								{
+									createNestedElement(GUIElementEnum::h2TAABlendGUI),
+									createNestedElement(GUIElementEnum::h2TAAMotionBlendGUI),
+									createNestedElement(GUIElementEnum::h2TAAObjectMotionGUI),
+									createNestedElement(GUIElementEnum::h2TAADebugGUI),
+								},
+							}, 0.f));
+
+				// CMAA2's two options: the same settings SMAA Quality and SMAA Show Detected Edges use (CMAA2 has always followed them),
+				// as rows of their own so they can sit under the method they belong to
+				case GUIElementEnum::cmaaQualityGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::SMAAQuality, 90.f>>
+						(game, ToolTipCollection("How strongly CMAA2 smooths: Low / Medium / High / Ultra. Higher = more edges treated and longer ones followed. Shares its value with SMAA Quality."), "CMAA2 Quality", settings->smaaQuality));
+
+				case GUIElementEnum::cmaaShowEdgesGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Tuning view: instead of smoothing, shows the edges CMAA2 detects over a dimmed picture. Not saved."), std::nullopt, "CMAA2 Show Detected Edges", settings->smaaShowEdges));
+
+			// 2026-11-24 (user: "I also want a 'Bounce Mode' and 'Season 7 Bounce Mode' Near the very top ... Right Below Anti
+			// Aliasing"). What a press sets is fixed in BounceMode.h; every option stays editable afterwards.
+			case GUIElementEnum::bounceModeHeadingGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
+					(game, ToolTipCollection("One press sets everything up for bouncing"), "Bounce Mode", headerChildElements
+						{
+						createNestedElement(GUIElementEnum::bounceModeGUI),
+						createNestedElement(GUIElementEnum::season7BounceModeGUI),
+						createNestedElement(GUIElementEnum::h2PlayerModelSwapGUI),
+						createNestedElement(GUIElementEnum::h2PlayerModelSwapStageGUI),
+						}));
+
+				// 2026-11-24 (user: "If it can be done, have 'Player Model Swap' be right under Bounce Mode"): H2PlayerModelSwap.cpp
+				case GUIElementEnum::h2PlayerModelSwapGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("EXPERIMENTAL. On a level you start as the Arbiter, play as the Master Chief instead - body, physics, first-person arms and legs and first-person weapon animations. As the level loads, HCM adds the chief's first-person tags the level does not contain (from a prebuilt pack in HCM's player_model_swap folder) and points the player at them. Takes effect when a level is loaded: tick it, then restart the mission. Levels without a pack are left alone. Do not keep a checkpoint made with this on for a session without it. Vehicle seat animations are not included yet. Not saved. MCC 1.3528."), std::nullopt, "Player Model Swap", settings->h2PlayerModelSwapToggle));
+
+				case GUIElementEnum::h2PlayerModelSwapStageGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<SliderParam<int>{}, true>>
+						(game, ToolTipCollection("For testing Player Model Swap one step at a time (press Enter, then restart the mission): 2 = only rebuild the map's tag tables, 3 = also add the bitmaps and shaders, 4 = also the models, 5 = also the animations, 6 = everything, and play as the chief (default). Below 6 nothing visible should change - the test is that the level loads and plays normally."), " Swap Test Stage", settings->h2PlayerModelSwapStage
+						));
+
+				case GUIElementEnum::bounceModeGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Ticking it sets: Shadow / Detail RetailLOD; 30 tick (Season 7 Physics off); FP Scale Fix, Animation Fixes, Infinite Ammo (grenades: Frags), Bottomless Clip, Invulnerability and MP Revert Fix on; Anti Aliasing on with TAA (blend 0.20, motion weight 0.40, object motion on); Bypass OBS Capture on; MasterChief Colour on with the harctwo preset; Custom Emblem on with the transparent emblem. Ticked outside a level, the tickrate and cheats are applied when the next Halo 2 level loads. Everything it sets can be changed afterwards; changing it does not change what the next tick sets. Unticking puts back what each option was before - except options you changed since. Turns Season 7 Bounce Mode off. Not saved."), std::nullopt, "Bounce Mode", settings->bounceModeToggle));
+
+				case GUIElementEnum::season7BounceModeGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The same as Bounce Mode, but 60 tick with Season 7 Physics on (the collision scalar is 60). Turns Bounce Mode off. Not saved."), std::nullopt, "Season 7 Bounce Mode", settings->season7BounceModeToggle));
+
+				case GUIElementEnum::smaaQualityGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::SMAAQuality, 90.f>>
+						(game, ToolTipCollection("How far SMAA follows each edge it found. Low / Medium: short searches, straight edges only. High: SMAA's recommended default (adds diagonal edges and corner rounding). Ultra: the longest searches, best on long shallow edges, a little slower. How many edges are found is set by Edge Threshold."), "SMAA Quality", settings->smaaQuality));
+
+				case GUIElementEnum::smaaEdgeDetectionGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::SMAAEdgeDetection, 90.f>>
+						(game, ToolTipCollection("What counts as an edge. Luma: brightness differences only (SMAA's default). Colour: the biggest red / green / blue difference, so it also smooths edges between colours of similar brightness (more edges caught)."), "SMAA Edge Detection", settings->smaaEdgeDetection));
+
+				case GUIElementEnum::smaaThresholdGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.02f, 0.20f)>>
+						(game, ToolTipCollection("SMAA's sensitivity: the smallest contrast treated as an edge. LOWER = more edges smoothed (fainter ones too); higher = only strong edges. SMAA's own presets use 0.15 (Low), 0.10 (Medium / High) and 0.05 (Ultra). Very low values can soften fine texture detail and HUD text. Use Show Detected Edges to see what it picks up."), "SMAA Edge Threshold", settings->smaaThreshold));
+
+				case GUIElementEnum::smaaUseDepthGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Uses the game's depth buffer to tell real geometry edges (walls, ledges, objects against the sky) from texture detail and the HUD. Geometry edges keep Edge Threshold; everything else needs Depth Strength times more contrast, so grainy textures and HUD text stay sharp. Halo 2 only for now (other games: plain SMAA)."), std::nullopt, "SMAA Use Depth (Halo 2)", settings->smaaUseDepth));
+
+				case GUIElementEnum::smaaDepthStrengthGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(1.f, 6.f)>>
+						(game, ToolTipCollection("With Use Depth: how much stricter SMAA is where the depth buffer shows no geometry edge (texture detail, HUD). 1 = no difference; 2.5 = default; higher = only geometry edges get smoothed."), "SMAA Depth Strength", settings->smaaDepthStrength));
+
+				case GUIElementEnum::smaaShowEdgesGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Tuning view: instead of smoothing, shows what SMAA detects as edges over a dimmed picture (red = edge on a pixel's left, green = on its top, yellow = both). Lower Edge Threshold or pick Colour to catch more. Not saved."), std::nullopt, "SMAA Show Detected Edges", settings->smaaShowEdges));
+
 				case GUIElementEnum::toggleGUIHotkeyGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<63>>
 						(game, ToolTipCollection("Brings up or collapses this main GUI window"), RebindableHotkeyEnum::toggleGUI, "Toggle this GUI"));
@@ -302,9 +411,20 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Hides the HCM message log too."), std::nullopt, "Also hide HCM messages", settings->hideWatermarkHideMessages));
 
+				// 2026-11-21: in every game too (Play from inside a game ends it and starts the map from the lobby), and ONE
+				// panel shared by all of them - the panel owns the launcher, whose hooks must exist once.
 				case GUIElementEnum::mapLauncherGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIMapLauncher>
-						(game, ToolTipCollection("Launch a map from MCC's mod map packs (or Halo 2 stock maps) with the lobby's gametype. Pick a map, press Play, then Start in a Halo 2 custom game lobby. Halo 2 only for now."), settings->togglePause));
+				{
+					static std::weak_ptr<GUIMapLauncher> sShared;
+					auto shared = sShared.lock();
+					if (!shared)
+					{
+						shared = std::make_shared<GUIMapLauncher>
+							(game, ToolTipCollection("Launch a map from MCC's mod map packs or the stock maps, with the gametype you pick. In a custom game lobby: pick a map, press Play. In a game: Play ends it and starts the map from the lobby. Every game but ODST."), settings->togglePause);
+						sShared = shared;
+					}
+					return std::optional<std::shared_ptr<IGUIElement>>(shared);
+				}
 
 				case GUIElementEnum::presetsHeadingGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
@@ -1021,21 +1141,23 @@ private:
 							createNestedElement(GUIElementEnum::invulnGUI),
 							createNestedElement(GUIElementEnum::invulnerabilitySettingsSubheading),
 							createNestedElement(GUIElementEnum::infiniteAmmoGUI),
+							createNestedElement(GUIElementEnum::infiniteAmmoGrenadesGUI),
 							createNestedElement(GUIElementEnum::bottomlessClipGUI),
 							createNestedElement(GUIElementEnum::oneShotKillGUI),
+							createNestedElement(GUIElementEnum::noInvisibleCollisionGUI),
 							createNestedElement(GUIElementEnum::halo3TheaterInterpToggleGUI),
 							createNestedElement(GUIElementEnum::halo3TheaterInterpCrouchGUI),
 							createNestedElement(GUIElementEnum::season7PhysicsToggle),
 							createNestedElement(GUIElementEnum::farClipDistanceGUI),
-							createNestedElement(GUIElementEnum::sunScaleFixToggle),
 							createNestedElement(GUIElementEnum::fpScaleFixToggle),
 							createNestedElement(GUIElementEnum::fpScaleFixLegSizeGUI),
 							createNestedElement(GUIElementEnum::fpScaleFixLegTuckGUI),
-							createNestedElement(GUIElementEnum::animationFixesToggle),
 							createNestedElement(GUIElementEnum::masterTickrateToggleGUI),   // no arming checkbox: these always apply
 							createNestedElement(GUIElementEnum::masterTickrateCustomGUI),
 							createNestedElement(GUIElementEnum::aiFreezeGUI),
 							createNestedElement(GUIElementEnum::hceAiFreezeGUI),
+							createNestedElement(GUIElementEnum::h2EraseAllEntitiesGUI),
+							createNestedElement(GUIElementEnum::h2BlockAISpawningGUI),
 							createNestedElement(GUIElementEnum::medusaGUI),
 							createNestedElement(GUIElementEnum::forceTeleportGUI),
 							createNestedElement(GUIElementEnum::forceTeleportSettingsSubheading),
@@ -1066,11 +1188,19 @@ private:
 							createNestedElement(GUIElementEnum::offscreenShadowCastersToggle),
 							createNestedElement(GUIElementEnum::offscreenShadowCastersMultiplierGUI),
 							createNestedElement(GUIElementEnum::uncapDropShadowsToggle),
+							createNestedElement(GUIElementEnum::uncapDropShadowsMaxGUI),
+							createNestedElement(GUIElementEnum::uncapDynamicLightsToggle),
+							createNestedElement(GUIElementEnum::uncapDynamicLightsMaxGUI),
+							createNestedElement(GUIElementEnum::uncapDynamicLightsFadeFloorGUI),
 							createNestedElement(GUIElementEnum::uncapVisibilityLimitsToggle),
 							createNestedElement(GUIElementEnum::uncapClusterLimitToggle),
 							createNestedElement(GUIElementEnum::uncapRenderSectionsToggle),
+							// 2026-11-19 (user): Sun Scale Fix and Animation Fixes grouped with the uncaps
+							createNestedElement(GUIElementEnum::sunScaleFixToggle),
+							createNestedElement(GUIElementEnum::animationFixesToggle),
 							createNestedElement(GUIElementEnum::h2aShaderPrewarmToggle),
 							createNestedElement(GUIElementEnum::h2ShadowResolutionCombo),
+							createNestedElement(GUIElementEnum::h2SupersamplingGUI),   // (TAA moved to the Anti Aliasing section, 2026-11-24)
 							createNestedElement(GUIElementEnum::h2ArmorColourToggle),
 							createNestedElement(GUIElementEnum::h2ArmorColourPrimaryPicker),
 							createNestedElement(GUIElementEnum::h2ArmorColourSecondaryPicker),
@@ -1107,10 +1237,19 @@ private:
 						(game, ToolTipCollection("Gives the player infinite ammo (doesn't consume on reload) and infinite grenades"), RebindableHotkeyEnum::infiniteAmmo, "Infinite Ammo", settings->infiniteAmmoToggle
 						));
 
+				// 2026-11-24: Halo 2 only (InfiniteAmmo.cpp). The label starts with a space: a row that belongs to the one above.
+				case GUIElementEnum::infiniteAmmoGrenadesGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::InfiniteAmmoGrenades, 90.f>>
+						(game, ToolTipCollection("Which grenades Infinite Ammo keeps infinite. All: both kinds (the game's own behaviour). Frags / Plasmas: only that kind - the other is used up and picked up as normal. Weapon ammo is infinite either way. MCC 1.3528."), " Infinite Grenades", settings->infiniteAmmoGrenades));
+
 				case GUIElementEnum::bottomlessClipGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("The player no longer has to reload"), RebindableHotkeyEnum::bottomlessClip, "Bottomless Clip", settings->bottomlessClipToggle
 						));
+
+				case GUIElementEnum::noInvisibleCollisionGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Invisible \"*\" collision surfaces (the player-blocking walls the Collision Viewer draws red) stop colliding: you, vehicles and other physics objects pass through them, while every real BSP and instanced-geometry wall stays solid. Bullets are unchanged. A wall you are touching when you switch this keeps its current state until you step away from it."), std::nullopt, "No invisible walls (*)", settings->noInvisibleCollisionToggle));
 
 				case GUIElementEnum::oneShotKillGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1141,9 +1280,29 @@ private:
 						(game, ToolTipCollection("Halo 2: bounding-sphere radius multiplier for off-screen shadow casters. Higher keeps shadows from further off-camera (25 is a good default). Too high in a dense scene can hit the visibility caps."), "  Off-Screen Caster Radius x", settings->offscreenShadowCastersMultiplier
 						));
 
+				case GUIElementEnum::uncapDynamicLightsToggle:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Halo 2: lets more dynamic lights shine at once in a view - as many as Max Lights below, up to every light the game gathers (128). Stock, a view's light list holds 32, and only the 3 most important may fade in (lights flagged never-fade stay lit). More than 64 at once also needs Uncap Visibility Limits (the game's visible-light list holds 64). Each shining light is an extra pass over what it lights, so busy scenes cost frame rate. Reverts when disabled. Build 1.3528 only."), std::nullopt, "Uncap Dynamic Lights", settings->uncapDynamicLightsToggle
+						));
+
+				case GUIElementEnum::uncapDynamicLightsMaxGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<SliderParam<int>{}, true>>
+						(game, ToolTipCollection("How many dynamic lights may shine at once while Uncap Dynamic Lights is on: 3 (stock) to 128 (every light the game gathers in a frame). Press Enter to apply. If a busy scene misbehaves, lower it."), "Max Lights", settings->uncapDynamicLightsMax
+						));
+
+				case GUIElementEnum::uncapDynamicLightsFadeFloorGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<SliderParam<int>{}, true>>
+						(game, ToolTipCollection("While Uncap Dynamic Lights is on: the least a light can be dimmed by its tag's distance fading (Illumination / Shadow / Specular Fade). 100 = lights never fade with distance, 50 = never below half, 0 = the game's own fading. Press Enter to apply."), "Min Distance Fade (%)", settings->uncapDynamicLightsFadeFloor
+						));
+
+				case GUIElementEnum::uncapDropShadowsMaxGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<SliderParam<int>{}, true>>
+						(game, ToolTipCollection("How many drop shadows at once while Uncap Drop Shadows is on: 4 to 120 (default 30). Press Enter to apply. Shadows glitched at 32 and above with the first version of this - if they do again, say at which number."), "Max Shadows", settings->uncapDropShadowsMax
+						));
+
 				case GUIElementEnum::uncapDropShadowsToggle:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
-						(game, ToolTipCollection("Halo 2: raises the 32-shadow cap to 120 and the rasterizer pool to 8MB, so many more drop-shadows render at once. Fully reverts on disable. Build 1.3528 only."), std::nullopt, "Uncap Drop Shadows", settings->uncapDropShadowsToggle
+						(game, ToolTipCollection("Halo 2: lets more drop shadows render at once - as many as Max Shadows below (stock: 32 collected, 4 shine) - and enlarges the shadow rasterizer pool to 2 MB. Fully reverts on disable. Build 1.3528 only."), std::nullopt, "Uncap Drop Shadows", settings->uncapDropShadowsToggle
 						));
 
 				case GUIElementEnum::uncapVisibilityLimitsToggle:
@@ -1166,6 +1325,7 @@ private:
 							createNestedElement(GUIElementEnum::collisionViewerShowInvisibleGUI),
 							createNestedElement(GUIElementEnum::collisionViewerShowBreakableGUI),
 							createNestedElement(GUIElementEnum::collisionViewerShowSceneryGUI),
+							createNestedElement(GUIElementEnum::collisionViewerShowSceneryBulletGUI),
 							createNestedElement(GUIElementEnum::collisionViewerShowCratesGUI),
 							createNestedElement(GUIElementEnum::collisionViewerShowMachinesGUI),
 							createNestedElement(GUIElementEnum::collisionViewerShowKillTriggersGUI),
@@ -1206,9 +1366,13 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Breakable surfaces; they drop out when broken."), std::nullopt, "Breakable (orange)", settings->collisionViewerShowBreakable));
 
+				case GUIElementEnum::collisionViewerShowSceneryBulletGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("What bullets hit on scenery: its collision model, every piece on the node it is bound to. This is NOT what the player collides with - many trees stop bullets and let you walk through. Scenery (magenta) shows the player's collision."), std::nullopt, "Scenery bullet collision (lime)", settings->collisionViewerShowSceneryBullet));
+
 				case GUIElementEnum::collisionViewerShowSceneryGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
-						(game, ToolTipCollection("Scenery object collision (moves with the object)."), std::nullopt, "Scenery (magenta)", settings->collisionViewerShowScenery));
+						(game, ToolTipCollection("Scenery the PLAYER collides with (Halo 2: only the pieces in the level's collision tree, placed where the game puts them). Bullets use the collision model instead - see Scenery bullet collision."), std::nullopt, "Scenery (magenta)", settings->collisionViewerShowScenery));
 
 				case GUIElementEnum::collisionViewerShowCratesGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
@@ -1429,6 +1593,21 @@ private:
 						(game, ToolTipCollection("Flags landings and seams where a late contact would start so far below the floor (0.19+) that you fall through instead of launching. A LOTTERY needing it turns red; LIKELY / EDGE notes the risk."), std::nullopt, "Debounce predictor", settings->collisionViewerSuperbounceDebounce
 						));
 
+				case GUIElementEnum::collisionViewerSuperbounceMonsterFinderGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("While you fall (or for a jump from where you stand): marks where on the seams below a landing would launch 20+ u/s, worked out with the game's own contact rules for this exact fall. Cyan = monster, white = dreadnought; the ring and arrow show where to land and how to be moving."), std::nullopt, "Monster predictor (live)", settings->collisionViewerSuperbounceMonsterFinder
+						));
+
+				case GUIElementEnum::collisionViewerSuperbounceMonsterOnlyGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("With the monster predictor on: hides the regular seams' lines and labels, so only the monster marks show (your landing path and its verdict stay)."), std::nullopt, "Monster predictor: hide regular seams", settings->collisionViewerSuperbounceMonsterOnly
+						));
+
+				case GUIElementEnum::collisionViewerSuperbounceMonsterRingsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("The ring and approach arrow on each seam's best monster landing. Off: only the small diamonds (one on every landing point that gives a monster) and the coloured stretches of seam."), std::nullopt, "Monster predictor: rings and arrows", settings->collisionViewerSuperbounceMonsterRings
+						));
+
 				case GUIElementEnum::collisionViewerSuperbounceSeamsGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
 						(game, ToolTipCollection("Draws the viewer's seams, path, landing circle, launch arrow and contact pairs. Off: only monster/dreadnought spots and the CHARGED indicator show. Charge options, recording and scans still work."), std::nullopt, "Seams, path and landing", settings->collisionViewerSuperbounceSeams
@@ -1471,6 +1650,9 @@ private:
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSeamTextGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSpeedGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceDebounceGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceMonsterFinderGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceMonsterOnlyGUI),
+							createNestedElement(GUIElementEnum::collisionViewerSuperbounceMonsterRingsGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceObjectsGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSeamsGUI),
 							createNestedElement(GUIElementEnum::collisionViewerSuperbounceSpotsGUI),
@@ -1712,10 +1894,11 @@ private:
 			// ---- Poorboy's Mods (ported from Poorboys Checkpoint Manager by Poorboy, MIT): Halo2Physics.cpp, GUIH2Physics.h, BottomlessClip.cpp ----
 			case GUIElementEnum::halo2PhysicsHeadingGUI:
 				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
-					(game, ToolTipCollection("Poorboy's mods for Halo 3, ODST and Reach, ported from Poorboys Checkpoint Manager: Halo 2 physics, button combos and lunges, fly, save spot, bottomless clip."), "Poorboy's Mods", headerChildElements
+					(game, ToolTipCollection("Poorboy's mods for Halo 3, ODST and Reach, ported from Poorboys Checkpoint Manager: Halo 2 physics, button combos and lunges, fly, save spot, bottomless clip. Halo 4: Halo 2 physics only (a separate mod)."), "Poorboy's Mods", headerChildElements
 						{
 						createNestedElement(GUIElementEnum::h2pStatusGUI),
 						createNestedElement(GUIElementEnum::h2pPhysicsToggleGUI),
+						createNestedElement(GUIElementEnum::h4pPhysicsToggleGUI),
 						createNestedElement(GUIElementEnum::h2pArmGUI),
 						createNestedElement(GUIElementEnum::h2pFlyToggleGUI),
 						createNestedElement(GUIElementEnum::h2pFlySpeedGUI),
@@ -1738,6 +1921,10 @@ private:
 				case GUIElementEnum::h2pPhysicsToggleGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
 						(game, ToolTipCollection("Halo 2's player physics, movement and jump. Off: the mod unloads and the game is untouched"), RebindableHotkeyEnum::h2pPhysicsHotkey, "Halo 2 physics", settings->h2pPhysicsToggle));
+
+				case GUIElementEnum::h4pPhysicsToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Halo 4: Halo 2's own player physics (Halo 2's biped and Havok step, back-steps and superbounces) move you. Off: Halo 4's own physics again (the mod stays loaded until MCC closes, doing nothing). MCC build 1.3528 only; its log is h4h2p\\H4Halo2Physics.log in the HCM folder."), std::nullopt, "Halo 2 physics##h4p", settings->h4pPhysicsToggle));
 
 				case GUIElementEnum::h2pArmGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
@@ -1829,9 +2016,30 @@ private:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
 						(game, ToolTipCollection("Pick a PNG, animated GIF, or video (mp4/mov/mkv/...) to use as your custom emblem (opens an Open dialog). Videos loop and play without audio."), std::nullopt, "Load Emblem...", settings->h2ArmorEmblemLoadEvent));
 
+				case GUIElementEnum::h2SupersamplingGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::H2Supersampling, 90.f>>
+						(game, ToolTipCollection("Halo 2 supersampling (anti-aliasing): the game renders at 1.5x or 2x your resolution on each axis and its own pass scales it back down - smooths edges, fences / grates and shimmer. Takes effect at the NEXT resolution change: in MCC's video settings change the resolution, then change it back. 2x = 4x the pixels (heavier on the GPU). Experimental, not saved. Build 1.3528 only."), "Supersampling", settings->h2Supersampling));
+
+				// 2026-11-23: Halo 2 TAA (H2TAA.cpp)
+				case GUIElementEnum::h2TAABlendGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.05f, 0.3f)>>
+						(game, ToolTipCollection("How much of each new frame goes into the TAA picture. Lower = smoother and steadier edges but more blur / trails while moving; higher = sharper in motion but more shimmer. Default 0.1."), "TAA Blend", settings->h2TAABlend));
+
+				case GUIElementEnum::h2TAAMotionBlendGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.05f, 1.0f)>>
+						(game, ToolTipCollection("How much of each new frame goes into the TAA picture for the parts of the screen that are MOVING (2 pixels a frame or more - less than that is ramped). Higher = less ghosting, trailing and blur while you or an object move, but less smoothing during the motion; things that stand still always use TAA Blend. At or below TAA Blend this does nothing. Default 0.4."), "TAA Motion Weight", settings->h2TAAMotionBlend));
+
+				case GUIElementEnum::h2TAAObjectMotionGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("TAA follows moving things by their own motion - characters, vehicles, weapons, projectiles (rockets), doors and lifts, crates - instead of treating everything as standing still while the camera moves, so they stay sharp and do not leave trails. Each one's motion comes from the engine's own animation data and its collision shape. Off = camera motion only (the first version). Use the TAA Debug View to see it: moving objects show with a cyan tint."), std::nullopt, "TAA Object Motion", settings->h2TAAObjectMotion));
+
+				case GUIElementEnum::h2TAADebugGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("TAA tuning view instead of the picture: red = horizontal motion, green = vertical (8 pixels a frame = full), blue = the first-person weapon (no motion), cyan tint = something moving by its own motion (TAA Object Motion), magenta = no usable history (off screen or reset). Not saved."), std::nullopt, "TAA Debug View", settings->h2TAADebug));
+
 				case GUIElementEnum::h2ShadowResolutionCombo:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIComboEnum<SettingsEnums::H2ShadowResolution, 90.f>>
-						(game, ToolTipCollection("Halo 2: shadow-buffer resolution and detail. Retail = no changes. RetailLOD = max LOD, no object distance-culling. x2048/x4096/x8192 add that shadow res (x8192 ~512MB VRAM). Build 1.3528 only."), "Shadow / Detail", settings->h2ShadowResolutionSetting));
+						(game, ToolTipCollection("Halo 2: shadow-buffer resolution and detail. Retail = no changes. RetailLOD = max model LOD, every shader at its most detailed level (shadows included), no object distance-culling. x2048/x4096/x8192 add that shadow res (x8192 ~512MB VRAM). Build 1.3528 only."), "Shadow / Detail", settings->h2ShadowResolutionSetting));
 
 				case GUIElementEnum::farClipDistanceGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloatStepper>
@@ -1877,14 +2085,236 @@ private:
 							}));
 
 				case GUIElementEnum::masterTickrateToggleGUI:
-					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
-						(game, ToolTipCollection("Flips the master simulation tickrate between 60 and 30 Hz. Needs a loaded game. Games run at 60 until you pick; your last pick is re-applied on every level load and mission restart this session."), std::nullopt, "Toggle Tickrate (60/30)", settings->masterTickrateFlipEvent
+					// 2026-11-18 (user): a tick box, not a button - ticked while the game runs at 30. Clicking it is the same flip
+					// event as before (about 60 -> 30, anything else -> 60); the tick follows the rate the box below shows.
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIEventCheckbox<false>>
+						(game, ToolTipCollection("Ticked = the simulation runs at 30 Hz, unticked = 60 Hz (or a custom rate). Needs a loaded game. Games run at 60 until you pick; your last pick is re-applied on every level load and mission restart this session."), std::nullopt, "Toggle 30 Tick", settings->masterTickrateFlipEvent,
+							[rate = std::weak_ptr(settings->customTickrate)]() { const auto r = rate.lock(); return r && r->GetValue() == 30; }
 						));
 
 				case GUIElementEnum::masterTickrateCustomGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<SliderParam<int>{}, true>>
 						(game, ToolTipCollection("Master tickrate in Hz, 3 to 32766; press Enter to apply (not while typing). Needs a loaded game; HCM re-applies it on every map load. Rates of 1-2 crash the game and are rejected."), "Custom Tickrate (Hz)", settings->customTickrate
 						));
+
+			// 2026-11-24: Metro 2033 Redux / Last Light Redux (metro.exe). Its own top-level heading; the Control rows that work
+			// in Metro are listed for it in GuiElementEnum.h (..._AND_METRO).
+			case GUIElementEnum::metroHeadingGUI:
+				return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHeading>
+					(game, ToolTipCollection("Metro Redux: instant checkpoints, teleport, launch, player info, invincibility, infinite ammo"), "Metro", headerChildElements
+						{
+						createNestedElement(GUIElementEnum::metroCheckpointGUI),
+						createNestedElement(GUIElementEnum::metroRevertGUI),
+						createNestedElement(GUIElementEnum::metroUseGameSavesGUI),
+						createNestedElement(GUIElementEnum::metroForceTeleportGUI),
+						createNestedElement(GUIElementEnum::metroForceTeleportSettingsSubheading),
+						createNestedElement(GUIElementEnum::metroForceLaunchGUI),
+						createNestedElement(GUIElementEnum::metroForceLaunchSettingsSubheading),
+						createNestedElement(GUIElementEnum::metroAcrophobiaGUI),
+						createNestedElement(GUIElementEnum::metroKillScriptsGUI),
+						createNestedElement(GUIElementEnum::metroGameSpeedGUI),
+						createNestedElement(GUIElementEnum::metroGameSpeedAmountGUI),
+						createNestedElement(GUIElementEnum::metroFirstPersonBodyGUI),
+						createNestedElement(GUIElementEnum::metroFirstPersonBodyShowArmsGUI),
+						createNestedElement(GUIElementEnum::metroFirstPersonBodyHideGearGUI),
+						createNestedElement(GUIElementEnum::metroFirstPersonBodyBackGUI),
+						createNestedElement(GUIElementEnum::metroCollisionViewerGUI),
+						createNestedElement(GUIElementEnum::metroCollisionViewerRangeGUI),
+						createNestedElement(GUIElementEnum::metroCollisionViewerBudgetGUI),
+						createNestedElement(GUIElementEnum::metroCollisionViewerHideFlatEdgesGUI),
+						createNestedElement(GUIElementEnum::metroDisplayInfoToggleGUI),
+						createNestedElement(GUIElementEnum::metroInvincibilityGUI),
+						createNestedElement(GUIElementEnum::metroInfiniteAmmoGUI),
+						}));
+
+				case GUIElementEnum::metroCheckpointGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Stores your position, view, velocity, health and stamina in HCM, instantly (press it as often as you like). Only the player is stored: enemies, doors and pickups are not. With 'Use the game's own saves' ticked it saves the game's checkpoint instead."), RebindableHotkeyEnum::forceCheckpoint, "Save Checkpoint##metro", settings->forceCheckpointEvent));
+
+				case GUIElementEnum::metroRevertGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Puts you back where you were at the last Save Checkpoint, instantly, with no loading screen. With 'Use the game's own saves' ticked it reloads the game's last checkpoint instead (the level reloads)."), RebindableHotkeyEnum::forceRevert, "Revert##metro", settings->forceRevertEvent));
+
+				case GUIElementEnum::metroUseGameSavesGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Save Checkpoint / Revert always use the game's own checkpoint, so the whole level (you, enemies, scripts, dialogue) goes back. Unticked, Revert restores it in place with no loading screen. Ticked, Revert reloads the level the stock way, with a loading screen."), std::nullopt, " Revert with a level reload", settings->metroUseGameSavesToggle));
+
+				case GUIElementEnum::metroFirstPersonBodyGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Draws your own body (the full-body model the game animates for its third-person views) in first person, so you see your legs. The head, neck, arms and upper chest are hidden so they do not block the camera or double up with the first-person hands. Not saved."), std::nullopt, "First Person Body##metro", settings->metroFirstPersonBodyToggle));
+
+				case GUIElementEnum::metroFirstPersonBodyShowArmsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Hide only the head: the body's arms and chest are drawn too (they may block the view or show next to the first-person hands)."), std::nullopt, " Show arms and chest##metro", settings->metroFirstPersonBodyShowArms));
+
+				case GUIElementEnum::metroFirstPersonBodyHideGearGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Hides the carried inventory hanging on the body - the holstered guns, charger, knife and gas mask (they would show as extra copies on your hips)."), std::nullopt, " Hide gear on the body##metro", settings->metroFirstPersonBodyHideGear));
+
+				case GUIElementEnum::metroFirstPersonBodyBackGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(-1.f, 1.f)>>
+						(game, ToolTipCollection("Moves the whole body back (positive) or forward (negative) along your view, in world units (1 wu = 3.048 m), e.g. if the legs show too far in front. Ctrl+click to type a value."), " Body offset back (wu)##metro", settings->metroFirstPersonBodyBack));
+
+				case GUIElementEnum::metroGameSpeedGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Speeds up or slows down the game's clock, like Cheat Engine's speedhack: movement, enemies, scripts, timers and dialogue waits all follow it. Not saved."), std::nullopt, "Game Speed##metro", settings->metroGameSpeedToggle));
+
+				case GUIElementEnum::metroGameSpeedAmountGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.01f, 10.f)>>
+						(game, ToolTipCollection("Game speed multiplier. 1.0 is normal, below 1 is slow motion, up to 10x. Ctrl+click to type a value."), " Speed Multiplier##metro", settings->metroGameSpeedAmount));
+
+				case GUIElementEnum::metroKillScriptsGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Stops the level's scripts: no trigger, timer or scripted action can fire (e.g. a 'too slow - you die' timer). Everything scripted stops with them - doors, cutscenes, spawns, objectives, maybe the death screen. Also lifts the limits scripts put on you in 'cinematic' sections: lowered weapons can be drawn, and blocked sprint / jump / crouch work again (not while the game plays a scripted animation on you). Untick to run them again (what was skipped does not replay). Not saved."), std::nullopt, "Kill Scripts##metro", settings->metroKillScriptsToggle));
+
+				case GUIElementEnum::metroCollisionViewerGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Draws the physics collision as a wireframe: green = floor (walkable), grey-blue = wall, red = ceiling, orange = moving objects. Drawn on top of everything (no depth). Not saved."), std::nullopt, "Collision Viewer##metro", settings->metroCollisionViewerToggle));
+
+				case GUIElementEnum::metroCollisionViewerRangeGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.5f, 50000.f)>>
+						(game, ToolTipCollection("How far from the camera collision is drawn, in world units (1 wu = 3.048 m). Ctrl+click the slider to type a value. Far ranges are limited by Max triangles (nearest are drawn first)."), " Range (wu)##metroCollision", settings->metroCollisionViewerRange));
+
+				case GUIElementEnum::metroCollisionViewerBudgetGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIInputInt<SliderParam<int>{}, true>>
+						(game, ToolTipCollection("The most triangles drawn (nearest first). The collision is drawn by the GPU from a kept buffer, so millions are fine; lower it only if the frame rate drops."), " Max triangles##metroCollision", settings->metroCollisionViewerBudget));
+
+				case GUIElementEnum::metroCollisionViewerHideFlatEdgesGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("Do not draw the seams between triangles that lie in one flat plane (a flat floor split into many triangles shows as its outline only). Untick to see every triangle."), std::nullopt, " Hide flat seams##metroCollision", settings->metroCollisionViewerHideFlatEdges));
+
+				case GUIElementEnum::metroAcrophobiaGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Acrophobia (boots off the ground): hold JUMP (Space / A) to fly along your look direction, hold CROUCH (Left Ctrl / L3) to hover. The Halo 1 / CER flight model - its acceleration curve tops out at 16 wu/s. Walls and floors still stop you."), RebindableHotkeyEnum::hceSkullAcrophobiaHotkey, "Acrophobia##metro", settings->h5AcrophobiaToggle));
+
+				// Force Teleport / Force Launch: the MCC settings, events and hotkeys, in Halo world units (Z up)
+				case GUIElementEnum::metroForceTeleportGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Teleports the player, either to absolute coordinates or relative to where they are looking. Halo world units (1 wu = 3.048 m, Z up), the same numbers Display Player Info shows."), RebindableHotkeyEnum::forceTeleport, "Force Teleport##metro", settings->forceTeleportEvent));
+
+				case GUIElementEnum::metroForceTeleportSettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection(""), "Force Teleport Settings##metro", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::metroForceTeleportSettingsRadioGroup),
+							}));
+
+					case GUIElementEnum::metroForceTeleportSettingsRadioGroup:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioGroup>
+							(game, ToolTipCollection(""), "Force Teleport Radio Group##metro", headerChildElements
+								{
+								createNestedElement(GUIElementEnum::metroForceTeleportForward),
+								createNestedElement(GUIElementEnum::metroForceTeleportManual)
+								}));
+
+						case GUIElementEnum::metroForceTeleportForward:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Teleport relative to the players position and look-direction"), std::nullopt, "Teleport Relative to Player##metro", settings->forceTeleportForward, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::metroForceTeleportRelativeVec3),
+									createNestedElement(GUIElementEnum::metroForceTeleportForwardIgnoreZ)
+									}));
+
+							case GUIElementEnum::metroForceTeleportRelativeVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("How far forward/right/up to teleport the player (world units), relative to their look-direction"), "Teleport: ##metroForceTeleportRelativeVec3", settings->forceTeleportRelativeVec3, "Forward", "Right", "Up"));
+
+							case GUIElementEnum::metroForceTeleportForwardIgnoreZ:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+									(game, ToolTipCollection("Will ignore the vertical component of your look direction (ie pretends you're looking at the horizon)"), std::nullopt, "Ignore vertical look angle##metroTeleport", settings->forceTeleportForwardIgnoreZ));
+
+						case GUIElementEnum::metroForceTeleportManual:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Teleport to absolute world coordinates"), std::nullopt, "Teleport to Manual Coordinates##metro", settings->forceTeleportManual, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::metroForceTeleportAbsoluteVec3),
+									createNestedElement(GUIElementEnum::metroForceTeleportAbsoluteFillCurrent),
+									createNestedElement(GUIElementEnum::metroForceTeleportAbsoluteCopy),
+									createNestedElement(GUIElementEnum::metroForceTeleportAbsolutePaste),
+									}));
+
+							case GUIElementEnum::metroForceTeleportAbsoluteVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("The xyz world coordinates to teleport to (world units, Z up)"), "Teleport: ##metroForceTeleportAbsoluteVec3", settings->forceTeleportAbsoluteVec3));
+
+							case GUIElementEnum::metroForceTeleportAbsoluteFillCurrent:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+									(game, ToolTipCollection("Fill with the current xyz position of the player"), std::nullopt, "Fill with current position##metro", settings->forceTeleportAbsoluteFillCurrent));
+
+							case GUIElementEnum::metroForceTeleportAbsoluteCopy:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+									(game, ToolTipCollection("Copy the position above to your clipboard"), std::nullopt, "Copy to Clipboard##metro", settings->forceTeleportAbsoluteCopy));
+
+							case GUIElementEnum::metroForceTeleportAbsolutePaste:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+									(game, ToolTipCollection("Paste a position from your clipboard into above"), std::nullopt, "Paste from Clipboard##metro", settings->forceTeleportAbsolutePaste));
+
+				case GUIElementEnum::metroForceLaunchGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+						(game, ToolTipCollection("Boosts the players velocity. World units per second (1 wu/s = 3.048 m/s, Z up), like the Speed line of Display Player Info."), RebindableHotkeyEnum::forceLaunch, "Force Launch##metro", settings->forceLaunchEvent));
+
+				case GUIElementEnum::metroForceLaunchSettingsSubheading:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISubHeading<false>>
+						(game, ToolTipCollection(""), "Force Launch Settings##metro", headerChildElements
+							{
+							createNestedElement(GUIElementEnum::metroForceLaunchSettingsRadioGroup),
+							}));
+
+					case GUIElementEnum::metroForceLaunchSettingsRadioGroup:
+						return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioGroup>
+							(game, ToolTipCollection(""), "Force Launch Radio Group##metro", headerChildElements
+								{
+								createNestedElement(GUIElementEnum::metroForceLaunchForward),
+								createNestedElement(GUIElementEnum::metroForceLaunchManual)
+								}));
+
+						case GUIElementEnum::metroForceLaunchForward:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Add velocity relative to the players look-direction"), std::nullopt, "Launch relative to player facing##metro", settings->forceLaunchForward, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::metroForceLaunchRelativeVec3),
+									createNestedElement(GUIElementEnum::metroForceLaunchForwardIgnoreZ)
+									}));
+
+							case GUIElementEnum::metroForceLaunchRelativeVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("How much velocity to ADD (world units/s) in the forward/right/up directions, relative to the players look-direction"), "Launch: ##metroForceLaunchRelativeVec3", settings->forceLaunchRelativeVec3, "Forward", "Right", "Up"));
+
+							case GUIElementEnum::metroForceLaunchForwardIgnoreZ:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+									(game, ToolTipCollection("Will ignore the vertical component of your look direction (ie pretends you're looking at the horizon)"), std::nullopt, "Ignore vertical look angle##metroLaunch", settings->forceLaunchForwardIgnoreZ));
+
+						case GUIElementEnum::metroForceLaunchManual:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIRadioButton>
+								(game, ToolTipCollection("Set velocity along the absolute world-axes"), std::nullopt, "Launch with absolute velocity##metro", settings->forceLaunchManual, headerChildElements
+									{
+									createNestedElement(GUIElementEnum::metroForceLaunchAbsoluteVec3),
+									}));
+
+							case GUIElementEnum::metroForceLaunchAbsoluteVec3:
+								return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIVec3<true, true, 8>>
+									(game, ToolTipCollection("The velocity to set (world units/s, Z up). This REPLACES your current velocity rather than adding to it."), "Launch: ##metroForceLaunchAbsoluteVec3", settings->forceLaunchAbsoluteVec3));
+
+				case GUIElementEnum::metroInvincibilityGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("You take no damage: the game's own god-mode switch (the stripped g_god command's flag). Also: unlimited gas-mask filters (and no breathing / low-filter sounds), the mask put on once, ordinary hits dropped before the hurt / choking reaction, and a health floor so nothing can kill you. Not saved."), RebindableHotkeyEnum::invuln, "Invincibility##metro", settings->invulnerabilityToggle));
+
+				case GUIElementEnum::metroInfiniteAmmoGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Ammo is not used up: the game's own unlimited-ammo switch (the stripped g_unlimitedammo command's flag). Not saved."), RebindableHotkeyEnum::infiniteAmmo, "Infinite Ammo##metro", settings->infiniteAmmoToggle));
+
+				case GUIElementEnum::metroDisplayInfoToggleGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
+						(game, ToolTipCollection("Shows your position and speed in Halo world units (1 wu = 3.048 m, Z up) and in metres, your health and stamina, and the level's name. Uses the 2D info display's corner, font and colour settings."), RebindableHotkeyEnum::display2DInfo, "Display Player Info##metro", settings->display2DInfoToggle));
+
+				// 2026-11-24: Halo 2 (H2EraseEntities.cpp). The checkbox's label starts with a space: it belongs to the button above it.
+				case GUIElementEnum::h2EraseAllEntitiesGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<false>>
+						(game, ToolTipCollection("Deletes every AI on the map, alive or dead (bodies included), and any vehicle an AI is driving. Never the players, and never a vehicle a player is in or on. A safer version of the console's ai_erase_all: it runs at the start of the next game tick with the game's own delete functions, checks every object first, and stops (instead of crashing) if the engine faults. Every biped and creature that is not a player's goes - scripted characters too. MCC 1.3528."), std::nullopt, "Erase All Entities", settings->h2EraseAllEntitiesEvent));
+
+				case GUIElementEnum::h2BlockAISpawningGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>
+						(game, ToolTipCollection("While ticked, squads are not placed: scripts and encounters that spawn AI spawn nothing. Untick and AI can spawn again (what was skipped meanwhile does not come back by itself). Scripts that wait for a squad to die carry on at once. Things that are not placed as a squad (e.g. infection forms bursting out of a carrier) still appear. Not saved. MCC 1.3528."), std::nullopt, " Also Stop New AI From Spawning?", settings->h2BlockAISpawningToggle));
 
 				case GUIElementEnum::aiFreezeGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<true>>
@@ -4579,6 +5009,11 @@ private:
 								createNestedElement(GUIElementEnum::freeCameraUserInputCameraTranslationSpeed),
 								createNestedElement(GUIElementEnum::freeCameraUserInputCameraIncreaseTranslationSpeedHotkey),
 								createNestedElement(GUIElementEnum::freeCameraUserInputCameraDecreaseTranslationSpeedHotkey),
+								createNestedElement(GUIElementEnum::freeCameraUserInputBoostBinding),
+								createNestedElement(GUIElementEnum::freeCameraBoostFactor),
+								createNestedElement(GUIElementEnum::freeCameraBoostAcceleration),
+								createNestedElement(GUIElementEnum::freeCameraZoomHotkeyGUI),
+								createNestedElement(GUIElementEnum::freeCameraZoomAmountGUI),
 								createNestedElement(GUIElementEnum::freeCameraUserInputCameraRotationSpeed),
 								createNestedElement(GUIElementEnum::freeCameraUserInputCameraSetPosition),
 								createNestedElement(GUIElementEnum::freeCameraUserInputCameraSetPositionChildren),
@@ -4637,9 +5072,14 @@ private:
 								{
 									createNestedElement(GUIElementEnum::freeCameraUserInputCameraBindingsSubheading),
 									createNestedElement(GUIElementEnum::freeCameraUserInputCameraBaseFOV),
+									createNestedElement(GUIElementEnum::freeCameraZoomHotkeyGUI),
+									createNestedElement(GUIElementEnum::freeCameraZoomAmountGUI),
 									createNestedElement(GUIElementEnum::freeCameraUserInputCameraTranslationSpeed),
 									createNestedElement(GUIElementEnum::freeCameraUserInputCameraIncreaseTranslationSpeedHotkey),
 									createNestedElement(GUIElementEnum::freeCameraUserInputCameraDecreaseTranslationSpeedHotkey),
+								createNestedElement(GUIElementEnum::freeCameraUserInputBoostBinding),
+								createNestedElement(GUIElementEnum::freeCameraBoostFactor),
+								createNestedElement(GUIElementEnum::freeCameraBoostAcceleration),
 									createNestedElement(GUIElementEnum::freeCameraUserInputCameraTranslationSpeedChangeFactor),
 									createNestedElement(GUIElementEnum::freeCameraUserInputCameraTranslationInterpolator),
 									createNestedElement(GUIElementEnum::freeCameraUserInputCameraRotationSpeed),
@@ -4703,6 +5143,15 @@ private:
 								(game, ToolTipCollection("How fast the camera translates (moves positionally)"), "Translation Speed", settings->freeCameraUserInputCameraTranslationSpeed));
 
 
+						// 2026-11-20: free camera zoom (Halo 3 Theater's: a toggle, eased over 0.5 s; FreeCamera.cpp)
+						case GUIElementEnum::freeCameraZoomHotkeyGUI:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
+								(game, ToolTipCollection("Zoom the free camera in; press again to zoom out (like Halo 3's Theater camera: eased over half a second, look speed slows while zoomed)"), RebindableHotkeyEnum::freeCameraZoomHotkey, "Zoom", settings->freeCameraZoomHotkey));
+
+						case GUIElementEnum::freeCameraZoomAmountGUI:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(1.f, 20.f)>>
+								(game, ToolTipCollection("How far Zoom magnifies (x times). 4.5 is about Halo 3's Theater zoom (20 degrees from its 78 degree view)."), "Zoom Amount", settings->freeCameraZoomAmount));
+
 						case GUIElementEnum::freeCameraUserInputCameraIncreaseTranslationSpeedHotkey:
 							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
 								(game, ToolTipCollection("Increases camera translation speed by a scale factor"), RebindableHotkeyEnum::freeCameraUserInputCameraIncreaseTranslationSpeedHotkey, "Increase Translation Speed", settings->freeCameraUserInputCameraIncreaseTranslationSpeedHotkey));
@@ -4710,6 +5159,18 @@ private:
 						case GUIElementEnum::freeCameraUserInputCameraDecreaseTranslationSpeedHotkey:
 							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleButton<true>>
 								(game, ToolTipCollection("Decreases camera translation speed by a scale factor"), RebindableHotkeyEnum::freeCameraUserInputCameraDecreaseTranslationSpeedHotkey, "Decrease Translation Speed", settings->freeCameraUserInputCameraDecreaseTranslationSpeedHotkey));
+
+						case GUIElementEnum::freeCameraUserInputBoostBinding:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIHotkeyOnly<103>>
+								(game, ToolTipCollection("Hold to move the free camera faster: its translation speed is multiplied by Boost Factor while this is held."), RebindableHotkeyEnum::cameraBoostBinding, "Boost (hold)"));
+
+						case GUIElementEnum::freeCameraBoostFactor:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(1.f, 10.f)>>
+								(game, ToolTipCollection("How much faster the free camera moves while Boost is held (2 = twice the Translation Speed)."), "Boost Factor", settings->freeCameraBoostFactor));
+
+						case GUIElementEnum::freeCameraBoostAcceleration:
+							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam<float>(0.f, 20.f)>>
+								(game, ToolTipCollection("How quickly the boost builds up when you press Boost and falls away when you let go: a straight ramp, in multiples of speed per second. With Boost Factor 2 and 4 here, full boost is reached in a quarter of a second. 0 = instant."), "Boost Acceleration", settings->freeCameraBoostAcceleration));
 
 						case GUIElementEnum::freeCameraUserInputCameraTranslationSpeedChangeFactor:
 							return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<>>
