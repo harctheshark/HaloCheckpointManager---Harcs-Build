@@ -5,6 +5,7 @@
 #include "ModuleHook.h"
 #include "MultilevelPointer.h"
 #include "IMCCStateHook.h"
+#include "H2Overscan.h"
 
 // ================================================================================================================================
 // HOW (halo2.dll 1.3528; read 2026-11-21 in the MCC halo2.dll.i64).
@@ -64,12 +65,20 @@ namespace
 	// text scale +0xE14F2C = h / 960 (>= 1 unless q[+0x1E8CE68]), widget scale +0xE14F28 = that x 0.9 / 0.8 / 1.0, margin
 	// +0x187D860 = h x 0.05. The fade / flash overlay sub_180973620 after it also takes its ortho from 0x1996A58.
 	// (sub_1807FFD70, hooked before as "the HUD", is the UI / menu pass that comes later.)
-	constexpr uintptr_t kEngineNotifyRva = 0x53FF0;     // sub_180053FF0(this, event, data): MCC -> engine events (14 = video reset)
+	// (the engine notify sub_180053FF0(this, 14 = video reset, data) must NEVER be called by HCM - see requestRebuild)
 	constexpr uintptr_t kHudPassRva = 0x822190;         // sub_180822190 (void)
 	constexpr uintptr_t kFadePassRva = 0x973620;        // sub_180973620 (void)
 	constexpr uintptr_t kHudScaleSetupRva = 0x95EA50;   // sub_18095EA50(int, int) -> bool
 	constexpr uintptr_t kRenderTopRva = 0x1994860, kRenderBottomRva = 0x1994864;
 	constexpr uintptr_t kHudScaleRva = 0xE14F2C, kHudWidgetScaleRva = 0xE14F28, kHudMarginRva = 0x187D860, kHudNoClampRva = 0x1E8CE68;
+	// v6 (2026-11-27, user: "figure out the video reset so we dont need to menu to do it"): the engine's OWN in-place rebuild
+	// sub_180037ED0 = if (byte_181E8CE73 && qword_181A23008) { release sub_180953030; size = [qword_181A23008]->vf+0x60;
+	// render rect sub_180954DD0(w, h); recreate sub_180953050 } - the video reset WITHOUT its MCC host call (the one that
+	// deadlocked, see the note at requestRebuild). The engine calls it itself from sub_18003B4F0 inside the frame-boundary
+	// function sub_18003CAB0, on Halo 2's thread. HCM runs it right after the event drain sub_18003A3C0 (also called from
+	// sub_18003CAB0 - where the engine runs its own video reset) when a rebuild is pending.
+	constexpr uintptr_t kEventDrainRva = 0x3A3C0;       // sub_18003A3C0 (void)
+	constexpr uintptr_t kRebuildRva = 0x37ED0;          // sub_180037ED0 (the args are passed through, unused)
 
 	struct Probe { uintptr_t rva; uint8_t bytes[20]; size_t n; };
 	const Probe kProbes[] = {
@@ -86,7 +95,19 @@ namespace
 		{ kHudPassRva, { 0x48, 0x83, 0xEC, 0x28, 0x80, 0x3D }, 6 },
 		{ kFadePassRva, { 0x48, 0x8B, 0xC4, 0x55, 0x48, 0x8D, 0xA8, 0x48, 0xFF, 0xFF, 0xFF, 0x48, 0x81, 0xEC, 0xB0, 0x01, 0x00, 0x00 }, 18 },
 		{ kHudScaleSetupRva, { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48, 0x83, 0xEC, 0x30, 0x0F, 0xBF, 0x05 }, 18 },
+		{ kEventDrainRva, { 0x40, 0x55, 0x53, 0x56, 0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8D, 0xAC, 0x24, 0xD8, 0xFC, 0xFF, 0xFF }, 17 },
+		// sub rsp,78h; cmp byte_181E8CE73,0; jz; cmp qword_181A23008,0; jz; call sub_180953030 (relative operands skipped)
+		{ kRebuildRva, { 0x48, 0x83, 0xEC, 0x78, 0x80, 0x3D }, 6 },
+		{ kRebuildRva + 0x0B, { 0x74, 0x37, 0x48, 0x83, 0x3D }, 5 },
+		{ kRebuildRva + 0x15, { 0x74, 0x2D, 0xE8 }, 3 },
 	};
+
+	using RebuildFn = int64_t(__fastcall*)(int64_t, int64_t);
+	bool sehRebuild(RebuildFn fn)
+	{
+		__try { fn(0, 0); return true; }
+		__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+	}
 
 	bool bytesAt(uintptr_t a, const uint8_t* expect, size_t n)
 	{
@@ -112,6 +133,25 @@ namespace
 
 	thread_local int tUnscaled = 0;   // > 0: inside the HUD pass - the getters answer the real window
 	thread_local int tFinalPass = 0;  // > 0: inside the final pass (sub_180975230)
+
+	// TAA overscan (H2Overscan.h): the final pass's full-screen quad builder - the only caller whose getter calls must answer
+	// the TARGET size while the final pass runs (its texture coordinates = pixel bounds / getters, so the crop in target pixels
+	// becomes exact texture coordinates); the rest of the final pass keeps the window.
+	constexpr uintptr_t kFinalQuadUvRva = 0x976010, kFinalQuadUvEnd = 0x976115;   // sub_180976010 (size 0x105)
+
+	// ret = _ReturnAddress() taken IN the getter detour (= the getter's caller)
+	bool isFinalQuadCaller(uintptr_t ret)
+	{
+		const uintptr_t mod = (uintptr_t)GetModuleHandleW(L"halo2.dll");
+		return mod && ret >= mod + kFinalQuadUvRva && ret < mod + kFinalQuadUvEnd;
+	}
+
+	// percent per side -> the factor each axis grows by (5 % per side = 1.1); capped at 25 % per side
+	float overscanFactor(float percent)
+	{
+		if (!std::isfinite(percent) || percent <= 0.f) return 1.f;
+		return 1.f + 2.f * (std::min)(percent, 25.f) / 100.f;
+	}
 }
 
 class H2Supersampling::H2SupersamplingImpl
@@ -120,37 +160,119 @@ private:
 	GameState mGame;
 	std::weak_ptr<IMessagesGUI> messagesGUIWeak;
 	std::mutex mMutex;
-	std::unique_ptr<ModuleInlineHook> mRectHook, mWinRectHook, mWinHHook, mWinWHook, mHudHook, mFinalHook, mPixelShaderHook, mHudPassHook, mFadePassHook, mHudScaleHook;
+	std::unique_ptr<ModuleInlineHook> mRectHook, mWinRectHook, mWinHHook, mWinWHook, mHudHook, mFinalHook, mPixelShaderHook, mHudPassHook, mFadePassHook, mHudScaleHook, mDrainHook;
+	static inline std::atomic<bool> sRebuildPending{ false };   // run the engine's in-place rebuild at the next frame boundary
+	static inline std::atomic<uint64_t> sRebuildPostedMs{ 0 };
 	bool mVerified = false, mVerifyFailed = false;
 	ScopedCallback<eventpp::CallbackList<void(SettingsEnums::H2Supersampling&)>> mChangeCallback;
 	ScopedCallback<eventpp::CallbackList<void(const MCCState&)>> mMCCStateChangedCallback;
 	float mWanted = 1.f;
 
-	static inline std::atomic<float> sFactor{ 1.f };    // the setting
-	static inline std::atomic<float> sApplied{ 1.f };   // the factor the render rectangle was last built with
+	static inline std::atomic<float> sFactor{ 1.f };    // the Supersampling setting
+	// the factors the render rectangle was last built with, per axis (supersampling x overscan); sApplied = the larger one,
+	// > 1 = "the 3D frame is scaled" (every hook acts)
+	static inline std::atomic<float> sApplied{ 1.f }, sAppliedX{ 1.f }, sAppliedY{ 1.f };
+	// TAA overscan in percent per side (H2Overscan.h), set by H2TAA: X = left / right, Y = top / bottom
+	static inline std::atomic<float> sOverscanX{ 0.f }, sOverscanY{ 0.f };
 	static inline std::atomic<H2SupersamplingImpl*> sSelf{ nullptr };
 	static inline std::atomic<int> sInFlight{ 0 };
+	// render rect globals sub_18095E9B0 writes (i16): +0x1994864 height, +0x1994866 width; +0x1994868 an inner rect
+	// {offY, offX, height - offY, width - offX}. Both sizes come from ONE scale, so for separate X / Y factors the height
+	// words are rewritten after it (the targets are created later, from these words).
+	static constexpr uintptr_t kRenderHeightRva = 0x1994864, kRenderInnerBottomRva = 0x199486C;
 
-	static float scaleNow() { const float f = sApplied.load(std::memory_order_relaxed); return (f > 1.f && tUnscaled == 0) ? f : 1.f; }
+	static bool scaledNow() { return sApplied.load(std::memory_order_relaxed) > 1.f && tUnscaled == 0; }
+
+	// a scaled screen coordinate back to the window (x = a left / right word, else top / bottom): the exact window size for
+	// the exact target size, otherwise / the axis's factor
+	static int16_t toWindow(int16_t v, bool x)
+	{
+		if (h2os::gActive.load(std::memory_order_acquire))
+		{
+			const h2os::Layout& L = h2os::gLayout;
+			if (x && v == (int16_t)L.targetW) return (int16_t)L.windowW;
+			if (!x && v == (int16_t)L.targetH) return (int16_t)L.windowH;
+		}
+		const float f = x ? sAppliedX.load() : sAppliedY.load();
+		return (int16_t)std::lround(v / (f > 0.f ? f : 1.f));
+	}
+
+	// a window-size value as the scaled 3D frame sees it: the EXACT target size the engine made for the window's width /
+	// height (the layout - computed with the engine's own rounding), otherwise value x factor
+	static uint32_t scaledSize(uint32_t v, bool width)
+	{
+		if (h2os::gActive.load(std::memory_order_acquire))
+		{
+			const h2os::Layout& L = h2os::gLayout;
+			if (width && (int)v == L.windowW) return (uint32_t)L.targetW;
+			if (!width && (int)v == L.windowH) return (uint32_t)L.targetH;
+		}
+		return (uint32_t)std::lround((double)v * (width ? sAppliedX.load() : sAppliedY.load()));
+	}
 
 	static int64_t __fastcall rectDetour(int64_t w, int64_t h, int64_t offX, int64_t offY, int64_t a5, int64_t a6, float uiScale, float renderScale)
 	{
 		++sInFlight;
 		int64_t r = 0;
 		float f = sFactor.load();
+		float ox = overscanFactor(sOverscanX.load()), oy = overscanFactor(sOverscanY.load());
+		const bool scaleOk = std::isfinite(renderScale) && renderScale > 0.f;
 		// D3D11's texture limit is 16384 a side: a bigger render rect fails to create its targets and the next frame crashes
-		// (the engine ignores the failure) - the factor is cut to fit
-		if (f > 1.f && std::isfinite(renderScale) && renderScale > 0.f)
+		// (the engine ignores the failure) - the overscan goes first, then the supersampling factor is cut to fit
+		if ((f > 1.f || ox > 1.f || oy > 1.f) && scaleOk)
 		{
-			const float side = (float)(std::max)((int)w, (int)h) * renderScale;
+			const float sw = (float)(int)w * renderScale, sh = (float)(int)h * renderScale;
+			if (sw * f * ox > 16384.f || sh * f * oy > 16384.f) { ox = oy = 1.f; PLOG_WARNING << "Halo 2 TAA overscan: the targets would pass 16384 pixels - no overscan"; }
+			const float side = (std::max)(sw, sh);
 			if (side > 0.f && side * f > 16384.f) f = (std::max)(1.f, 16384.f / side);
 		}
-		const float scaled = (std::isfinite(renderScale) && renderScale > 0.f && f > 1.f) ? renderScale * f : renderScale;
-		sApplied = f > 1.f ? f : 1.f;
-		PLOG_INFO << "Halo 2 supersampling: window " << (int)w << "x" << (int)h << ", render scale " << renderScale << " -> " << scaled
-			<< " (render " << (int)((float)(int)w * scaled) << "x" << (int)((float)(int)h * scaled) << ")";
+		const float fx = f * ox, fy = f * oy;
+		const float scaledX = (scaleOk && fx > 1.f) ? renderScale * fx : renderScale;
+		const float scaledY = (scaleOk && fy > 1.f) ? renderScale * fy : renderScale;
+
+		// the layout (H2Overscan.h) whenever the frame is scaled - supersampling, overscan or both - with the engine's own
+		// rounding (render size = (int)(float)(window x scale)). Without overscan the shown part is the whole target.
+		h2os::gActive.store(false, std::memory_order_release);
+		h2os::gOverscan.store(false, std::memory_order_release);
+		if (scaleOk && (fx > 1.f || fy > 1.f))
+		{
+			h2os::Layout L;
+			L.windowW = (int)w; L.windowH = (int)h;
+			L.targetW = (int)((float)(int)w * scaledX);
+			L.targetH = (int)((float)(int)h * scaledY);
+			L.innerW = (ox > 1.f) ? (int)std::lround((double)(int)w * renderScale * f) : L.targetW;
+			L.innerH = (oy > 1.f) ? (int)std::lround((double)(int)h * renderScale * f) : L.targetH;
+			L.offX = (L.targetW - L.innerW) / 2;
+			L.offY = (L.targetH - L.innerH) / 2;
+			if (L.innerW > 0 && L.innerH > 0 && L.targetW >= L.innerW && L.targetH >= L.innerH)
+			{
+				h2os::gLayout = L;
+				h2os::gOverscan.store(L.targetW > L.innerW || L.targetH > L.innerH, std::memory_order_release);
+				h2os::gActive.store(true, std::memory_order_release);
+				if (h2os::gOverscan.load())
+					PLOG_INFO << "Halo 2 TAA overscan: " << sOverscanX.load() << "% left/right, " << sOverscanY.load() << "% top/bottom - render "
+						<< L.targetW << "x" << L.targetH << ", shown " << L.innerW << "x" << L.innerH << " at (" << L.offX << ", " << L.offY << ") onto the "
+						<< L.windowW << "x" << L.windowH << " window";
+			}
+		}
+		sAppliedX = fx > 1.f ? fx : 1.f;
+		sAppliedY = fy > 1.f ? fy : 1.f;
+		sApplied = (std::max)(sAppliedX.load(), sAppliedY.load());
+		PLOG_INFO << "Halo 2 supersampling: window " << (int)w << "x" << (int)h << ", render scale " << renderScale << " -> " << scaledX << " x / " << scaledY
+			<< " y (render " << (int)((float)(int)w * scaledX) << "x" << (int)((float)(int)h * scaledY) << ")";
 		if (H2SupersamplingImpl* self = sSelf.load())
-			r = self->mRectHook->getInlineHook().call<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float, float>(w, h, offX, offY, a5, a6, uiScale, scaled);
+		{
+			r = self->mRectHook->getInlineHook().call<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, float, float>(w, h, offX, offY, a5, a6, uiScale, scaledX);
+			// the engine made both sizes with the X scale: the height again with the Y scale (its own formula and rounding)
+			if (scaledY != scaledX)
+				if (const HMODULE mod = GetModuleHandleW(L"halo2.dll"))
+				{
+					const int16_t hh = (int16_t)(int)((float)(int)h * scaledY);
+					const int16_t inner = (int16_t)(hh - (int16_t)offY);
+					safeCopy((uint8_t*)mod + kRenderHeightRva, &hh, 2);
+					safeCopy((uint8_t*)mod + kRenderInnerBottomRva, &inner, 2);
+				}
+		}
 		--sInFlight;
 		return r;
 	}
@@ -161,23 +283,25 @@ private:
 		if (H2SupersamplingImpl* self = sSelf.load())
 		{
 			self->mWinRectHook->getInlineHook().call<void, int16_t*>(rect);
-			const float f = scaleNow();
-			if (f > 1.f && rect)
+			if (scaledNow() && rect)
 			{
-				rect[2] = (int16_t)std::lround(rect[2] * f);   // bottom (height)
-				rect[3] = (int16_t)std::lround(rect[3] * f);   // right (width)
+				rect[2] = (int16_t)scaledSize((uint32_t)(uint16_t)rect[2], false);   // bottom (height)
+				rect[3] = (int16_t)scaledSize((uint32_t)(uint16_t)rect[3], true);    // right (width)
 			}
 		}
 		--sInFlight;
 	}
 
+	// the getters: the scaled size for the 3D frame; the window inside the HUD / final pass - except for the final pass's
+	// quad builder, which divides the shown part (target pixels) by the target size: exact texture coordinates
 	static uint32_t __fastcall winHDetour()
 	{
 		++sInFlight;
+		const uintptr_t ret = (uintptr_t)_ReturnAddress();
 		uint32_t v = 0;
 		if (H2SupersamplingImpl* self = sSelf.load()) v = self->mWinHHook->getInlineHook().call<uint32_t>();
-		const float f = scaleNow();
-		if (f > 1.f) v = (uint32_t)std::lround((double)v * f);
+		if (scaledNow()) v = scaledSize(v, false);
+		else if (tFinalPass > 0 && h2os::gActive.load(std::memory_order_acquire) && isFinalQuadCaller(ret)) v = (uint32_t)h2os::gLayout.targetH;
 		--sInFlight;
 		return v;
 	}
@@ -185,10 +309,11 @@ private:
 	static uint32_t __fastcall winWDetour()
 	{
 		++sInFlight;
+		const uintptr_t ret = (uintptr_t)_ReturnAddress();
 		uint32_t v = 0;
 		if (H2SupersamplingImpl* self = sSelf.load()) v = self->mWinWHook->getInlineHook().call<uint32_t>();
-		const float f = scaleNow();
-		if (f > 1.f) v = (uint32_t)std::lround((double)v * f);
+		if (scaledNow()) v = scaledSize(v, true);
+		else if (tFinalPass > 0 && h2os::gActive.load(std::memory_order_acquire) && isFinalQuadCaller(ret)) v = (uint32_t)h2os::gLayout.targetW;
 		--sInFlight;
 		return v;
 	}
@@ -208,7 +333,7 @@ private:
 		int16_t* rect[2]{};
 		int16_t saved[2][8]{}, down[2][8]{};
 		bool set[2]{};
-		void begin(HMODULE mod, float f)
+		void begin(HMODULE mod)
 		{
 			const uintptr_t rva[2] = { kScreenRectRva, kPixelBoundsRva };
 			for (int k = 0; k < 2; ++k)
@@ -216,7 +341,7 @@ private:
 				const size_t n = sizeof(int16_t) * kWords[k];
 				rect[k] = (int16_t*)((uint8_t*)mod + rva[k]);
 				if (!safeCopy(saved[k], rect[k], n)) continue;
-				for (int i = 0; i < kWords[k]; ++i) down[k][i] = (int16_t)std::lround(saved[k][i] / f);
+				for (int i = 0; i < kWords[k]; ++i) down[k][i] = toWindow(saved[k][i], (i & 1) != 0);   // words: top, left, bottom, right
 				set[k] = safeCopy(rect[k], down[k], n);
 			}
 		}
@@ -245,7 +370,7 @@ private:
 			if (f > 1.f && mod)
 			{
 				WindowRects w;
-				w.begin(mod, f);
+				w.begin(mod);
 				++tUnscaled;
 				(self->*Hook)->getInlineHook().call<void>();
 				--tUnscaled;
@@ -264,7 +389,7 @@ private:
 		bool r = false;
 		H2SupersamplingImpl* self = sSelf.load();
 		if (self) r = self->mHudScaleHook->getInlineHook().call<bool, int32_t, int32_t>(a1, a2);
-		const float f = sApplied.load();
+		const float f = sAppliedY.load();   // the HUD scale follows the render HEIGHT
 		const HMODULE mod = GetModuleHandleW(L"halo2.dll");
 		if (self && mod && f > 1.f)
 		{
@@ -302,9 +427,9 @@ private:
 				alignas(16) int16_t copy[32];
 				if (safeCopy(copy, viewRect, sizeof(copy)))
 				{
-					for (int i = 0; i < 8; ++i) copy[i] = (int16_t)std::lround(copy[i] / f);   // the camera rect: 8 words, like 0x165C290
+					for (int i = 0; i < 8; ++i) copy[i] = toWindow(copy[i], (i & 1) != 0);   // the camera rect: 8 words, like 0x165C290
 					WindowRects w;
-					w.begin(mod, f);
+					w.begin(mod);
 					++tUnscaled;
 					self->mHudHook->getInlineHook().call<void, uint32_t, uint32_t, int16_t*>(a1, a2, copy);
 					--tUnscaled;
@@ -338,7 +463,22 @@ private:
 					<< ((a && !b) ? "the plain-copy path (not scaled down: the frame stays cropped)" : "the drawn path (scaled down onto the window)");
 			}
 			WindowRects w;
-			w.begin(mod, f);
+			w.begin(mod);
+			// TAA overscan: the quad samples only the centre of the frame - the pixel bounds (i16 top, left, bottom, right)
+			// become the crop in TARGET pixels; the quad builder divides them by the target size (isFinalQuadCaller), so its
+			// texture coordinates hit texel centres exactly; the viewport (0x165C290, divided above) stays the window
+			if (h2os::gActive.load(std::memory_order_acquire) && w.rect[1] && w.set[1])   // set[1]: the original was saved
+			{
+				const h2os::Layout& L = h2os::gLayout;
+				const int16_t crop[4] = { (int16_t)L.offY, (int16_t)L.offX, (int16_t)(L.offY + L.innerH), (int16_t)(L.offX + L.innerW) };
+				if (safeCopy(w.rect[1], crop, sizeof(crop)))
+				{
+					memcpy(w.down[1], crop, sizeof(crop));
+					w.set[1] = true;
+					static bool s_saidCrop = false;
+					if (!s_saidCrop) { s_saidCrop = true; PLOG_INFO << "Halo 2 TAA overscan: the final pass shows target pixels (" << L.offX << ", " << L.offY << ") .. (" << L.offX + L.innerW << ", " << L.offY + L.innerH << ")"; }
+				}
+			}
 			++tUnscaled; ++tFinalPass;
 			r = self->mFinalHook->getInlineHook().call<int64_t, uint16_t>(target);
 			--tUnscaled; --tFinalPass;
@@ -347,6 +487,31 @@ private:
 		else if (self) r = self->mFinalHook->getInlineHook().call<int64_t, uint16_t>(target);
 		--sInFlight;
 		return r;
+	}
+
+	// v6: the frame-boundary event drain (see kEventDrainRva) - after it, the engine's own in-place rebuild when one is pending
+	static uint64_t __fastcall drainDetour()
+	{
+		++sInFlight;
+		uint64_t result = 0;
+		H2SupersamplingImpl* self = sSelf.load();
+		if (self)
+		{
+			result = self->mDrainHook->getInlineHook().call<uint64_t>();
+			if (sRebuildPending.exchange(false))
+			{
+				const HMODULE mod = GetModuleHandleW(L"halo2.dll");
+				if (mod)
+				{
+					const uint64_t waited = GetTickCount64() - sRebuildPostedMs.load();
+					const bool ok = sehRebuild(reinterpret_cast<RebuildFn>((uint8_t*)mod + kRebuildRva));
+					if (ok) PLOG_INFO << "Halo 2 supersampling: render targets rebuilt in place by the engine (sub_180037ED0), " << waited << " ms after the request";
+					else PLOG_ERROR << "Halo 2 supersampling: the engine's in-place rebuild faulted - change MCC's resolution and back to recover";
+				}
+			}
+		}
+		--sInFlight;
+		return result;
 	}
 
 	// the final pass's pixel shader set-up (see kSetPixelShaderRva): stage 0 mag / min filter linear before its draw
@@ -390,7 +555,7 @@ private:
 		{
 			if (mVerifyFailed) return -1;
 			const bool anyInstalled = mRectHook->isHookInstalled() || mWinRectHook->isHookInstalled() || mWinHHook->isHookInstalled()
-				|| mWinWHook->isHookInstalled() || mHudHook->isHookInstalled() || mFinalHook->isHookInstalled() || mPixelShaderHook->isHookInstalled() || mHudPassHook->isHookInstalled() || mFadePassHook->isHookInstalled() || mHudScaleHook->isHookInstalled();
+				|| mWinWHook->isHookInstalled() || mHudHook->isHookInstalled() || mFinalHook->isHookInstalled() || mPixelShaderHook->isHookInstalled() || mHudPassHook->isHookInstalled() || mFadePassHook->isHookInstalled() || mHudScaleHook->isHookInstalled() || mDrainHook->isHookInstalled();
 			if (!anyInstalled)
 				for (const Probe& p : kProbes)
 					if (!bytesAt((uintptr_t)mod + p.rva, p.bytes, p.n))
@@ -401,7 +566,7 @@ private:
 					}
 			mVerified = true;
 		}
-		for (auto* h : { &mHudHook, &mFinalHook, &mPixelShaderHook, &mHudPassHook, &mFadePassHook, &mHudScaleHook, &mWinRectHook, &mWinHHook, &mWinWHook, &mRectHook }) (*h)->setWantsToBeAttached(true);
+		for (auto* h : { &mHudHook, &mFinalHook, &mPixelShaderHook, &mHudPassHook, &mFadePassHook, &mHudScaleHook, &mWinRectHook, &mWinHHook, &mWinWHook, &mRectHook, &mDrainHook }) (*h)->setWantsToBeAttached(true);
 		return mRectHook->isHookInstalled() ? 1 : 0;
 	}
 
@@ -410,35 +575,31 @@ private:
 		std::scoped_lock lk(mMutex);
 		const float f = factorOf(v);
 		sFactor = f; mWanted = f;
-		const int r = f > 1.f ? ensureHooks() : 1;
+		const int r = (f > 1.f || sOverscanX.load() > 0.f || sOverscanY.load() > 0.f) ? ensureHooks() : 1;
 		if (r < 0) { say("Halo 2 Supersampling: this Halo 2 build is not supported (made for MCC 1.3528)"); return; }
-		if (requestVideoReset())
-			say(f > 1.f ? std::format("Halo 2 Supersampling {}x", f) : std::string("Halo 2 Supersampling off"));
+		if (requestRebuild())
+			say(f > 1.f ? std::format("Halo 2 Supersampling {}x applied", f) : std::string("Halo 2 Supersampling off"));
 		else if (f > 1.f)
-			say(std::format("Halo 2 Supersampling {}x set. It takes effect at the next resolution change: in MCC's video settings change the resolution, then change it back.", f));
+			say(std::format("Halo 2 Supersampling {}x set. It takes effect once Halo 2 is loaded (or at the next resolution change).", f));
 		else
 			say("Halo 2 Supersampling off - back to normal at the next resolution change (change MCC's resolution and back).");
 	}
 
-	// 2026-11-23 (user: "we need to trip the video reset within HCM"): what MCC does on a resolution change - the engine's
-	// notify sub_180053FF0(this, 14, data) ('this' unused for 14, data only for events >= 16) queues a video reset that the
-	// engine's own thread runs at the next frame boundary (H2A wrapper: ring consumer sub_180053910; classic-only engine: the
-	// SList drained by sub_18003A3C0): release all targets, GetDesc, sub_180954DD0 (the render rect - rectDetour - and the HUD
-	// scale), recreate. True when posted.
-	bool requestVideoReset()
+	// ⚠⚠ NEVER POST THE ENGINE'S VIDEO RESET EVENT. sub_180053FF0(this, 14, data) - what MCC's resolution change does - HUNG
+	// MCC FOR GOOD every time HCM posted it (2026-11-24 once, 2026-11-27 twice). The engine runs it between frames on Halo 2's
+	// thread: case 14 of sub_18003A3C0 releases the targets (sub_180953030) and calls the MCC host [qword_181E8CE68]+0x10, which
+	// waits for MCC's main thread - and MCC's main thread is waiting in its UI frame rendezvous (mcc+BA08A5 -> D3CAB7) for Halo
+	// 2's next FrameEnd: a deadlock (snapshot: MCC Hang Tools\snapshots\h2_overscan_184239.txt). When MCC itself changes the
+	// resolution its main thread is not in that wait.
+	// Instead (v6): the engine's own in-place rebuild sub_180037ED0 (no host call), run on Halo 2's thread right after the
+	// frame-boundary event drain (drainDetour). The window size is unchanged, so MCC's swap chain needs nothing.
+	// True when the rebuild will run at the next frame boundary.
+	bool requestRebuild()
 	{
-		const HMODULE mod = GetModuleHandleW(L"halo2.dll");
-		if (!mod) return false;
-		static constexpr uint8_t kNotify[] = { 0x4D, 0x8B, 0xD8, 0x44, 0x8B, 0xD2, 0x83, 0xFA, 0x0E, 0x74, 0x05, 0x83, 0xFA, 0x05, 0x75, 0x49 };
-		if (!bytesAt((uintptr_t)mod + kEngineNotifyRva, kNotify, sizeof(kNotify)))
-		{
-			PLOG_ERROR << "Halo 2 supersampling: the engine notify function is not what this was made for - no instant reset";
-			return false;
-		}
-		if (!mRectHook->isHookInstalled()) return false;   // the rebuild would not be scaled
-		using Notify = void(__fastcall*)(void* self, int32_t event, void* data);
-		reinterpret_cast<Notify>((uint8_t*)mod + kEngineNotifyRva)(nullptr, 14, nullptr);
-		PLOG_INFO << "Halo 2 supersampling: video reset requested (engine event 14)";
+		if (!mDrainHook || !mDrainHook->isHookInstalled() || !mRectHook->isHookInstalled()) return false;
+		sRebuildPostedMs = GetTickCount64();
+		sRebuildPending = true;
+		PLOG_INFO << "Halo 2 supersampling: in-place rebuild of the render targets requested (runs at the next frame boundary)";
 		return true;
 	}
 
@@ -446,7 +607,29 @@ private:
 	{
 		if (s.currentGameState != mGame) return;
 		std::scoped_lock lk(mMutex);
-		if (mWanted > 1.f) ensureHooks();
+		if (mWanted > 1.f || sOverscanX.load() > 0.f || sOverscanY.load() > 0.f) ensureHooks();
+	}
+
+	// TAA overscan (H2Overscan.h), called by H2TAA with the wanted percent per side, left / right and top / bottom (0 = off):
+	// the targets are rebuilt in place at the next frame boundary (requestRebuild). 1 applied (or already as wanted), 0 set -
+	// applies once it can be rebuilt (Halo 2 not loaded yet), -1 other Halo 2 build.
+	int requestOverscan(float px, float py)
+	{
+		std::scoped_lock lk(mMutex);
+		if (!std::isfinite(px) || px < 0.f) px = 0.f;
+		if (!std::isfinite(py) || py < 0.f) py = 0.f;
+		if (px == sOverscanX.load() && py == sOverscanY.load()) return 1;   // nothing changed
+		const float bx = sOverscanX.exchange(px), by = sOverscanY.exchange(py);
+		const bool needHooks = px > 0.f || py > 0.f || sFactor.load() > 1.f;
+		if (needHooks && ensureHooks() < 0) { sOverscanX = bx; sOverscanY = by; return -1; }
+		if (!needHooks && !h2os::gActive.load()) return 1;   // off, and the targets are already normal
+		return requestRebuild() ? 1 : 0;
+	}
+
+	static int requestOverscanStatic(float px, float py)
+	{
+		H2SupersamplingImpl* self = sSelf.load();
+		return self ? self->requestOverscan(px, py) : -1;
 	}
 
 	std::unique_ptr<ModuleInlineHook> makeHook(uintptr_t rva, void* detour)
@@ -475,16 +658,32 @@ public:
 		mHudPassHook = makeHook(kHudPassRva, (void*)&windowPassDetour<&H2SupersamplingImpl::mHudPassHook>);
 		mFadePassHook = makeHook(kFadePassRva, (void*)&windowPassDetour<&H2SupersamplingImpl::mFadePassHook>);
 		mHudScaleHook = makeHook(kHudScaleSetupRva, (void*)&hudScaleDetour);
+		mDrainHook = makeHook(kEventDrainRva, (void*)&drainDetour);
 		sSelf = this;
 		const float f = factorOf(dicon.Resolve<SettingsStateAndEvents>().lock()->h2Supersampling->GetValue());
 		sFactor = f; mWanted = f;
 		if (f > 1.f) { std::scoped_lock lk(mMutex); ensureHooks(); }
+		h2os::gRequest = &requestOverscanStatic;
 	}
 
 	~H2SupersamplingImpl()
 	{
-		sFactor = 1.f; sApplied = 1.f;
-		for (auto* h : { &mRectHook, &mWinRectHook, &mWinHHook, &mWinWHook, &mHudHook, &mFinalHook, &mPixelShaderHook, &mHudPassHook, &mFadePassHook, &mHudScaleHook }) if (*h) (*h)->setWantsToBeAttached(false);
+		h2os::gRequest = nullptr;
+		// HCM closing with scaled targets: have the engine rebuild them at normal size first (our drain hook runs it on Halo 2's
+		// thread at the next frame boundary; with the factors at 1 the rebuild comes out normal). Wait up to 0.5 s - a paused or
+		// loading game may not reach a frame boundary, then the targets stay as they are until the next resolution change.
+		const bool wasScaled = sApplied.load() > 1.f;
+		sFactor = 1.f; sOverscanX = 0.f; sOverscanY = 0.f;
+		if (wasScaled)
+		{
+			bool posted = false;
+			{ std::scoped_lock lk(mMutex); posted = requestRebuild(); }
+			for (int i = 0; posted && i < 500 && sRebuildPending.load(); ++i) Sleep(1);
+			if (posted && sRebuildPending.exchange(false)) PLOG_WARNING << "Halo 2 supersampling: no frame boundary within 0.5 s of closing - the targets stay scaled until the next resolution change";
+		}
+		h2os::gActive = false;
+		sApplied = 1.f; sAppliedX = 1.f; sAppliedY = 1.f; h2os::gOverscan = false;
+		for (auto* h : { &mRectHook, &mWinRectHook, &mWinHHook, &mWinWHook, &mHudHook, &mFinalHook, &mPixelShaderHook, &mHudPassHook, &mFadePassHook, &mHudScaleHook, &mDrainHook }) if (*h) (*h)->setWantsToBeAttached(false);
 		for (int i = 0; i < 500 && sInFlight.load() > 0; ++i) Sleep(1);
 		sSelf = nullptr;
 	}

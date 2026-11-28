@@ -243,6 +243,8 @@ private:
 								{
 									createNestedElement(GUIElementEnum::h2TAABlendGUI),
 									createNestedElement(GUIElementEnum::h2TAAMotionBlendGUI),
+									createNestedElement(GUIElementEnum::h2TAAOverscanGUI),
+									createNestedElement(GUIElementEnum::h2TAAOverscanVerticalGUI),
 									createNestedElement(GUIElementEnum::h2TAAObjectMotionGUI),
 									createNestedElement(GUIElementEnum::h2TAADebugGUI),
 								},
@@ -2028,6 +2030,14 @@ private:
 				case GUIElementEnum::h2TAAMotionBlendGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.05f, 1.0f)>>
 						(game, ToolTipCollection("How much of each new frame goes into the TAA picture for the parts of the screen that are MOVING (2 pixels a frame or more - less than that is ramped). Higher = less ghosting, trailing and blur while you or an object move, but less smoothing during the motion; things that stand still always use TAA Blend. At or below TAA Blend this does nothing. Default 0.4."), "TAA Motion Weight", settings->h2TAAMotionBlend));
+
+				case GUIElementEnum::h2TAAOverscanGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.f, 15.f)>>
+						(game, ToolTipCollection("Renders the 3D view this many percent wider on the LEFT and RIGHT of the screen, out of sight, so TAA already has history for what comes into view at the edges when you turn: the whole screen stays as stable as the centre. 0 = off. Turning left / right needs the most - try 3-5 (8-10 for very fast flicks); each percent costs about 2% more pixels. Applied half a second after you stop changing it (the game rebuilds its render targets in place - a brief flicker). Single view only (not split screen). Experimental."), "TAA Overscan Left / Right (%)", settings->h2TAAOverscan));
+
+				case GUIElementEnum::h2TAAOverscanVerticalGUI:
+					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUIFloat<SliderParam(0.f, 15.f)>>
+						(game, ToolTipCollection("The same hidden border at the TOP and BOTTOM of the screen, for looking up and down. Usually needs less than left / right - try 1-2. 0 = off. Each percent costs about 2% more pixels."), "TAA Overscan Top / Bottom (%)", settings->h2TAAOverscanVertical));
 
 				case GUIElementEnum::h2TAAObjectMotionGUI:
 					return std::optional<std::shared_ptr<IGUIElement>>(std::make_shared<GUISimpleToggle<false>>

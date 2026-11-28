@@ -10,6 +10,7 @@
 #include "H2CV_Halo2.h"
 #include "H2CV_Mem.h"
 #include "H2TAAObjects.h"
+#include "H2Overscan.h"
 #include "TAA\Generated\TAAShaders.h"
 #include <wrl/client.h>
 #include <intrin.h>
@@ -337,6 +338,7 @@ private:
 	ScopedCallback<eventpp::CallbackList<void(SettingsEnums::PostAAMethod&)>> mMethodCallback;    // the Anti-Aliasing Method
 	std::atomic<bool> mWanted{ false };   // toggle on and method TAA, as last acted on
 	ScopedCallback<eventpp::CallbackList<void(bool&)>> mDebugCallback;
+	ScopedCallback<eventpp::CallbackList<void(float&)>> mOverscanCallback, mOverscanVCallback;
 	ScopedCallback<eventpp::CallbackList<void(const MCCState&)>> mMCCStateChangedCallback;
 	std::mutex mToggleMutex;          // toggles / MCC state (GUI threads)
 	std::mutex mGpuMutex;             // held while the resolve runs; the destructor takes it after unhooking
@@ -606,8 +608,20 @@ private:
 			const uintptr_t b = h2::base();
 			if (b && rect && cam)
 			{
-				if (ret == b + kMainViewRetRva) self->onMainViewRect(b, (uintptr_t)cam, rect);
-				else if (ret == b + kFpRetRva) self->onFirstPersonRect(b, (uintptr_t)cam, rect);
+				const bool main = ret == b + kMainViewRetRva, fp = ret == b + kFpRetRva;
+				if (main || fp)
+				{
+					// TAA overscan (H2Overscan.h): while the targets are overscanned, the main view and the gun are drawn
+					// that much wider - whether TAA is on or not (the targets follow at the next video reset), and before
+					// the jitter, which then works in the overscanned view's pixels
+					int16_t vr[4];
+					if (h2os::gOverscan.load(std::memory_order_acquire) && mem::copy(vr, (uintptr_t)cam + 0x30, sizeof(vr))
+						&& std::isfinite(rect[0] + rect[1] + rect[2] + rect[3]))
+						h2os::widen(rect, vr[3] - vr[1], vr[2] - vr[0]);
+					if (main) self->pollOverscan();
+				}
+				if (main) self->onMainViewRect(b, (uintptr_t)cam, rect);
+				else if (fp) self->onFirstPersonRect(b, (uintptr_t)cam, rect);
 			}
 		}
 		--sInFlight;
@@ -1484,6 +1498,41 @@ private:
 		PLOG_INFO << "Halo 2 TAA: on (hook " << (r > 0 ? "installed" : "pending: halo2.dll not loaded") << ")";
 	}
 
+	// TAA overscan (H2Overscan.h): what TAA wants is checked every main view (render thread) and handed to H2Supersampling,
+	// which rebuilds the targets; a slider change is applied once it has been left alone for 0.6 s (each apply is a video
+	// reset). Off whenever TAA is off.
+	float mOsRequestedX = -1.f, mOsRequestedY = -1.f;   // the last percents handed over (-1 = none yet)
+	std::atomic<uint64_t> mOsChangedAt{ 0 };
+
+	void pollOverscan()
+	{
+		auto settings = settingsWeak.lock();
+		float wx = 0.f, wy = 0.f;
+		if (settings && sEnabled.load() && sActive.load() && !sFailed.load())
+		{
+			wx = std::round(std::clamp(settings->h2TAAOverscan->GetValue(), 0.f, 15.f) * 2.f) / 2.f;            // half-percent steps
+			wy = std::round(std::clamp(settings->h2TAAOverscanVertical->GetValue(), 0.f, 15.f) * 2.f) / 2.f;
+		}
+		if (wx == mOsRequestedX && wy == mOsRequestedY) return;
+		if (mOsRequestedX < 0.f && wx == 0.f && wy == 0.f) { mOsRequestedX = mOsRequestedY = 0.f; return; }   // start-up, off: nothing to do
+		if (GetTickCount64() - mOsChangedAt.load() < 600) return;   // still being dragged
+		const bool wasOn = mOsRequestedX > 0.f || mOsRequestedY > 0.f;
+		mOsRequestedX = wx; mOsRequestedY = wy;
+		const h2os::RequestFn fn = h2os::gRequest.load();
+		if (!fn)
+		{
+			if (wx > 0.f || wy > 0.f) say("Halo 2 TAA Overscan: it needs Halo 2 Supersampling, which did not load - not applied");
+			return;
+		}
+		const int r = fn(wx, wy);
+		const float cost = (1.f + 2.f * wx / 100.f) * (1.f + 2.f * wy / 100.f);
+		if (r < 0) say("Halo 2 TAA Overscan: this Halo 2 build is not supported (made for MCC 1.3528)");
+		else if (r == 0) say(std::format("Halo 2 TAA Overscan {}% / {}% set - it applies once Halo 2 is running", wx, wy));
+		else if (wx > 0.f || wy > 0.f) say(std::format("Halo 2 TAA Overscan applied: {}% left/right, {}% top/bottom ({:.2f}x the pixels)", wx, wy, cost));
+		else if (wasOn) say("Halo 2 TAA Overscan off");
+		PLOG_INFO << "Halo 2 TAA overscan: requested " << wx << "% left/right, " << wy << "% top/bottom (result " << r << ")";
+	}
+
 	// 2026-11-24 (user: "TAA goes under AA method"): TAA has no toggle of its own - it runs while the Anti Aliasing
 	// toggle is on and the method is TAA.
 	static bool wanted(const std::shared_ptr<SettingsStateAndEvents>& settings)
@@ -1521,6 +1570,8 @@ public:
 		mToggleCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->smaaToggle->valueChangedEvent, [this](bool&) { onSettingChanged(); }),
 		mMethodCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->postAAMethod->valueChangedEvent, [this](SettingsEnums::PostAAMethod&) { onSettingChanged(); }),
 		mDebugCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->h2TAADebug->valueChangedEvent, [this](bool& on) { PLOG_INFO << "Halo 2 TAA: debug view " << (on ? "on" : "off"); if (on) sLogObjectStats = true; }),
+		mOverscanCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->h2TAAOverscan->valueChangedEvent, [this](float&) { mOsChangedAt = GetTickCount64(); }),
+		mOverscanVCallback(dicon.Resolve<SettingsStateAndEvents>().lock()->h2TAAOverscanVertical->valueChangedEvent, [this](float&) { mOsChangedAt = GetTickCount64(); }),
 		mMCCStateChangedCallback(dicon.Resolve<IMCCStateHook>().lock()->getMCCStateChangedEvent(), [this](const MCCState& s) { onMCCStateChanged(s); })
 	{
 		if (game.operator GameState::Value() != GameState::Value::Halo2) throw HCMInitException("Halo 2 TAA is Halo 2 only");

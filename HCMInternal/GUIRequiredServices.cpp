@@ -1126,6 +1126,12 @@ const std::map <GUIElementEnum, std::vector<OptionalCheatEnum>> GUIRequiredServi
 	{ GUIElementEnum::h2TAAMotionBlendGUI,
 		{OptionalCheatEnum::H2TAA}
 	},
+	{ GUIElementEnum::h2TAAOverscanGUI,
+		{OptionalCheatEnum::H2TAA, OptionalCheatEnum::H2Supersampling}
+	},
+	{ GUIElementEnum::h2TAAOverscanVerticalGUI,
+		{OptionalCheatEnum::H2TAA, OptionalCheatEnum::H2Supersampling}
+	},
 	{ GUIElementEnum::h2TAADebugGUI,
 		{OptionalCheatEnum::H2TAA}
 	},

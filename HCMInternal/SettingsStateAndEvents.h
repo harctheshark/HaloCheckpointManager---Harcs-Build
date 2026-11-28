@@ -1216,6 +1216,22 @@ public:
 			[](float in) { return in >= 0.05f && in <= 1.0f; },
 			nameof(h2TAAMotionBlend)
 		);
+	// 2026-11-27 (user: "apply a TAA overscan, just so the entire screen the player sees is stable"): the 3D view is rendered
+	// this many percent wider on the LEFT and RIGHT and TAA runs on all of it; only the centre is shown (H2Overscan.h).
+	// 0 = off. Costs (1 + 2 x left/right / 100) x (1 + 2 x top/bottom / 100) the pixels.
+	std::shared_ptr<BinarySetting<float>> h2TAAOverscan = std::make_shared<BinarySetting<float>>
+		(
+			0.f,
+			[](float in) { return in >= 0.f && in <= 15.f; },
+			nameof(h2TAAOverscan)
+		);
+	// the same at the TOP and BOTTOM (user: "4% covers my horizontal needs, 1.5 is what i'd need for vertical")
+	std::shared_ptr<BinarySetting<float>> h2TAAOverscanVertical = std::make_shared<BinarySetting<float>>
+		(
+			0.f,
+			[](float in) { return in >= 0.f && in <= 15.f; },
+			nameof(h2TAAOverscanVertical)
+		);
 	// debug view: motion vectors / gun mask / rejected history instead of the picture
 	std::shared_ptr<BinarySetting<bool>> h2TAADebug = std::make_shared<BinarySetting<bool>>
 		(
@@ -5633,6 +5649,8 @@ public:
 		smaaDepthStrength,
 		h2TAABlend,
 		h2TAAMotionBlend,
+		h2TAAOverscan,
+		h2TAAOverscanVertical,
 		h2TAAObjectMotion,
 		freeCameraBoostFactor,
 		freeCameraBoostAcceleration,

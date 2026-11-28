@@ -208,6 +208,8 @@ namespace
 			{ "infiniteAmmoGrenadesGUI", "infinite grenades frags plasmas only grenade type" },
 			{ "h2TAABlendGUI", "taa temporal anti aliasing antialiasing aa blend ghosting" },
 			{ "h2TAAMotionBlendGUI", "taa temporal anti aliasing antialiasing aa motion weight speed ghosting trails blur history" },
+			{ "h2TAAOverscanGUI", "taa overscan guard band border edges screen edge stable wider fov margin horizontal left right sides" },
+			{ "h2TAAOverscanVerticalGUI", "taa overscan guard band border edges screen edge stable taller margin vertical top bottom" },
 			{ "h2TAADebugGUI", "taa temporal anti aliasing antialiasing aa debug motion vectors" },
 			{ "h2TAAObjectMotionGUI", "taa temporal anti aliasing antialiasing aa object motion ghosting trails velocity" },
 			{ "smaaEdgeDetectionGUI", "anti aliasing antialiasing aa luma colour color edges" },

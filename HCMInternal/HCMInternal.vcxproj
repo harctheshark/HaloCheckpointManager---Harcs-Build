@@ -462,6 +462,7 @@ IF EXIST "C:\Program Files\LockHunter\LockHunter.exe"  (
     <ClInclude Include="H2PlayerModelSwap.h" />
     <ClInclude Include="H2TAAObjects.h" />
     <ClInclude Include="H2PassTaps.h" />
+    <ClInclude Include="H2Overscan.h" />
     <ClInclude Include="TAA\Generated\TAAShaders.h" />
     <None Include="TAA\HCM_TAA.hlsl" />
     <None Include="TAA\build_shaders.py" />

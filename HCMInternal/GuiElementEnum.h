@@ -1053,6 +1053,8 @@
 			((metroForceLaunchAbsoluteVec3, (METRO_ONLY)))\
 	((h2TAABlendGUI, (Halo2)))\
 	((h2TAAMotionBlendGUI, (Halo2)))\
+	((h2TAAOverscanGUI, (Halo2)))\
+	((h2TAAOverscanVerticalGUI, (Halo2)))\
 	((h2TAAObjectMotionGUI, (Halo2)))\
 	((h2TAADebugGUI, (Halo2)))\
 	((smaaEdgeDetectionGUI, (ALL_GAMES_AND_MAINMENU)))\
